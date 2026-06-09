@@ -7,7 +7,74 @@ export default function App() {
   const [vulnMapActive, setVulnMapActive] = useState(false);
   const [flickerCard, setFlickerCard] = useState(false);
 
+  // Live Data State
+  const [agents, setAgents] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [reasoningLogs, setReasoningLogs] = useState([]);
+  const [currentSession, setCurrentSession] = useState(null);
+
   const terminalRef = useRef(null);
+
+  // Live Data Fetching
+  useEffect(() => {
+    const fetchAgents = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8088/agents", {
+          headers: { Authorization: "Bearer dev-token" }
+        });
+        if (res.ok) setAgents(await res.json());
+      } catch (e) {
+        console.error("Failed to fetch agents", e);
+      }
+    };
+    
+    const fetchSession = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8088/engagements", {
+          headers: { Authorization: "Bearer dev-token" }
+        });
+        if (res.ok) {
+          const sessions = await res.json();
+          if (sessions.length > 0) {
+            // Get the most recent session
+            setCurrentSession(sessions[sessions.length - 1].session_id);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch sessions", e);
+      }
+    };
+
+    fetchAgents();
+    fetchSession();
+    const interval = setInterval(fetchAgents, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // WebSocket Connection
+  useEffect(() => {
+    if (!currentSession) return;
+    
+    const ws = new WebSocket(`ws://127.0.0.1:8088/ws/engagements/${currentSession}`);
+    
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+        
+        if (msg.event_type === "agent_thought" || msg.event === "agent_action") {
+            setReasoningLogs(prev => [...prev, { time: timestamp, ...msg }]);
+        } else {
+            setAuditLogs(prev => [...prev, { time: timestamp, ...msg }]);
+        }
+      } catch (e) {
+        const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+        setAuditLogs(prev => [...prev, { time: timestamp, raw: event.data }]);
+      }
+    };
+    
+    return () => ws.close();
+  }, [currentSession]);
 
   // Auto-scroll terminal
   useEffect(() => {
@@ -115,39 +182,25 @@ export default function App() {
                 FLEET INVENTORY
               </div>
               <div className="space-y-3">
-                <div className="flex items-center justify-between group cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-primary-container animate-pulse"></div>
-                    <span className="font-code-sm text-code-sm text-primary group-hover:underline">
-                      Recon_Agent
-                    </span>
+                {agents.length === 0 ? (
+                  <div className="font-code-sm text-[10px] text-on-surface-variant">
+                    NO AGENTS DETECTED
                   </div>
-                  <span className="font-code-sm text-[10px] text-on-surface-variant">
-                    EXECUTING
-                  </span>
-                </div>
-                <div className="flex items-center justify-between group cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-on-surface-variant"></div>
-                    <span className="font-code-sm text-code-sm text-on-surface-variant group-hover:text-primary">
-                      Exploit_Agent
-                    </span>
-                  </div>
-                  <span className="font-code-sm text-[10px] text-on-surface-variant">
-                    STANDBY
-                  </span>
-                </div>
-                <div className="flex items-center justify-between group cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-error animate-pulse"></div>
-                    <span className="font-code-sm text-code-sm text-on-surface-variant group-hover:text-error">
-                      Payload_Agent
-                    </span>
-                  </div>
-                  <span className="font-code-sm text-[10px] text-on-surface-variant">
-                    AWAITING
-                  </span>
-                </div>
+                ) : (
+                  agents.map(agent => (
+                    <div key={agent.agent_id} className="flex items-center justify-between group cursor-pointer">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${agent.status !== 'idle' ? 'bg-primary-container animate-pulse' : 'bg-on-surface-variant'}`}></div>
+                        <span className={`font-code-sm text-code-sm group-hover:underline ${agent.status !== 'idle' ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary'}`}>
+                          {agent.agent_type.toUpperCase()}
+                        </span>
+                      </div>
+                      <span className="font-code-sm text-[10px] text-on-surface-variant">
+                        {agent.status.toUpperCase()}
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -704,31 +757,19 @@ export default function App() {
                 className="flex-1 p-4 font-code-sm text-code-sm overflow-y-auto terminal-scroll space-y-1"
                 ref={terminalRef}
               >
-                <div className="flex gap-4">
-                  <span className="text-on-surface-variant">[09:42:01]</span>{" "}
-                  <span className="text-primary-container">[SYS]</span> SYSCALL
-                  EXECVE: /usr/bin/python3
-                </div>
-                <div className="flex gap-4">
-                  <span className="text-on-surface-variant">[09:42:15]</span>{" "}
-                  <span className="text-primary-container">[SYS]</span> PROCESS
-                  FORK: Child 8821 spawned.
-                </div>
-                <div className="flex gap-4">
-                  <span className="text-on-surface-variant">[09:43:44]</span>{" "}
-                  <span className="text-error">[AUDIT]</span> Unauthorized memory
-                  access attempt at 0x7fff...
-                </div>
-                <div className="flex gap-4">
-                  <span className="text-on-surface-variant">[09:44:02]</span>{" "}
-                  <span className="text-secondary-fixed">[AUDIT]</span> Kernel
-                  integrity check: PASSED.
-                </div>
-                <div className="flex gap-4">
-                  <span className="text-on-surface-variant">[09:45:10]</span>{" "}
-                  <span className="text-primary-container">[SYS]</span> Socket
-                  opened: 0.0.0.0:4444 (TCP)
-                </div>
+                {auditLogs.length === 0 ? (
+                  <div className="text-on-surface-variant">Waiting for system audit logs...</div>
+                ) : (
+                  auditLogs.map((log, i) => (
+                    <div key={i} className="flex gap-4">
+                      <span className="text-on-surface-variant">[{log.time}]</span>{" "}
+                      <span className={log.severity === 'error' ? 'text-error' : 'text-primary-container'}>
+                        [{log.event_type ? log.event_type.toUpperCase() : 'SYS'}]
+                      </span>{" "}
+                      {log.raw ? log.raw : (typeof log.action === 'object' ? JSON.stringify(log.action) : (log.action || JSON.stringify(log)))}
+                    </div>
+                  ))
+                )}
               </div>
             )}
 
@@ -738,33 +779,22 @@ export default function App() {
                 className="flex-1 p-4 font-code-sm text-code-sm overflow-y-auto terminal-scroll space-y-2"
                 ref={terminalRef}
               >
-                <div className="flex gap-3">
-                  <span className="text-primary-fixed-dim shrink-0">
-                    AGENT_01:
-                  </span>
-                  <span className="text-on-surface italic">
-                    "Analyzing attack surface... Cloudflare WAF detected.
-                    Scanning for misconfigured origin IPs."
-                  </span>
-                </div>
-                <div className="flex gap-3">
-                  <span className="text-primary-fixed-dim shrink-0">
-                    THINKING:
-                  </span>
-                  <span className="text-on-surface-variant text-[11px]">
-                    IF bypass_prob &gt; 0.6 THEN execute exploit_module_v3 ELSE
-                    escalate_to_operator
-                  </span>
-                </div>
-                <div className="flex gap-3">
-                  <span className="text-primary-fixed-dim shrink-0">
-                    DECISION:
-                  </span>
-                  <span className="text-primary-container">
-                    Proceeding with SSRF payload injection. Probability of
-                    success: 72%.
-                  </span>
-                </div>
+                {reasoningLogs.length === 0 ? (
+                  <div className="text-on-surface-variant">Waiting for agent reasoning...</div>
+                ) : (
+                  reasoningLogs.map((log, i) => (
+                    <div key={i} className="flex flex-col gap-1 mb-3">
+                      <div className="flex gap-3">
+                        <span className="text-primary-fixed-dim shrink-0">
+                          {log.actor_id ? log.actor_id.toUpperCase() : 'AGENT'}:
+                        </span>
+                        <span className="text-on-surface italic">
+                          "{log.action || log.reasoning || log.thought || 'Processing...'}"
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             )}
 
