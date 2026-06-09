@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ai-osop-sandbox-runtime
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: sandbox
+spec:
+  selector:
+    matchLabels:
+      app: ai-osop
+      component: sandbox
+  template:
+    metadata:
+      labels:
+        app: ai-osop
+        component: sandbox
+    spec:
+      hostNetwork: false
+      containers:
+      - name: sandbox-runtime
+        image: ai-osop/sandbox-runtime:latest
+        imagePullPolicy: Always
+        securityContext:
+          privileged: false
+          capabilities:
+            add:
+            - NET_ADMIN
+            - SYS_ADMIN
+        env:
+        - name: SANDBOX_NETWORK_MODE
+          value: "isolated"
+        - name: SANDBOX_DEFAULT_CPU
+          value: "2"
+        - name: SANDBOX_DEFAULT_MEMORY
+          value: "4Gi"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: seccomp-profiles
+          mountPath: /etc/seccomp
+          readOnly: true
+        - name: cni-config
+          mountPath: /etc/cni
+          readOnly: true
+      volumes:
+      - name: seccomp-profiles
+        configMap:
+          name: ai-osop-seccomp-profiles
+      - name: cni-config
+        configMap:
+          name: ai-osop-cni-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-osop-seccomp-profiles
+  namespace: ai-osop
+data:
+  restricted.json: |
+    {
+      "defaultAction": "SCMP_ACT_ERRNO",
+      "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86"],
+      "syscalls": [
+        {
+          "names": [
+            "accept", "accept4", "bind", "clone", "close", "connect",
+            "epoll_create", "epoll_create1", "epoll_ctl", "epoll_pwait",
+            "epoll_wait", "exit", "exit_group", "fcntl", "fstat", "futex",
+            "getpid", "getrandom", "getsockname", "getsockopt", "ioctl",
+            "listen", "mmap", "mprotect", "munmap", "nanosleep", "open",
+            "openat", "poll", "read", "recvfrom", "recvmsg", "rt_sigaction",
+            "rt_sigprocmask", "rt_sigreturn", "select", "sendmsg", "sendto",
+            "setitimer", "setsockopt", "sigaltstack", "socket", "socketpair",
+            "write", "writev"
+          ],
+          "action": "SCMP_ACT_ALLOW"
+        }
+      ]
+    }

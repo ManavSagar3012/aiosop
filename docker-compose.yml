@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5.18-community
+    container_name: ai-osop-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/${OSOP_NEO4J_PASSWORD:-change-me-local}
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - ai-osop
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-osop-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=osop
+      - POSTGRES_PASSWORD=osop
+      - POSTGRES_DB=osop
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai-osop
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-osop-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai-osop
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-osop-api
+    ports:
+      - "8080:8080"
+    environment:
+      - OSOP_ENV=development
+      - OSOP_NEO4J_URI=bolt://neo4j:7687
+      - OSOP_POSTGRES_URI=postgresql+asyncpg://osop:osop@postgres:5432/osop
+      - OSOP_REDIS_URI=redis://redis:6379/0
+    depends_on:
+      - neo4j
+      - postgres
+      - redis
+    networks:
+      - ai-osop
+    volumes:
+      - ./src:/app/src
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  postgres_data:
+  redis_data:
+
+networks:
+  ai-osop:
+    driver: bridge

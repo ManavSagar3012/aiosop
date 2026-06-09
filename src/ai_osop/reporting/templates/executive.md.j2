@@ -1,0 +1,19 @@
+# CONFIDENTIAL / CLIENT-SENSITIVE
+# Executive Summary
+**Engagement ID:** {{ engagement_id }}
+**Date Generated:** {{ date }}
+**Version:** {{ version }}
+
+## Risk Narrative
+{{ risk_narrative }}
+
+## Assessment Overview
+- **Total Assets Discovered:** {{ stats.assets_count }}
+- **Total Endpoints Mapped:** {{ stats.endpoints_count }}
+- **Critical Vulnerabilities:** {{ stats.critical_count }}
+- **High Vulnerabilities:** {{ stats.high_count }}
+
+## Key Findings Summary
+{% for vuln in top_findings %}
+- **{{ vuln.severity }}**: {{ vuln.title }} ({{ vuln.vuln_type }})
+{% endfor %}

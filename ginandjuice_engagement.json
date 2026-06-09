@@ -1,0 +1,7 @@
+{
+  "engagement_id": "eng-ginandjuice-shop",
+  "domains": ["ginandjuice.shop"],
+  "ips": [],
+  "exclusions": [],
+  "approval_required_for": ["rce", "sqli", "ssrf"]
+}
