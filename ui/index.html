@@ -1,11 +1,149 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI-OSOP Approval Console</title>
+    <title>AI-OSOP // COMMAND CORE</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "background": "#050505",
+                        "on-secondary-fixed-variant": "#00531b",
+                        "inverse-primary": "#006b54",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-high": "#2a2a2a",
+                        "on-primary-container": "#00725a",
+                        "surface-bright": "#3a3939",
+                        "tertiary-container": "#ffd9d7",
+                        "on-primary": "#00382b",
+                        "outline-variant": "#1a1a1a",
+                        "on-tertiary": "#68000e",
+                        "primary-fixed-dim": "#00e0b3",
+                        "on-surface-variant": "#b9cbc2",
+                        "on-tertiary-fixed": "#410006",
+                        "on-error": "#690005",
+                        "error": "#ff003c",
+                        "surface-tint": "#00ffcc",
+                        "on-primary-fixed-variant": "#00513f",
+                        "on-background": "#e5e2e1",
+                        "secondary-container": "#00ff66",
+                        "on-tertiary-container": "#ca0026",
+                        "on-secondary": "#003911",
+                        "surface-container-lowest": "#0e0e0e",
+                        "primary-fixed": "#24ffcd",
+                        "secondary-fixed-dim": "#00e55b",
+                        "tertiary-fixed-dim": "#ffb3af",
+                        "primary": "#fdfffc",
+                        "tertiary-fixed": "#ffdad8",
+                        "on-surface": "#e5e2e1",
+                        "primary-container": "#00ffcc",
+                        "surface-container-highest": "#353534",
+                        "surface-container": "#201f1f",
+                        "on-tertiary-fixed-variant": "#930019",
+                        "on-primary-fixed": "#002118",
+                        "secondary-fixed": "#6bff83",
+                        "surface-container-low": "#1c1b1b",
+                        "surface": "#0a0a0a",
+                        "inverse-surface": "#e5e2e1",
+                        "error-container": "#93000a",
+                        "surface-dim": "#050505",
+                        "surface-variant": "#1a1a1a",
+                        "secondary": "#ebffe6",
+                        "tertiary": "#fffeff",
+                        "inverse-on-surface": "#313030",
+                        "on-secondary-fixed": "#002107",
+                        "outline": "#333333",
+                        "on-secondary-container": "#007128"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0px",
+                        "lg": "0px",
+                        "xl": "0px",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "container-max": "1440px",
+                        "gutter": "16px",
+                        "unit": "4px",
+                        "margin": "24px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "display-lg-mobile": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "label-caps": ["JetBrains Mono"],
+                        "code-sm": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "800"}],
+                        "display-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}],
+                        "headline-md": ["20px", {"lineHeight": "28px", "letterSpacing": "0.01em", "fontWeight": "600"}],
+                        "label-caps": ["11px", {"lineHeight": "14px", "letterSpacing": "0.15em", "fontWeight": "700"}],
+                        "code-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}]
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #050505;
+            color: #e5e2e1;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+        .scanline {
+            width: 100%;
+            height: 100%;
+            z-index: 50;
+            background: linear-gradient(0deg, rgba(0, 0, 0, 0) 0%, rgba(255, 255, 255, 0.02) 50%, rgba(0, 0, 0, 0) 100%);
+            background-size: 100% 4px;
+            position: absolute;
+            pointer-events: none;
+            animation: scanline 10s linear infinite;
+        }
+        @keyframes scanline {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(100%); }
+        }
+        .glow-cyan { box-shadow: 0 0 10px rgba(0, 255, 204, 0.3); }
+        .glow-red { box-shadow: 0 0 10px rgba(255, 0, 60, 0.3); }
+        .glow-green { box-shadow: 0 0 10px rgba(0, 255, 102, 0.3); }
+        .flicker { animation: flicker 0.15s infinite alternate; }
+        @keyframes flicker {
+            0% { opacity: 0.8; }
+            100% { opacity: 1; }
+        }
+        .caution-border {
+            background: repeating-linear-gradient(45deg, #00ffcc, #00ffcc 10px, #000 10px, #000 20px);
+        }
+        .terminal-scroll::-webkit-scrollbar { width: 4px; }
+        .terminal-scroll::-webkit-scrollbar-track { background: #050505; }
+        .terminal-scroll::-webkit-scrollbar-thumb { background: #1a1a1a; }
+        .cursor-blink { animation: blink 1s step-end infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+        
+        .node-inspect {
+            transition: all 0.2s ease-out;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .node-trigger:hover + .node-inspect, .node-inspect:hover {
+            opacity: 1;
+            pointer-events: auto;
+        }
+    </style>
   </head>
-  <body>
+  <body class="font-body-md text-body-md">
     <div id="root"></div>
     <script type="module" src="/src/App.jsx"></script>
   </body>
