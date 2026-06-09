@@ -1,6 +1,7 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 import pytest
+import json
 
 # Mock dependencies BEFORE importing app to prevent early connection attempts if any
 with patch("ai_osop.memory.session_memory.SessionMemory"), \
@@ -31,6 +32,11 @@ def client():
         orch_instance.register_agent = AsyncMock()
         orch_instance.shutdown = AsyncMock()
         orch_instance.mcp_registry = mock_mcp_registry.return_value
+        
+        # Mock session_memory for websocket
+        mock_session_memory = mock_session.return_value
+        orch_instance.session_memory = mock_session_memory
+        
         orch_instance._sessions = {}
         orch_instance._agents = {}
         
@@ -59,3 +65,23 @@ def test_api_startup_registers_agents(client):
 def test_root_not_found(client):
     response = client.get("/")
     assert response.status_code == 404
+
+def test_websocket_endpoint(client):
+    # Create an async generator that yields one test message then stops
+    async def mock_listen():
+        yield {"type": "message", "data": json.dumps({"event": "test_event"})}
+        
+    mock_pubsub = AsyncMock()
+    mock_pubsub.listen = mock_listen
+    mock_pubsub.unsubscribe = AsyncMock()
+    
+    # We must patch the global orchestrator used by the endpoint
+    with patch("ai_osop.api.main.orchestrator.session_memory.subscribe_events", new_callable=AsyncMock) as mock_subscribe:
+        mock_subscribe.return_value = mock_pubsub
+        
+        with client.websocket_connect("/ws/engagements/test-session") as websocket:
+            data = websocket.receive_text()
+            assert json.loads(data) == {"event": "test_event"}
+            
+        mock_subscribe.assert_called_once_with("engagement:test-session")
+        mock_pubsub.unsubscribe.assert_awaited_once()
