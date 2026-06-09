@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AI-OSOP // COMMAND CORE</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "background": "#050505",
+                        "on-secondary-fixed-variant": "#00531b",
+                        "inverse-primary": "#006b54",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-high": "#2a2a2a",
+                        "on-primary-container": "#00725a",
+                        "surface-bright": "#3a3939",
+                        "tertiary-container": "#ffd9d7",
+                        "on-primary": "#00382b",
+                        "outline-variant": "#1a1a1a",
+                        "on-tertiary": "#68000e",
+                        "primary-fixed-dim": "#00e0b3",
+                        "on-surface-variant": "#b9cbc2",
+                        "on-tertiary-fixed": "#410006",
+                        "on-error": "#690005",
+                        "error": "#ff003c",
+                        "surface-tint": "#00ffcc",
+                        "on-primary-fixed-variant": "#00513f",
+                        "on-background": "#e5e2e1",
+                        "secondary-container": "#00ff66",
+                        "on-tertiary-container": "#ca0026",
+                        "on-secondary": "#003911",
+                        "surface-container-lowest": "#0e0e0e",
+                        "primary-fixed": "#24ffcd",
+                        "secondary-fixed-dim": "#00e55b",
+                        "tertiary-fixed-dim": "#ffb3af",
+                        "primary": "#fdfffc",
+                        "tertiary-fixed": "#ffdad8",
+                        "on-surface": "#e5e2e1",
+                        "primary-container": "#00ffcc",
+                        "surface-container-highest": "#353534",
+                        "surface-container": "#201f1f",
+                        "on-tertiary-fixed-variant": "#930019",
+                        "on-primary-fixed": "#002118",
+                        "secondary-fixed": "#6bff83",
+                        "surface-container-low": "#1c1b1b",
+                        "surface": "#0a0a0a",
+                        "inverse-surface": "#e5e2e1",
+                        "error-container": "#93000a",
+                        "surface-dim": "#050505",
+                        "surface-variant": "#1a1a1a",
+                        "secondary": "#ebffe6",
+                        "tertiary": "#fffeff",
+                        "inverse-on-surface": "#313030",
+                        "on-secondary-fixed": "#002107",
+                        "outline": "#333333",
+                        "on-secondary-container": "#007128"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0px",
+                        "lg": "0px",
+                        "xl": "0px",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "container-max": "1440px",
+                        "gutter": "16px",
+                        "unit": "4px",
+                        "margin": "24px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "display-lg-mobile": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "label-caps": ["JetBrains Mono"],
+                        "code-sm": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "800"}],
+                        "display-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}],
+                        "headline-md": ["20px", {"lineHeight": "28px", "letterSpacing": "0.01em", "fontWeight": "600"}],
+                        "label-caps": ["11px", {"lineHeight": "14px", "letterSpacing": "0.15em", "fontWeight": "700"}],
+                        "code-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: #050505;
+            color: #e5e2e1;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+        .scanline {
+            width: 100%;
+            height: 100%;
+            z-index: 50;
+            background: linear-gradient(0deg, rgba(0, 0, 0, 0) 0%, rgba(255, 255, 255, 0.02) 50%, rgba(0, 0, 0, 0) 100%);
+            background-size: 100% 4px;
+            position: absolute;
+            pointer-events: none;
+            animation: scanline 10s linear infinite;
+        }
+        @keyframes scanline {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(100%); }
+        }
+        .glow-cyan { box-shadow: 0 0 10px rgba(0, 255, 204, 0.3); }
+        .glow-red { box-shadow: 0 0 10px rgba(255, 0, 60, 0.3); }
+        .glow-green { box-shadow: 0 0 10px rgba(0, 255, 102, 0.3); }
+        .flicker { animation: flicker 0.15s infinite alternate; }
+        @keyframes flicker {
+            0% { opacity: 0.8; }
+            100% { opacity: 1; }
+        }
+        .caution-border {
+            background: repeating-linear-gradient(45deg, #00ffcc, #00ffcc 10px, #000 10px, #000 20px);
+        }
+        .terminal-scroll::-webkit-scrollbar { width: 4px; }
+        .terminal-scroll::-webkit-scrollbar-track { background: #050505; }
+        .terminal-scroll::-webkit-scrollbar-thumb { background: #1a1a1a; }
+        .cursor-blink { animation: blink 1s step-end infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+        
+        .node-inspect {
+            transition: all 0.2s ease-out;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .node-trigger:hover + .node-inspect, .node-inspect:hover {
+            opacity: 1;
+            pointer-events: auto;
+        }
+    </style>
+</head>
+<body class="font-body-md text-body-md">
+<div class="scanline"></div>
+<!-- UI WRAPPER -->
+<div class="flex flex-col h-screen w-full relative z-10 border border-outline-variant">
+<!-- TOP APP BAR -->
+<header class="flex justify-between items-center w-full px-margin h-16 bg-background border-b border-outline-variant shrink-0">
+<div class="flex items-center gap-8">
+<div class="font-display-lg text-display-lg text-primary-fixed tracking-tighter uppercase">AI-OSOP // COMMAND CORE</div>
+<div class="flex flex-col">
+<div class="flex justify-between items-end mb-1">
+<span class="font-label-caps text-label-caps text-on-surface-variant">TARGET: ALPHA-CORP.COM</span>
+<span class="font-label-caps text-label-caps text-primary-container">PHASE: EXPLOITATION</span>
+</div>
+<div class="w-64 h-1 bg-surface-variant relative overflow-hidden">
+<div class="absolute top-0 left-0 h-full bg-primary-container glow-cyan" style="width: 65%;"></div>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="bg-primary-container text-on-primary-fixed px-4 py-2 font-label-caps text-label-caps hover:brightness-110 transition-all active:scale-95">NEW MISSION</button>
+<button class="border border-outline text-on-surface px-4 py-2 font-label-caps text-label-caps hover:bg-surface-container-high transition-all">PRINT REPORT</button>
+<button class="bg-error text-on-primary px-4 py-2 font-label-caps text-label-caps glow-red hover:brightness-125 transition-all">EMERGENCY HALT</button>
+<div class="flex gap-2 ml-4">
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-primary transition-colors" data-icon="settings">settings</span>
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-primary transition-colors" data-icon="notifications_active" style="font-variation-settings: 'FILL' 1;">notifications_active</span>
+</div>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- SIDEBAR NAV (LEFT) -->
+<aside class="flex flex-col h-full w-64 bg-surface-container-low border-r border-outline-variant py-gutter shrink-0 overflow-y-auto">
+<div class="px-gutter mb-8">
+<div class="flex items-center gap-3 mb-6">
+<div class="w-10 h-10 bg-primary-fixed-dim flex items-center justify-center">
+<span class="material-symbols-outlined text-on-primary-fixed" data-icon="smart_toy">smart_toy</span>
+</div>
+<div>
+<div class="font-label-caps text-label-caps text-primary">OPERATOR_01</div>
+<div class="font-code-sm text-code-sm text-on-surface-variant">RANK: ELITE</div>
+</div>
+</div>
+<div class="mb-8">
+<div class="font-label-caps text-label-caps text-on-surface-variant mb-4 border-b border-outline-variant pb-1">FLEET INVENTORY</div>
+<div class="space-y-3">
+<div class="flex items-center justify-between group cursor-pointer">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-primary-container animate-pulse"></div>
+<span class="font-code-sm text-code-sm text-primary group-hover:underline">Recon_Agent</span>
+</div>
+<span class="font-code-sm text-[10px] text-on-surface-variant">EXECUTING</span>
+</div>
+<div class="flex items-center justify-between group cursor-pointer">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-on-surface-variant"></div>
+<span class="font-code-sm text-code-sm text-on-surface-variant group-hover:text-primary">Exploit_Agent</span>
+</div>
+<span class="font-code-sm text-[10px] text-on-surface-variant">STANDBY</span>
+</div>
+<div class="flex items-center justify-between group cursor-pointer">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-error animate-pulse"></div>
+<span class="font-code-sm text-code-sm text-on-surface-variant group-hover:text-error">Payload_Agent</span>
+</div>
+<span class="font-code-sm text-[10px] text-on-surface-variant">AWAITING</span>
+</div>
+</div>
+</div>
+<!-- INTERACTIVE RCE APPROVAL FLOW -->
+<div class="mb-8 border border-error p-3 relative overflow-hidden bg-error-container/10 transition-all duration-300" id="approval-card">
+<div class="absolute top-0 left-0 w-full h-1 caution-border opacity-50" id="approval-hazard"></div>
+<div id="approval-initial">
+<div class="font-label-caps text-label-caps text-error mb-2">HUMAN APPROVALS</div>
+<div class="font-code-sm text-code-sm text-on-surface mb-3 uppercase font-bold leading-tight">RCE EXECUTION APPROVAL REQUIRED</div>
+<div class="flex gap-2">
+<button class="flex-1 bg-secondary-container text-on-secondary py-1 font-label-caps text-[10px] hover:brightness-110 active:scale-95 transition-all glow-green" onclick="handleAuthorize()">AUTHORIZE</button>
+<button class="flex-1 border border-error text-error py-1 font-label-caps text-[10px] hover:bg-error/10 active:scale-95 transition-all" onclick="handleReject()">REJECT</button>
+</div>
+</div>
+<div class="hidden py-2 text-center" id="approval-pending">
+<div class="flex justify-center mb-2">
+<span class="material-symbols-outlined text-primary-container animate-spin" data-icon="sync">sync</span>
+</div>
+<div class="font-label-caps text-[10px] text-primary-container animate-pulse">PENDING BIOMETRIC VERIFICATION...</div>
+</div>
+<div class="hidden py-1" id="approval-success">
+<div class="flex items-center gap-2 text-secondary-container mb-1">
+<span class="material-symbols-outlined text-[16px]" data-icon="check_circle">check_circle</span>
+<span class="font-label-caps text-[10px]">MISSION AUTHORIZED</span>
+</div>
+<div class="font-code-sm text-[9px] text-on-surface-variant uppercase">Key: OSOP-882-VERIFIED</div>
+</div>
+</div>
+<div>
+<div class="font-label-caps text-label-caps text-on-surface-variant mb-4 border-b border-outline-variant pb-1">SYSTEM HEALTH</div>
+<div class="flex gap-4">
+<div class="flex flex-col items-center gap-1 group cursor-help">
+<div class="w-3 h-3 bg-primary-container glow-cyan group-hover:scale-125 transition-transform"></div>
+<span class="text-[9px] font-label-caps text-on-surface-variant">SANDBOX</span>
+</div>
+<div class="flex flex-col items-center gap-1 group cursor-help">
+<div class="w-3 h-3 bg-primary-container glow-cyan group-hover:scale-125 transition-transform"></div>
+<span class="text-[9px] font-label-caps text-on-surface-variant">EBPF</span>
+</div>
+<div class="flex flex-col items-center gap-1 group cursor-help">
+<div class="w-3 h-3 bg-primary-container glow-cyan group-hover:scale-125 transition-transform"></div>
+<span class="text-[9px] font-label-caps text-on-surface-variant">DB</span>
+</div>
+</div>
+</div>
+</div>
+<div class="mt-auto px-gutter">
+<button class="w-full py-3 border border-primary-fixed text-primary-fixed font-label-caps text-label-caps hover:bg-primary-fixed/10 transition-colors active:scale-95">NEW AGENT</button>
+</div>
+</aside>
+<!-- MAIN CONTENT -->
+<main class="flex flex-col flex-1 overflow-hidden">
+<!-- TABS -->
+<div class="flex bg-surface-container h-12 border-b border-outline-variant shrink-0">
+<button class="px-8 flex items-center border-r border-outline-variant text-primary border-b-2 border-primary-container bg-surface-variant font-label-caps text-label-caps transition-all" id="tab-tactical" onclick="switchTab('tactical')">TACTICAL GRAPH</button>
+<button class="px-8 flex items-center border-r border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-high transition-all" id="tab-explorer" onclick="switchTab('explorer')">ATTACK PATH EXPLORER</button>
+<button class="px-8 flex items-center border-r border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-high transition-all" id="tab-entity" onclick="switchTab('entity')">ENTITY DB</button>
+</div>
+<div class="flex-1 overflow-hidden relative">
+<!-- TAB 1: TACTICAL GRAPH -->
+<div class="h-full w-full flex flex-col p-6" id="content-tactical">
+<div class="flex-1 relative border border-outline-variant bg-black overflow-hidden rounded-lg transition-all duration-700" id="graph-container">
+<!-- SVG Placeholder for animation -->
+<div class="absolute inset-0 opacity-40 bg-[radial-gradient(#1a1a1a_1px,transparent_1px)] [background-size:40px_40px]"></div>
+<!-- Interactive Node Example 1 -->
+<div class="absolute top-1/3 left-1/4">
+<div class="node-trigger w-4 h-4 bg-primary-fixed glow-cyan cursor-pointer hover:scale-150 transition-transform"></div>
+<div class="node-inspect absolute top-6 left-0 z-20 w-48 bg-surface-container border border-primary-container p-3 backdrop-blur-md">
+<div class="font-label-caps text-[10px] text-primary-container mb-1">NODE_ALPHA_05</div>
+<div class="font-code-sm text-[11px] space-y-1">
+<div class="flex justify-between"><span>IP:</span> <span class="text-primary">10.0.42.101</span></div>
+<div class="flex justify-between"><span>SRV:</span> <span class="text-primary">HTTP, SSH</span></div>
+<div class="flex justify-between"><span>RISK:</span> <span class="text-error">CRITICAL</span></div>
+</div>
+</div>
+</div>
+<!-- Interactive Node Example 2 -->
+<div class="absolute bottom-1/4 right-1/3">
+<div class="node-trigger w-3 h-3 bg-secondary-fixed cursor-pointer hover:scale-150 transition-transform"></div>
+<div class="node-inspect absolute bottom-6 right-0 z-20 w-48 bg-surface-container border border-secondary-fixed p-3 backdrop-blur-md">
+<div class="font-label-caps text-[10px] text-secondary-fixed mb-1">ENDPOINT_BETA_21</div>
+<div class="font-code-sm text-[11px] space-y-1">
+<div class="flex justify-between"><span>IP:</span> <span class="text-primary">192.168.1.105</span></div>
+<div class="flex justify-between"><span>OS:</span> <span class="text-primary">LINUX X64</span></div>
+<div class="flex justify-between"><span>AUTH:</span> <span class="text-secondary-fixed">BYPASSED</span></div>
+</div>
+</div>
+</div>
+<!-- Legend & Controls -->
+<div class="absolute top-4 right-4 bg-surface/80 backdrop-blur-md p-4 border border-outline-variant">
+<div class="font-label-caps text-label-caps text-on-surface-variant mb-3">GRAPH LEGEND</div>
+<div class="space-y-2 mb-6">
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 bg-primary-fixed glow-cyan"></div>
+<span class="font-code-sm text-code-sm">TARGET NODE</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 bg-secondary-fixed"></div>
+<span class="font-code-sm text-code-sm">ENDPOINT</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 bg-error glow-red"></div>
+<span class="font-code-sm text-code-sm">VULNERABILITY</span>
+</div>
+</div>
+<button class="w-full border border-primary-container text-primary-container py-2 font-label-caps text-[10px] hover:bg-primary-container/10 transition-all active:scale-95" onclick="toggleVulnerabilityMap()">FULLSCREEN VULN MAP</button>
+</div>
+<!-- Overlay HUD stats -->
+<div class="absolute bottom-4 left-4 font-code-sm text-code-sm text-primary flex gap-8">
+<div>NODES: 1,204</div>
+<div>EDGES: 4,921</div>
+<div>LATENCY: 14MS</div>
+</div>
+</div>
+</div>
+<!-- TAB 2: EXPLORER (Detailed Vertical Kill Chain) -->
+<div class="hidden h-full w-full p-8 overflow-y-auto terminal-scroll" id="content-explorer">
+<div class="max-w-3xl mx-auto space-y-0">
+<!-- RECON -->
+<div class="relative flex gap-8">
+<div class="flex flex-col items-center">
+<div class="w-10 h-10 border border-primary-container bg-primary-container/20 flex items-center justify-center text-primary-container glow-cyan">
+<span class="material-symbols-outlined text-[20px]" data-icon="search">search</span>
+</div>
+<div class="w-px h-24 bg-primary-container"></div>
+</div>
+<div class="pt-1 pb-12 flex-1">
+<div class="flex justify-between items-start mb-1">
+<div>
+<div class="font-label-caps text-label-caps text-primary-container">PHASE 01 // RECONNAISSANCE</div>
+<div class="font-headline-md text-headline-md text-primary">SUBDOMAIN ENUMERATION</div>
+</div>
+<span class="px-2 py-0.5 bg-primary-container/10 text-primary-container font-label-caps text-[9px] border border-primary-container/30">COMPLETED</span>
+</div>
+<div class="font-code-sm text-code-sm text-on-surface-variant grid grid-cols-2 gap-4 mt-2 bg-white/5 p-3">
+<div>Target: <span class="text-primary">alpha-corp.com</span></div>
+<div>Found: <span class="text-primary">42 Assets</span></div>
+<div class="col-span-2">Tool: <span class="text-primary">Amass / Assetfinder / OSINT-ML</span></div>
+</div>
+</div>
+</div>
+<!-- WEAPONIZATION -->
+<div class="relative flex gap-8">
+<div class="flex flex-col items-center">
+<div class="w-10 h-10 border border-primary-container bg-primary-container/20 flex items-center justify-center text-primary-container glow-cyan">
+<span class="material-symbols-outlined text-[20px]" data-icon="architecture">architecture</span>
+</div>
+<div class="w-px h-24 bg-primary-container"></div>
+</div>
+<div class="pt-1 pb-12 flex-1">
+<div class="flex justify-between items-start mb-1">
+<div>
+<div class="font-label-caps text-label-caps text-primary-container">PHASE 02 // WEAPONIZATION</div>
+<div class="font-headline-md text-headline-md text-primary">PAYLOAD CRAFTING</div>
+</div>
+<span class="px-2 py-0.5 bg-primary-container/10 text-primary-container font-label-caps text-[9px] border border-primary-container/30">COMPLETED</span>
+</div>
+<div class="font-code-sm text-code-sm text-on-surface-variant grid grid-cols-2 gap-4 mt-2 bg-white/5 p-3">
+<div>Payload: <span class="text-primary">msf-venom-x64-custom</span></div>
+<div>Encoder: <span class="text-primary">Shikata_ga_nai (3 iterations)</span></div>
+<div class="col-span-2">Signature: <span class="text-primary">Polymorphic Bypass v2.1</span></div>
+</div>
+</div>
+</div>
+<!-- DELIVERY -->
+<div class="relative flex gap-8">
+<div class="flex flex-col items-center">
+<div class="w-10 h-10 border border-primary-container bg-primary-container/20 flex items-center justify-center text-primary-container glow-cyan">
+<span class="material-symbols-outlined text-[20px]" data-icon="outgoing_mail">outgoing_mail</span>
+</div>
+<div class="w-px h-24 bg-primary-container"></div>
+</div>
+<div class="pt-1 pb-12 flex-1">
+<div class="flex justify-between items-start mb-1">
+<div>
+<div class="font-label-caps text-label-caps text-primary-container">PHASE 03 // DELIVERY</div>
+<div class="font-headline-md text-headline-md text-primary">SSRF CHAIN INJECTION</div>
+</div>
+<span class="px-2 py-0.5 bg-primary-container/10 text-primary-container font-label-caps text-[9px] border border-primary-container/30 animate-pulse">ACTIVE</span>
+</div>
+<div class="font-code-sm text-code-sm text-on-surface-variant grid grid-cols-2 gap-4 mt-2 bg-white/5 p-3">
+<div>Vector: <span class="text-primary">/api/v1/fetch?url=</span></div>
+<div>Target: <span class="text-primary">internal-proxy-01.local</span></div>
+<div class="col-span-2">Status: <span class="text-primary">Exfiltrating Metadata...</span></div>
+</div>
+</div>
+</div>
+<!-- PENDING STEPS -->
+<div class="relative flex gap-8 opacity-40">
+<div class="flex flex-col items-center">
+<div class="w-10 h-10 border border-outline-variant bg-surface-variant flex items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined text-[20px]" data-icon="lock">lock</span>
+</div>
+<div class="w-px h-24 bg-outline-variant"></div>
+</div>
+<div class="pt-1 pb-12 flex-1">
+<div class="font-label-caps text-label-caps text-on-surface-variant">PHASE 04 // EXPLOITATION</div>
+<div class="font-headline-md text-headline-md text-on-surface-variant">RCE EXECUTION</div>
+</div>
+</div>
+<div class="relative flex gap-8 opacity-40">
+<div class="flex flex-col items-center">
+<div class="w-10 h-10 border border-outline-variant bg-surface-variant flex items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined text-[20px]" data-icon="settings_input_component">settings_input_component</span>
+</div>
+</div>
+<div class="pt-1 flex-1">
+<div class="font-label-caps text-label-caps text-on-surface-variant">PHASE 05 // INSTALLATION</div>
+<div class="font-headline-md text-headline-md text-on-surface-variant">PERSISTENCE ESTABLISHMENT</div>
+</div>
+</div>
+</div>
+</div>
+<!-- TAB 3: ENTITY DB -->
+<div class="hidden h-full w-full p-6 overflow-hidden flex flex-col" id="content-entity">
+<div class="border border-outline-variant overflow-hidden flex-1 flex flex-col">
+<table class="w-full text-left font-code-sm text-code-sm">
+<thead class="bg-surface-container-high border-b border-outline-variant">
+<tr>
+<th class="p-3 font-label-caps text-label-caps text-on-surface-variant">IP_ADDRESS</th>
+<th class="p-3 font-label-caps text-label-caps text-on-surface-variant">HOSTNAME</th>
+<th class="p-3 font-label-caps text-label-caps text-on-surface-variant">STATUS</th>
+<th class="p-3 font-label-caps text-label-caps text-on-surface-variant">RISK</th>
+</tr>
+</thead>
+<tbody class="bg-black/40 overflow-y-auto">
+<tr class="border-b border-outline-variant/30 hover:bg-surface-variant transition-colors cursor-pointer group">
+<td class="p-3 text-primary group-hover:glow-cyan">10.0.42.101</td>
+<td class="p-3">api.alpha-corp.com</td>
+<td class="p-3"><span class="text-primary-container">PROBED</span></td>
+<td class="p-3"><div class="w-16 h-2 bg-surface-variant"><div class="h-full bg-primary-container" style="width: 40%"></div></div></td>
+</tr>
+<tr class="border-b border-outline-variant/30 hover:bg-surface-variant transition-colors cursor-pointer group">
+<td class="p-3 text-primary">10.0.42.105</td>
+<td class="p-3">db-01.internal.alpha</td>
+<td class="p-3 text-on-surface-variant">DISCOVERED</td>
+<td class="p-3"><div class="w-16 h-2 bg-surface-variant"><div class="h-full bg-on-surface-variant" style="width: 10%"></div></div></td>
+</tr>
+<tr class="border-b border-outline-variant/30 bg-error-container/5 hover:bg-error-container/10 transition-colors cursor-pointer group">
+<td class="p-3 text-error group-hover:glow-red">10.0.1.5</td>
+<td class="p-3">vault.alpha-corp.com</td>
+<td class="p-3 text-error">VULNERABLE</td>
+<td class="p-3"><div class="w-16 h-2 bg-surface-variant"><div class="h-full bg-error" style="width: 95%"></div></div></td>
+</tr>
+<tr class="border-b border-outline-variant/30 hover:bg-surface-variant transition-colors cursor-pointer group">
+<td class="p-3 text-primary">44.201.12.8</td>
+<td class="p-3">prod-lb.alpha-corp.com</td>
+<td class="p-3 text-primary-container">PROBED</td>
+<td class="p-3"><div class="w-16 h-2 bg-surface-variant"><div class="h-full bg-primary-container" style="width: 30%"></div></div></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<!-- BOTTOM TERMINAL -->
+<div class="h-72 bg-black border-t border-outline-variant flex flex-col shrink-0">
+<div class="flex h-10 bg-surface-container-low border-b border-outline-variant">
+<button class="px-6 border-r border-outline-variant bg-black text-primary font-label-caps text-[10px] transition-colors" id="terminal-tab-audit" onclick="switchTerminalTab('audit')">SYSTEM AUDIT</button>
+<button class="px-6 border-r border-outline-variant text-on-surface-variant font-label-caps text-[10px] transition-colors hover:text-primary" id="terminal-tab-reasoning" onclick="switchTerminalTab('reasoning')">AGENT REASONING</button>
+</div>
+<!-- TERMINAL CONTENT: SYSTEM AUDIT -->
+<div class="flex-1 p-4 font-code-sm text-code-sm overflow-y-auto terminal-scroll space-y-1" id="terminal-audit">
+<div class="flex gap-4"><span class="text-on-surface-variant">[09:42:01]</span> <span class="text-primary-container">[SYS]</span> SYSCALL EXECVE: /usr/bin/python3</div>
+<div class="flex gap-4"><span class="text-on-surface-variant">[09:42:15]</span> <span class="text-primary-container">[SYS]</span> PROCESS FORK: Child 8821 spawned.</div>
+<div class="flex gap-4"><span class="text-on-surface-variant">[09:43:44]</span> <span class="text-error">[AUDIT]</span> Unauthorized memory access attempt at 0x7fff...</div>
+<div class="flex gap-4"><span class="text-on-surface-variant">[09:44:02]</span> <span class="text-secondary-fixed">[AUDIT]</span> Kernel integrity check: PASSED.</div>
+<div class="flex gap-4"><span class="text-on-surface-variant">[09:45:10]</span> <span class="text-primary-container">[SYS]</span> Socket opened: 0.0.0.0:4444 (TCP)</div>
+</div>
+<!-- TERMINAL CONTENT: AGENT REASONING (Hidden) -->
+<div class="hidden flex-1 p-4 font-code-sm text-code-sm overflow-y-auto terminal-scroll space-y-2" id="terminal-reasoning">
+<div class="flex gap-3">
+<span class="text-primary-fixed-dim shrink-0">AGENT_01:</span>
+<span class="text-on-surface italic">"Analyzing attack surface... Cloudflare WAF detected. Scanning for misconfigured origin IPs."</span>
+</div>
+<div class="flex gap-3">
+<span class="text-primary-fixed-dim shrink-0">THINKING:</span>
+<span class="text-on-surface-variant text-[11px]">IF bypass_prob &gt; 0.6 THEN execute exploit_module_v3 ELSE escalate_to_operator</span>
+</div>
+<div class="flex gap-3">
+<span class="text-primary-fixed-dim shrink-0">DECISION:</span>
+<span class="text-primary-container">Proceeding with SSRF payload injection. Probability of success: 72%.</span>
+</div>
+</div>
+<div class="h-10 bg-surface-container-low border-t border-outline-variant px-4 flex items-center gap-3">
+<span class="text-primary-container font-code-sm">&gt;</span>
+<input class="bg-transparent border-none outline-none focus:ring-0 flex-1 font-code-sm text-primary p-0 placeholder-primary/30" placeholder="AWAITING COMMAND_" type="text"/>
+<div class="w-2 h-4 bg-primary-container cursor-blink"></div>
+</div>
+</div>
+</main>
+<!-- RIGHT SIDEBAR -->
+<aside class="w-80 bg-surface border-l border-outline-variant shrink-0 flex flex-col overflow-y-auto p-gutter">
+<!-- WAF INTELLIGENCE -->
+<div class="mb-8">
+<div class="font-label-caps text-label-caps text-on-surface-variant mb-4 border-b border-outline-variant pb-1 flex items-center justify-between">
+                        WAF INTELLIGENCE
+                        <span class="material-symbols-outlined text-[14px]" data-icon="security">security</span>
+</div>
+<div class="space-y-3">
+<!-- Provider 1 -->
+<div class="bg-surface-container p-3 border border-outline-variant hover:border-primary-container/50 transition-colors cursor-default">
+<div class="flex justify-between items-center mb-2">
+<span class="font-label-caps text-[10px] text-primary">CLOUDFLARE V3</span>
+<span class="font-label-caps text-[9px] text-primary px-1 bg-primary/10">THREAT: MED</span>
+</div>
+<div class="flex justify-between items-end mb-1">
+<span class="font-code-sm text-[10px] text-on-surface-variant uppercase">Bypass Chance</span>
+<span class="font-label-caps text-[10px] text-primary-container">65%</span>
+</div>
+<div class="h-1 bg-surface-variant">
+<div class="h-full bg-primary-container glow-cyan" style="width: 65%;"></div>
+</div>
+</div>
+<!-- Provider 2 -->
+<div class="bg-surface-container p-3 border border-outline-variant hover:border-primary-container/50 transition-colors cursor-default">
+<div class="flex justify-between items-center mb-2">
+<span class="font-label-caps text-[10px] text-on-surface-variant">AWS WAF</span>
+<span class="font-label-caps text-[9px] text-error px-1 bg-error/10">THREAT: HIGH</span>
+</div>
+<div class="flex justify-between items-end mb-1">
+<span class="font-code-sm text-[10px] text-on-surface-variant uppercase">Bypass Chance</span>
+<span class="font-label-caps text-[10px] text-on-surface-variant">12%</span>
+</div>
+<div class="h-1 bg-surface-variant">
+<div class="h-full bg-error glow-red" style="width: 12%;"></div>
+</div>
+</div>
+<!-- Provider 3 -->
+<div class="bg-surface-container p-3 border border-outline-variant hover:border-primary-container/50 transition-colors cursor-default">
+<div class="flex justify-between items-center mb-2">
+<span class="font-label-caps text-[10px] text-on-surface-variant">AKAMAI KOANA</span>
+<span class="font-label-caps text-[9px] text-secondary-container px-1 bg-secondary-container/10">THREAT: LOW</span>
+</div>
+<div class="flex justify-between items-end mb-1">
+<span class="font-code-sm text-[10px] text-on-surface-variant uppercase">Bypass Chance</span>
+<span class="font-label-caps text-[10px] text-secondary-container">89%</span>
+</div>
+<div class="h-1 bg-surface-variant">
+<div class="h-full bg-secondary-container glow-green" style="width: 89%;"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- CREDENTIAL VAULT -->
+<div class="mb-8">
+<div class="font-label-caps text-label-caps text-on-surface-variant mb-4 border-b border-outline-variant pb-1 flex items-center justify-between">
+                        CREDENTIAL VAULT
+                        <span class="material-symbols-outlined text-[14px]" data-icon="lock_open">lock_open</span>
+</div>
+<div class="space-y-2">
+<div class="p-2 border border-outline-variant bg-black/40 flex items-center justify-between group cursor-pointer hover:border-primary-fixed transition-all hover:bg-surface-container">
+<span class="font-code-sm text-[11px] text-on-surface-variant truncate mr-2">root: $argon2i$v=19$m=4096...</span>
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant group-hover:text-primary-fixed opacity-0 group-hover:opacity-100 transition-all" data-icon="content_copy">content_copy</span>
+</div>
+<div class="p-2 border border-outline-variant bg-black/40 flex items-center justify-between group cursor-pointer hover:border-primary-fixed transition-all hover:bg-surface-container">
+<span class="font-code-sm text-[11px] text-on-surface-variant truncate mr-2">db_admin: $sha512$512$t=2...</span>
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant group-hover:text-primary-fixed opacity-0 group-hover:opacity-100 transition-all" data-icon="content_copy">content_copy</span>
+</div>
+<div class="p-2 border border-outline-variant bg-black/40 flex items-center justify-between group cursor-pointer hover:border-primary-fixed transition-all hover:bg-surface-container">
+<span class="font-code-sm text-[11px] text-on-surface-variant truncate mr-2">sys_dev: $pbkdf2$s2id$612...</span>
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant group-hover:text-primary-fixed opacity-0 group-hover:opacity-100 transition-all" data-icon="content_copy">content_copy</span>
+</div>
+<div class="p-2 border border-outline-variant bg-black/40 flex items-center justify-between group cursor-pointer hover:border-primary-fixed transition-all hover:bg-surface-container">
+<span class="font-code-sm text-[11px] text-on-surface-variant truncate mr-2">svc_web: cleartext:P@ssw0rd1</span>
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant group-hover:text-primary-fixed opacity-0 group-hover:opacity-100 transition-all" data-icon="content_copy">content_copy</span>
+</div>
+<div class="p-2 border border-outline-variant bg-black/40 flex items-center justify-between group cursor-pointer hover:border-primary-fixed transition-all hover:bg-surface-container">
+<span class="font-code-sm text-[11px] text-on-surface-variant truncate mr-2">infra_ops: cert_thumb:7ea2...</span>
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant group-hover:text-primary-fixed opacity-0 group-hover:opacity-100 transition-all" data-icon="content_copy">content_copy</span>
+</div>
+</div>
+</div>
+<div class="mt-auto">
+<div class="border border-outline-variant bg-surface-container-low p-4">
+<div class="font-label-caps text-[9px] text-on-surface-variant mb-2">LIVE FEED // NETWORK UPTIME</div>
+<div class="flex items-end gap-1 h-12">
+<div class="w-full bg-primary-container/20 h-4 hover:h-8 transition-all hover:bg-primary-container"></div>
+<div class="w-full bg-primary-container/20 h-6 hover:h-8 transition-all hover:bg-primary-container"></div>
+<div class="w-full bg-primary-container/20 h-3 hover:h-8 transition-all hover:bg-primary-container"></div>
+<div class="w-full bg-primary-container/20 h-8 hover:h-10 transition-all hover:bg-primary-container"></div>
+<div class="w-full bg-primary-container/20 h-5 hover:h-8 transition-all hover:bg-primary-container"></div>
+<div class="w-full bg-primary-container/20 h-7 hover:h-8 transition-all hover:bg-primary-container"></div>
+<div class="w-full bg-primary-container/20 h-6 hover:h-8 transition-all hover:bg-primary-container"></div>
+<div class="w-full bg-primary-container h-8 animate-pulse"></div>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</div>
+<script>
+        // Main Tab Switching
+        function switchTab(tabId) {
+            document.getElementById('content-tactical').classList.add('hidden');
+            document.getElementById('content-explorer').classList.add('hidden');
+            document.getElementById('content-entity').classList.add('hidden');
+            
+            const tabs = ['tactical', 'explorer', 'entity'];
+            tabs.forEach(id => {
+                const tab = document.getElementById(`tab-${id}`);
+                tab.classList.remove('text-primary', 'border-b-2', 'border-primary-container', 'bg-surface-variant');
+                tab.classList.add('text-on-surface-variant');
+            });
+            
+            document.getElementById(`content-${tabId}`).classList.remove('hidden');
+            const activeTab = document.getElementById(`tab-${tabId}`);
+            activeTab.classList.add('text-primary', 'border-b-2', 'border-primary-container', 'bg-surface-variant');
+            activeTab.classList.remove('text-on-surface-variant');
+        }
+
+        // Terminal Tab Switching
+        function switchTerminalTab(tabId) {
+            const auditTab = document.getElementById('terminal-tab-audit');
+            const reasoningTab = document.getElementById('terminal-tab-reasoning');
+            const auditContent = document.getElementById('terminal-audit');
+            const reasoningContent = document.getElementById('terminal-reasoning');
+
+            if (tabId === 'audit') {
+                auditTab.classList.add('bg-black', 'text-primary');
+                auditTab.classList.remove('text-on-surface-variant');
+                reasoningTab.classList.remove('bg-black', 'text-primary');
+                reasoningTab.classList.add('text-on-surface-variant');
+                auditContent.classList.remove('hidden');
+                reasoningContent.classList.add('hidden');
+            } else {
+                reasoningTab.classList.add('bg-black', 'text-primary');
+                reasoningTab.classList.remove('text-on-surface-variant');
+                auditTab.classList.remove('bg-black', 'text-primary');
+                auditTab.classList.add('text-on-surface-variant');
+                reasoningContent.classList.remove('hidden');
+                auditContent.classList.add('hidden');
+            }
+        }
+
+        // RCE Approval Flow
+        function handleAuthorize() {
+            const initial = document.getElementById('approval-initial');
+            const pending = document.getElementById('approval-pending');
+            const success = document.getElementById('approval-success');
+            const card = document.getElementById('approval-card');
+            const hazard = document.getElementById('approval-hazard');
+
+            initial.classList.add('hidden');
+            pending.classList.remove('hidden');
+            
+            setTimeout(() => {
+                pending.classList.add('hidden');
+                success.classList.remove('hidden');
+                card.classList.remove('border-error', 'bg-error-container/10');
+                card.classList.add('border-secondary-container', 'bg-secondary-container/5');
+                hazard.classList.remove('caution-border');
+                hazard.classList.add('bg-secondary-container/20');
+            }, 1500);
+        }
+
+        function handleReject() {
+            const card = document.getElementById('approval-card');
+            card.classList.add('flicker');
+            setTimeout(() => card.classList.remove('flicker'), 500);
+            alert("ACTION REJECTED BY OPERATOR");
+        }
+
+        // Fullscreen Vuln Map Toggle
+        function toggleVulnerabilityMap() {
+            const container = document.getElementById('graph-container');
+            container.classList.toggle('bg-error-container/10');
+            container.classList.toggle('border-error');
+            
+            const btn = event.target;
+            if (container.classList.contains('border-error')) {
+                btn.textContent = "EXIT VULNERABILITY MAP";
+                btn.classList.replace('text-primary-container', 'text-error');
+                btn.classList.replace('border-primary-container', 'border-error');
+            } else {
+                btn.textContent = "FULLSCREEN VULN MAP";
+                btn.classList.replace('text-error', 'text-primary-container');
+                btn.classList.replace('border-error', 'border-primary-container');
+            }
+        }
+
+        // Auto-scroll terminal
+        const terminal = document.getElementById('terminal-audit');
+        setInterval(() => {
+            if (terminal.scrollTop + terminal.clientHeight >= terminal.scrollHeight - 20) {
+                terminal.scrollTop = terminal.scrollHeight;
+            }
+        }, 1000);
+    </script>
+</body></html>
