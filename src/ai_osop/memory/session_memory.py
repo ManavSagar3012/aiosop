@@ -205,13 +205,31 @@ class SessionMemory:
     async def write_audit_event(self, event: AuditEvent) -> None:
         """Write cryptographically signed audit event."""
         import hmac
+        
+        # Load the key - in production this would fetch from Vault using the path
+        # Fallback for dev/testing if not configured
+        secret_key = getattr(settings, "audit_secret_key", b"default-insecure-audit-key")
+        if isinstance(secret_key, str):
+            secret_key = secret_key.encode()
+
+        # Get the hash of the last event for the chain
+        last_hash = None
+        async with self._async_session() as session:
+            # We get the most recent event for this engagement to continue the chain
+            last_event = await session.execute(
+                select(AuditLogORM.integrity_hash)
+                .where(AuditLogORM.engagement_id == event.engagement_id)
+                .order_by(AuditLogORM.timestamp.desc())
+                .limit(1)
+            )
+            last_hash = last_event.scalar_one_or_none()
+
         # Calculate integrity hash using HMAC with a secret key
-        # In a real production system, this key should come from a secure KMS
-        secret_key = getattr(settings, "audit_secret_key", "default-insecure-audit-key").encode()
-        event_data = (
-            f"{event.event_id}:{event.timestamp.isoformat()}:{event.actor_id}:{event.event_type}:"
-            f"{json.dumps(event.action, sort_keys=True)}:{json.dumps(event.result, sort_keys=True)}"
-        )
+        # We match the chain format expected by scope.py
+        event_data = f"{event.event_id}:{event.timestamp.isoformat()}:{event.actor_id}:{event.event_type}"
+        if last_hash:
+            event_data = f"{last_hash}:{event_data}"
+            
         integrity_hash = hmac.new(secret_key, event_data.encode(), hashlib.sha256).hexdigest()
         event.integrity_hash = integrity_hash
 
