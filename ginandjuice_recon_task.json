@@ -1,0 +1,13 @@
+{
+  "task_type": "full_recon",
+  "agent_type": "recon",
+  "engagement_id": "eng-ginandjuice-shop",
+  "priority": 10,
+  "payload": {
+    "domain": "ginandjuice.shop",
+    "scope": {
+      "include": ["ginandjuice.shop"],
+      "exclude": []
+    }
+  }
+}

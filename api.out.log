@@ -1,0 +1,18 @@
+Skipping MCP server burp-mcp at localhost:8081: Failed to connect to MCP server burp-mcp: Cannot connect to host localhost:8081 ssl:default [The remote computer refused the network connection]
+Skipping MCP server recon-mcp at localhost:8082: Failed to connect to MCP server recon-mcp: Cannot connect to host localhost:8082 ssl:default [The remote computer refused the network connection]
+Skipping MCP server payload-mcp at localhost:8083: Failed to connect to MCP server payload-mcp: Cannot connect to host localhost:8083 ssl:default [The remote computer refused the network connection]
+INFO:     127.0.0.1:65005 - "GET / HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:65005 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:57929 - "GET / HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:61788 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61793 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57184 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59402 - "GET / HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53674 - "OPTIONS /approvals/pending HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53674 - "GET /approvals/pending HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53674 - "GET /approvals/pending HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53674 - "GET /approvals/pending HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50417 - "GET /approvals/pending HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50417 - "GET /approvals/pending HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50417 - "GET /approvals/pending HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50417 - "GET /approvals/pending HTTP/1.1" 200 OK

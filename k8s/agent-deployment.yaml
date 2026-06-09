@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-osop-agents
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: agents
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-osop
+      component: agents
+  template:
+    metadata:
+      labels:
+        app: ai-osop
+        component: agents
+    spec:
+      serviceAccountName: ai-osop
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: agent-pool
+        image: ai-osop/agents:latest
+        imagePullPolicy: Always
+        env:
+        - name: OSOP_ENV
+          value: "production"
+        - name: AGENT_POOL_SIZE
+          value: "10"
+        - name: OSOP_ORCHESTRATOR_URL
+          value: "http://ai-osop-orchestrator.ai-osop.svc.cluster.local"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-osop-agents
+  namespace: ai-osop
+spec:
+  selector:
+    app: ai-osop
+    component: agents
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP

@@ -1,0 +1,9 @@
+{
+  "task_type": "burp_scan",
+  "priority": 5,
+  "agent_type": "vuln_analysis",
+  "payload": {"url": "http://example.com"},
+  "dependencies": [],
+  "approval_required": false,
+  "engagement_id": "eng-20260604141450-test-full"
+}

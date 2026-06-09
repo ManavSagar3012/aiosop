@@ -1,0 +1,159 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-osop-orchestrator
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: orchestrator
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ai-osop
+      component: orchestrator
+  template:
+    metadata:
+      labels:
+        app: ai-osop
+        component: orchestrator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: ai-osop
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: orchestrator
+        image: ai-osop/orchestrator:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: OSOP_ENV
+          value: "production"
+        - name: OSOP_LOG_LEVEL
+          value: "INFO"
+        - name: OSOP_NEO4J_URI
+          valueFrom:
+            secretKeyRef:
+              name: ai-osop-secrets
+              key: neo4j-uri
+        - name: OSOP_NEO4J_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-osop-secrets
+              key: neo4j-password
+        - name: OSOP_POSTGRES_URI
+          valueFrom:
+            secretKeyRef:
+              name: ai-osop-secrets
+              key: postgres-uri
+        - name: OSOP_REDIS_URI
+          valueFrom:
+            secretKeyRef:
+              name: ai-osop-secrets
+              key: redis-uri
+        - name: OSOP_LLM_KEY_PATH
+          value: "secret/data/llm/openai"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: vault-token
+          mountPath: /vault/token
+          readOnly: true
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: vault-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: vault-token
+              expirationSeconds: 600
+              audience: vault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-osop-orchestrator
+  namespace: ai-osop
+spec:
+  selector:
+    app: ai-osop
+    component: orchestrator
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  - port: 9090
+    targetPort: 9090
+    name: metrics
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-osop-orchestrator
+  namespace: ai-osop
+spec:
+  podSelector:
+    matchLabels:
+      app: ai-osop
+      component: orchestrator
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ai-osop
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: ai-osop
+    ports:
+    - protocol: TCP
+      port: 7687  # Neo4j
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 6379  # Redis
+  - to: []  # Deny all other egress by default

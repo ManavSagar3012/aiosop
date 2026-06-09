@@ -1,0 +1,24 @@
+# CONFIDENTIAL / CLIENT-SENSITIVE
+# Technical Details
+**Engagement ID:** {{ engagement_id }}
+
+## Verified Vulnerabilities
+
+{% for vuln in findings %}
+### {{ loop.index }}. {{ vuln.title }}
+- **Severity**: {{ vuln.severity }}
+- **Type**: {{ vuln.vuln_type }}
+- **Target**: {{ vuln.target }}
+
+#### Description
+{{ vuln.description }}
+
+#### Proof of Concept / Evidence
+```
+{{ vuln.evidence }}
+```
+**Artifact SHA-256 Hash**: `{{ vuln.evidence_hash }}`
+**Chain of Custody ID**: `{{ vuln.event_id }}`
+
+---
+{% endfor %}
