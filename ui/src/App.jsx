@@ -367,13 +367,13 @@ export default function App() {
                           <div className="flex gap-2">
                             <button
                               className="flex-1 bg-secondary-container text-on-secondary py-1 font-label-caps text-[10px] hover:brightness-110 active:scale-95 transition-all glow-green"
-                              onClick={() => handleAuthorize(approval.request_id)}
+                              onClick={() => handleAuthorize(approval.id)}
                             >
                               AUTHORIZE
                             </button>
                             <button
                               className="flex-1 border border-error text-error py-1 font-label-caps text-[10px] hover:bg-error/10 active:scale-95 transition-all"
-                              onClick={() => handleReject(approval.request_id)}
+                              onClick={() => handleReject(approval.id)}
                             >
                               REJECT
                             </button>
