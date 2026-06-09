@@ -12,6 +12,9 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [reasoningLogs, setReasoningLogs] = useState([]);
   const [currentSession, setCurrentSession] = useState(null);
+  const [sessionDetails, setSessionDetails] = useState({ target: "WAITING...", phase: "WAITING..." });
+  const [entities, setEntities] = useState([]);
+  const [pendingApprovals, setPendingApprovals] = useState([]);
 
   const terminalRef = useRef(null);
 
@@ -36,8 +39,12 @@ export default function App() {
         if (res.ok) {
           const sessions = await res.json();
           if (sessions.length > 0) {
-            // Get the most recent session
-            setCurrentSession(sessions[sessions.length - 1].session_id);
+            const latest = sessions[sessions.length - 1];
+            setCurrentSession(latest.session_id);
+            setSessionDetails({
+                target: latest.scope?.domains?.[0] || "UNKNOWN",
+                phase: latest.phase ? latest.phase.toUpperCase() : "UNKNOWN"
+            });
           }
         }
       } catch (e) {
@@ -45,11 +52,46 @@ export default function App() {
       }
     };
 
+    const fetchApprovals = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8088/approvals/pending", {
+          headers: { Authorization: "Bearer dev-token" }
+        });
+        if (res.ok) setPendingApprovals(await res.json());
+      } catch (e) {
+        console.error("Failed to fetch approvals", e);
+      }
+    };
+
+    const fetchGraph = async () => {
+      if (!currentSession) return;
+      try {
+        const res = await fetch(`http://127.0.0.1:8088/engagements/${currentSession}/graph`, {
+          headers: { Authorization: "Bearer dev-token" }
+        });
+        if (res.ok) {
+           const data = await res.json();
+           const endpoints = data.nodes.filter(n => n.labels.includes("Endpoint")).map(n => n.properties);
+           setEntities(endpoints);
+        }
+      } catch (e) {
+        console.error("Failed to fetch graph", e);
+      }
+    };
+
     fetchAgents();
     fetchSession();
-    const interval = setInterval(fetchAgents, 3000);
+    fetchApprovals();
+    fetchGraph();
+    
+    const interval = setInterval(() => {
+        fetchAgents();
+        fetchSession();
+        fetchApprovals();
+        fetchGraph();
+    }, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentSession]);
 
   // WebSocket Connection
   useEffect(() => {
@@ -91,17 +133,39 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleAuthorize = () => {
+  const handleAuthorize = async (requestId) => {
     setApprovalState("pending");
-    setTimeout(() => {
-      setApprovalState("success");
-    }, 1500);
+    try {
+        await fetch(`http://127.0.0.1:8088/approvals/${requestId}/resolve`, {
+            method: "POST",
+            headers: { 
+                "Authorization": "Bearer dev-token",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ decision: "approve", operator_id: "OPERATOR_01", notes: "Approved via UI" })
+        });
+        setApprovalState("success");
+    } catch(e) {
+        alert("Failed to authorize.");
+        setApprovalState("initial");
+    }
   };
 
-  const handleReject = () => {
+  const handleReject = async (requestId) => {
     setFlickerCard(true);
     setTimeout(() => setFlickerCard(false), 500);
-    alert("ACTION REJECTED BY OPERATOR");
+    try {
+        await fetch(`http://127.0.0.1:8088/approvals/${requestId}/resolve`, {
+            method: "POST",
+            headers: { 
+                "Authorization": "Bearer dev-token",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ decision: "reject", operator_id: "OPERATOR_01", notes: "Rejected via UI" })
+        });
+    } catch(e) {
+        alert("Failed to reject.");
+    }
   };
 
   return (
@@ -117,10 +181,10 @@ export default function App() {
           <div className="flex flex-col">
             <div className="flex justify-between items-end mb-1">
               <span className="font-label-caps text-label-caps text-on-surface-variant">
-                TARGET: ALPHA-CORP.COM
+                TARGET: {sessionDetails.target}
               </span>
               <span className="font-label-caps text-label-caps text-primary-container">
-                PHASE: EXPLOITATION
+                PHASE: {sessionDetails.phase}
               </span>
             </div>
             <div className="w-64 h-1 bg-surface-variant relative overflow-hidden">
@@ -205,77 +269,91 @@ export default function App() {
             </div>
 
             {/* INTERACTIVE RCE APPROVAL FLOW */}
-            <div
-              className={`mb-8 border p-3 relative overflow-hidden transition-all duration-300 ${
-                flickerCard ? "flicker" : ""
-              } ${
-                approvalState === "success"
-                  ? "border-secondary-container bg-secondary-container/5"
-                  : "border-error bg-error-container/10"
-              }`}
-            >
-              <div
-                className={`absolute top-0 left-0 w-full h-1 opacity-50 ${
-                  approvalState === "success"
-                    ? "bg-secondary-container/20"
-                    : "caution-border"
-                }`}
-              ></div>
-
-              {approvalState === "initial" && (
-                <div>
-                  <div className="font-label-caps text-label-caps text-error mb-2">
+            {pendingApprovals.length === 0 ? (
+                <div className="mb-8 border border-outline-variant p-3 relative bg-surface-container-low opacity-50">
+                  <div className="font-label-caps text-label-caps text-on-surface-variant mb-2">
                     HUMAN APPROVALS
                   </div>
-                  <div className="font-code-sm text-code-sm text-on-surface mb-3 uppercase font-bold leading-tight">
-                    RCE EXECUTION APPROVAL REQUIRED
+                  <div className="font-code-sm text-[10px] text-on-surface-variant text-center py-4">
+                    NO PENDING APPROVALS
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      className="flex-1 bg-secondary-container text-on-secondary py-1 font-label-caps text-[10px] hover:brightness-110 active:scale-95 transition-all glow-green"
-                      onClick={handleAuthorize}
+                </div>
+            ) : (
+                pendingApprovals.map(approval => (
+                    <div
+                      key={approval.request_id}
+                      className={`mb-8 border p-3 relative overflow-hidden transition-all duration-300 ${
+                        flickerCard ? "flicker" : ""
+                      } ${
+                        approvalState === "success"
+                          ? "border-secondary-container bg-secondary-container/5"
+                          : "border-error bg-error-container/10"
+                      }`}
                     >
-                      AUTHORIZE
-                    </button>
-                    <button
-                      className="flex-1 border border-error text-error py-1 font-label-caps text-[10px] hover:bg-error/10 active:scale-95 transition-all"
-                      onClick={handleReject}
-                    >
-                      REJECT
-                    </button>
-                  </div>
-                </div>
-              )}
+                      <div
+                        className={`absolute top-0 left-0 w-full h-1 opacity-50 ${
+                          approvalState === "success"
+                            ? "bg-secondary-container/20"
+                            : "caution-border"
+                        }`}
+                      ></div>
 
-              {approvalState === "pending" && (
-                <div className="py-2 text-center">
-                  <div className="flex justify-center mb-2">
-                    <span className="material-symbols-outlined text-primary-container animate-spin">
-                      sync
-                    </span>
-                  </div>
-                  <div className="font-label-caps text-[10px] text-primary-container animate-pulse">
-                    PENDING BIOMETRIC VERIFICATION...
-                  </div>
-                </div>
-              )}
+                      {approvalState === "initial" && (
+                        <div>
+                          <div className="font-label-caps text-label-caps text-error mb-2">
+                            HUMAN APPROVALS
+                          </div>
+                          <div className="font-code-sm text-code-sm text-on-surface mb-3 uppercase font-bold leading-tight">
+                            {approval.task_type} EXECUTION APPROVAL REQUIRED
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              className="flex-1 bg-secondary-container text-on-secondary py-1 font-label-caps text-[10px] hover:brightness-110 active:scale-95 transition-all glow-green"
+                              onClick={() => handleAuthorize(approval.request_id)}
+                            >
+                              AUTHORIZE
+                            </button>
+                            <button
+                              className="flex-1 border border-error text-error py-1 font-label-caps text-[10px] hover:bg-error/10 active:scale-95 transition-all"
+                              onClick={() => handleReject(approval.request_id)}
+                            >
+                              REJECT
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
-              {approvalState === "success" && (
-                <div className="py-1">
-                  <div className="flex items-center gap-2 text-secondary-container mb-1">
-                    <span className="material-symbols-outlined text-[16px]">
-                      check_circle
-                    </span>
-                    <span className="font-label-caps text-[10px]">
-                      MISSION AUTHORIZED
-                    </span>
-                  </div>
-                  <div className="font-code-sm text-[9px] text-on-surface-variant uppercase">
-                    Key: OSOP-882-VERIFIED
-                  </div>
-                </div>
-              )}
-            </div>
+                      {approvalState === "pending" && (
+                        <div className="py-2 text-center">
+                          <div className="flex justify-center mb-2">
+                            <span className="material-symbols-outlined text-primary-container animate-spin">
+                              sync
+                            </span>
+                          </div>
+                          <div className="font-label-caps text-[10px] text-primary-container animate-pulse">
+                            PENDING BIOMETRIC VERIFICATION...
+                          </div>
+                        </div>
+                      )}
+
+                      {approvalState === "success" && (
+                        <div className="py-1">
+                          <div className="flex items-center gap-2 text-secondary-container mb-1">
+                            <span className="material-symbols-outlined text-[16px]">
+                              check_circle
+                            </span>
+                            <span className="font-label-caps text-[10px]">
+                              MISSION AUTHORIZED
+                            </span>
+                          </div>
+                          <div className="font-code-sm text-[9px] text-on-surface-variant uppercase">
+                            Key: OSOP-882-VERIFIED
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                ))
+            )}
 
             <div>
               <div className="font-label-caps text-label-caps text-on-surface-variant mb-4 border-b border-outline-variant pb-1">
@@ -645,10 +723,10 @@ export default function App() {
                     <thead className="bg-surface-container-high border-b border-outline-variant">
                       <tr>
                         <th className="p-3 font-label-caps text-label-caps text-on-surface-variant">
-                          IP_ADDRESS
+                          URL/ENDPOINT
                         </th>
                         <th className="p-3 font-label-caps text-label-caps text-on-surface-variant">
-                          HOSTNAME
+                          METHOD
                         </th>
                         <th className="p-3 font-label-caps text-label-caps text-on-surface-variant">
                           STATUS
@@ -659,66 +737,29 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="bg-black/40 overflow-y-auto">
-                      <tr className="border-b border-outline-variant/30 hover:bg-surface-variant transition-colors cursor-pointer group">
-                        <td className="p-3 text-primary group-hover:glow-cyan">
-                          10.0.42.101
-                        </td>
-                        <td className="p-3">api.alpha-corp.com</td>
-                        <td className="p-3">
-                          <span className="text-primary-container">PROBED</span>
-                        </td>
-                        <td className="p-3">
-                          <div className="w-16 h-2 bg-surface-variant">
-                            <div
-                              className="h-full bg-primary-container"
-                              style={{ width: "40%" }}
-                            ></div>
-                          </div>
-                        </td>
-                      </tr>
-                      <tr className="border-b border-outline-variant/30 hover:bg-surface-variant transition-colors cursor-pointer group">
-                        <td className="p-3 text-primary">10.0.42.105</td>
-                        <td className="p-3">db-01.internal.alpha</td>
-                        <td className="p-3 text-on-surface-variant">
-                          DISCOVERED
-                        </td>
-                        <td className="p-3">
-                          <div className="w-16 h-2 bg-surface-variant">
-                            <div
-                              className="h-full bg-on-surface-variant"
-                              style={{ width: "10%" }}
-                            ></div>
-                          </div>
-                        </td>
-                      </tr>
-                      <tr className="border-b border-outline-variant/30 bg-error-container/5 hover:bg-error-container/10 transition-colors cursor-pointer group">
-                        <td className="p-3 text-error group-hover:glow-red">
-                          10.0.1.5
-                        </td>
-                        <td className="p-3">vault.alpha-corp.com</td>
-                        <td className="p-3 text-error">VULNERABLE</td>
-                        <td className="p-3">
-                          <div className="w-16 h-2 bg-surface-variant">
-                            <div
-                              className="h-full bg-error"
-                              style={{ width: "95%" }}
-                            ></div>
-                          </div>
-                        </td>
-                      </tr>
-                      <tr className="border-b border-outline-variant/30 hover:bg-surface-variant transition-colors cursor-pointer group">
-                        <td className="p-3 text-primary">44.201.12.8</td>
-                        <td className="p-3">prod-lb.alpha-corp.com</td>
-                        <td className="p-3 text-primary-container">PROBED</td>
-                        <td className="p-3">
-                          <div className="w-16 h-2 bg-surface-variant">
-                            <div
-                              className="h-full bg-primary-container"
-                              style={{ width: "30%" }}
-                            ></div>
-                          </div>
-                        </td>
-                      </tr>
+                      {entities.length === 0 ? (
+                        <tr><td colSpan="4" className="p-3 text-center text-on-surface-variant">WAITING FOR RECON DATA...</td></tr>
+                      ) : (
+                        entities.map((entity, i) => (
+                          <tr key={i} className="border-b border-outline-variant/30 hover:bg-surface-variant transition-colors cursor-pointer group">
+                            <td className="p-3 text-primary group-hover:glow-cyan">
+                              {entity.url || entity.id}
+                            </td>
+                            <td className="p-3">{entity.method || "GET"}</td>
+                            <td className="p-3">
+                              <span className="text-primary-container">PROBED</span>
+                            </td>
+                            <td className="p-3">
+                              <div className="w-16 h-2 bg-surface-variant">
+                                <div
+                                  className="h-full bg-primary-container"
+                                  style={{ width: "30%" }}
+                                ></div>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
