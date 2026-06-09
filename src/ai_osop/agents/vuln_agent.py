@@ -109,21 +109,37 @@ class VulnAnalysisAgent(BaseAgent):
         
         # --- MOCK DISCOVERY TRIGGER ---
         if settings.mock_llm and len(vulns) == 0:
-            print("MOCK_MODE: Simulating vulnerability discovery for testing.")
+            print("MOCK_MODE: Simulating advanced attack chain for exploitation phase trigger.")
             from ai_osop.core.config import Severity, VulnClass
-            mock_vuln = Vulnerability(
-                id=f"vuln-sqli-{int(datetime.utcnow().timestamp())}",
+            
+            # 1. WAF Bypass finding
+            vuln1 = Vulnerability(
+                id=f"vuln-waf-{int(datetime.utcnow().timestamp())}",
+                vuln_type="waf_bypass",
+                severity=Severity.MEDIUM,
+                title="WAF Configuration Weakness (Simulated)",
+                description="Detected pattern-based WAF bypass using HTTP Parameter Pollution.",
+                evidence=[{"type": "mock_probe", "payload": "param=1&param=2"}],
+                tool_source="vuln-agent-mock",
+                endpoint_id=f"endpoint-{domain}",
+                confidence=0.8,
+                engagement_id=self.ctx.current_task.engagement_id
+            )
+            
+            # 2. Blind SQL Injection
+            vuln2 = Vulnerability(
+                id=f"vuln-blind-sqli-{int(datetime.utcnow().timestamp()) + 1}",
                 vuln_type=VulnClass.SQLI,
                 severity=Severity.HIGH,
-                title="Reflected SQL Injection (Simulated)",
-                description="A potential SQL injection was identified during mock reasoning analysis.",
-                evidence=[{"type": "mock_probe", "payload": "' OR 1=1 --"}],
+                title="Blind SQL Injection (Simulated)",
+                description="Blind SQL injection detected behind bypassed WAF.",
+                evidence=[{"type": "mock_probe", "payload": "AND 1=SLEEP(5)"}],
                 tool_source="vuln-agent-mock",
                 endpoint_id=f"endpoint-{domain}",
                 confidence=0.9,
                 engagement_id=self.ctx.current_task.engagement_id
             )
-            vulns = [mock_vuln]
+            vulns = [vuln1, vuln2]
         # -----------------------------
 
         endpoints = await self.burp_adapter.get_sitemap(url_prefix=domain)
