@@ -15,6 +15,10 @@ export default function App() {
   const [sessionDetails, setSessionDetails] = useState({ target: "WAITING...", phase: "WAITING..." });
   const [entities, setEntities] = useState([]);
   const [pendingApprovals, setPendingApprovals] = useState([]);
+  
+  // Mission Launch State
+  const [showMissionModal, setShowMissionModal] = useState(false);
+  const [newDomain, setNewDomain] = useState("");
 
   const terminalRef = useRef(null);
 
@@ -168,9 +172,60 @@ export default function App() {
     }
   };
 
+  const handleLaunch = async () => {
+    if (!newDomain) return;
+    try {
+      const payload = {
+        engagement_id: `ui-mission-${Date.now()}`,
+        domains: [newDomain],
+        approval_required_for: ["rce", "sqli"]
+      };
+      const res = await fetch("http://127.0.0.1:8088/engagements", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer dev-token",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        setShowMissionModal(false);
+        setNewDomain("");
+      } else {
+        alert("Failed to launch mission.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Failed to launch mission.");
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen w-full relative z-10 border border-outline-variant">
       <div className="scanline"></div>
+
+      {/* NEW MISSION MODAL */}
+      {showMissionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="bg-surface-container border border-primary-container p-6 w-96 glow-cyan">
+            <div className="font-label-caps text-label-caps text-primary-container mb-4">LAUNCH NEW MISSION</div>
+            <div className="mb-4">
+              <label className="block font-code-sm text-code-sm text-on-surface-variant mb-2">TARGET DOMAIN</label>
+              <input 
+                type="text" 
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+                className="w-full bg-black border border-outline-variant p-2 text-primary font-code-sm outline-none focus:border-primary-container"
+                placeholder="e.g. example.com"
+              />
+            </div>
+            <div className="flex gap-4">
+              <button onClick={handleLaunch} className="flex-1 bg-primary-container text-on-primary-fixed py-2 font-label-caps hover:brightness-110">LAUNCH</button>
+              <button onClick={() => setShowMissionModal(false)} className="flex-1 border border-outline text-on-surface py-2 font-label-caps hover:bg-surface-variant">CANCEL</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TOP APP BAR */}
       <header className="flex justify-between items-center w-full px-margin h-16 bg-background border-b border-outline-variant shrink-0 relative z-20">
@@ -196,7 +251,10 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <button className="bg-primary-container text-on-primary-fixed px-4 py-2 font-label-caps text-label-caps hover:brightness-110 transition-all active:scale-95">
+          <button 
+            onClick={() => setShowMissionModal(true)}
+            className="bg-primary-container text-on-primary-fixed px-4 py-2 font-label-caps text-label-caps hover:brightness-110 transition-all active:scale-95"
+          >
             NEW MISSION
           </button>
           <button className="border border-outline text-on-surface px-4 py-2 font-label-caps text-label-caps hover:bg-surface-container-high transition-all">
