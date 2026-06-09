@@ -251,9 +251,10 @@ class Orchestrator:
                     type="exploit_validation",
                     priority=9,
                     agent_type=AgentType.EXPLOIT_VALIDATION,
+                    approval_required=True,
                     payload={
                         "vuln_id": vid,
-                        "operator_approved": True,
+                        "operator_approved": False,
                         "approval_id": f"auto-{vid}"
                     },
                     engagement_id=session.session_id,
@@ -304,6 +305,23 @@ class Orchestrator:
         agent = await self._find_available_agent(task.agent_type)
 
         if agent:
+            # Approval Gatekeeping
+            if task.approval_required:
+                request = ApprovalRequest(
+                    task_id=task.id,
+                    agent_id=agent.ctx.agent_id,
+                    action_type=task.type,
+                    target=str(task.payload.get("url", task.payload.get("target", "unknown"))),
+                    payload_summary=str(task.payload),
+                    risk_assessment="high",
+                    engagement_id=task.engagement_id
+                )
+                await self.request_approval(request)
+                if request.status != "approved":
+                    task.status = "failed"
+                    task.result = {"error": f"Approval denied: {request.status}"}
+                    return
+
             task.assigned_agent_id = agent.ctx.agent_id
             task.status = "running"
             await self.coordination_bus.publish(
@@ -443,6 +461,15 @@ class Orchestrator:
         request.operator_id = operator_id
         request.operator_notes = notes
         request.responded_at = datetime.utcnow()
+
+        # Update task payload if approved
+        if decision == "approved":
+            task = self._tasks.get(request.task_id)
+            if task:
+                task.payload["operator_approved"] = True
+                task.payload["approval_id"] = request.id
+                # Now that it's approved, we can assign it
+                await self._assign_task(task)
 
         # Audit log
         await self._audit_log(
