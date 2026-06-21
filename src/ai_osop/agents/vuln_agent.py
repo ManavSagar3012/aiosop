@@ -3,12 +3,15 @@ Vulnerability Analysis Agent
 Specialized agent for vulnerability scanning, correlation, and validation.
 """
 
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.adapters.burp_mcp import BurpMCPAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType, Severity, VulnClass, settings
+from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, Vulnerability
 
 
@@ -31,8 +34,32 @@ class VulnAnalysisAgent(BaseAgent):
     async def _setup_resources(self) -> None:
         """Initialize vulnerability scanning tools."""
         self.burp_adapter = BurpMCPAdapter(self.ctx.mcp_registry)
+        # Phase 1 Bug Bounty Upgrade: authenticated session store so probes can run
+        # as an imported user (User A vs User B authz testing) instead of anonymously.
+        self.session_store = SessionStore(self.ctx.session_memory)
         self.findings: Dict[str, Vulnerability] = {}
         self.false_positive_patterns: List[str] = []
+
+    def session_client(self, engagement_id: str, user_label: str):
+        """Return an auth-aware SessionClient context manager for a stored user.
+
+        All agents consume credentials through this single abstraction — no agent
+        hand-injects cookies or bearer tokens. Usage:
+
+            async with self.session_client(engagement_id, "user_a") as client:
+                resp = await client.get(url)
+
+        Cookie mutations from Set-Cookie are auto-persisted on context exit.
+        """
+        return self.session_store.as_user(engagement_id, user_label)
+
+    async def _has_session(self, engagement_id: str, user_label: str) -> bool:
+        """True if an imported (and non-expired) user session exists for replay."""
+        try:
+            sess = await self.session_store.get_session_or_none(engagement_id, user_label)
+        except Exception:
+            return False
+        return sess is not None and not sess.is_expired()
 
     async def think(self, context: str, skill_names: List[str]) -> str:
         """Reason about the current context using specialized skills."""
@@ -52,6 +79,14 @@ class VulnAnalysisAgent(BaseAgent):
         """Execute vulnerability analysis task."""
         task_type = task.type
         payload = task.payload
+        # PATCH (REL-016, 2026-06-15): inject engagement_id into payload so
+        # downstream helpers don't depend on self.ctx.current_task (which can
+        # race to None when retries fire concurrently — see BaseAgent.handle_task
+        # finally block + asyncio.create_task(self._schedule_retry(...))).
+        # Observed failures: "'NoneType' object has no attribute 'engagement_id'"
+        # in burp_scan branch (vuln-agent had 5 of these in eng-...verify).
+        if isinstance(payload, dict) and not payload.get("engagement_id"):
+            payload["engagement_id"] = task.engagement_id
 
         if task_type == "burp_scan":
             return await self._execute_burp_scan(payload)
@@ -68,7 +103,22 @@ class VulnAnalysisAgent(BaseAgent):
 
     async def _execute_burp_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute Burp Suite scan on target."""
-        url = payload["url"]
+        # PATCH (REL-010, 2026-06-15): Task scheduler sometimes emits
+        # `target`/`target_url` instead of `url` (observed in eng-...verify
+        # tasks task-f2948e789933, task-7f00a78fd92a). Accept any of the three
+        # to avoid silent KeyError -> "Task failed after 3 retries: 'url'".
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException(
+                "burp_scan task requires one of 'url', 'target_url', or 'target' in payload"
+            )
+        # PATCH (REL-016): pull engagement_id from payload (injected by _execute)
+        # rather than self.ctx.current_task (race-prone on retries).
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("burp_scan: cannot determine engagement_id")
         domain = url.replace("https://", "").replace("http://", "").split("/")[0]
         config = payload.get("config", {})
 
@@ -81,17 +131,28 @@ class VulnAnalysisAgent(BaseAgent):
             confidence=1.0,
             first_seen=datetime.utcnow(),
             last_seen=datetime.utcnow(),
-            engagement_id=self.ctx.current_task.engagement_id,
+            engagement_id=engagement_id,
             metadata={},
         )
         # Note: metadata might cause issues if Neo4j expects primitives,
         # but let's ensure we match the pydantic requirements first.
         await self.ctx.graph_memory.add_asset(asset)
 
-        # Ensure adapter is initialized for this engagement
-        session = await self.ctx.session_memory.get_session_state(
-            self.ctx.current_task.engagement_id
+        # Ensure default Endpoint node exists for f"endpoint-{domain}"
+        from ai_osop.core.models import Endpoint
+
+        default_ep = Endpoint(
+            id=f"endpoint-{domain}",
+            url=f"https://{domain}/",
+            asset_id=asset.id,
+            source="scan_base",
+            confidence=1.0,
+            engagement_id=engagement_id,
         )
+        await self.ctx.graph_memory.add_endpoint(default_ep)
+
+        # Ensure adapter is initialized for this engagement
+        session = await self.ctx.session_memory.get_session_state(engagement_id)
         if session:
             await self.burp_adapter.initialize(session.scope, session.session_id)
 
@@ -106,16 +167,16 @@ class VulnAnalysisAgent(BaseAgent):
         # Retrieve and normalize findings
         print(f"DEBUG: Requesting issues, sitemap, and proxy history for {url}")
         vulns = await self.burp_adapter.get_scan_issues(url)
-        
+
         # --- MOCK DISCOVERY TRIGGER ---
         if settings.mock_llm and len(vulns) == 0:
             print("MOCK_MODE: Simulating advanced attack chain for exploitation phase trigger.")
             from ai_osop.core.config import Severity, VulnClass
-            
+
             # 1. WAF Bypass finding
             vuln1 = Vulnerability(
                 id=f"vuln-waf-{int(datetime.utcnow().timestamp())}",
-                vuln_type="waf_bypass",
+                vuln_type=VulnClass.AUTHENTICATION_WEAKNESS,
                 severity=Severity.MEDIUM,
                 title="WAF Configuration Weakness (Simulated)",
                 description="Detected pattern-based WAF bypass using HTTP Parameter Pollution.",
@@ -123,9 +184,9 @@ class VulnAnalysisAgent(BaseAgent):
                 tool_source="vuln-agent-mock",
                 endpoint_id=f"endpoint-{domain}",
                 confidence=0.8,
-                engagement_id=self.ctx.current_task.engagement_id
+                engagement_id=engagement_id,
             )
-            
+
             # 2. Blind SQL Injection
             vuln2 = Vulnerability(
                 id=f"vuln-blind-sqli-{int(datetime.utcnow().timestamp()) + 1}",
@@ -137,7 +198,7 @@ class VulnAnalysisAgent(BaseAgent):
                 tool_source="vuln-agent-mock",
                 endpoint_id=f"endpoint-{domain}",
                 confidence=0.9,
-                engagement_id=self.ctx.current_task.engagement_id
+                engagement_id=engagement_id,
             )
             vulns = [vuln1, vuln2]
         # -----------------------------
@@ -162,28 +223,20 @@ class VulnAnalysisAgent(BaseAgent):
                     asset_id=asset.id,
                     source="burp_proxy",
                     confidence=1.0,
-                    engagement_id=self.ctx.current_task.engagement_id,
+                    engagement_id=engagement_id,
                 )
 
         print(f"DEBUG: Total unique endpoints for {domain}: {len(all_endpoints)}")
 
-        # Perform reasoning using security skills
-        analysis_context = f"Target {domain} identified. Initializing vulnerability analysis phase."
-        if all_endpoints:
-            analysis_context = (
-                f"Analyzing {len(all_endpoints)} new endpoints for {domain} to identify potential vulnerabilities:\n"
-                + "\n".join([e.url for e in list(all_endpoints.values())[:10]])
-            )
-
-        skills = self._get_relevant_skills(self.ctx.current_task)
-        reasoning = await self.think(analysis_context, skills)
-        reasoning = f"[VERIFIED_V0.1.2] {reasoning}"  # Force unique prefix
-        print(f"AGENT REASONING: {reasoning}")
-
-        # Store findings
+        # PATCH (REL-035, 2026-06-15): Persist findings + endpoints FIRST.
+        # Pre-patch order was: reasoning (Ollama, often 60–1800s) → persist.
+        # If the LLM hit the 300s task timeout, vulnerabilities were never
+        # written to the graph. Now we persist immediately so partial results
+        # survive any downstream timeout. Reasoning is best-effort with its
+        # own short ceiling.
         for vuln in vulns:
             try:
-                vuln.engagement_id = self.ctx.current_task.engagement_id
+                vuln.engagement_id = engagement_id
                 vuln.endpoint_id = f"endpoint-{domain}"
                 await self.ctx.graph_memory.add_vulnerability(vuln)
                 self.findings[vuln.id] = vuln
@@ -192,11 +245,38 @@ class VulnAnalysisAgent(BaseAgent):
 
         for ep in all_endpoints.values():
             try:
-                ep.engagement_id = self.ctx.current_task.engagement_id
+                ep.engagement_id = engagement_id
                 ep.asset_id = asset.id
                 await self.ctx.graph_memory.add_endpoint(ep)
             except Exception as e:
                 print(f"ERROR: Failed to add endpoint {ep.url} to graph: {e}")
+
+        # Perform reasoning using security skills (best-effort, never blocks
+        # finding persistence; bounded by a short timeout so vuln_agent fits
+        # inside its 300s task budget even when Ollama is slow).
+        analysis_context = f"Target {domain} identified. Initializing vulnerability analysis phase."
+        if all_endpoints:
+            analysis_context = (
+                f"Analyzing {len(all_endpoints)} new endpoints for {domain} to identify potential vulnerabilities:\n"
+                + "\n".join([e.url for e in list(all_endpoints.values())[:10]])
+            )
+
+        reasoning = "(reasoning skipped: not attempted)"
+        try:
+            skills = await self._get_relevant_skills(self.ctx.current_task)
+            reasoning_timeout = float(payload.get("reasoning_timeout_seconds", 45))
+            reasoning = await asyncio.wait_for(
+                self.think(analysis_context, skills),
+                timeout=reasoning_timeout,
+            )
+            reasoning = f"[VERIFIED_V0.1.2] {reasoning}"
+        except asyncio.TimeoutError:
+            reasoning = f"(reasoning skipped: exceeded {reasoning_timeout}s budget)"
+            print(f"WARN: vuln_agent reasoning timed out for {domain}; findings persisted anyway")
+        except Exception as e:
+            reasoning = f"(reasoning skipped: {type(e).__name__}: {str(e)[:120]})"
+            print(f"WARN: vuln_agent reasoning errored for {domain}: {e}")
+        print(f"AGENT REASONING: {reasoning}")
 
         return {
             "status": "success",
@@ -214,17 +294,19 @@ class VulnAnalysisAgent(BaseAgent):
         url = payload.get("url")
         method = payload.get("method", "GET")
         body = payload.get("body", "")
-        payload_set = payload.get("payload_set", ["' OR 1=1 --", "admin'--", "<script>alert(1)</script>"])
+        payload_set = payload.get(
+            "payload_set", ["' OR 1=1 --", "admin'--", "<script>alert(1)</script>"]
+        )
         tab_name = payload.get("tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}")
 
         print(f"DEBUG: Deploying Intruder attack against {url}")
-        
+
         # Prepare the base request definition expected by our Java MCP adapter
         mock_request = {
             "method": method,
             "url": url,
             "headers": {"User-Agent": "AI-OSOP-Intruder/1.0"},
-            "body": body
+            "body": body,
         }
 
         # The actual integration would pass positions, but for the MCP adapter
@@ -234,33 +316,53 @@ class VulnAnalysisAgent(BaseAgent):
             # Given our Java update mapped "intruder_attack":
             response = await self.burp_adapter.intruder_attack(
                 request=mock_request,
-                payload_positions=[], # Handled dynamically by Burp in Sniper mode if empty
+                payload_positions=[],  # Handled dynamically by Burp in Sniper mode if empty
                 payload_set=payload_set,
-                config={"attack_type": "sniper", "tab_name": tab_name}
+                config={"attack_type": "sniper", "tab_name": tab_name},
             )
-            
+
             # Simulated reasoning over Intruder decision
             reasoning = f"[INTRUDER_DEPLOYED] Dispatched Sniper attack to {url} with {len(payload_set)} payloads targeting dynamic parameters."
-            
+
             return {
                 "status": "success",
                 "target": url,
                 "tab_name": tab_name,
                 "reasoning": reasoning,
-                "mcp_response": response.dict() if hasattr(response, 'dict') else str(response)
+                "mcp_response": response.dict() if hasattr(response, "dict") else str(response),
             }
-            
+
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     async def _execute_nuclei_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute Nuclei scan on targets."""
-        targets = payload["targets"]
+        # PATCH (REL-015/REL-016, 2026-06-15): be forgiving on payload shape.
+        # Observed runtime failures: KeyError 'targets' (when scheduler used
+        # `target`/`url` instead), and "'str' object has no attribute 'get'"
+        # when callers passed a single URL string rather than a list.
+        targets = payload.get("targets")
+        if targets is None:
+            single = payload.get("target") or payload.get("url") or payload.get("target_url")
+            if single:
+                targets = [single]
+        if not targets:
+            raise AgentException(
+                "nuclei_scan task requires 'targets' (list) or 'target'/'url' in payload"
+            )
+        if isinstance(targets, str):
+            targets = [targets]
         templates = payload.get("templates", [])
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
 
         # Execute via MCP
         response = await self.ctx.mcp_registry.execute_tool(
-            "nuclei-mcp", "scan", {"targets": targets, "templates": templates, "rate_limit": 150}
+            "nuclei-mcp",
+            "scan",
+            {"targets": targets, "templates": templates, "rate_limit": 150},
+            timeout_override=settings.nuclei_mcp_timeout,
         )
 
         if response.status != "success":
@@ -271,8 +373,16 @@ class VulnAnalysisAgent(BaseAgent):
         vulns = []
 
         for finding in raw_findings:
+            # PATCH (REL-015): _normalize_nuclei_finding does `finding.get(...)`,
+            # which raised "'str' object has no attribute 'get'" when the MCP
+            # returned a list of strings. Skip non-dict findings instead of
+            # crashing the whole task.
+            if not isinstance(finding, dict):
+                print(f"WARN: skipping non-dict nuclei finding: {finding!r}")
+                continue
             vuln = self._normalize_nuclei_finding(finding)
-            vuln.engagement_id = self.ctx.current_task.engagement_id
+            if engagement_id:
+                vuln.engagement_id = engagement_id
             await self.ctx.graph_memory.add_vulnerability(vuln)
             self.findings[vuln.id] = vuln
             vulns.append(vuln)

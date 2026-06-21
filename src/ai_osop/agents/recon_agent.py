@@ -48,6 +48,10 @@ class ReconAgent(BaseAgent):
         task_type = task.type
         payload = task.payload
 
+        # Initialize adapter if scope is provided in payload (Issue 12)
+        if "scope" in payload:
+            await self.recon_adapter.initialize(payload["scope"], task.engagement_id)
+
         if task_type == "dns_enumeration":
             return await self._execute_dns_enum(payload)
         elif task_type == "port_scan":
@@ -65,7 +69,15 @@ class ReconAgent(BaseAgent):
 
     async def _execute_dns_enum(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute DNS enumeration for domain."""
-        domain = payload["domain"]
+        domain = payload.get("domain")
+        if not domain and "url" in payload:
+            domain = payload["url"].replace("https://", "").replace("http://", "").split("/")[0]
+        if not domain and payload.get("targets"):
+            domain = payload["targets"][0]
+
+        if not domain:
+            return {"status": "failed", "error": "domain parameter is required"}
+
         depth = payload.get("depth", 2)
         active = payload.get("active", True)
 
@@ -156,10 +168,36 @@ class ReconAgent(BaseAgent):
 
     async def _execute_full_recon(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute comprehensive reconnaissance chain."""
-        domain = payload["domain"]
+        domain = payload.get("domain")
+        if not domain and "url" in payload:
+            domain = payload["url"].replace("https://", "").replace("http://", "").split("/")[0]
+
+        if not domain:
+            return {"status": "failed", "error": "domain parameter is required for full recon"}
 
         # 1. DNS Enum
         dns_results = await self._execute_dns_enum({"domain": domain})
+
+        # Guarantee the root domain itself is always persisted as an Asset, even
+        # when DNS enumeration resolves nothing. Downstream VULNERABILITY_DISCOVERY
+        # schedules one scan task per Asset; with zero assets it would schedule
+        # zero scans and the engagement would hang in that phase forever. The seed
+        # domain is always a valid scan target. add_asset MERGEs on id, so this is
+        # idempotent with any subdomain asset that happens to equal the root.
+        # (AIOSOP-AUTO-2026-06-16)
+        try:
+            root_asset = Asset(
+                id=f"asset-{domain}",
+                type="domain",
+                value=domain,
+                source="recon_seed",
+                confidence=1.0,
+                engagement_id=self.ctx.current_task.engagement_id,
+            )
+            await self.ctx.graph_memory.add_asset(root_asset)
+            self.asset_inventory[root_asset.id] = root_asset
+        except Exception as e:
+            print(f"ERROR: failed to seed root asset for {domain}: {e}")
 
         # 2. Port Scan found subdomains
         subdomains = [a["value"] for a in dns_results["assets"]]
@@ -169,7 +207,7 @@ class ReconAgent(BaseAgent):
             f"Initial infrastructure discovery for {domain}:\n"
             + f"Found {len(subdomains)} subdomains: {', '.join(subdomains[:10])}"
         )
-        skills = self._get_relevant_skills(self.ctx.current_task)
+        skills = await self._get_relevant_skills(self.ctx.current_task)
         reasoning = await self.think(analysis_context, skills)
         print(f"AGENT REASONING: {reasoning}")
 

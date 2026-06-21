@@ -179,33 +179,42 @@ class ThreatIntelAdapter:
         """Map vulnerability to MITRE ATT&CK techniques based on description heuristics."""
         tactics = []
         desc_lower = description.lower()
-        
+
         # Enhanced heuristic mapping
-        if "execution" in desc_lower or "rce" in desc_lower or "command injection" in desc_lower or "arbitrary code" in desc_lower:
+        if (
+            "execution" in desc_lower
+            or "rce" in desc_lower
+            or "command injection" in desc_lower
+            or "arbitrary code" in desc_lower
+        ):
             tactics.append("TA0002")  # Execution
-            tactics.append("T1059")   # Command and Scripting Interpreter
-        
+            tactics.append("T1059")  # Command and Scripting Interpreter
+
         if "privilege" in desc_lower or "escalation" in desc_lower or "root" in desc_lower:
             tactics.append("TA0004")  # Privilege Escalation
-            tactics.append("T1068")   # Exploitation for Privilege Escalation
-            
-        if "bypass" in desc_lower or "authentication" in desc_lower or "unauthenticated" in desc_lower:
+            tactics.append("T1068")  # Exploitation for Privilege Escalation
+
+        if (
+            "bypass" in desc_lower
+            or "authentication" in desc_lower
+            or "unauthenticated" in desc_lower
+        ):
             tactics.append("TA0001")  # Initial Access
-            tactics.append("T1190")   # Exploit Public-Facing Application
-            
+            tactics.append("T1190")  # Exploit Public-Facing Application
+
         if "credential" in desc_lower or "password" in desc_lower or "hash" in desc_lower:
             tactics.append("TA0006")  # Credential Access
-            tactics.append("T1003")   # OS Credential Dumping
-            
+            tactics.append("T1003")  # OS Credential Dumping
+
         if "sql injection" in desc_lower or "sqli" in desc_lower:
             tactics.append("TA0001")  # Initial Access
-            tactics.append("T1190")   # Exploit Public-Facing Application
+            tactics.append("T1190")  # Exploit Public-Facing Application
             tactics.append("TA0009")  # Collection (Data from Local System)
 
         if "cross-site scripting" in desc_lower or "xss" in desc_lower:
             tactics.append("TA0001")  # Initial Access (via watering hole or phish)
-            tactics.append("T1189")   # Drive-by Compromise
-            
+            tactics.append("T1189")  # Drive-by Compromise
+
         if "ssrf" in desc_lower or "server-side request forgery" in desc_lower:
             tactics.append("TA0008")  # Lateral Movement
             tactics.append("TA0007")  # Discovery (Network Service Discovery)

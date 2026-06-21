@@ -428,11 +428,27 @@ class AdaptivePayloadEngine:
             )
         return payloads
 
-    def _parse_llm_payloads(self, raw_response: str, count: int) -> List[str]:
+    def _parse_llm_payloads(self, raw_response: Any, count: int) -> List[str]:
         """Parse and validate LLM payload JSON output."""
-        try:
-            parsed = json.loads(raw_response)
-        except json.JSONDecodeError:
+        parsed = None
+        if isinstance(raw_response, dict):
+            content = raw_response.get("content")
+            if isinstance(content, str):
+                try:
+                    parsed = json.loads(content)
+                except json.JSONDecodeError:
+                    parsed = raw_response
+            else:
+                parsed = raw_response
+        elif isinstance(raw_response, str):
+            try:
+                parsed = json.loads(raw_response)
+            except json.JSONDecodeError:
+                return []
+        else:
+            return []
+
+        if not isinstance(parsed, dict):
             return []
 
         values = parsed.get("payloads", [])

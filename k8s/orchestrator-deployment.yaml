@@ -24,7 +24,7 @@ spec:
         component: orchestrator
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
+        prometheus.io/port: "8200"
     spec:
       serviceAccountName: ai-osop
       securityContext:
@@ -35,8 +35,13 @@ spec:
       - name: orchestrator
         image: ai-osop/orchestrator:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          seccompProfile:
+            type: RuntimeDefault
         ports:
-        - containerPort: 8080
+        - containerPort: 8200
           name: http
         - containerPort: 9090
           name: metrics
@@ -77,13 +82,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port: 8200
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /ready
-            port: 8080
+            port: 8200
           initialDelaySeconds: 5
           periodSeconds: 5
         volumeMounts:

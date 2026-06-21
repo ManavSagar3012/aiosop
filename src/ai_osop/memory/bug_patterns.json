@@ -1,0 +1,42 @@
+[
+  {
+    "technology": "Firebase",
+    "pattern_id": "FB-OPEN-01",
+    "finding": "Open Database Rules",
+    "impact": "PII Exposure / Data Theft",
+    "severity": "High",
+    "conditions": ["firebase_url", "anonymous_access"],
+    "historical_reports": ["H1-123456", "H1-789012"],
+    "remediation": "Update security rules to require authentication."
+  },
+  {
+    "technology": "JWT",
+    "pattern_id": "JWT-WEAK-01",
+    "finding": "Weak Secret",
+    "impact": "Privilege Escalation / Admin Takeover",
+    "severity": "Critical",
+    "conditions": ["jwt_token", "secret_discovered"],
+    "historical_reports": ["H1-456789", "Bugcrowd-321"],
+    "remediation": "Use a strong, randomly generated secret."
+  },
+  {
+    "technology": "Next.js",
+    "pattern_id": "NEXT-MID-01",
+    "finding": "Middleware Auth Bypass",
+    "impact": "Unauthorized Endpoint Access",
+    "severity": "High",
+    "conditions": ["nextjs_framework", "middleware_js"],
+    "historical_reports": ["CVE-2024-XXXX", "H1-998877"],
+    "remediation": "Ensure middleware checks are applied to all routes, including static and data routes."
+  },
+  {
+    "technology": "GraphQL",
+    "pattern_id": "GQL-IDOR-01",
+    "finding": "Introspection IDOR",
+    "impact": "Unauthorized Data Retrieval",
+    "severity": "Medium",
+    "conditions": ["graphql_introspection_enabled", "uuid_identifiers"],
+    "historical_reports": ["H1-112233"],
+    "remediation": "Disable introspection in production and enforce object-level authorization."
+  }
+]

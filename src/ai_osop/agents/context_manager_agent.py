@@ -22,6 +22,9 @@ class ContextManagerAgent(BaseAgent):
     def agent_type(self) -> AgentType:
         return AgentType.CONTEXT_MANAGER
 
+    def supports_task_type(self, task_type: str) -> bool:
+        return task_type in ["summarize_context", "retrieve_context", "store_context_snapshot"]
+
     async def _setup_resources(self) -> None:
         self.context_snapshots: Dict[str, Dict[str, Any]] = {}
 

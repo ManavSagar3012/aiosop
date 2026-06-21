@@ -4,16 +4,33 @@ Attack graph construction, pathfinding, and risk propagation.
 """
 
 import asyncio
+import hashlib
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.graph import Node, Path, Relationship
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import GraphQueryError, MemoryException
-from ai_osop.core.models import Asset, AttackPath, Endpoint, Exploit, Payload, Vulnerability
+from ai_osop.core.models import (
+    Asset,
+    AttackPath,
+    BusinessInvariant,
+    DiffAuthFinding,
+    Endpoint,
+    Exploit,
+    Payload,
+    Vulnerability,
+    Workflow,
+    WorkflowStep,
+    WorkflowTransition,
+)
+from ai_osop.core.tracing import trace_span
 
 
 class GraphMemory:
@@ -55,21 +72,46 @@ class GraphMemory:
             "CREATE CONSTRAINT vuln_id IF NOT EXISTS FOR (v:Vulnerability) REQUIRE v.id IS UNIQUE",
             "CREATE CONSTRAINT exploit_id IF NOT EXISTS FOR (x:Exploit) REQUIRE x.id IS UNIQUE",
             "CREATE CONSTRAINT payload_id IF NOT EXISTS FOR (p:Payload) REQUIRE p.id IS UNIQUE",
+            "CREATE CONSTRAINT diff_auth_id IF NOT EXISTS FOR (d:DiffAuthFinding) REQUIRE d.id IS UNIQUE",
+            "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (ev:Evidence) REQUIRE ev.id IS UNIQUE",
+            "CREATE CONSTRAINT workflow_id IF NOT EXISTS FOR (w:Workflow) REQUIRE w.id IS UNIQUE",
+            "CREATE CONSTRAINT step_id IF NOT EXISTS FOR (s:Step) REQUIRE s.id IS UNIQUE",
+            "CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
+            "CREATE CONSTRAINT engagement_id IF NOT EXISTS FOR (e:Engagement) REQUIRE e.engagement_id IS UNIQUE",
+            "CREATE CONSTRAINT auto_discovery_claim_eid IF NOT EXISTS FOR (c:AutoDiscoveryClaim) REQUIRE c.engagement_id IS UNIQUE",
         ]
 
         indexes = [
+            "CREATE INDEX endpoint_type_idx IF NOT EXISTS FOR (e:Endpoint) ON (e.type)",
+            "CREATE INDEX endpoint_eid_idx IF NOT EXISTS FOR (e:Endpoint) ON (e.engagement_id)",
+            "CREATE INDEX endpoint_url_idx IF NOT EXISTS FOR (e:Endpoint) ON (e.url)",
+            "CREATE INDEX task_eid_idx IF NOT EXISTS FOR (t:Task) ON (t.engagement_id)",
+            "CREATE INDEX task_status_idx IF NOT EXISTS FOR (t:Task) ON (t.status)",
+            "CREATE INDEX vuln_eid_idx IF NOT EXISTS FOR (v:Vulnerability) ON (v.engagement_id)",
+            "CREATE INDEX vuln_class_idx IF NOT EXISTS FOR (v:Vulnerability) ON (v.vuln_class)",
+            "CREATE INDEX replay_eid_idx IF NOT EXISTS FOR (r:ReplayResult) ON (r.engagement_id)",
+            "CREATE INDEX authtest_eid_idx IF NOT EXISTS FOR (a:AuthorizationTest) ON (a.engagement_id)",
+            "CREATE INDEX diffauth_eid_idx IF NOT EXISTS FOR (d:DiffAuthFinding) ON (d.engagement_id)",
+            "CREATE INDEX evidence_eid_idx IF NOT EXISTS FOR (e:Evidence) ON (e.engagement_id)",
+            "CREATE INDEX workflow_eid_idx IF NOT EXISTS FOR (w:Workflow) ON (w.engagement_id)",
             "CREATE INDEX asset_type_value IF NOT EXISTS FOR (a:Asset) ON (a.type, a.value)",
-            "CREATE INDEX endpoint_url IF NOT EXISTS FOR (e:Endpoint) ON (e.url)",
             "CREATE INDEX vuln_type_confidence IF NOT EXISTS FOR (v:Vulnerability) ON (v.vuln_type, v.confidence)",
             "CREATE INDEX exploit_timestamp IF NOT EXISTS FOR (x:Exploit) ON (x.timestamp)",
+            "CREATE INDEX diff_auth_category IF NOT EXISTS FOR (d:DiffAuthFinding) ON (d.category, d.engagement_id)",
         ]
 
         async with self._driver.session() as session:
             for cypher in constraints + indexes:
                 try:
                     await session.run(cypher)
-                except Exception:
-                    pass  # Constraint/index may already exist
+                except Exception as e:
+                    msg = str(e).lower()
+                    # Only swallow the benign "already exists / equivalent rule" case.
+                    # Surface anything else (e.g. a uniqueness constraint that cannot
+                    # be created because duplicate nodes already exist in the DB).
+                    if "equivalent" in msg or "already exists" in msg:
+                        continue
+                    logger.warning("DDL statement failed: %s | error: %s", cypher, e)
 
     async def add_asset(self, asset: Asset) -> str:
         """Add or update an Asset node."""
@@ -105,11 +147,12 @@ class GraphMemory:
             return record["a.id"]
 
     async def add_endpoint(self, endpoint: Endpoint) -> str:
-        """Add an Endpoint and link to its Asset."""
+        """Add or update an Endpoint node. Handles both web and api endpoint types."""
         cypher = """
         MERGE (e:Endpoint {id: $id})
         SET e.url = $url,
             e.method = $method,
+            e.type = $type,
             e.status_code = $status_code,
             e.title = $title,
             e.technologies = $technologies,
@@ -118,34 +161,82 @@ class GraphMemory:
             e.source = $source,
             e.confidence = $confidence,
             e.engagement_id = $engagement_id,
-            e.screenshot_path = $screenshot_path
+            e.screenshot_path = $screenshot_path,
+            e.host = $host,
+            e.path = $path,
+            e.query_keys = $query_keys,
+            e.has_body = $has_body,
+            e.content_type = $content_type,
+            e.body_schema_keys = $body_schema_keys,
+            e.auth_class = $auth_class,
+            e.request_headers_sample = $request_headers_sample,
+            e.status_codes_seen = $status_codes_seen,
+            e.response_size_avg = $response_size_avg,
+            e.response_content_type = $response_content_type,
+            e.user_label = $user_label,
+            e.workflow_id = $workflow_id,
+            e.first_seen = CASE WHEN e.first_seen IS NULL THEN $first_seen ELSE e.first_seen END,
+            e.last_seen = $last_seen,
+            e.observations = $observations
         WITH e
-        MATCH (a:Asset {id: $asset_id})
-        MERGE (a)-[:HAS_ENDPOINT]->(e)
-        RETURN e.id
+        OPTIONAL MATCH (a:Asset {id: $asset_id})
+        FOREACH (x IN CASE WHEN a IS NOT NULL THEN [a] ELSE [] END |
+            MERGE (a)-[:HAS_ENDPOINT]->(e)
+        )
+        WITH e
+        OPTIONAL MATCH (w:Workflow {id: $workflow_id})
+        FOREACH (x IN CASE WHEN w IS NOT NULL THEN [w] ELSE [] END |
+            MERGE (w)-[:CALLED]->(e)
+        )
+        RETURN e.id AS id
         """
 
         async with self._driver.session() as session:
-            result = await session.run(
-                cypher,
-                {
-                    "id": endpoint.id,
-                    "url": endpoint.url,
-                    "method": endpoint.method,
-                    "status_code": endpoint.status_code,
-                    "title": endpoint.title,
-                    "technologies": endpoint.technologies,
-                    "parameters": endpoint.parameters,
-                    "auth_required": endpoint.auth_required,
-                    "source": endpoint.source,
-                    "confidence": endpoint.confidence,
+            with trace_span(
+                "graph_memory.add_endpoint",
+                attributes={
+                    "endpoint_id": endpoint.id,
+                    "endpoint_type": endpoint.type,
                     "engagement_id": endpoint.engagement_id,
-                    "screenshot_path": endpoint.screenshot_path,
-                    "asset_id": endpoint.asset_id,
                 },
-            )
-            record = await result.single()
-            return record["e.id"]
+            ):
+                result = await session.run(
+                    cypher,
+                    {
+                        "id": endpoint.id,
+                        "url": endpoint.url,
+                        "method": endpoint.method,
+                        "type": endpoint.type,
+                        "status_code": endpoint.status_code,
+                        "title": endpoint.title,
+                        "technologies": endpoint.technologies,
+                        "parameters": endpoint.parameters,
+                        "auth_required": endpoint.auth_required,
+                        "source": endpoint.source,
+                        "confidence": endpoint.confidence,
+                        "engagement_id": endpoint.engagement_id,
+                        "screenshot_path": endpoint.screenshot_path,
+                        "asset_id": endpoint.asset_id,
+                        "host": endpoint.host,
+                        "path": endpoint.path,
+                        "query_keys": endpoint.query_keys,
+                        "has_body": endpoint.has_body,
+                        "content_type": endpoint.content_type,
+                        "body_schema_keys": endpoint.body_schema_keys,
+                        "auth_class": endpoint.auth_class,
+                        "request_headers_sample": json.dumps(endpoint.request_headers_sample),
+                        "status_codes_seen": endpoint.status_codes_seen,
+                        "response_size_avg": endpoint.response_size_avg,
+                        "response_content_type": endpoint.response_content_type,
+                        "user_label": endpoint.user_label,
+                        "workflow_id": endpoint.workflow_id,
+                        "first_seen": endpoint.first_seen.isoformat(),
+                        "last_seen": endpoint.last_seen.isoformat(),
+                        "observations": endpoint.observations,
+                    },
+                )
+                record = await result.single()
+                return record["id"] if record else endpoint.id
 
     async def add_vulnerability(self, vuln: Vulnerability) -> str:
         """Add a Vulnerability and link to its Endpoint."""
@@ -177,31 +268,51 @@ class GraphMemory:
         """
 
         async with self._driver.session() as session:
-            result = await session.run(
-                cypher,
-                {
-                    "id": vuln.id,
-                    "cwe": vuln.cwe,
+            with trace_span(
+                "graph_memory.add_vulnerability",
+                attributes={
+                    "vuln_id": vuln.id,
                     "vuln_type": vuln.vuln_type.value,
-                    "severity": vuln.severity.value,
-                    "cvss_score": vuln.cvss_score,
-                    "title": vuln.title,
-                    "description": vuln.description,
-                    "evidence": json.dumps(vuln.evidence, default=str),
-                    "tool_source": vuln.tool_source,
-                    "confidence": vuln.confidence,
-                    "entry_point": vuln.entry_point,
-                    "requires_auth": vuln.requires_auth,
-                    "validated": vuln.validated,
-                    "exploitability": vuln.exploitability,
-                    "impact": vuln.impact,
                     "engagement_id": vuln.engagement_id,
-                    "created_at": vuln.created_at.isoformat(),
-                    "endpoint_id": vuln.endpoint_id,
                 },
-            )
-            record = await result.single()
-            return record["v.id"]
+            ):
+                result = await session.run(
+                    cypher,
+                    {
+                        "id": vuln.id,
+                        "cwe": vuln.cwe,
+                        "vuln_type": vuln.vuln_type.value,
+                        "severity": vuln.severity.value,
+                        "cvss_score": vuln.cvss_score,
+                        "title": vuln.title,
+                        "description": vuln.description,
+                        "evidence": json.dumps(vuln.evidence, default=str),
+                        "tool_source": vuln.tool_source,
+                        "confidence": vuln.confidence,
+                        "entry_point": vuln.entry_point,
+                        "requires_auth": vuln.requires_auth,
+                        "validated": vuln.validated,
+                        "exploitability": vuln.exploitability,
+                        "impact": vuln.impact,
+                        "engagement_id": vuln.engagement_id,
+                        "created_at": vuln.created_at.isoformat(),
+                        "endpoint_id": vuln.endpoint_id,
+                    },
+                )
+                record = await result.single()
+                return record["v.id"]
+
+    async def validate_vulnerability(self, vuln_id: str) -> None:
+        """Mark a vulnerability as validated in the graph."""
+        cypher = """
+        MATCH (v:Vulnerability {id: $vid})
+        SET v.validated = true,
+            v.last_validated = $ts,
+            v.confidence = 1.0
+        RETURN v.id
+        """
+        async with self._driver.session() as session:
+            await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
 
     async def add_exploit(self, exploit: Exploit) -> str:
         """Add an Exploit and link to Vulnerability and Payload."""
@@ -217,11 +328,16 @@ class GraphMemory:
             x.impact_confirmed = $impact_confirmed,
             x.engagement_id = $engagement_id
         WITH x
-        MATCH (v:Vulnerability {id: $vuln_id})
-        MATCH (p:Payload {id: $payload_id})
-        MERGE (v)-[:EXPLOITED_BY]->(x)
-        MERGE (x)-[:USES_PAYLOAD]->(p)
-        RETURN x.id
+        OPTIONAL MATCH (v:Vulnerability {id: $vuln_id})
+        FOREACH (y IN CASE WHEN v IS NOT NULL THEN [v] ELSE [] END |
+            MERGE (v)-[:EXPLOITED_BY]->(x)
+        )
+        WITH x
+        OPTIONAL MATCH (p:Payload {id: $payload_id})
+        FOREACH (y IN CASE WHEN p IS NOT NULL THEN [p] ELSE [] END |
+            MERGE (x)-[:USES_PAYLOAD]->(p)
+        )
+        RETURN x.id AS id
         """
 
         async with self._driver.session() as session:
@@ -243,20 +359,22 @@ class GraphMemory:
                 },
             )
             record = await result.single()
-            return record["x.id"]
+            return record["id"] if record else exploit.id
 
     async def add_attack_path(self, path: AttackPath) -> str:
         """Add an attack path with its nodes and edges."""
         # Create LEADS_TO relationships between consecutive nodes
         cypher = """
         UNWIND $edges as edge
-        MATCH (from {id: edge.from_id})
-        MATCH (to {id: edge.to_id})
-        MERGE (from)-[r:LEADS_TO]->(to)
-        SET r.type = edge.type,
-            r.probability = edge.probability,
-            r.time_estimate = edge.time_estimate,
-            r.detection_risk = edge.detection_risk
+        OPTIONAL MATCH (from {id: edge.from_id})
+        OPTIONAL MATCH (to {id: edge.to_id})
+        FOREACH (pair IN CASE WHEN from IS NOT NULL AND to IS NOT NULL THEN [1] ELSE [] END |
+            MERGE (from)-[r:LEADS_TO]->(to)
+            SET r.type = edge.type,
+                r.probability = edge.probability,
+                r.time_estimate = edge.time_estimate,
+                r.detection_risk = edge.detection_risk
+        )
         """
 
         edges = []
@@ -323,15 +441,20 @@ class GraphMemory:
             paths = []
             async for record in result:
                 # Ensure no NaN
-                conf = record["confidence"] if not isinstance(record["confidence"], float) or not (record["confidence"] != record["confidence"]) else 0.5
-                
+                conf = (
+                    record["confidence"]
+                    if not isinstance(record["confidence"], float)
+                    or not (record["confidence"] != record["confidence"])
+                    else 0.5
+                )
+
                 path = AttackPath(
                     node_ids=record["node_ids"],
                     edge_ids=[f"{e['type']}-{i}" for i, e in enumerate(record["edges"])],
                     confidence=min(max(conf, 0.0), 1.0),
                     risk_score=min(max(conf * 10, 0.0), 10.0),
                     total_time_estimate=record["total_time"],
-                    detection_risk=0.5, # Default for now
+                    detection_risk=0.5,  # Default for now
                     entry_node_id=record["entry_id"],
                     goal_node_id=record["goal_id"],
                     engagement_id="",
@@ -423,6 +546,523 @@ class GraphMemory:
             result = await session.run(cypher, {"engagement_id": engagement_id})
             record = await result.single()
             return dict(record) if record else {}
+
+    async def add_workflow(self, workflow: Workflow) -> str:
+        """Persist a Workflow node."""
+        cypher = """
+        MERGE (w:Workflow {id: $id})
+        SET w.name = $name,
+            w.role = $role,
+            w.engagement_id = $engagement_id,
+            w.created_at = $created_at
+        RETURN w.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": workflow.id,
+                    "name": workflow.name,
+                    "role": workflow.role,
+                    "engagement_id": workflow.engagement_id,
+                    "created_at": workflow.created_at.isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"]
+
+    async def add_workflow_step(self, step: WorkflowStep) -> str:
+        """Persist a WorkflowStep node and link to its parent Workflow."""
+        cypher = """
+        MERGE (s:Step {id: $id})
+        SET s.workflow_id = $workflow_id,
+            s.endpoint_id = $endpoint_id,
+            s.order = $order,
+            s.action_type = $action_type,
+            s.engagement_id = $engagement_id,
+            s.created_at = $created_at
+        WITH s
+        OPTIONAL MATCH (w:Workflow {id: $workflow_id})
+        FOREACH (x IN CASE WHEN w IS NOT NULL THEN [w] ELSE [] END |
+            MERGE (w)-[:HAS_STEP]->(s)
+        )
+        WITH s
+        OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (s)-[:TARGETS_ENDPOINT]->(e)
+        )
+        RETURN s.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": step.id,
+                    "workflow_id": step.workflow_id,
+                    "endpoint_id": step.endpoint_id,
+                    "order": step.order,
+                    "action_type": step.action_type,
+                    "engagement_id": step.engagement_id,
+                    "created_at": step.created_at.isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"]
+
+    async def add_workflow_transition(self, transition: WorkflowTransition) -> str:
+        """Persist a transition edge between two WorkflowSteps."""
+        cypher = """
+        MATCH (a:Step {id: $from_step_id}), (b:Step {id: $to_step_id})
+        MERGE (a)-[r:TRANSITION {id: $id}]->(b)
+        SET r.trigger = $trigger,
+            r.engagement_id = $engagement_id
+        RETURN $id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": transition.id,
+                    "from_step_id": transition.from_step_id,
+                    "to_step_id": transition.to_step_id,
+                    "trigger": transition.trigger,
+                    "engagement_id": transition.engagement_id,
+                },
+            )
+            record = await result.single()
+            return record["id"] if record else transition.id
+
+    async def add_diff_auth_finding(self, finding: DiffAuthFinding) -> str:
+        """Persist a DiffAuthFinding and link it to the affected Resource/Endpoint."""
+        cypher = """
+        MERGE (d:DiffAuthFinding {id: $id})
+        SET d.category = $category,
+            d.resource_id = $resource_id,
+            d.test_identity_id = $test_identity_id,
+            d.expected_result = $expected_result,
+            d.observed_result = $observed_result,
+            d.evidence_diff = $evidence_diff,
+            d.confidence = $confidence,
+            d.engagement_id = $engagement_id,
+            d.created_at = $created_at
+        WITH d
+        OPTIONAL MATCH (e:Endpoint {id: $resource_id})
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (e)-[:HAS_DIFF_AUTH_FINDING]->(d)
+        )
+        WITH d
+        OPTIONAL MATCH (r:Resource {id: $resource_id})
+        FOREACH (x IN CASE WHEN r IS NOT NULL THEN [r] ELSE [] END |
+            MERGE (r)-[:HAS_DIFF_AUTH_FINDING]->(d)
+        )
+        RETURN d.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": finding.id,
+                    "category": finding.category,
+                    "resource_id": finding.resource_id,
+                    "test_identity_id": finding.test_identity_id,
+                    "expected_result": finding.expected_result,
+                    "observed_result": finding.observed_result,
+                    "evidence_diff": json.dumps(finding.evidence_diff, default=str),
+                    "confidence": finding.confidence,
+                    "engagement_id": finding.engagement_id,
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"]
+
+    # ---- Phase 2: Differential Authorization persistence ----
+
+    async def add_replay_result(self, rr: Dict[str, Any]) -> str:
+        """Persist a ReplayResult and link it to its Endpoint:
+        (:Endpoint)-[:HAS_REPLAY]->(:ReplayResult)."""
+        cypher = """
+        MERGE (rr:ReplayResult {id: $id})
+        SET rr.endpoint_id = $endpoint_id, rr.identity = $identity,
+            rr.status_code = $status_code, rr.response_size = $response_size,
+            rr.json_keys = $json_keys, rr.sensitive_fields = $sensitive_fields,
+            rr.ownership_hits = $ownership_hits, rr.content_type = $content_type,
+            rr.error = $error, rr.engagement_id = $engagement_id,
+            rr.created_at = $created_at
+        WITH rr
+        OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (e)-[:HAS_REPLAY]->(rr))
+        RETURN rr.id AS id
+        """
+        async with self._driver.session() as session:
+            res = await session.run(
+                cypher,
+                {
+                    "id": rr["id"],
+                    "endpoint_id": rr["endpoint_id"],
+                    "identity": rr["identity"],
+                    "status_code": rr.get("status_code", 0),
+                    "response_size": rr.get("response_size", 0),
+                    "json_keys": rr.get("json_keys", []),
+                    "sensitive_fields": rr.get("sensitive_fields", []),
+                    "ownership_hits": rr.get("ownership_hits", []),
+                    "content_type": rr.get("content_type", ""),
+                    "error": rr.get("error", ""),
+                    "engagement_id": rr["engagement_id"],
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            rec = await res.single()
+            return rec["id"]
+
+    async def add_authorization_test(self, at: Dict[str, Any]) -> str:
+        """Persist an AuthorizationTest and link it to its Endpoint:
+        (:Endpoint)-[:HAS_AUTH_TEST]->(:AuthorizationTest)."""
+        cypher = """
+        MERGE (t:AuthorizationTest {id: $id})
+        SET t.endpoint_id = $endpoint_id, t.user_a = $user_a, t.user_b = $user_b,
+            t.signals = $signals, t.verdict = $verdict, t.category = $category,
+            t.confidence = $confidence, t.engagement_id = $engagement_id,
+            t.created_at = $created_at
+        WITH t
+        OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (e)-[:HAS_AUTH_TEST]->(t))
+        RETURN t.id AS id
+        """
+        async with self._driver.session() as session:
+            res = await session.run(
+                cypher,
+                {
+                    "id": at["id"],
+                    "endpoint_id": at["endpoint_id"],
+                    "user_a": at.get("user_a", ""),
+                    "user_b": at.get("user_b", ""),
+                    "signals": json.dumps(at.get("signals", {}), default=str),
+                    "verdict": at.get("verdict", ""),
+                    "category": at.get("category", ""),
+                    "confidence": at.get("confidence", 0.0),
+                    "engagement_id": at["engagement_id"],
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            rec = await res.single()
+            return rec["id"]
+
+    async def add_diff_auth_finding_for_endpoint(
+        self, finding: DiffAuthFinding, endpoint_id: str, test_id: str = ""
+    ) -> str:
+        """Persist a DiffAuthFinding linked to its Endpoint and AuthorizationTest:
+        (:Endpoint)-[:HAS_DIFF_AUTH_FINDING]->(:DiffAuthFinding)<-[:PRODUCED]-(:AuthorizationTest).
+        """
+        cypher = """
+        MERGE (d:DiffAuthFinding {id: $id})
+        SET d.category = $category, d.resource_id = $resource_id,
+            d.test_identity_id = $test_identity_id, d.expected_result = $expected_result,
+            d.observed_result = $observed_result, d.evidence_diff = $evidence_diff,
+            d.confidence = $confidence, d.engagement_id = $engagement_id, d.created_at = $created_at
+        WITH d
+        OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (e)-[:HAS_DIFF_AUTH_FINDING]->(d))
+        WITH d
+        OPTIONAL MATCH (t:AuthorizationTest {id: $test_id})
+        FOREACH (x IN CASE WHEN t IS NOT NULL THEN [t] ELSE [] END |
+            MERGE (t)-[:PRODUCED]->(d))
+        RETURN d.id AS id
+        """
+        async with self._driver.session() as session:
+            res = await session.run(
+                cypher,
+                {
+                    "id": finding.id,
+                    "category": finding.category,
+                    "resource_id": finding.resource_id,
+                    "test_identity_id": finding.test_identity_id,
+                    "expected_result": finding.expected_result,
+                    "observed_result": finding.observed_result,
+                    "evidence_diff": json.dumps(finding.evidence_diff, default=str),
+                    "confidence": finding.confidence,
+                    "engagement_id": finding.engagement_id,
+                    "endpoint_id": endpoint_id,
+                    "test_id": test_id,
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            rec = await res.single()
+            return rec["id"]
+
+    # ---- Reliability sprint: durable task lifecycle + dedupe + recovery ----
+
+    async def upsert_task(self, task: Any, result_summary: Optional[Dict[str, Any]] = None) -> bool:
+        """Persist a Task's lifecycle state to Neo4j. Ground truth for the stuck-task
+        reaper, restart recovery, and graph-backed dedupe (replaces in-memory only state)."""
+        # AIOSOP-AUDIT-2026-06-16: persist payload + priority so restart recovery can
+        # faithfully RE-DISPATCH interrupted tasks (previously payload was dropped, so
+        # interrupted tasks could only be reset, never re-run). recovery_attempts is
+        # preserved if already set (incremented by reset_interrupted_tasks).
+        cypher = """
+        MERGE (t:Task {id: $id})
+        SET t.type=$type, t.status=$status, t.engagement_id=$engagement_id,
+            t.agent_type=$agent_type, t.retry_count=$retry_count, t.max_retries=$max_retries,
+            t.timeout_seconds=$timeout_seconds, t.created_at=$created_at, t.started_at=$started_at,
+            t.completed_at=$completed_at, t.updated_at=$updated_at, t.result_summary=$result_summary,
+            t.payload=$payload, t.priority=$priority,
+            t.recovery_attempts=coalesce(t.recovery_attempts, 0)
+        RETURN t.id AS id
+        """
+        params = {
+            "id": task.id,
+            "type": task.type,
+            "status": task.status,
+            "engagement_id": task.engagement_id,
+            "agent_type": getattr(task.agent_type, "value", str(task.agent_type)),
+            "retry_count": getattr(task, "retry_count", 0),
+            "max_retries": getattr(task, "max_retries", 0),
+            "timeout_seconds": getattr(task, "timeout_seconds", 300),
+            "created_at": (
+                task.created_at.isoformat() if getattr(task, "created_at", None) else None
+            ),
+            "started_at": (
+                task.started_at.isoformat() if getattr(task, "started_at", None) else None
+            ),
+            "completed_at": (
+                task.completed_at.isoformat() if getattr(task, "completed_at", None) else None
+            ),
+            "updated_at": datetime.utcnow().isoformat(),
+            "result_summary": json.dumps(result_summary or {}, default=str),
+            "payload": json.dumps(getattr(task, "payload", {}) or {}, default=str),
+            "priority": getattr(task, "priority", 5),
+        }
+        # Bounded retry so a brief Neo4j blip doesn't silently drop a lifecycle
+        # transition (would make Neo4j diverge from in-memory -> zombie tasks).
+        backoffs = [0.2, 0.4]
+        for attempt in range(len(backoffs) + 1):
+            try:
+                async with self._driver.session() as s:
+                    with trace_span(
+                        "graph_memory.upsert_task",
+                        attributes={
+                            "task_id": task.id,
+                            "task_type": task.type,
+                            "task_status": task.status,
+                            "engagement_id": task.engagement_id,
+                        },
+                    ):
+                        await s.run(cypher, params)
+                return True
+            except Exception as e:
+                if attempt < len(backoffs):
+                    await asyncio.sleep(backoffs[attempt])
+                    continue
+                # All callers ignore the return value, so re-raising would change
+                # behavior (and could crash lifecycle transitions); return False
+                # after logging at ERROR so the dropped write stays observable.
+                logger.error("upsert_task failed for task %s after retries: %s", task.id, e)
+                return False
+
+    async def task_has_spawned(self, task_id: str) -> bool:
+        """True if this task already has a SPAWNED chain child (durable dedupe marker)."""
+        try:
+            async with self._driver.session() as s:
+                res = await s.run(
+                    "MATCH (t:Task {id:$id})-[:SPAWNED]->() RETURN count(*) AS c", {"id": task_id}
+                )
+                rec = await res.single()
+                return bool(rec and rec["c"] > 0)
+        except Exception as e:
+            logger.debug("task_has_spawned_failed", error=str(e))
+            return False
+
+    async def claim_auto_discovery(self, engagement_id: str) -> bool:
+        """Atomically claim auto-discovery dispatch for an engagement. Returns True only
+        for the first caller — Neo4j MERGE locks the key, so concurrent hooks (and a
+        restarted process) cannot both win. Returns False if Neo4j is unreachable (safe:
+        no dispatch while the graph is down)."""
+        cypher = """
+        MERGE (c:AutoDiscoveryClaim {engagement_id: $eid})
+        ON CREATE SET c.claimed_at = $ts, c._new = true
+        ON MATCH SET c._new = false
+        RETURN c._new AS is_new
+        """
+        try:
+            async with self._driver.session() as s:
+                res = await s.run(
+                    cypher, {"eid": engagement_id, "ts": datetime.utcnow().isoformat()}
+                )
+                rec = await res.single()
+                return bool(rec and rec["is_new"])
+        except Exception as e:
+            logger.debug("claim_auto_discovery_failed", error=str(e))
+            return False
+
+    async def reset_interrupted_tasks(self) -> List[Dict[str, Any]]:
+        """Mark tasks left 'running' by a dead process as 'interrupted', increment their
+        recovery_attempts, and return the full props needed to RE-DISPATCH them
+        (AIOSOP-AUDIT-2026-06-16). Previously only id/type/engagement_id were returned,
+        so recover_state could not actually re-run the interrupted work."""
+        cypher = """
+        MATCH (t:Task {status:'running'})
+        SET t.status='interrupted', t.updated_at=$ts,
+            t.recovery_attempts=coalesce(t.recovery_attempts, 0)+1
+        RETURN t.id AS id, t.type AS type, t.engagement_id AS engagement_id,
+               t.agent_type AS agent_type, t.payload AS payload, t.priority AS priority,
+               t.max_retries AS max_retries, t.timeout_seconds AS timeout_seconds,
+               t.recovery_attempts AS recovery_attempts
+        """
+        out: List[Dict[str, Any]] = []
+        try:
+            async with self._driver.session() as s:
+                res = await s.run(cypher, {"ts": datetime.utcnow().isoformat()})
+                async for rec in res:
+                    out.append(dict(rec))
+        except Exception as e:
+            logger.debug("reset_interrupted_tasks_failed", error=str(e))
+        return out
+
+    async def mark_task_status(self, task_id: str, status: str) -> None:
+        """Set a Task node's status (used by recovery to fail tasks over the
+        re-dispatch cap). AIOSOP-AUDIT-2026-06-16."""
+        try:
+            async with self._driver.session() as s:
+                await s.run(
+                    "MATCH (t:Task {id:$id}) SET t.status=$status, t.updated_at=$ts",
+                    {"id": task_id, "status": status, "ts": datetime.utcnow().isoformat()},
+                )
+        except Exception as e:
+            logger.debug("mark_task_status_failed", error=str(e))
+
+    async def find_incomplete_chains(self) -> List[Dict[str, Any]]:
+        """Completed chain parents missing their next SPAWNED child — candidates to resume."""
+        cypher = """
+        MATCH (t:Task {status:'completed'})
+        WHERE t.type IN ['map_workflow','capture_authenticated_surface']
+          AND NOT (t)-[:SPAWNED]->(:Task)
+        RETURN t.id AS id, t.type AS type, t.engagement_id AS engagement_id,
+               t.result_summary AS result_summary
+        """
+        out: List[Dict[str, Any]] = []
+        try:
+            async with self._driver.session() as s:
+                res = await s.run(cypher)
+                async for rec in res:
+                    out.append(dict(rec))
+        except Exception as e:
+            logger.debug("find_incomplete_chains_failed", error=str(e))
+        return out
+
+    async def attach_evidence_to_step(
+        self,
+        step_id: str,
+        evidence_type: str,
+        path: str,
+        engagement_id: str,
+        workflow_id: str = "",
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Create an Evidence node and link it to a WorkflowStep and parent Workflow.
+        Returns the evidence node id. Idempotent on (step_id, path)."""
+        evidence_id = f"ev-{hashlib.sha1(f'{step_id}|{path}'.encode()).hexdigest()[:16]}"
+        cypher = """
+        MERGE (ev:Evidence {id: $id})
+        SET ev.type = $type,
+            ev.path = $path,
+            ev.engagement_id = $engagement_id,
+            ev.workflow_id = $workflow_id,
+            ev.extra = $extra,
+            ev.created_at = $created_at
+        WITH ev
+        OPTIONAL MATCH (s:Step {id: $step_id})
+        FOREACH (x IN CASE WHEN s IS NOT NULL THEN [s] ELSE [] END |
+            MERGE (s)-[:HAS_EVIDENCE]->(ev)
+        )
+        WITH ev
+        OPTIONAL MATCH (w:Workflow {id: $workflow_id})
+        FOREACH (x IN CASE WHEN w IS NOT NULL THEN [w] ELSE [] END |
+            MERGE (w)-[:HAS_EVIDENCE]->(ev)
+        )
+        RETURN ev.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": evidence_id,
+                    "type": evidence_type,
+                    "path": path,
+                    "engagement_id": engagement_id,
+                    "workflow_id": workflow_id,
+                    "step_id": step_id,
+                    "extra": json.dumps(extra or {}, default=str),
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"]
+
+    async def add_business_invariant(
+        self, invariant: BusinessInvariant, engagement_id: str, is_violated: bool = False
+    ) -> str:
+        """Persist a BusinessInvariant so it can be surfaced on the Research
+        Intelligence dashboard. Idempotent on invariant id."""
+        cypher = """
+        MERGE (i:BusinessInvariant {id: $id})
+        SET i.description = $description,
+            i.target_resource_type = $target_resource_type,
+            i.required_state = $required_state,
+            i.violation_strategy = $violation_strategy,
+            i.actor_constraints = $actor_constraints,
+            i.is_violated = $is_violated,
+            i.engagement_id = $engagement_id,
+            i.created_at = coalesce(i.created_at, $created_at)
+        RETURN i.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": invariant.id,
+                    "description": invariant.description,
+                    "target_resource_type": invariant.target_resource_type,
+                    "required_state": invariant.required_state,
+                    "violation_strategy": invariant.violation_strategy,
+                    "actor_constraints": invariant.actor_constraints,
+                    "is_violated": is_violated,
+                    "engagement_id": engagement_id or invariant.engagement_id,
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"]
+
+    async def mark_invariant_violated(self, invariant_id: str) -> None:
+        """Flag a previously-persisted invariant as violated."""
+        cypher = "MATCH (i:BusinessInvariant {id: $id}) SET i.is_violated = true RETURN i.id"
+        async with self._driver.session() as session:
+            await session.run(cypher, {"id": invariant_id})
+
+    async def get_invariants(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Return persisted invariants for an engagement, shaped for the UI."""
+        cypher = (
+            "MATCH (i:BusinessInvariant) WHERE i.engagement_id = $sid "
+            "RETURN i ORDER BY i.created_at DESC"
+        )
+        out: List[Dict[str, Any]] = []
+        async with self._driver.session() as session:
+            result = await session.run(cypher, {"sid": engagement_id})
+            async for record in result:
+                i = dict(record["i"])
+                out.append(
+                    {
+                        "id": i.get("id"),
+                        "description": i.get("description"),
+                        "target_resource_type": i.get("target_resource_type"),
+                        "violation_strategy": i.get("violation_strategy"),
+                        "is_violated": bool(i.get("is_violated", False)),
+                    }
+                )
+        return out
 
     async def close(self) -> None:
         if self._driver:

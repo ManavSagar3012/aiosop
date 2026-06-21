@@ -36,8 +36,11 @@ ENV PYTHONPATH=/app/src
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8080
+# PATCH (REL-001, 2026-06-15): Was 8080 throughout — but :8080 collides with
+# Oracle XDB/TNSLSNR on common dev hosts. Standardize on :8200 to match the
+# direct `poetry run uvicorn ... --port 8200` invocation used in production.
+EXPOSE 8200
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8200/health')" || exit 1
 
-CMD ["uvicorn", "ai_osop.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "ai_osop.api.main:app", "--host", "0.0.0.0", "--port", "8200"]

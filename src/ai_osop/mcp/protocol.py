@@ -46,7 +46,14 @@ class MCPInitializeRequest(BaseModel):
 
 class MCPInitializeResponse(BaseModel):
     server_id: str
-    version: str
+    # PATCH (REL-002, 2026-06-15): Defaulting `version` so that a partial MCP
+    # response missing this field still parses. Real-time verification on
+    # 2026-06-15 showed all current servers (recon/payload/shodan/threat-intel/
+    # burp/browser/etc.) DO return a version, so this is defense-in-depth only.
+    # The actual reason those four MCPs appear "uninitialized" in
+    # /system/health/full is that no agent has invoked them yet — initialize
+    # is called lazily by each adapter's .initialize() the first time it runs.
+    version: str = "unknown"
     capabilities: List[str]
     tools: List[MCPToolDefinition]
     status: str = "ready"
@@ -80,7 +87,7 @@ class MCPStateResponse(BaseModel):
 
 @dataclass
 class MCPConnection:
-    """Managed connection to an MCP server."""
+    """Managed connection to an MCP server with circuit breaker."""
 
     server_id: str
     host: str
@@ -91,45 +98,95 @@ class MCPConnection:
     _initialized: bool = False
     _capabilities: List[str] = field(default_factory=list)
     _tools: Dict[str, MCPToolDefinition] = field(default_factory=dict)
+    # Circuit breaker state (P5 fix)
+    _failure_count: int = field(default=0)
+    _success_count: int = field(default=0)
+    _circuit_open: bool = field(default=False)
+    _circuit_opened_at: Optional[datetime] = field(default=None)
+    CIRCUIT_THRESHOLD: int = field(default=5)
+    CIRCUIT_RECOVERY_SECONDS: int = field(default=30)
+
+    def _circuit_breaker_check(self) -> None:
+        if not self._circuit_open:
+            return
+        if self._circuit_opened_at is None:
+            self._circuit_open = False
+            return
+        elapsed = (datetime.utcnow() - self._circuit_opened_at).total_seconds()
+        if elapsed >= self.CIRCUIT_RECOVERY_SECONDS:
+            self._circuit_open = False
+            self._failure_count = 0
+            self._circuit_opened_at = None
+
+    def _record_success(self) -> None:
+        self._success_count += 1
+        self._failure_count = 0
+
+    def _record_failure(self) -> None:
+        self._failure_count += 1
+        if self._failure_count >= self.CIRCUIT_THRESHOLD:
+            self._circuit_open = True
+            self._circuit_opened_at = datetime.utcnow()
 
     async def connect(self) -> None:
         """Establish HTTP and WebSocket connections."""
+        self._circuit_breaker_check()
+        if self._circuit_open:
+            raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
         try:
             self._session = aiohttp.ClientSession(
                 headers={"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
             )
-            # Test connection with health check
             async with self._session.get(
                 f"http://{self.host}:{self.port}/health", timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
+                    self._record_failure()
                     raise MCPConnectionError(
                         f"MCP server {self.server_id} health check failed: {resp.status}"
                     )
+            self._record_success()
         except asyncio.TimeoutError:
+            self._record_failure()
             await self.close()
             raise MCPTimeoutError(f"MCP server {self.server_id} connection timed out")
         except Exception as e:
+            self._record_failure()
             await self.close()
             raise MCPConnectionError(f"Failed to connect to MCP server {self.server_id}: {e}")
 
     async def initialize(self, request: MCPInitializeRequest) -> MCPInitializeResponse:
         """Initialize server with scope and credentials."""
+        self._circuit_breaker_check()
+        if self._circuit_open:
+            raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
         if not self._session:
             await self.connect()
 
-        async with self._session.post(
-            f"http://{self.host}:{self.port}/mcp/initialize", json=request.dict()
-        ) as resp:
-            data = await resp.json()
-            response = MCPInitializeResponse(**data)
-            self._capabilities = response.capabilities
-            self._tools = {t.name: t for t in response.tools}
-            self._initialized = True
-            return response
+        try:
+            async with self._session.post(
+                f"http://{self.host}:{self.port}/mcp/initialize", json=request.dict()
+            ) as resp:
+                data = await resp.json()
+                response = MCPInitializeResponse(**data)
+                self._capabilities = response.capabilities
+                self._tools = {t.name: t for t in response.tools}
+                self._initialized = True
+                self._record_success()
+                return response
+        except Exception as e:
+            self._record_failure()
+            raise MCPConnectionError(f"MCP server {self.server_id} initialize failed: {e}")
 
     async def execute(self, request: MCPExecuteRequest) -> MCPExecuteResponse:
-        """Execute a tool with timeout and error handling."""
+        """Execute a tool with timeout, error handling, and circuit breaker."""
+        self._circuit_breaker_check()
+        if self._circuit_open:
+            return MCPExecuteResponse(
+                request_id=request.request_id,
+                status="circuit_open",
+                error=f"MCP server {self.server_id} circuit breaker is open",
+            )
         if not self._initialized:
             raise MCPException(f"MCP server {self.server_id} not initialized")
 
@@ -150,14 +207,17 @@ class MCPConnection:
                 elapsed = int((datetime.utcnow() - start).total_seconds() * 1000)
                 response = MCPExecuteResponse(**data)
                 response.execution_time_ms = elapsed
+                self._record_success()
                 return response
         except asyncio.TimeoutError:
+            self._record_failure()
             return MCPExecuteResponse(
                 request_id=request.request_id,
                 status="timeout",
                 error=f"Tool {request.tool_name} exceeded {timeout}s timeout",
             )
         except Exception as e:
+            self._record_failure()
             return MCPExecuteResponse(request_id=request.request_id, status="error", error=str(e))
 
     async def get_state(self) -> MCPStateResponse:
@@ -184,6 +244,7 @@ class MCPRegistry:
     def __init__(self):
         self._servers: Dict[str, MCPConnection] = {}
         self._event_handlers: Dict[str, List[Callable]] = {}
+        self.call_counts: Dict[str, int] = {}
 
     async def register_server(
         self, server_id: str, host: str, port: int, auth_token: Optional[str] = None
@@ -219,6 +280,7 @@ class MCPRegistry:
         if not conn:
             raise MCPConnectionError(f"Server {server_id} not registered")
 
+        self.call_counts[server_id] = self.call_counts.get(server_id, 0) + 1
         request = MCPExecuteRequest(
             tool_name=tool_name, parameters=parameters, timeout_override=timeout_override
         )

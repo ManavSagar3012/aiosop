@@ -12,11 +12,11 @@ from typing import Optional
 import click
 import httpx
 
-API_BASE = "http://localhost:8088"
+API_BASE = "http://localhost:8200"
 
 
 @click.group()
-@click.option("--api-url", default="http://localhost:8088", help="AI-OSOP API URL")
+@click.option("--api-url", default="http://localhost:8200", help="AI-OSOP API URL")
 @click.option("--token", envvar="OSOP_TOKEN", help="API authentication token")
 @click.pass_context
 def cli(ctx, api_url, token):

@@ -31,16 +31,39 @@ class Endpoint(BaseModel):
     id: str = Field(default_factory=lambda: f"ep-{uuid.uuid4().hex[:12]}")
     url: str
     method: str = "GET"
+    type: str = "web"  # web, api, websocket, graphql
+    engagement_id: str
+
+    # Web-oriented fields
     status_code: Optional[int] = None
     title: Optional[str] = None
     technologies: List[str] = Field(default_factory=list)
     parameters: List[str] = Field(default_factory=list)
     auth_required: bool = False
-    asset_id: str
-    source: str
-    confidence: float = Field(ge=0.0, le=1.0)
-    engagement_id: str
+    asset_id: str = ""
+    source: str = ""
     screenshot_path: Optional[str] = None
+
+    # API-oriented fields (unified from APIEndpoint)
+    host: str = ""
+    path: str = ""
+    query_keys: List[str] = Field(default_factory=list)
+    has_body: bool = False
+    content_type: str = ""
+    body_schema_keys: List[str] = Field(default_factory=list)
+    auth_class: str = "anonymous"  # anonymous | bearer | cookie | mixed
+    request_headers_sample: Dict[str, str] = Field(default_factory=dict)
+    status_codes_seen: List[int] = Field(default_factory=list)
+    response_size_avg: int = 0
+    response_content_type: str = ""
+    user_label: str = ""
+    workflow_id: str = ""
+    first_seen: datetime = Field(default_factory=datetime.utcnow)
+    last_seen: datetime = Field(default_factory=datetime.utcnow)
+    observations: int = 0
+
+    # Common
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
 
 
 class Vulnerability(BaseModel):
@@ -172,6 +195,7 @@ class SessionState(BaseModel):
     agents: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     checkpoint_id: Optional[str] = None
     audit_log_position: str = "0"
+    created_by: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -188,3 +212,250 @@ class AuditEvent(BaseModel):
     context: Dict[str, Any]
     integrity_hash: Optional[str] = None
     engagement_id: str
+
+
+class DiffAuthFinding(BaseModel):
+    """Result of a differential authorization comparison between two identities."""
+
+    id: str = Field(default_factory=lambda: f"diff-{uuid.uuid4().hex[:12]}")
+    category: str  # horizontal_pe, vertical_pe, tenant_escape, workflow_bypass
+    resource_id: str
+    test_identity_id: str  # The identity that attempted access
+    expected_result: str  # e.g. "403 Forbidden"
+    observed_result: str  # e.g. "200 OK"
+    evidence_diff: Dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(ge=0.0, le=1.0)
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Resource(BaseModel):
+    """A protected resource targeted by differential authorization tests."""
+
+    id: str
+    type: str  # endpoint, record, file, ...
+    value: str
+    owner_identity_id: str = ""
+    discovery_step_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    engagement_id: str
+
+
+class PermissionMatrix(BaseModel):
+    """Per-identity expected access map. Used by DifferentialAuthEngine baselines."""
+
+    id: str = Field(default_factory=lambda: f"pm-{uuid.uuid4().hex[:12]}")
+    resource_id: str
+    identity_id: str
+    expected_allowed: bool = False
+    engagement_id: str
+
+
+class BrowserSession(BaseModel):
+    """Captured browser identity envelope (cookies + storage)."""
+
+    id: str = Field(default_factory=lambda: f"bs-{uuid.uuid4().hex[:12]}")
+    user_label: str
+    engagement_id: str
+    cookies: List[Dict[str, Any]] = Field(default_factory=list)
+    local_storage: Dict[str, Any] = Field(default_factory=dict)
+    session_storage: Dict[str, Any] = Field(default_factory=dict)
+    captured_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Workflow(BaseModel):
+    """A recorded user/agent journey across endpoints."""
+
+    id: str = Field(default_factory=lambda: f"wf-{uuid.uuid4().hex[:12]}")
+    name: str
+    role: str = "guest"
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class WorkflowStep(BaseModel):
+    """One step within a Workflow, linked to an Endpoint."""
+
+    id: str = Field(default_factory=lambda: f"step-{uuid.uuid4().hex[:12]}")
+    workflow_id: str
+    endpoint_id: str
+    order: int = 0
+    action_type: str = "NAVIGATE"
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class WorkflowTransition(BaseModel):
+    """Edge between two WorkflowSteps."""
+
+    id: str = Field(default_factory=lambda: f"tr-{uuid.uuid4().hex[:12]}")
+    from_step_id: str
+    to_step_id: str
+    trigger: str = "auto"
+    engagement_id: str
+
+
+class Observation(BaseModel):
+    """Structured agent observation published to the coordination bus."""
+
+    id: str = Field(default_factory=lambda: f"obs-{uuid.uuid4().hex[:12]}")
+    type: str
+    source_agent_id: str
+    target_id: str
+    data: Dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 1.0
+    provenance: str = "live"
+    engagement_id: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= MISSING MODELS FOR SWARM GOVERNANCE & AUDITS =================
+
+
+class OutcomeStatus(str, Enum):
+    PAID = "paid"
+    TRIAGED = "triaged"
+    SUBMITTED = "submitted"
+    VERIFIED = "verified"
+    # AIOSOP-AUDIT-2026-06-16: referenced by BugBountyAdapter.sync_outcomes for
+    # reports a program closes as not-applicable/duplicate/informative. Was missing,
+    # which would raise AttributeError on the live H1 sync path.
+    REJECTED = "rejected"
+
+
+class OutcomeRecord(BaseModel):
+    id: str = Field(default_factory=lambda: f"out-{uuid.uuid4().hex[:12]}")
+    finding_id: str
+    finding_type: str
+    status: Union[OutcomeStatus, str]
+    severity: str
+    cost_total: float = 0.0
+    time_to_finding_seconds: Optional[int] = None
+    agent_id_responsible: str
+    program_name: Optional[str] = None
+    external_report_id: Optional[str] = None
+    program_payout: float = 0.0
+    is_accepted: bool = False
+    engagement_id: str
+    stack: List[str] = Field(default_factory=list)
+    workflow_intent: Optional[str] = None
+    validated: bool = False
+    initial_confidence: float = 0.0
+    time_to_validate_seconds: Optional[int] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UncertaintyRecord(BaseModel):
+    id: str = Field(default_factory=lambda: f"unc-{uuid.uuid4().hex[:12]}")
+    target_id: str
+    knowns: List[str] = Field(default_factory=list)
+    unknowns: List[str] = Field(default_factory=list)
+    blocked_paths: List[str] = Field(default_factory=list)
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CriticalOperation(BaseModel):
+    id: str = Field(default_factory=lambda: f"cop-{uuid.uuid4().hex[:12]}")
+    name: str
+    type: str
+    source: str
+    confidence: float
+    related_node_id: str
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class VisualAnalysis(BaseModel):
+    id: str = Field(default_factory=lambda: f"va-{uuid.uuid4().hex[:12]}")
+    screenshot_path: str
+    workflow_step_id: str
+    user_role: str
+    visible_actions: List[Dict[str, Any]] = Field(default_factory=list)
+    business_context: str
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SwarmBudget(BaseModel):
+    id: str = Field(default_factory=lambda: f"bud-{uuid.uuid4().hex[:12]}")
+    total_budget: float
+    spent_budget: float = 0.0
+    system1_requests: int = 0
+    system2_requests: int = 0
+    engagement_id: str
+
+
+class BusinessInvariant(BaseModel):
+    id: str = Field(default_factory=lambda: f"inv-{uuid.uuid4().hex[:12]}")
+    description: str
+    target_resource_type: str
+    required_state: Optional[str] = None
+    violation_strategy: str
+    actor_constraints: List[str] = Field(default_factory=list)
+    engagement_id: str
+
+
+class EvidenceProvenance(str, Enum):
+    MOCK = "mock"
+    SIMULATED = "simulated"
+    LIVE = "live"
+
+
+class VerificationStage(BaseModel):
+    name: str
+    status: str
+
+
+class VerificationRecord(BaseModel):
+    id: str = Field(default_factory=lambda: f"ver-{uuid.uuid4().hex[:12]}")
+    finding_id: str
+    provenance: EvidenceProvenance = EvidenceProvenance.LIVE
+    is_verified: bool = False
+    overall_confidence: float = 0.0
+    evidence_chain_score: float = 0.0
+    stages: List[VerificationStage] = Field(default_factory=list)
+    agreed_agents: List[str] = Field(default_factory=list)
+    replayable: bool = False
+    replayability_score: float = 0.0
+    evidence_sources: List[str] = Field(default_factory=list)
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProcessState(BaseModel):
+    """A single state in a business-process state machine, used by the
+    stateful-logic agent to model multi-step workflows (e.g. cart -> pay ->
+    ship). Previously referenced but never defined, which broke the agent's
+    import. (AIOSOP-AUDIT-2026-06-16)"""
+
+    id: str = Field(default_factory=lambda: f"pstate-{uuid.uuid4().hex[:12]}")
+    name: Optional[str] = None
+    process_name: Optional[str] = None
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class GraphQLType(BaseModel):
+    id: str = Field(default_factory=lambda: f"gql-type-{uuid.uuid4().hex[:12]}")
+    name: str
+    kind: str  # OBJECT, SCALAR, INTERFACE, UNION, ENUM, INPUT_OBJECT, LIST, NON_NULL
+    fields: List[str] = Field(default_factory=list)
+    description: Optional[str] = None
+
+
+class GraphQLOperation(BaseModel):
+    id: str = Field(default_factory=lambda: f"gql-op-{uuid.uuid4().hex[:12]}")
+    name: str
+    type: str  # query, mutation, subscription
+    schema_id: str
+    is_hidden: bool = False
+    description: Optional[str] = None
+
+
+class GraphQLSchema(BaseModel):
+    id: str = Field(default_factory=lambda: f"gql-schema-{uuid.uuid4().hex[:12]}")
+    endpoint_url: str
+    introspection_enabled: bool
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)

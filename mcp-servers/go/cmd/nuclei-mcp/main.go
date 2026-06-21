@@ -21,6 +21,9 @@ func main() {
 		Returns: map[string]any{"findings": "array"},
 		Handler: func(params map[string]any) any {
 			targets := stringSlice(params["targets"])
+			if len(targets) == 0 {
+				return map[string]any{"findings": []any{}, "error": "target parameter is required and cannot be empty"}
+			}
 			args := []string{"-jsonl", "-silent"}
 			for _, target := range targets {
 				args = append(args, "-target", target)
