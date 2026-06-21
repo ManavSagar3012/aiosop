@@ -33,7 +33,10 @@ class VectorMemory:
 
         import asyncpg
 
-        self.pool = await asyncpg.create_pool(self.uri)
+        uri = self.uri
+        if uri.startswith("postgresql+asyncpg://"):
+            uri = uri.replace("postgresql+asyncpg://", "postgresql://")
+        self.pool = await asyncpg.create_pool(uri)
         async with self.pool.acquire() as conn:
             # Ensure the extension and table exist
             try:

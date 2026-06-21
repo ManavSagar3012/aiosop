@@ -1,0 +1,98 @@
+name: AI-OSOP CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
+
+    services:
+      neo4j:
+        image: neo4j:5.18-community
+        env:
+          NEO4J_AUTH: neo4j/test-password
+          NEO4J_PLUGINS: '["apoc"]'
+        ports:
+          - 7687:7687
+          - 7474:7474
+
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: osop
+          POSTGRES_PASSWORD: osop
+          POSTGRES_DB: osop
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Load cached venv
+      id: cached-poetry-dependencies
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+
+    - name: Install dependencies
+      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+      run: poetry install --no-interaction --no-ansi
+
+    - name: Format check (black)
+      run: poetry run black --check src tests
+
+    - name: Import sort check (isort)
+      run: poetry run isort --check-only src tests
+
+    - name: Lint (flake8)
+      run: poetry run flake8 src
+
+    - name: Type check (mypy)
+      run: poetry run mypy src
+
+    - name: Run tests
+      env:
+        OSOP_NEO4J_URI: bolt://localhost:7687
+        OSOP_NEO4J_USER: neo4j
+        OSOP_NEO4J_PASSWORD: test-password
+        OSOP_POSTGRES_URI: postgresql+asyncpg://osop:osop@localhost:5432/osop
+        OSOP_REDIS_URI: redis://localhost:6379/0
+        OSOP_JWT_SECRET: test-secret-for-ci-only
+        OSOP_API_TOKEN: test-token-for-ci-only
+      run: poetry run pytest --no-cov -q
+
+    - name: Build Docker image
+      run: docker build -t ai-osop:test .
+
+    - name: Check Dockerfile health
+      run: |
+        docker run -d --name ai-osop-test -p 8200:8200 ai-osop:test
+        sleep 10
+        curl -f http://localhost:8200/health || exit 1
+        docker stop ai-osop-test
+        docker rm ai-osop-test

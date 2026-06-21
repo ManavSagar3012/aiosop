@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
-from sqlalchemy import JSON, Column, DateTime, String, select
+from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
@@ -19,9 +19,53 @@ from sqlalchemy.orm import sessionmaker
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import MemoryException
-from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState
+from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
 
 Base = declarative_base()
+
+
+class ApprovalRequestORM(Base):
+    __tablename__ = "approval_requests"
+
+    id = Column(String(64), primary_key=True)
+    task_id = Column(String(64), index=True)
+    agent_id = Column(String(64))
+    action_type = Column(String(64))
+    target = Column(String(512))
+    payload_summary = Column(String(1024))
+    risk_assessment = Column(String(1024))
+    evidence = Column(JSON)
+    status = Column(String(16), index=True)  # pending, approved, rejected, modified, timeout
+    operator_id = Column(String(64), nullable=True)
+    operator_notes = Column(String(2048), nullable=True)
+    requested_at = Column(DateTime)
+    responded_at = Column(DateTime, nullable=True)
+    engagement_id = Column(String(64), index=True)
+
+
+class TaskORM(Base):
+    __tablename__ = "tasks"
+
+    id = Column(String(64), primary_key=True)
+    type = Column(String(64))
+    priority = Column(Integer)
+    agent_type = Column(String(64))
+    payload = Column(JSON)
+    dependencies = Column(JSON)
+    max_retries = Column(Integer)
+    timeout_seconds = Column(Integer)
+    scope_check = Column(Boolean, default=True)
+    approval_required = Column(Boolean, default=False)
+    status = Column(
+        String(16), index=True
+    )  # pending, running, completed, failed, cancelled, awaiting_approval
+    result = Column(JSON, nullable=True)
+    retry_count = Column(Integer)
+    created_at = Column(DateTime)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    engagement_id = Column(String(64), index=True)
+    assigned_agent_id = Column(String(64), nullable=True)
 
 
 class SessionStateORM(Base):
@@ -34,6 +78,7 @@ class SessionStateORM(Base):
     agents = Column(JSON)
     checkpoint_id = Column(String(64))
     audit_log_position = Column(String(64))
+    created_by = Column(String(64), nullable=True)
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
 
@@ -162,6 +207,7 @@ class SessionMemory:
                     agents=state.agents,
                     checkpoint_id=state.checkpoint_id,
                     audit_log_position=state.audit_log_position,
+                    created_by=state.created_by,
                     created_at=state.created_at,
                     updated_at=state.updated_at,
                 )
@@ -197,6 +243,7 @@ class SessionMemory:
                     agents=orm.agents,
                     checkpoint_id=orm.checkpoint_id,
                     audit_log_position=orm.audit_log_position,
+                    created_by=orm.created_by,
                     created_at=orm.created_at,
                     updated_at=orm.updated_at,
                 )
@@ -205,7 +252,7 @@ class SessionMemory:
     async def write_audit_event(self, event: AuditEvent) -> None:
         """Write cryptographically signed audit event."""
         import hmac
-        
+
         # Load the key - in production this would fetch from Vault using the path
         # Fallback for dev/testing if not configured
         secret_key = getattr(settings, "audit_secret_key", b"default-insecure-audit-key")
@@ -226,10 +273,12 @@ class SessionMemory:
 
         # Calculate integrity hash using HMAC with a secret key
         # We match the chain format expected by scope.py
-        event_data = f"{event.event_id}:{event.timestamp.isoformat()}:{event.actor_id}:{event.event_type}"
+        event_data = (
+            f"{event.event_id}:{event.timestamp.isoformat()}:{event.actor_id}:{event.event_type}"
+        )
         if last_hash:
             event_data = f"{last_hash}:{event_data}"
-            
+
         integrity_hash = hmac.new(secret_key, event_data.encode(), hashlib.sha256).hexdigest()
         event.integrity_hash = integrity_hash
 
@@ -290,6 +339,216 @@ class SessionMemory:
                     )
                 )
             return events
+
+    # ============== APPROVAL REQUESTS ==============
+
+    async def store_approval_request(self, request: ApprovalRequest) -> None:
+        """Persist approval request to hot + warm tier."""
+        # Hot tier (Redis)
+        await self.store_hot(f"approval:{request.id}", request.dict(), ttl=86400 * 7)
+        # Warm tier (Postgres)
+        async with self._async_session() as session:
+            stmt = (
+                insert(ApprovalRequestORM)
+                .values(
+                    id=request.id,
+                    task_id=request.task_id,
+                    agent_id=request.agent_id,
+                    action_type=request.action_type,
+                    target=request.target,
+                    payload_summary=request.payload_summary,
+                    risk_assessment=request.risk_assessment,
+                    evidence=request.evidence,
+                    status=request.status,
+                    operator_id=request.operator_id,
+                    operator_notes=request.operator_notes,
+                    requested_at=request.requested_at,
+                    responded_at=request.responded_at,
+                    engagement_id=request.engagement_id,
+                )
+                .on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "status": request.status,
+                        "operator_id": request.operator_id,
+                        "operator_notes": request.operator_notes,
+                        "responded_at": request.responded_at,
+                    },
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def load_approval_request(self, request_id: str) -> Optional[ApprovalRequest]:
+        """Load approval request from hot tier, fallback to warm."""
+        # Try hot first
+        data = await self.retrieve_hot(f"approval:{request_id}")
+        if data:
+            return ApprovalRequest(**data)
+        # Fallback to warm
+        async with self._async_session() as session:
+            result = await session.execute(
+                select(ApprovalRequestORM).where(ApprovalRequestORM.id == request_id)
+            )
+            orm = result.scalar_one_or_none()
+            if orm:
+                return ApprovalRequest(
+                    id=orm.id,
+                    task_id=orm.task_id,
+                    agent_id=orm.agent_id,
+                    action_type=orm.action_type,
+                    target=orm.target,
+                    payload_summary=orm.payload_summary,
+                    risk_assessment=orm.risk_assessment,
+                    evidence=orm.evidence,
+                    status=orm.status,
+                    operator_id=orm.operator_id,
+                    operator_notes=orm.operator_notes,
+                    requested_at=orm.requested_at,
+                    responded_at=orm.responded_at,
+                    engagement_id=orm.engagement_id,
+                )
+        return None
+
+    async def list_pending_approvals(self) -> List[ApprovalRequest]:
+        """List all pending approval requests from warm tier."""
+        async with self._async_session() as session:
+            result = await session.execute(
+                select(ApprovalRequestORM).where(ApprovalRequestORM.status == "pending")
+            )
+            approvals = []
+            for orm in result.scalars():
+                approvals.append(
+                    ApprovalRequest(
+                        id=orm.id,
+                        task_id=orm.task_id,
+                        agent_id=orm.agent_id,
+                        action_type=orm.action_type,
+                        target=orm.target,
+                        payload_summary=orm.payload_summary,
+                        risk_assessment=orm.risk_assessment,
+                        evidence=orm.evidence,
+                        status=orm.status,
+                        operator_id=orm.operator_id,
+                        operator_notes=orm.operator_notes,
+                        requested_at=orm.requested_at,
+                        responded_at=orm.responded_at,
+                        engagement_id=orm.engagement_id,
+                    )
+                )
+            return approvals
+
+    # ============== TASKS ==============
+
+    async def store_task(self, task: Task) -> None:
+        """Persist task to hot + warm tier."""
+        # Hot tier (Redis)
+        await self.store_hot(f"task:{task.id}", task.dict(), ttl=86400 * 7)
+        # Warm tier (Postgres)
+        async with self._async_session() as session:
+            stmt = (
+                insert(TaskORM)
+                .values(
+                    id=task.id,
+                    type=task.type,
+                    priority=task.priority,
+                    agent_type=task.agent_type.value,
+                    payload=task.payload,
+                    dependencies=task.dependencies,
+                    max_retries=task.max_retries,
+                    timeout_seconds=task.timeout_seconds,
+                    scope_check=task.scope_check,
+                    approval_required=task.approval_required,
+                    status=task.status,
+                    result=task.result,
+                    retry_count=task.retry_count,
+                    created_at=task.created_at,
+                    started_at=task.started_at,
+                    completed_at=task.completed_at,
+                    engagement_id=task.engagement_id,
+                    assigned_agent_id=task.assigned_agent_id,
+                )
+                .on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "status": task.status,
+                        "result": task.result,
+                        "retry_count": task.retry_count,
+                        "started_at": task.started_at,
+                        "completed_at": task.completed_at,
+                        "assigned_agent_id": task.assigned_agent_id,
+                    },
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def load_task(self, task_id: str) -> Optional[Task]:
+        """Load task from hot tier, fallback to warm."""
+        data = await self.retrieve_hot(f"task:{task_id}")
+        if data:
+            return Task(**data)
+        async with self._async_session() as session:
+            result = await session.execute(select(TaskORM).where(TaskORM.id == task_id))
+            orm = result.scalar_one_or_none()
+            if orm:
+                from ai_osop.core.config import AgentType
+
+                return Task(
+                    id=orm.id,
+                    type=orm.type,
+                    priority=orm.priority,
+                    agent_type=AgentType(orm.agent_type),
+                    payload=orm.payload,
+                    dependencies=orm.dependencies,
+                    max_retries=orm.max_retries,
+                    timeout_seconds=orm.timeout_seconds,
+                    scope_check=orm.scope_check,
+                    approval_required=orm.approval_required,
+                    status=orm.status,
+                    result=orm.result,
+                    retry_count=orm.retry_count,
+                    created_at=orm.created_at,
+                    started_at=orm.started_at,
+                    completed_at=orm.completed_at,
+                    engagement_id=orm.engagement_id,
+                    assigned_agent_id=orm.assigned_agent_id,
+                )
+        return None
+
+    async def load_all_active_tasks(self) -> List[Task]:
+        """Load all non-completed tasks from warm tier for recovery."""
+        from ai_osop.core.config import AgentType
+
+        async with self._async_session() as session:
+            result = await session.execute(
+                select(TaskORM).where(TaskORM.status.notin_(["completed", "failed", "cancelled"]))
+            )
+            tasks = []
+            for orm in result.scalars():
+                tasks.append(
+                    Task(
+                        id=orm.id,
+                        type=orm.type,
+                        priority=orm.priority,
+                        agent_type=AgentType(orm.agent_type),
+                        payload=orm.payload,
+                        dependencies=orm.dependencies,
+                        max_retries=orm.max_retries,
+                        timeout_seconds=orm.timeout_seconds,
+                        scope_check=orm.scope_check,
+                        approval_required=orm.approval_required,
+                        status=orm.status,
+                        result=orm.result,
+                        retry_count=orm.retry_count,
+                        created_at=orm.created_at,
+                        started_at=orm.started_at,
+                        completed_at=orm.completed_at,
+                        engagement_id=orm.engagement_id,
+                        assigned_agent_id=orm.assigned_agent_id,
+                    )
+                )
+            return tasks
 
     # ============== CHECKPOINTS ==============
 

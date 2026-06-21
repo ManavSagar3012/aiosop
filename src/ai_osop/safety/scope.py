@@ -257,7 +257,7 @@ class SandboxManager:
         network_policy: Dict[str, Any],
         resources: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Create isolated execution environment."""
+        """Create isolated execution environment with Docker network + iptables."""
         import docker
 
         client = docker.from_env()
@@ -268,31 +268,60 @@ class SandboxManager:
             "memory": settings.sandbox_memory_limit,
         }
 
-        # Create container with restrictions
-        container = client.containers.run(
-            "ai-osop/sandbox:latest",
-            detach=True,
-            network_mode="none",  # No network by default
-            cpu_period=100000,
-            cpu_quota=int(float(resource_limits["cpu"]) * 100000),
-            mem_limit=resource_limits["memory"],
-            read_only=True,
-            security_opt=["no-new-privileges:true", "seccomp:restricted.json"],
-            cap_drop=["ALL"],
-            cap_add=["NET_BIND_SERVICE"],
-            labels={
-                "ai-osop.sandbox.id": sandbox_id,
-                "ai-osop.sandbox.created": datetime.utcnow().isoformat(),
-            },
-        )
+        # Create custom bridge network first (so container can attach at creation)
+        network_name = f"ai-osop-sandbox-{sandbox_id}"
+        subnet_octet = abs(hash(sandbox_id)) % 254 + 1
+        subnet = f"172.30.{subnet_octet}.0/24"
+        try:
+            network = client.networks.create(
+                network_name,
+                driver="bridge",
+                internal=False,
+                ipam=docker.types.IPAMConfig(
+                    pool_configs=[
+                        docker.types.IPAMPool(
+                            subnet=subnet,
+                            gateway=f"172.30.{subnet_octet}.1",
+                        )
+                    ]
+                ),
+                options={
+                    "com.docker.network.bridge.name": f"br-{sandbox_id[:12]}",
+                },
+            )
+        except Exception as e:
+            raise SandboxException(f"Failed to create sandbox network: {e}")
 
-        # Setup network if policy allows
-        if network_policy.get("egress"):
-            await self._setup_network(container, network_policy["egress"])
+        # Create container attached to the custom network
+        try:
+            container = client.containers.run(
+                "ai-osop/sandbox:latest",
+                detach=True,
+                network=network_name,
+                cpu_period=100000,
+                cpu_quota=int(float(resource_limits["cpu"]) * 100000),
+                mem_limit=resource_limits["memory"],
+                read_only=True,
+                security_opt=["no-new-privileges:true", "seccomp:restricted.json"],
+                cap_drop=["ALL"],
+                cap_add=["NET_BIND_SERVICE"],
+                labels={
+                    "ai-osop.sandbox.id": sandbox_id,
+                    "ai-osop.sandbox.created": datetime.utcnow().isoformat(),
+                },
+            )
+        except Exception as e:
+            try:
+                network.remove()
+            except Exception:
+                pass
+            raise SandboxException(f"Failed to create sandbox container: {e}")
 
         sandbox = {
             "id": sandbox_id,
             "container_id": container.id,
+            "network_name": network_name,
+            "network_id": network.id,
             "network_policy": network_policy,
             "resources": resource_limits,
             "created_at": datetime.utcnow(),
@@ -300,14 +329,137 @@ class SandboxManager:
         }
 
         self._active_sandboxes[sandbox_id] = sandbox
+
+        # Setup network filtering if policy allows
+        if network_policy.get("egress"):
+            try:
+                await self._setup_network(container, network_policy["egress"])
+            except Exception as e:
+                # Cleanup on network setup failure
+                try:
+                    del self._active_sandboxes[sandbox_id]
+                except Exception:
+                    pass
+                try:
+                    container.stop(timeout=5)
+                    container.remove(force=True)
+                except Exception:
+                    pass
+                try:
+                    network.remove()
+                except Exception:
+                    pass
+                raise SandboxException(f"Failed to setup sandbox network filtering: {e}")
+
         return sandbox
 
     async def _setup_network(self, container: Any, egress_policy: Dict[str, Any]) -> None:
-        """Setup restricted network access."""
-        # Create custom network with egress filtering
-        # This would use Docker network + iptables rules
-        # or eBPF for more granular control
-        pass
+        """Setup restricted network access using Docker bridge + iptables.
+
+        Phase A implementation:
+        1. Inspect container's network to get bridge interface
+        2. Apply iptables rules via a custom chain for easy cleanup:
+           - ACCEPT established/related connections
+           - ACCEPT DNS (UDP/TCP 53)
+           - ACCEPT loopback
+           - ACCEPT explicitly allowed IPs/domains
+           - DROP everything else
+        """
+        import socket
+        import subprocess
+
+        sandbox_id = container.labels.get("ai-osop.sandbox.id", container.short_id)
+
+        # Get network info from container
+        container.reload()
+        network_settings = container.attrs.get("NetworkSettings", {})
+        networks = network_settings.get("Networks", {})
+
+        # Find the sandbox network
+        sandbox_network = None
+        for net_name, net_info in networks.items():
+            if net_name.startswith("ai-osop-sandbox-"):
+                sandbox_network = net_info
+                break
+
+        if not sandbox_network:
+            raise SandboxException(f"Sandbox network not found for container {container.id}")
+
+        # Get bridge interface name from network ID
+        network_id = sandbox_network.get("NetworkID", "")
+        bridge_name = f"br-{sandbox_id[:12]}"
+
+        # 1. Resolve allowed domains to IPs
+        allowed_ips: set = set()
+        for ip_str in egress_policy.get("allowed_ips", []):
+            try:
+                allowed_ips.add(ipaddress.ip_network(ip_str, strict=False))
+            except ValueError:
+                pass
+
+        for domain in egress_policy.get("allowed_domains", []):
+            try:
+                addr_info = socket.getaddrinfo(domain, None, socket.AF_INET)
+                for _, _, _, _, sockaddr in addr_info:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                    allowed_ips.add(ipaddress.ip_network(f"{ip}/32"))
+            except (socket.gaierror, ValueError):
+                pass
+
+        # 2. Build iptables rules using a custom chain for easy cleanup
+        chain_name = f"AIOSOP-{sandbox_id[:12]}"
+        iptables_cmds = []
+
+        # Create custom chain
+        iptables_cmds.append(["iptables", "-N", chain_name])
+
+        # Jump from FORWARD to custom chain (insert at top)
+        iptables_cmds.append(
+            ["iptables", "-I", "FORWARD", "1", "-i", bridge_name, "-j", chain_name]
+        )
+
+        # Allow established/related
+        iptables_cmds.append(
+            [
+                "iptables",
+                "-A",
+                chain_name,
+                "-m",
+                "state",
+                "--state",
+                "ESTABLISHED,RELATED",
+                "-j",
+                "ACCEPT",
+            ]
+        )
+
+        # Allow DNS (UDP 53, TCP 53)
+        iptables_cmds.append(
+            ["iptables", "-A", chain_name, "-p", "udp", "--dport", "53", "-j", "ACCEPT"]
+        )
+        iptables_cmds.append(
+            ["iptables", "-A", chain_name, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]
+        )
+
+        # Allow loopback (for containers on same network talking to each other)
+        iptables_cmds.append(["iptables", "-A", chain_name, "-d", "127.0.0.1/8", "-j", "ACCEPT"])
+
+        # Allow explicitly permitted IPs
+        for ip_net in allowed_ips:
+            iptables_cmds.append(["iptables", "-A", chain_name, "-d", str(ip_net), "-j", "ACCEPT"])
+
+        # Drop everything else
+        iptables_cmds.append(["iptables", "-A", chain_name, "-j", "DROP"])
+
+        # Apply rules
+        for cmd in iptables_cmds:
+            subprocess.run(cmd, check=False, capture_output=True)
+
+        # 3. Store network info for cleanup
+        self._active_sandboxes[sandbox_id]["network"] = {
+            "bridge": bridge_name,
+            "chain": chain_name,
+        }
 
     async def execute_in_sandbox(
         self, sandbox_id: str, command: List[str], timeout: int = 300
@@ -345,21 +497,57 @@ class SandboxManager:
             }
 
     async def destroy_sandbox(self, sandbox_id: str) -> None:
-        """Destroy sandbox and clean up resources."""
+        """Destroy sandbox and clean up network + iptables resources."""
         sandbox = self._active_sandboxes.pop(sandbox_id, None)
         if not sandbox:
             return
+
+        import subprocess
 
         import docker
 
         client = docker.from_env()
 
+        # 1. Remove iptables rules first (while container still exists)
+        net_info = sandbox.get("network", {})
+        chain_name = net_info.get("chain")
+        bridge_name = net_info.get("bridge")
+
+        if chain_name and bridge_name:
+            # Remove jump rule from FORWARD chain
+            subprocess.run(
+                ["iptables", "-D", "FORWARD", "-i", bridge_name, "-j", chain_name],
+                check=False,
+                capture_output=True,
+            )
+            # Flush and delete custom chain
+            subprocess.run(
+                ["iptables", "-F", chain_name],
+                check=False,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["iptables", "-X", chain_name],
+                check=False,
+                capture_output=True,
+            )
+
+        # 2. Remove container
         try:
             container = client.containers.get(sandbox["container_id"])
             container.stop(timeout=10)
             container.remove(force=True)
         except Exception:
             pass
+
+        # 3. Remove Docker network
+        network_id = sandbox.get("network_id")
+        if network_id:
+            try:
+                network = client.networks.get(network_id)
+                network.remove()
+            except Exception:
+                pass
 
 
 class AuditIntegrity:
@@ -373,8 +561,9 @@ class AuditIntegrity:
     - Tamper detection
     """
 
-    def __init__(self, signing_key: bytes):
+    def __init__(self, signing_key: bytes, old_keys: Optional[List[bytes]] = None):
         self.signing_key = signing_key
+        self.old_keys = old_keys or []
         self._last_hash: Optional[str] = None
 
     def sign_event(self, event: AuditEvent) -> str:
@@ -401,11 +590,15 @@ class AuditIntegrity:
             if last_hash:
                 expected_data = f"{last_hash}:{expected_data}"
 
-            expected_hash = hmac.new(
-                self.signing_key, expected_data.encode(), hashlib.sha256
-            ).hexdigest()
+            keys_to_try = [self.signing_key] + self.old_keys
+            match_found = False
+            for key in keys_to_try:
+                expected_hash = hmac.new(key, expected_data.encode(), hashlib.sha256).hexdigest()
+                if expected_hash == event.integrity_hash:
+                    match_found = True
+                    break
 
-            if expected_hash != event.integrity_hash:
+            if not match_found:
                 return False
 
             last_hash = event.integrity_hash

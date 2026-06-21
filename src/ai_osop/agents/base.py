@@ -11,13 +11,18 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
+import structlog
+
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import AgentException, AgentTaskFailed
-from ai_osop.core.models import AuditEvent, SessionState, Task
+from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.observability import record_task
+from ai_osop.core.tracing import trace_span
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
 from ai_osop.memory.vector_memory import VectorMemory
+
+agent_logger = structlog.get_logger("ai_osop.agents")
 
 
 class AgentContext:
@@ -56,6 +61,15 @@ class AgentContext:
         self.current_task: Optional[Task] = None
         self.status = "idle"
         self.last_heartbeat = datetime.utcnow()
+        # PlaywrightAgent reads scope to scope-check before navigation.
+        # None is a valid "no scope override" signal.
+        self.scope: Optional[ScopeDefinition] = None
+        # task_executor is used by DifferentialAuthEngine for replay loops.
+        # PlaywrightAgent's navigate path doesn't require it.
+        self.task_executor: Optional[Callable] = None
+        self.skill_engine: Optional[Any] = None
+        self.persona: Optional[str] = None
+        self.cost_incurred: float = 0.0
 
 
 class BaseAgent(ABC):
@@ -75,12 +89,25 @@ class BaseAgent(ABC):
         self._task_queue: asyncio.Queue = asyncio.Queue()
         self._max_concurrent_tasks = 3
         self._active_tasks: Dict[str, asyncio.Task] = {}
+        # AIOSOP-AUDIT-2026-06-16: track the background worker/heartbeat loop
+        # handles so shutdown() can actually cancel them. Previously start()
+        # discarded these handles, leaking tasks (the worker blocks forever on
+        # _task_queue.get() and never observes _running=False).
+        self._bg_tasks: list[asyncio.Task] = []
+        # AIOSOP-AUDIT-2026-06-16: task ids whose skill activations were already
+        # recorded, so coverage can be extended to every agent without double-counting
+        # for agents (recon/vuln) that also resolve skills inside _execute.
+        self._activated_tasks: set = set()
 
     @property
     @abstractmethod
     def agent_type(self) -> AgentType:
         """Return the agent's type."""
         pass
+
+    def supports_task_type(self, task_type: str) -> bool:
+        """Check if this agent supports the specified task type."""
+        return True
 
     async def initialize(self) -> None:
         """Initialize agent state from persistent memory."""
@@ -98,9 +125,11 @@ class BaseAgent(ABC):
         self.ctx.status = "idle"
         self._running = True
 
-        # Start task worker and heartbeat loop
-        asyncio.create_task(self._task_worker())
-        asyncio.create_task(self._heartbeat_loop())
+        # Start task worker and heartbeat loop (retain handles for shutdown)
+        self._bg_tasks = [
+            asyncio.create_task(self._task_worker()),
+            asyncio.create_task(self._heartbeat_loop()),
+        ]
 
     async def _task_worker(self) -> None:
         """Background worker to process tasks from the queue."""
@@ -110,7 +139,7 @@ class BaseAgent(ABC):
                 await self.execute_task(task)
                 self._task_queue.task_done()
             except Exception as e:
-                print(f"Worker error in agent {self.ctx.agent_id}: {e}")
+                agent_logger.error("worker_error", agent_id=self.ctx.agent_id, error=str(e))
                 await asyncio.sleep(5)
 
     @abstractmethod
@@ -118,88 +147,175 @@ class BaseAgent(ABC):
         """Agent-specific resource initialization."""
         pass
 
+    # Hard ceiling for any single agent task. Long enough for real browser/scan
+    # work, short enough to prevent permanent hangs (Issue 3).
+    DEFAULT_TASK_TIMEOUT_SECONDS = 300
+
     async def execute_task(self, task: Task) -> Dict[str, Any]:
         """
         Execute a task with full lifecycle management.
 
         1. Validate task
         2. Load context
-        3. Execute (agent-specific)
+        3. Execute (agent-specific) UNDER A TIMEOUT
         4. Validate output
         5. Store results
         6. Audit logging
         """
-        self.ctx.current_task = task
-        self.ctx.status = "running"
+        with trace_span(
+            "agent.execute_task",
+            attributes={
+                "agent_id": self.ctx.agent_id,
+                "agent_type": self.ctx.agent_type.value,
+                "task_id": task.id,
+                "task_type": task.type,
+                "engagement_id": task.engagement_id,
+            },
+        ):
+            self.ctx.current_task = task
+            self.ctx.status = "running"
+            # Carry the per-task engagement_id into the context so all downstream
+            # graph + evidence writes use the correct scope (Issue 14 — evidence
+            # was previously landing under the agent's static "global" session).
+            self.ctx.session_id = task.engagement_id
 
-        target = task.payload.get("target") or task.payload.get("url") or task.payload.get("domain")
-        tool = self.ctx.agent_type.value
+            # PATCH (REL-029/030/031/033, 2026-06-15): Agents historically disagreed
+            # on payload shape (`url`/`target`/`target_url`/`domain`/`targets`/`vuln_class`/
+            # `vuln_type`). External callers (UI, CLI, audit scripts) couldn't predict the
+            # right key per agent, causing silent KeyError -> task failure. Normalize
+            # common aliases up front so individual agents can read whichever key they
+            # historically used. Keys are added only if missing; original keys preserved.
+            if isinstance(task.payload, dict):
+                p = task.payload
+                url_aliases = ("url", "target_url", "target", "domain")
+                resolved_url = next((p[k] for k in url_aliases if p.get(k)), None)
+                if resolved_url:
+                    for k in url_aliases:
+                        p.setdefault(k, resolved_url)
+                list_url = p.get("targets")
+                if not list_url and resolved_url:
+                    p.setdefault("targets", [resolved_url])
+                if isinstance(list_url, str):
+                    p["targets"] = [list_url]
+                vuln_aliases = ("vuln_type", "vuln_class")
+                resolved_vt = next((p[k] for k in vuln_aliases if p.get(k)), None)
+                if resolved_vt:
+                    for k in vuln_aliases:
+                        p.setdefault(k, resolved_vt)
+                p.setdefault("engagement_id", task.engagement_id)
 
-        # Rate Limiting
-        await self.ctx.rate_limiter.acquire(target=target, tool=tool)
-
-        task.started_at = datetime.utcnow()
-        start_time = time.monotonic()
-
-        try:
-            # Pre-execution validation
-            await self._validate_task(task)
-
-            # Execute agent-specific logic
-            result = await self._execute(task)
-
-            end_time = time.monotonic()
-            if target:
-                self.ctx.rate_limiter.record_backpressure(target, end_time - start_time)
-
-            # Post-execution validation
-            validated_result = await self._validate_output(result)
-
-            # Store results
-            task.result = validated_result
-            task.status = "completed"
-            task.completed_at = datetime.utcnow()
-
-            # Update working memory
-            self.ctx.task_history.append(task.id)
-            await self._update_working_memory(task, validated_result)
-
-            # Audit log
-            await self._log_task_completion(task, validated_result)
-            record_task(
-                task.status,
-                self.ctx.agent_type.value,
-                (
-                    (task.completed_at - task.started_at).total_seconds()
-                    if task.completed_at and task.started_at
-                    else 0.0
-                ),
+            target = (
+                task.payload.get("target") or task.payload.get("url") or task.payload.get("domain")
+            )
+            tool = self.ctx.agent_type.value
+            timeout_s = (
+                task.payload.get("task_timeout_seconds") or self.DEFAULT_TASK_TIMEOUT_SECONDS
             )
 
-            return validated_result
+            # Rate Limiting
+            await self.ctx.rate_limiter.acquire(target=target, tool=tool)
 
-        except Exception as e:
-            task.status = "failed"
-            task.retry_count += 1
-            task.completed_at = datetime.utcnow()
+            task.started_at = datetime.utcnow()
+            start_time = time.monotonic()
 
-            await self._log_task_failure(task, e)
+            try:
+                # Pre-execution validation
+                await self._validate_task(task)
 
-            if task.retry_count < task.max_retries:
-                # Schedule retry with exponential backoff
-                delay = 5 * (2**task.retry_count)
-                asyncio.create_task(self._schedule_retry(task, delay))
-            else:
-                raise AgentTaskFailed(
-                    f"Task {task.id} failed after {task.max_retries} retries: {e}"
+                # AIOSOP-AUDIT-2026-06-16: record skill activations for EVERY agent's
+                # task (not just recon/vuln). Feeds the now-durable reputation/effectiveness
+                # loop platform-wide. Idempotent + best-effort; never blocks execution.
+                try:
+                    await self._get_relevant_skills(task)
+                except Exception:
+                    pass
+
+                # Execute agent-specific logic under a hard timeout. An unbounded
+                # _execute previously left agents permanently "running" (Issue 3).
+                try:
+                    result = await asyncio.wait_for(self._execute(task), timeout=timeout_s)
+                except asyncio.TimeoutError as te:
+                    task.status = "failed"
+                    # P0-2: retry_count is owned solely by the orchestrator's _maybe_retry.
+                    # The agent no longer increments it (avoids double-counting).
+                    task.completed_at = datetime.utcnow()
+                    await self._log_task_failure(task, te)
+                    return {
+                        "status": "failed",
+                        "error": f"task timed out after {timeout_s}s",
+                        "error_type": "TimeoutError",
+                    }
+
+                end_time = time.monotonic()
+                if target:
+                    self.ctx.rate_limiter.record_backpressure(target, end_time - start_time)
+
+                # Post-execution validation
+                validated_result = await self._validate_output(result)
+
+                # PATCH (REL-017, 2026-06-15): If the agent returned an in-band
+                # failure dict (e.g. `{"status": "failed", "error": "..."}`), the
+                # old path still marked the task `completed` and wrote a
+                # `task_completed` audit event whose `error` field was the empty
+                # string from `_log_task_completion`. That hid root causes. Now we
+                # honor returned failure status by re-raising so the standard
+                # `_log_task_failure` path captures the error message.
+                if isinstance(validated_result, dict) and validated_result.get("status") in (
+                    "failed",
+                    "error",
+                ):
+                    err_msg = (
+                        validated_result.get("error")
+                        or "agent returned failure status without error message"
+                    )
+                    raise AgentException(str(err_msg))
+
+                # Store results
+                task.result = validated_result
+                task.status = "completed"
+                task.completed_at = datetime.utcnow()
+
+                # Update working memory
+                self.ctx.task_history.append(task.id)
+                await self._update_working_memory(task, validated_result)
+
+                # Audit log
+                await self._log_task_completion(task, validated_result)
+                record_task(
+                    task.status,
+                    self.ctx.agent_type.value,
+                    (
+                        (task.completed_at - task.started_at).total_seconds()
+                        if task.completed_at and task.started_at
+                        else 0.0
+                    ),
                 )
 
-            return {"status": "failed", "error": str(e)}
+                return validated_result
 
-        finally:
-            self.ctx.current_task = None
-            self.ctx.status = "idle"
-            self.ctx.last_heartbeat = datetime.utcnow()
+            except asyncio.CancelledError:
+                task.status = "failed"
+                task.result = {"error": "task cancelled", "error_type": "CancelledError"}
+                task.completed_at = datetime.utcnow()
+                raise
+            except Exception as e:
+                task.status = "failed"
+                # P0-2: retry_count owned solely by the orchestrator's _maybe_retry.
+                task.completed_at = datetime.utcnow()
+
+                await self._log_task_failure(task, e)
+
+                # P0-2 (single retry owner): the ORCHESTRATOR's _maybe_retry is the sole
+                # retry authority. The agent must NOT self-schedule a retry onto its
+                # internal _task_queue — doing so duplicated execution (e.g. an exploit
+                # ran twice) and double-counted retry_count. Return the failure dict so
+                # _execute_via_agent routes it through _maybe_retry exactly once.
+                return {"status": "failed", "error": str(e)}
+
+            finally:
+                self.ctx.current_task = None
+                self.ctx.status = "idle"
+                self.ctx.last_heartbeat = datetime.utcnow()
 
     @abstractmethod
     async def _execute(self, task: Task) -> Dict[str, Any]:
@@ -250,7 +366,12 @@ class BaseAgent(ABC):
 
     async def _log_task_completion(self, task: Task, result: Dict[str, Any]) -> None:
         """Write audit log for task completion."""
-        target = task.payload.get("target") or task.payload.get("domain") or task.payload.get("url") or "unknown"
+        target = (
+            task.payload.get("target")
+            or task.payload.get("domain")
+            or task.payload.get("url")
+            or "unknown"
+        )
         event = AuditEvent(
             event_type="task_completed",
             severity="info",
@@ -319,6 +440,17 @@ class BaseAgent(ABC):
         for task in self._active_tasks.values():
             task.cancel()
 
+        # Cancel background worker + heartbeat loops and await their teardown so
+        # they don't outlive the agent (AIOSOP-AUDIT-2026-06-16).
+        for bg in self._bg_tasks:
+            bg.cancel()
+        for bg in self._bg_tasks:
+            try:
+                await bg
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._bg_tasks = []
+
         # Persist final state
         await self.ctx.session_memory.store_agent_state(
             self.ctx.agent_id,
@@ -337,6 +469,73 @@ class BaseAgent(ABC):
     async def _cleanup_resources(self) -> None:
         """Agent-specific resource cleanup."""
         pass
+
+    async def observe(
+        self,
+        target_id: str,
+        obs_type: str,
+        data: Dict[str, Any],
+        confidence: float = 1.0,
+        provenance: str = "live",
+    ) -> Dict[str, Any]:
+        """Record an Observation to the coordination bus and audit log.
+        Returns the observation dict for downstream use."""
+        from ai_osop.core.models import Observation
+
+        obs = Observation(
+            type=obs_type,
+            source_agent_id=self.ctx.agent_id,
+            target_id=target_id,
+            data=data,
+            confidence=confidence,
+            provenance=provenance,
+            engagement_id=self.ctx.session_id,
+        )
+        try:
+            await self.ctx.coordination_bus.publish("observation", obs.dict(), self.ctx.agent_id)
+        except Exception:
+            pass
+        try:
+            await self.ctx.audit_callback(
+                AuditEvent(
+                    event_type="agent_observation",
+                    severity="info",
+                    actor_type="agent",
+                    actor_id=self.ctx.agent_id,
+                    action={"type": obs_type, "target": target_id},
+                    result={"confidence": confidence, "provenance": provenance},
+                    context={"data": data},
+                    engagement_id=self.ctx.session_id,
+                )
+            )
+        except Exception:
+            pass
+        return obs.dict()
+
+    async def think(self, context: str, skill_names: List[str]) -> str:
+        """Lightweight reasoning hook. Loads the named skills from the skills
+        directory and forwards their bodies to the model in the system prompt.
+        Returns the LLM completion text if a client is available, else ""."""
+        try:
+            skills_content = "\n\n".join([self._load_skill(s) for s in skill_names])
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are an AI {self.ctx.agent_type.value.replace('_', ' ').title()} Agent.\n\n"
+                        f"Use these skills:\n\n{skills_content}"
+                    ),
+                },
+                {"role": "user", "content": context},
+            ]
+            if hasattr(self.ctx.llm_client, "complete"):
+                result = await self.ctx.llm_client.complete(messages)
+                if isinstance(result, dict):
+                    return result.get("content", "")
+                return str(result)
+            return ""
+        except Exception:
+            return ""
 
     async def get_status(self) -> Dict[str, Any]:
         """Get current agent status."""
@@ -360,42 +559,83 @@ class BaseAgent(ABC):
         with open(skill_path, "r", encoding="utf-8") as f:
             return f.read()
 
-    def _get_relevant_skills(self, task: Task) -> List[str]:
-        """Dynamically resolve relevant skills for a task."""
+    async def _get_relevant_skills(self, task: Task) -> List[str]:
+        """Dynamically resolve relevant skills for a task.
+
+        Resolution order:
+          1. Static ``TASK_SKILL_MAP`` fast-path (curated skill ids per task type).
+          2. ``SkillEngine.rank_and_select`` (semantic; its ``tag_search`` fallback
+             works offline with no LLM/embeddings) when the engine is wired.
+          3. Filename substring matching over the skills directory.
+
+        Every resolved skill is recorded into the SkillEngine (stage="execution")
+        so ``usage_count`` / reputation reflect real activations.
+        """
         import os
+
         from ai_osop.core.config import TASK_SKILL_MAP
 
-        # 1. Check static configuration map
-        skills = TASK_SKILL_MAP.get(task.type, [])
-        if skills:
-            return skills
+        engine = getattr(self.ctx, "skill_engine", None)
 
-        # 2. Dynamic discovery: Check for exact match or substring match
-        skill_dir = os.path.join(os.path.dirname(__file__), "skills")
-        matched_skills = []
-        
-        # Normalize task type for matching (e.g., 'burp_scan' -> 'burp-scan')
-        normalized_type = task.type.lower().replace("_", "-")
-        search_terms = [normalized_type] + normalized_type.split("-")
-        
-        try:
-            for f in os.listdir(skill_dir):
-                if not f.endswith(".md"):
-                    continue
-                
-                skill_name = f[:-3]
-                
-                # Exact match
-                if skill_name == task.type or skill_name == normalized_type:
-                    return [skill_name]
-                    
-                # Keyword matching
-                for term in search_terms:
-                    if len(term) > 3 and term in skill_name:
-                        matched_skills.append(skill_name)
+        # 1. Static configuration map (fast-path)
+        selected = list(TASK_SKILL_MAP.get(task.type, []))
+
+        # 1b. Resolve any dead/unknown ids to real skills (AIOSOP-AUDIT-2026-06-16)
+        #     so they actually load and get recorded instead of failing silently.
+        if selected and engine is not None and hasattr(engine, "resolve_ids"):
+            try:
+                selected = engine.resolve_ids(selected)
+            except Exception as e:
+                agent_logger.warning("skill_engine_resolve_ids_failed", error=str(e))
+
+        # 2. SkillEngine ranking when unmapped
+        if not selected and engine is not None:
+            try:
+                context = f"{task.type} {task.payload}"
+                ranked = await engine.rank_and_select(task.type, context, self.ctx.agent_id)
+                selected = [s["id"] for s in ranked if s.get("id")]
+            except Exception as e:
+                agent_logger.warning("skill_engine_rank_and_select_failed", error=str(e))
+
+        # 3. Filename substring fallback
+        if not selected:
+            skill_dir = os.path.join(os.path.dirname(__file__), "skills")
+            normalized_type = task.type.lower().replace("_", "-")
+            search_terms = [normalized_type] + normalized_type.split("-")
+            matched: List[str] = []
+            try:
+                for f in os.listdir(skill_dir):
+                    if not f.endswith(".md"):
+                        continue
+                    skill_name = f[:-3]
+                    if skill_name == task.type or skill_name == normalized_type:
+                        matched = [skill_name]
                         break
-        except Exception as e:
-            print(f"WARN: Error during dynamic skill discovery: {e}")
+                    for term in search_terms:
+                        if len(term) > 3 and term in skill_name:
+                            matched.append(skill_name)
+                            break
+            except Exception as e:
+                agent_logger.warning("dynamic_skill_discovery_error", error=str(e))
+            selected = matched[:3]
 
-        # Return up to 3 dynamically matched skills to avoid overwhelming the context window
-        return matched_skills[:3]
+        # Record usage so SkillEngine reputation/effectiveness reflect reality.
+        # Idempotent per task id so the base-agent activation hook (which runs for
+        # EVERY agent) and recon/vuln's own call don't double-count.
+        if engine is not None and task.id not in self._activated_tasks:
+            self._activated_tasks.add(task.id)
+            if len(self._activated_tasks) > 5000:
+                self._activated_tasks.clear()
+                self._activated_tasks.add(task.id)
+            for sid in selected:
+                try:
+                    engine.record_execution(
+                        sid,
+                        self.ctx.agent_id,
+                        reason=f"selected for task {task.type}",
+                        stage="execution",
+                    )
+                except Exception:
+                    pass
+
+        return selected

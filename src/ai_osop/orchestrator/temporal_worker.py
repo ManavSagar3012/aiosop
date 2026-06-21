@@ -97,6 +97,30 @@ class TemporalTaskScheduler:
         return workflow_id
 
 
+class TaskActivities:
+    """Class wrapper for Temporal activities using orchestrator context."""
+
+    def __init__(self, orchestrator: Any):
+        self.orchestrator = orchestrator
+
+    async def execute_task_activity(self, task_data: dict) -> dict:
+        try:
+            from ai_osop.core.models import Task
+
+            task = Task(**task_data)
+            result = await self.orchestrator._execute_task_durable(task)
+            return result
+        except Exception as e:
+            return {"status": "failed", "error": str(e)}
+
+
+if workflow is not None:
+    # Decorate TaskActivities.execute_task_activity as a Temporal activity
+    TaskActivities.execute_task_activity = workflow.activity.defn(name="execute_task_activity")(
+        TaskActivities.execute_task_activity
+    )
+
+
 async def run_worker(activities: Optional[list[Any]] = None) -> None:
     """Run a Temporal worker for AI-OSOP task workflows."""
     if Worker is None:

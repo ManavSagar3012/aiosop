@@ -135,7 +135,7 @@ class PayloadMutationAgent(BaseAgent):
     async def initialize(self) -> None:
         """Initialize agent state from persistent memory."""
         await super().initialize()
-        
+
         # Subscribe to feedback
         asyncio.create_task(self._listen_for_feedback())
 
@@ -146,8 +146,38 @@ class PayloadMutationAgent(BaseAgent):
 
     async def _process_feedback(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Process results from ExploitValidationAgent to update memory."""
-        raw_payload = Payload.parse_obj(payload["payload"])
-        result = payload["result"]  # Output from ExploitValidationAgent
+        raw_payload_data = payload.get("payload")
+        if not raw_payload_data:
+            # PATCH (REL-022, 2026-06-15): was `from src.ai_osop.orchestrator.logging
+            # import get_logger` — wrong path (src. prefix + module doesn't exist).
+            import logging
+
+            logging.getLogger(__name__).warning("Feedback payload has no 'payload' content.")
+            return payload
+
+        try:
+            if isinstance(raw_payload_data, dict):
+                raw_payload = Payload.parse_obj(raw_payload_data)
+            else:
+                # PATCH (REL-036, 2026-06-15): Was `from ai_osop.payload_engine.engine
+                # import Payload` here. That local import creates a function-scoped
+                # binding for `Payload`, which made the `if` branch above raise
+                # `UnboundLocalError: cannot access local variable 'Payload'`. Use
+                # the module-level import (from ai_osop.core.models) instead — it's
+                # already imported at the top of the file.
+                raw_payload = Payload(model_type="unknown", payload_string=str(raw_payload_data))
+        except Exception as e:
+            # PATCH (REL-022, 2026-06-15): Was `from src.ai_osop.orchestrator.logging
+            # import get_logger`. That import is wrong on two counts: (1) the `src.`
+            # prefix breaks when the package is installed (which it is); (2) the
+            # `ai_osop.orchestrator.logging` module doesn't exist. Use stdlib logging.
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error parsing payload for feedback: {e}")
+            return payload
+
+        result = payload.get("result", {})
 
         # Calculate fitness
         fitness = self.engine.fitness_evaluator.evaluate(

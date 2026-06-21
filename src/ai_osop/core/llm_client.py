@@ -6,9 +6,12 @@ Standardized interface for LLM completions and embeddings with fallback routing.
 from typing import Any, Dict, List, Optional
 
 import litellm
+import structlog
 
 from ai_osop.core.config import settings
 from ai_osop.safety.prompt_defense import sanitize_messages
+
+llm_logger = structlog.get_logger("ai_osop.llm")
 
 
 class LiteLLMClient:
@@ -77,5 +80,5 @@ class LiteLLMClient:
             response = await litellm.aembedding(model=model, input=[text])
             return response["data"][0]["embedding"]
         except Exception as e:
-            print(f"ERROR: Failed to generate embedding: {e}")
+            llm_logger.error("embedding_generation_failed", error=str(e))
             return [0.0] * 1536

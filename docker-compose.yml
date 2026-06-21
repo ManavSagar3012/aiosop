@@ -17,7 +17,7 @@ services:
       - ai-osop
 
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: ai-osop-postgres
     ports:
       - "5432:5432"
@@ -46,7 +46,12 @@ services:
       dockerfile: Dockerfile
     container_name: ai-osop-api
     ports:
-      - "8080:8080"
+      # PATCH (REL-001, 2026-06-15): Was 8080:8080 — but :8080 is squatted by
+      # Oracle TNSLSNR/XDB on common dev hosts (TNS XDB picks 8080 by default).
+      # The real API uvicorn invocation (poetry run uvicorn ai_osop.api.main:app
+      # --port 8200) listens on :8200 and is what the runtime actually uses.
+      # Standardize on :8200 here so docker-compose matches reality.
+      - "8200:8200"
     environment:
       - OSOP_ENV=development
       - OSOP_NEO4J_URI=bolt://neo4j:7687

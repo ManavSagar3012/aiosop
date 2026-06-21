@@ -43,7 +43,7 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port: 8200
           initialDelaySeconds: 30
           periodSeconds: 10
 ---
@@ -57,6 +57,6 @@ spec:
     app: ai-osop
     component: agents
   ports:
-  - port: 8080
-    targetPort: 8080
+  - port: 8200
+    targetPort: 8200
   type: ClusterIP

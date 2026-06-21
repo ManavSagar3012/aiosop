@@ -136,6 +136,9 @@ class AttackChainAgent(BaseAgent):
 
     async def _validate_chain(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Validate a specific attack chain end-to-end."""
+        if not self.ctx.current_task:
+            return {"status": "error", "error": "No active task context"}
+
         path_id = payload["path_id"]
 
         # Retrieve path from graph
@@ -151,8 +154,10 @@ class AttackChainAgent(BaseAgent):
             if node and node.get("type") == "Vulnerability":
                 if not node.get("props", {}).get("validated", False):
                     # Fetch endpoint URL
-                    endpoint_url = await self.ctx.graph_memory.get_endpoint_url_for_vulnerability(node_id)
-                    
+                    endpoint_url = await self.ctx.graph_memory.get_endpoint_url_for_vulnerability(
+                        node_id
+                    )
+
                     # Schedule validation task for the exploit agent
                     task = Task(
                         type="validate_exploit",
@@ -161,7 +166,7 @@ class AttackChainAgent(BaseAgent):
                         payload={
                             "target": endpoint_url,
                             "vulnerability_id": node_id,
-                            "payload": "TBD", # Placeholder for now
+                            "payload": "TBD",  # Placeholder for now
                             "operator_approved": True,
                             "approval_id": f"sim-{node_id}",
                         },
@@ -208,6 +213,8 @@ class AttackChainAgent(BaseAgent):
         MATCH (a:Asset {engagement_id: $sid})
         RETURN a.id as id
         """
+        if not self.ctx.graph_memory or not self.ctx.graph_memory._driver:
+            return []
         ids = []
         async with self.ctx.graph_memory._driver.session() as session:
             result = await session.run(cypher, {"sid": engagement_id})

@@ -136,23 +136,42 @@ class ReportingAgent(BaseAgent):
 
         graph_html = self.exporter.render_attack_graph(graph_data, engagement_id)
 
-        # 5. Save generated assets
+        # 5. Save generated assets — in-memory AND on disk so the report
+        # survives restart and operators can inspect drafts before approval.
         report_id = f"report-{engagement_id}-{version}"
+        json_blob = self.exporter.export_json(report_context)
         self.generated_reports[report_id] = {
             "markdown": full_md,
             "html": html_report,
             "graph_html": graph_html,
-            "json": self.exporter.export_json(report_context),
+            "json": json_blob,
         }
 
-        # The task requires approval to export/finalize
+        import os
+
+        reports_dir = os.path.join("reports", engagement_id)
+        os.makedirs(reports_dir, exist_ok=True)
+        artifacts: Dict[str, str] = {}
+        for ext, content in (
+            ("md", full_md),
+            ("html", html_report),
+            ("graph.html", graph_html),
+            ("json", json_blob),
+        ):
+            path = os.path.join(reports_dir, f"{report_id}.{ext}")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            artifacts[ext] = os.path.abspath(path)
+
         return {
             "status": "success",
             "report_id": report_id,
             "version": version,
             "findings_included": len(findings),
             "requires_approval": True,
-            "message": "Report generated and awaiting operator sign-off before export.",
+            "report_paths": artifacts,
+            "report_path": artifacts["json"],
+            "message": "Report drafts persisted to disk; awaiting operator sign-off before final export.",
         }
 
     async def _compile_evidence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
