@@ -88,8 +88,14 @@ async def transition_phase(
     try:
         session = await state["orchestrator"].transition_phase(session_id, phase)
         return session
-    except Exception as e:
+    except WorkflowException as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except WorkflowTransitionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        import logging
+        logging.getLogger("ai_osop.api.engagements").exception("transition_phase_failed")
+        raise HTTPException(status_code=400, detail="Phase transition failed")
 
 
 @router.post("/{session_id}/halt")

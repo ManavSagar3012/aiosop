@@ -199,7 +199,12 @@ async def assert_engagement_access(operator: Dict[str, Any], session_id: str) ->
     if role == "senior_operator":
         return session
 
-    if session.created_by and session.created_by == operator.get("sub"):
+    if session.created_by is None:
+        raise HTTPException(
+            status_code=403, detail="Engagement has no owner and cannot be accessed"
+        )
+
+    if session.created_by == operator.get("sub"):
         return session
 
     raise HTTPException(

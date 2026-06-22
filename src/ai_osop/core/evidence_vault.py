@@ -60,7 +60,7 @@ class EvidenceVaultService:
                     audit_results["missing_artifacts"].append(pkg.id)
 
                 # 3. Mock Contamination Sweep
-                pkg_str = json.dumps(pkg.dict()).upper()
+                pkg_str = json.dumps(pkg.model_dump()).upper()
                 if any(m in pkg_str for m in ["MOCK", "SIMULATED", "PLACEHOLDER", "FAKE"]):
                     audit_results["mock_contamination"].append(pkg.id)
 

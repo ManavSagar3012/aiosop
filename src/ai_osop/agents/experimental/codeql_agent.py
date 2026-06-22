@@ -133,7 +133,7 @@ class CodeQLAgent(BaseAgent):
                         endpoint_id=endpoint_id,
                         tool_source="CodeQL",
                         engagement_id=self.ctx.session_id,
-                        evidence={"file": file_path, "line": finding["line"]},
+                        evidence=[{"file": file_path, "line": finding["line"]}],
                     )
 
                     await self.ctx.graph_memory.add_vulnerability(vuln)

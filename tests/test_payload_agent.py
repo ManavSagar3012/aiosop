@@ -83,7 +83,7 @@ async def test_process_feedback(mock_context):
         priority=5,
         agent_type=AgentType.PAYLOAD_MUTATION,
         payload={
-            "payload": payload_obj.dict(),
+            "payload": payload_obj.model_dump(),
             "result": {"status": "success", "waf_blocked": False, "target": "example.com"},
         },
         engagement_id="test-session",
@@ -120,7 +120,7 @@ async def test_evolve_population(mock_context):
         payload={
             "vuln_type": "sqli",
             "context": {},
-            "population": [mock_payload.dict()],
+            "population": [mock_payload.model_dump()],
             "generations": 2,
         },
         engagement_id="test-session",

@@ -174,7 +174,7 @@ class AttackChainAgent(BaseAgent):
                     )
                     # Push to orchestrator task queue
                     await self.ctx.session_memory.push_task_queue(
-                        f"tasks:{self.ctx.current_task.engagement_id}", task.dict()
+                        f"tasks:{self.ctx.current_task.engagement_id}", task.model_dump()
                     )
                     validation_results.append(
                         {"node_id": node_id, "status": "validation_scheduled", "task_id": task.id}

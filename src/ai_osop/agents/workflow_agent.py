@@ -72,7 +72,7 @@ class PlaywrightAgent(BaseAgent):
         """Execute browser intelligence tasks."""
         print(f"DEBUG: Agent {self.ctx.agent_id} entering _execute for task {task.id}")
         if self.ctx.scope:
-            await self.browser_adapter.initialize(self.ctx.scope.dict(), self.ctx.session_id)
+            await self.browser_adapter.initialize(self.ctx.scope.model_dump(), self.ctx.session_id)
 
         task_type = task.type
         payload = task.payload
@@ -123,7 +123,7 @@ class PlaywrightAgent(BaseAgent):
         return {
             "status": "success",
             "findings_count": len(findings),
-            "findings": [f.dict() for f in findings],
+            "findings": [f.model_dump() for f in findings],
         }
 
     async def _execute_run_diff_auth_analysis(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -766,7 +766,7 @@ class PlaywrightAgent(BaseAgent):
             extracted.append(element)
 
             # Emit as observation for AttackChainAgent
-            await self.observe(target_id=page_url, obs_type="ui_semantics", data=element.dict())
+            await self.observe(target_id=page_url, obs_type="ui_semantics", data=element.model_dump())
 
         return {"status": "success", "elements_found": len(extracted), "url": page_url}
 

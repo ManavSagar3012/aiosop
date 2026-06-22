@@ -35,7 +35,7 @@ class SessionMemoryMCPAdapter:
                 engagement_id=engagement_id, event_types=event_types, limit=limit
             )
         )
-        return [event.dict() if isinstance(event, AuditEvent) else dict(event) for event in events]
+        return [event.model_dump() if isinstance(event, AuditEvent) else dict(event) for event in events]
 
     async def write_audit_event(self, event: AuditEvent) -> Dict[str, Any]:
         """Write an audit event."""

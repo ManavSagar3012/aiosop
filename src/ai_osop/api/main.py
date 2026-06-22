@@ -16,6 +16,7 @@ REFACTOR (2026-06-19): Decomposed from 1,539-line monolith into router modules:
 import asyncio
 import json
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -27,6 +28,8 @@ from starlette.responses import JSONResponse
 
 from ai_osop.adapters.threat_intel_mcp import ThreatIntelAdapter
 from ai_osop.api.deps import require_role, state, verify_token
+from ai_osop.api.middleware import CorrelationIdMiddleware
+from ai_osop.api.health import router as health_router
 
 # Router imports
 from ai_osop.api.routers import (
@@ -43,6 +46,8 @@ from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import settings
 from ai_osop.core.llm_client import LiteLLMClient
 from ai_osop.core.observability import render_prometheus, update_active_agents
+from ai_osop.core.metrics import BUILD_INFO, REQUESTS_TOTAL, REQUEST_DURATION, ERRORS_TOTAL
+from prometheus_client import CONTENT_TYPE_LATEST
 from ai_osop.core.tracing import init_tracing, trace_span
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
@@ -290,6 +295,9 @@ async def lifespan(app: FastAPI):
         # 10. Bind to shared state dict so routers see the live values
         state["orchestrator"] = orch
 
+        # 11. Set build info for metrics
+        BUILD_INFO.info({"version": "3.0", "git_sha": "2bb4379"})
+
     logger.info("AI-OSOP API startup complete.")
     yield
 
@@ -328,11 +336,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 # Audit Logging Middleware (P2 fix)
 class AuditLogMiddleware(BaseHTTPMiddleware):
-    """Log all state-changing API requests with operator and engagement context."""
+    """Log all state-changing API requests with operator and engagement context.
+
+    Includes request_id from CorrelationIdMiddleware for full trace/log correlation.
+    """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         response = await call_next(request)
         method = request.method
+        request_id = getattr(request.state, "request_id", "unknown")
         if method in ("POST", "PUT", "PATCH", "DELETE"):
             op = request.scope.get("operator", {})
             operator_id = op.get("sub", "anonymous") if isinstance(op, dict) else "anonymous"
@@ -344,21 +356,58 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                 status_code=response.status_code,
                 user_agent=request.headers.get("user-agent", ""),
                 client_ip=request.client.host if request.client else "",
+                request_id=request_id,
             )
         return response
 
 
+class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
+    """Track request counts, durations, and errors for Prometheus.
+
+    Prometheus metrics intentionally do NOT include request_id labels to avoid
+    high cardinality. Use traces (Jaeger/OTel) and logs (structlog) for
+    per-request correlation; metrics are for aggregate SLO monitoring.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        path = request.url.path
+        method = request.method
+        start = time.time()
+        response = None
+        try:
+            response = await call_next(request)
+        except Exception:
+            ERRORS_TOTAL.labels(status_code="500", path=path).inc()
+            raise
+        finally:
+            duration = time.time() - start
+            REQUEST_DURATION.labels(method=method, path=path).observe(duration)
+            status_code = str(response.status_code) if response is not None else "500"
+            REQUESTS_TOTAL.labels(method=method, path=path, status_code=status_code).inc()
+            if response is not None and response.status_code >= 400:
+                ERRORS_TOTAL.labels(status_code=str(response.status_code), path=path).inc()
+        return response
+
+
+# Middleware stack (applied in order: LAST added = OUTERMOST = first to execute):
+#   CorrelationIdMiddleware    → outermost: injects X-Request-ID, binds RequestContext, OTel span
+#   PrometheusMetricsMiddleware → counts/durations/errors (within trace context)
+#   AuditLogMiddleware          → audit log for state-changing requests (has request_id)
+#   SecurityHeadersMiddleware   → innermost: adds security headers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuditLogMiddleware)
+app.add_middleware(PrometheusMetricsMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
 
 # Register routers
+app.include_router(health_router)
 app.include_router(engagements.router)
 app.include_router(tasks.router)
 app.include_router(agents.router)
@@ -369,13 +418,7 @@ app.include_router(intelligence.router)
 app.include_router(system.router)
 
 
-# ============== Health & Metrics (protected) ==============
-
-
-@app.get("/health")
-async def health(operator: Dict[str, Any] = Depends(verify_token)):
-    """Health check endpoint."""
-    return {"status": "healthy"}
+# ============== Metrics (protected) ==============
 
 
 @app.get("/metrics")
@@ -388,7 +431,7 @@ async def metrics(operator: Dict[str, Any] = Depends(require_role("senior_operat
 # ============== WebSocket (kept inline; needs auth via query param) ==============
 
 
-from ai_osop.api.deps import verify_token  # noqa: E402
+from ai_osop.api.deps import assert_engagement_access, verify_token  # noqa: E402
 
 
 @app.websocket("/ws/engagements/{engagement_id}")
@@ -406,6 +449,13 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
         operator = await verify_token(token=token)
     except HTTPException:
         await websocket.close(code=1008, reason="Invalid token")
+        return
+
+    # Ownership check: operator must own the engagement to receive real-time updates
+    try:
+        await assert_engagement_access(operator, engagement_id)
+    except HTTPException:
+        await websocket.close(code=1008, reason="Access denied")
         return
 
     orch = state["orchestrator"]

@@ -43,7 +43,7 @@ class SessionManager:
 
         # Store in hot memory (Redis) if available
         try:
-            await self.session_memory.store_hot(f"session:{session.id}", session.dict())
+            await self.session_memory.store_hot(f"session:{session.id}", session.model_dump())
         except Exception as e:
             print(f"DEBUG: Session store_hot failed (likely mock/test environment): {e}")
 
@@ -70,7 +70,7 @@ class SessionManager:
         Update session state (tokens, cookies, storage).
         """
         session.last_active = datetime.utcnow()
-        await self.session_memory.store_hot(f"session:{session.id}", session.dict())
+        await self.session_memory.store_hot(f"session:{session.id}", session.model_dump())
         self._active_sessions[session.id] = session
 
     async def check_drift(self, session_id: str, current_state: Dict[str, Any]) -> bool:

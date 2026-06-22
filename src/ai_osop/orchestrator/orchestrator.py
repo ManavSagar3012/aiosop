@@ -15,7 +15,21 @@ from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import ScopeException, WorkflowException, WorkflowTransitionError
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
-from ai_osop.core.tracing import trace_span
+from ai_osop.core.metrics import (
+    ACTIVE_ENGAGEMENTS,
+    ACTIVE_AGENT_COUNT,
+    PENDING_APPROVALS,
+    TASKS_BY_STATUS,
+    TASK_SCHEDULE_DURATION,
+    AGENT_EXECUTION_DURATION,
+    MCP_CALL_DURATION,
+    MCP_CIRCUIT_BREAKER_STATE,
+    MCP_ERRORS_TOTAL,
+    GRAPH_QUERY_DURATION,
+    LLM_CALL_DURATION,
+)
+from ai_osop.core.telemetry import RequestContext, inject_trace_context
+from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
@@ -204,7 +218,7 @@ class Orchestrator:
                     task.status = "pending"
                     task.assigned_agent_id = None
                 await self.session_memory.push_task_queue(
-                    f"tasks:{task.engagement_id}", task.dict()
+                    f"tasks:{task.engagement_id}", task.model_dump()
                 )
         except Exception as e:
             # Log but don't block startup — the orchestrator can still function
@@ -249,7 +263,7 @@ class Orchestrator:
                     severity="info",
                     actor_type="system",
                     actor_id="orchestrator",
-                    action={"scope": scope.dict(), "roe": roe},
+                    action={"scope": scope.model_dump(), "roe": roe},
                     result={"session_id": session.session_id},
                     context={"phase": session.phase},
                     engagement_id=scope.engagement_id,
@@ -311,7 +325,7 @@ class Orchestrator:
                     type="full_recon",
                     priority=5,
                     agent_type=AgentType.RECON,
-                    payload={"domain": domain, "scope": session.scope.dict()},
+                    payload={"domain": domain, "scope": session.scope.model_dump()},
                     engagement_id=session.session_id,
                 )
                 await self.schedule_task(task)
@@ -398,6 +412,16 @@ class Orchestrator:
 
     async def schedule_task(self, task: Task) -> Task:
         """Schedule a task for execution."""
+        # Sprint 6: propagate trace context into the task so the agent can continue the trace
+        if not task.trace_context:
+            inject_trace_context(task.trace_context)
+        # Also bind the task IDs into RequestContext for downstream logging
+        RequestContext.bind(
+            task_id=task.id,
+            engagement_id=task.engagement_id,
+            trace_id=task.trace_context.get("traceparent", "").split("-")[1] if task.trace_context.get("traceparent") else "",
+        )
+
         with trace_span(
             "orchestrator.schedule_task",
             attributes={
@@ -433,10 +457,10 @@ class Orchestrator:
             )
 
             # Store in hot memory
-            await self.session_memory.push_task_queue(f"tasks:{task.engagement_id}", task.dict())
+            await self.session_memory.push_task_queue(f"tasks:{task.engagement_id}", task.model_dump())
 
             if self.temporal_enabled and self.temporal_scheduler:
-                workflow_id = await self.temporal_scheduler.start_task_workflow(task.dict())
+                workflow_id = await self.temporal_scheduler.start_task_workflow(task.model_dump())
                 task.status = "scheduled"
                 task.result = {"workflow_id": workflow_id, "durable": True}
                 return task
@@ -656,8 +680,14 @@ class Orchestrator:
 
     async def _execute_via_agent(self, agent: Any, task: Task) -> None:
         """Execute task through assigned agent."""
-        with trace_span(
+        # Sprint 6: extract trace context from task to continue the trace
+        from ai_osop.core.telemetry import extract_trace_context
+
+        parent_span_context = extract_trace_context(task.trace_context)
+
+        with trace_span_with_parent(
             "orchestrator._execute_via_agent",
+            parent_span_context=parent_span_context,
             attributes={
                 "task_id": task.id,
                 "task_type": task.type,
@@ -1607,7 +1637,7 @@ class Orchestrator:
     async def _phase_monitor(self) -> None:
         """Monitor engagement phases and trigger auto-transitions."""
         tick = 0
-        while True:
+        while self._running:
             try:
                 await asyncio.sleep(10)
                 tick += 1

@@ -75,7 +75,7 @@ class GraphQLAgent(BaseAgent):
 
             # Emit observation
             await self.observe(
-                target_id=url, obs_type="gql_operation", data=op.dict(), provenance="live"
+                target_id=url, obs_type="gql_operation", data=op.model_dump(), provenance="live"
             )
 
         self.discovered_schemas[url] = schema

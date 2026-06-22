@@ -138,7 +138,7 @@ class VisualContextAgent(BaseAgent):
             await self.ctx.graph_memory.add_critical_operation(op)
 
             # Emit Observation
-            await self.observe(target_id=analysis.id, obs_type="critical_operation", data=op.dict())
+            await self.observe(target_id=analysis.id, obs_type="critical_operation", data=op.model_dump())
 
         self.analysis_history.append(analysis)
 

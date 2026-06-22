@@ -14,7 +14,7 @@ import redis.asyncio as redis
 from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 from ai_osop.core.config import settings
@@ -150,7 +150,7 @@ class SessionMemory:
     async def store_session_state(self, state: SessionState) -> None:
         """Store active session state in Redis."""
         key = f"session:{state.session_id}"
-        await self.store_hot(key, state.dict(), ttl=86400)
+        await self.store_hot(key, state.model_dump(), ttl=86400)
 
     async def get_session_state(self, session_id: str) -> Optional[SessionState]:
         """Retrieve active session state from Redis."""
@@ -201,7 +201,7 @@ class SessionMemory:
                 insert(SessionStateORM)
                 .values(
                     session_id=state.session_id,
-                    scope=state.scope.dict(),
+                    scope=state.scope.model_dump(),
                     roe=state.roe,
                     phase=state.phase,
                     agents=state.agents,
@@ -214,7 +214,7 @@ class SessionMemory:
                 .on_conflict_do_update(
                     index_elements=["session_id"],
                     set_={
-                        "scope": state.scope.dict(),
+                        "scope": state.scope.model_dump(),
                         "phase": state.phase,
                         "agents": state.agents,
                         "checkpoint_id": state.checkpoint_id,
@@ -345,7 +345,7 @@ class SessionMemory:
     async def store_approval_request(self, request: ApprovalRequest) -> None:
         """Persist approval request to hot + warm tier."""
         # Hot tier (Redis)
-        await self.store_hot(f"approval:{request.id}", request.dict(), ttl=86400 * 7)
+        await self.store_hot(f"approval:{request.id}", request.model_dump(), ttl=86400 * 7)
         # Warm tier (Postgres)
         async with self._async_session() as session:
             stmt = (
@@ -443,7 +443,7 @@ class SessionMemory:
     async def store_task(self, task: Task) -> None:
         """Persist task to hot + warm tier."""
         # Hot tier (Redis)
-        await self.store_hot(f"task:{task.id}", task.dict(), ttl=86400 * 7)
+        await self.store_hot(f"task:{task.id}", task.model_dump(), ttl=86400 * 7)
         # Warm tier (Postgres)
         async with self._async_session() as session:
             stmt = (
@@ -565,7 +565,7 @@ class SessionMemory:
         checkpoint_data = {
             "checkpoint_id": checkpoint_id,
             "session_id": session_id,
-            "state": state.dict(),
+            "state": state.model_dump(),
             "metadata": metadata,
             "created_at": datetime.utcnow().isoformat(),
         }

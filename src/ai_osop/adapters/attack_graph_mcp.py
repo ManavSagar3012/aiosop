@@ -39,7 +39,7 @@ class AttackGraphMCPAdapter:
                 min_confidence=min_confidence,
             )
         )
-        return [path.dict() for path in paths]
+        return [path.model_dump() for path in paths]
 
     async def propagate_risk(self, exploit_id: str, impact_score: float) -> Dict[str, Any]:
         """Propagate risk from a validated exploit through the graph."""

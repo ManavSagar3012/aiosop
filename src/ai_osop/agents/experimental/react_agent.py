@@ -65,7 +65,7 @@ class ReactSpecialistAgent(BaseAgent):
             # PATCH (REL-034, 2026-06-15): self.context -> self.ctx.
             adapter = SourceMapMCPAdapter(self.ctx.mcp_registry)
             await adapter.initialize(
-                self.ctx.scope.dict() if self.ctx.scope else {},
+                self.ctx.scope.model_dump() if self.ctx.scope else {},
                 self.ctx.session_id,
             )
             result = await adapter.fetch_and_parse_sourcemap(target_url)

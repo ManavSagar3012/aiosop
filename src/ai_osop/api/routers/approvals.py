@@ -22,7 +22,7 @@ router = APIRouter(prefix="/approvals", tags=["approvals"])
 async def list_pending_approvals(operator: Dict[str, Any] = Depends(verify_token)):
     """List all pending approval requests visible to the operator."""
     pending = [
-        req.dict()
+        req.model_dump()
         for req in state["orchestrator"]._approval_requests.values()
         if req.status == "pending"
     ]

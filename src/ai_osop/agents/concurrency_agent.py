@@ -60,7 +60,7 @@ class ConcurrencyAgent(BaseAgent):
 
             adapter = TurboIntruderMCPAdapter(self.ctx.mcp_registry)
             await adapter.initialize(
-                self.ctx.scope.dict() if self.ctx.scope else {},
+                self.ctx.scope.model_dump() if self.ctx.scope else {},
                 self.ctx.session_id,
             )
 
@@ -138,7 +138,7 @@ class ConcurrencyAgent(BaseAgent):
 
             adapter = TurboIntruderMCPAdapter(self.ctx.mcp_registry)
             await adapter.initialize(
-                self.ctx.scope.dict() if self.ctx.scope else {},
+                self.ctx.scope.model_dump() if self.ctx.scope else {},
                 self.ctx.session_id,
             )
 

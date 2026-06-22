@@ -17,7 +17,8 @@ from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import AgentException, AgentTaskFailed
 from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.observability import record_task
-from ai_osop.core.tracing import trace_span
+from ai_osop.core.telemetry import RequestContext, extract_trace_context
+from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
 from ai_osop.memory.vector_memory import VectorMemory
@@ -162,8 +163,17 @@ class BaseAgent(ABC):
         5. Store results
         6. Audit logging
         """
-        with trace_span(
+        # Sprint 6: extract trace context from task to continue the distributed trace
+        parent_span_context = extract_trace_context(task.trace_context)
+        RequestContext.bind(
+            task_id=task.id,
+            engagement_id=task.engagement_id,
+            trace_id=task.trace_context.get("traceparent", "").split("-")[1] if task.trace_context.get("traceparent") else "",
+        )
+
+        with trace_span_with_parent(
             "agent.execute_task",
+            parent_span_context=parent_span_context if parent_span_context.is_valid else None,
             attributes={
                 "agent_id": self.ctx.agent_id,
                 "agent_type": self.ctx.agent_type.value,
@@ -316,6 +326,7 @@ class BaseAgent(ABC):
                 self.ctx.current_task = None
                 self.ctx.status = "idle"
                 self.ctx.last_heartbeat = datetime.utcnow()
+                RequestContext.clear()
 
     @abstractmethod
     async def _execute(self, task: Task) -> Dict[str, Any]:
@@ -492,7 +503,7 @@ class BaseAgent(ABC):
             engagement_id=self.ctx.session_id,
         )
         try:
-            await self.ctx.coordination_bus.publish("observation", obs.dict(), self.ctx.agent_id)
+            await self.ctx.coordination_bus.publish("observation", obs.model_dump(), self.ctx.agent_id)
         except Exception:
             pass
         try:
@@ -510,7 +521,7 @@ class BaseAgent(ABC):
             )
         except Exception:
             pass
-        return obs.dict()
+        return obs.model_dump()
 
     async def think(self, context: str, skill_names: List[str]) -> str:
         """Lightweight reasoning hook. Loads the named skills from the skills

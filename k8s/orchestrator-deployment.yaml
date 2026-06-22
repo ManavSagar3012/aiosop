@@ -118,8 +118,8 @@ spec:
     app: ai-osop
     component: orchestrator
   ports:
-  - port: 80
-    targetPort: 8080
+  - port: 8200
+    targetPort: 8200
     name: http
   - port: 9090
     targetPort: 9090

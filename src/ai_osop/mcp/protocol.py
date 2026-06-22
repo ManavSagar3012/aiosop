@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 
 from ai_osop.core.exceptions import MCPConnectionError, MCPException, MCPTimeoutError
 from ai_osop.core.models import AuditEvent
+from ai_osop.core.telemetry import RequestContext
+from ai_osop.core.tracing import trace_span, trace_span_with_parent
 
 
 class MCPToolParameter(BaseModel):
@@ -165,7 +167,7 @@ class MCPConnection:
 
         try:
             async with self._session.post(
-                f"http://{self.host}:{self.port}/mcp/initialize", json=request.dict()
+                f"http://{self.host}:{self.port}/mcp/initialize", json=request.model_dump()
             ) as resp:
                 data = await resp.json()
                 response = MCPInitializeResponse(**data)
@@ -179,7 +181,7 @@ class MCPConnection:
             raise MCPConnectionError(f"MCP server {self.server_id} initialize failed: {e}")
 
     async def execute(self, request: MCPExecuteRequest) -> MCPExecuteResponse:
-        """Execute a tool with timeout, error handling, and circuit breaker."""
+        """Execute a tool with timeout, error handling, circuit breaker, and tracing."""
         self._circuit_breaker_check()
         if self._circuit_open:
             return MCPExecuteResponse(
@@ -196,29 +198,38 @@ class MCPConnection:
 
         timeout = request.timeout_override or tool.timeout_seconds
 
-        try:
-            start = datetime.utcnow()
-            async with self._session.post(
-                f"http://{self.host}:{self.port}/mcp/execute",
-                json=request.dict(),
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as resp:
-                data = await resp.json()
-                elapsed = int((datetime.utcnow() - start).total_seconds() * 1000)
-                response = MCPExecuteResponse(**data)
-                response.execution_time_ms = elapsed
-                self._record_success()
-                return response
-        except asyncio.TimeoutError:
-            self._record_failure()
-            return MCPExecuteResponse(
-                request_id=request.request_id,
-                status="timeout",
-                error=f"Tool {request.tool_name} exceeded {timeout}s timeout",
-            )
-        except Exception as e:
-            self._record_failure()
-            return MCPExecuteResponse(request_id=request.request_id, status="error", error=str(e))
+        with trace_span(
+            f"mcp.{self.server_id}.{request.tool_name}",
+            attributes={
+                "ai_osop.mcp.server_id": self.server_id,
+                "ai_osop.mcp.tool_name": request.tool_name,
+                "ai_osop.mcp.host": self.host,
+                "ai_osop.mcp.port": self.port,
+            },
+        ):
+            try:
+                start = datetime.utcnow()
+                async with self._session.post(
+                    f"http://{self.host}:{self.port}/mcp/execute",
+                    json=request.model_dump(),
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    data = await resp.json()
+                    elapsed = int((datetime.utcnow() - start).total_seconds() * 1000)
+                    response = MCPExecuteResponse(**data)
+                    response.execution_time_ms = elapsed
+                    self._record_success()
+                    return response
+            except asyncio.TimeoutError:
+                self._record_failure()
+                return MCPExecuteResponse(
+                    request_id=request.request_id,
+                    status="timeout",
+                    error=f"Tool {request.tool_name} exceeded {timeout}s timeout",
+                )
+            except Exception as e:
+                self._record_failure()
+                return MCPExecuteResponse(request_id=request.request_id, status="error", error=str(e))
 
     async def get_state(self) -> MCPStateResponse:
         """Get current server state."""

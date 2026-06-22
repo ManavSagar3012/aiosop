@@ -155,6 +155,8 @@ class Task(BaseModel):
     completed_at: Optional[datetime] = None
     engagement_id: str
     assigned_agent_id: Optional[str] = None
+    # Sprint 6: trace context propagation across async boundaries
+    trace_context: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ApprovalRequest(BaseModel):
