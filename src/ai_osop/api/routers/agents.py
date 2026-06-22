@@ -7,13 +7,13 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ai_osop.api.deps import AgentStatusResponse, state, update_active_agents, verify_token
+from ai_osop.api.deps import AgentStatusResponse, require_role, state, update_active_agents, verify_token
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
 @router.get("", response_model=List[AgentStatusResponse])
-async def list_agents(operator: Dict[str, Any] = Depends(verify_token)):
+async def list_agents(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
     """List all registered agents and their status."""
     agents = []
     for agent in state["orchestrator"]._agents.values():
@@ -24,7 +24,10 @@ async def list_agents(operator: Dict[str, Any] = Depends(verify_token)):
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+async def get_agent(
+    agent_id: str,
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
+):
     """Get specific agent status."""
     agent = state["orchestrator"]._agents.get(agent_id)
     if not agent:

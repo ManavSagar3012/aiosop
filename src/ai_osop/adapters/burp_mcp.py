@@ -37,7 +37,7 @@ class BurpMCPAdapter:
         """Initialize Burp MCP with scope and auth."""
         credentials = {}
         await self.registry.initialize_server(
-            self.SERVER_ID, scope=scope.dict(), credentials=credentials, session_id=session_id
+            self.SERVER_ID, scope=scope.model_dump(), credentials=credentials, session_id=session_id
         )
 
     async def scan_target(

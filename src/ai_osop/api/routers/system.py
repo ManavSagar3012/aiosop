@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
 
-from ai_osop.api.deps import state, verify_token
+from ai_osop.api.deps import require_role, state, verify_token
 from ai_osop.core.config import settings
 from ai_osop.core.observability import render_prometheus, update_active_agents
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 
 @router.get("/skills/stats")
-async def get_skill_stats(operator: Dict[str, Any] = Depends(verify_token)):
+async def get_skill_stats(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
     """SkillEngine reputation/usage stats, shaped for the UI skill store."""
     if state["skill_engine"] is None:
         return {
@@ -33,7 +33,7 @@ async def get_skill_stats(operator: Dict[str, Any] = Depends(verify_token)):
 
 
 @router.get("/config")
-async def get_system_config(operator: Dict[str, Any] = Depends(verify_token)):
+async def get_system_config(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
     """Get non-sensitive system configuration."""
     return {
         "env": settings.environment,
@@ -47,7 +47,7 @@ async def get_system_config(operator: Dict[str, Any] = Depends(verify_token)):
 
 
 @router.get("/sandbox/status")
-async def get_sandbox_status(operator: Dict[str, Any] = Depends(verify_token)):
+async def get_sandbox_status(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
     """Get execution sandbox health and guard status."""
     return {
         "runtime": settings.sandbox_runtime,

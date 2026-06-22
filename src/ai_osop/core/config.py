@@ -70,6 +70,7 @@ class VulnClass(str, Enum):
     INCIDENT_RESPONSE = "incident_response"
     THREAT_HUNTING = "threat_hunting"
     FORENSICS = "forensics"
+    SAST_SINK = "sast_sink"
 
 
 TASK_SKILL_MAP = {
@@ -305,6 +306,17 @@ class Settings(BaseSettings):
         default=["http://localhost:5173"],
         validation_alias="OSOP_CORS_ALLOWED_ORIGINS",
     )
+
+    # Observability (Sprint 6)
+    otel_enabled: bool = Field(default=False, validation_alias="OSOP_OTEL_ENABLED")
+    otel_endpoint: str = Field(default="localhost:4317", validation_alias="OSOP_OTEL_ENDPOINT")
+    otel_service_name: str = Field(default="ai-osop", validation_alias="OSOP_OTEL_SERVICE_NAME")
+    otel_environment: str = Field(default="dev", validation_alias="OSOP_OTEL_ENVIRONMENT")
+
+    correlation_id_enabled: bool = Field(default=True, validation_alias="OSOP_CORRELATION_ID_ENABLED")
+    metrics_enabled: bool = Field(default=True, validation_alias="OSOP_METRICS_ENABLED")
+    trace_propagation_enabled: bool = Field(default=True, validation_alias="OSOP_TRACE_PROPAGATION_ENABLED")
+    otel_sampling_rate: float = Field(default=1.0, validation_alias="OSOP_OTEL_SAMPLING_RATE")
 
     model_config = SettingsConfigDict(
         env_file=".env",

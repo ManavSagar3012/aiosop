@@ -41,6 +41,6 @@ ENV PYTHONUNBUFFERED=1
 # direct `poetry run uvicorn ... --port 8200` invocation used in production.
 EXPOSE 8200
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8200/health')" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8200/health', timeout=5)" || exit 1
 
 CMD ["uvicorn", "ai_osop.api.main:app", "--host", "0.0.0.0", "--port", "8200"]

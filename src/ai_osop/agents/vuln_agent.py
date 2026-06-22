@@ -286,7 +286,7 @@ class VulnAnalysisAgent(BaseAgent):
             "endpoints_count": len(all_endpoints),
             "reasoning": reasoning,
             "burp_error": burp_error,
-            "findings": [v.dict() for v in vulns],
+            "findings": [v.model_dump() for v in vulns],
         }
 
     async def _execute_intruder_fuzz(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -329,7 +329,7 @@ class VulnAnalysisAgent(BaseAgent):
                 "target": url,
                 "tab_name": tab_name,
                 "reasoning": reasoning,
-                "mcp_response": response.dict() if hasattr(response, "dict") else str(response),
+                "mcp_response": response.model_dump() if hasattr(response, "model_dump") else str(response),
             }
 
         except Exception as e:
@@ -392,7 +392,7 @@ class VulnAnalysisAgent(BaseAgent):
             "tool": "nuclei",
             "targets": targets,
             "findings_count": len(vulns),
-            "findings": [v.dict() for v in vulns],
+            "findings": [v.model_dump() for v in vulns],
         }
 
     async def _execute_correlation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -416,7 +416,7 @@ class VulnAnalysisAgent(BaseAgent):
             "status": "success",
             "correlations": correlations,
             "confirmed_findings": len(confirmed_findings),
-            "confirmed_details": [v.dict() for v in confirmed_findings],
+            "confirmed_details": [v.model_dump() for v in confirmed_findings],
         }
 
     async def _execute_triage(self, payload: Dict[str, Any]) -> Dict[str, Any]:

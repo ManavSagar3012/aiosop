@@ -64,7 +64,7 @@ class CloudSpecialistAgent(BaseAgent):
             # stores AgentContext as self.ctx; self.context is undefined).
             adapter = CloudMCPAdapter(self.ctx.mcp_registry)
             await adapter.initialize(
-                self.ctx.scope.dict() if self.ctx.scope else {},
+                self.ctx.scope.model_dump() if self.ctx.scope else {},
                 self.ctx.session_id,
             )
 

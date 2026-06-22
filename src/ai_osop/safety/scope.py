@@ -17,6 +17,9 @@ from ai_osop.core.exceptions import (
     ScopeValidationError,
 )
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition
+import structlog
+
+logger = structlog.get_logger()
 
 
 class ScopeEnforcer:
@@ -197,7 +200,7 @@ class ApprovalGate:
 
         # Store in hot memory
         await self.session_memory.store_hot(
-            f"approval:{request.id}", request.dict(), ttl=settings.approval_timeout_seconds + 300
+            f"approval:{request.id}", request.model_dump(), ttl=settings.approval_timeout_seconds + 300
         )
 
         return request
@@ -453,7 +456,9 @@ class SandboxManager:
 
         # Apply rules
         for cmd in iptables_cmds:
-            subprocess.run(cmd, check=False, capture_output=True)
+            result = subprocess.run(cmd, check=False, capture_output=True)
+            if result.returncode != 0:
+                logger.warning("iptables_rule_failed", cmd=cmd, stderr=result.stderr.decode()[:200])
 
         # 3. Store network info for cleanup
         self._active_sandboxes[sandbox_id]["network"] = {

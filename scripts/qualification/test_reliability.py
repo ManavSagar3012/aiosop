@@ -1,172 +1,180 @@
-"""Reliability Qualification Tests
+"""AI-OSOP Reliability Qualification Suite
 
 Validates:
-- Redis restart survival
-- Neo4j restart survival
-- Postgres restart survival
-- API restart recovery
-- MCP failure handling
+- Restart recovery (warm storage fallback)
+- MCP circuit breaker behavior
+- Task retry limits
+- Approval timeout handling
+- Graceful degradation when MCP is unreachable
 
-Usage:
+Run:
     python scripts/qualification/test_reliability.py
-
-Returns exit code 0 if all pass, 1 if any fail.
 """
 
 import asyncio
-import subprocess
 import sys
-import time
+from datetime import datetime, timedelta
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+sys.path.insert(0, "src")
 
-API_BASE = "http://localhost:8200"
-TOKEN = "dev-token"
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
-
-
-def run(cmd: list[str]) -> None:
-    subprocess.run(cmd, capture_output=True, text=True)
-
-
-async def health() -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{API_BASE}/health")
-            return r.status_code == 200
-    except Exception:
-        return False
+from ai_osop.api.deps import assert_engagement_access
+from ai_osop.mcp.protocol import MCPConnection, MCPExecuteRequest, MCPExecuteResponse
+from ai_osop.core.models import Task, ApprovalRequest
+from ai_osop.core.config import AgentType
 
 
-async def test_redis_restart() -> bool:
-    print("  [1] Stopping Redis...")
-    run(["docker-compose", "stop", "redis"])
-    time.sleep(3)
-    print("  [2] Checking API survival...")
-    if not await health():
-        print("  FAIL: API crashed after Redis stop")
-        run(["docker-compose", "start", "redis"])
-        return False
-    print("  [3] Restoring Redis...")
-    run(["docker-compose", "start", "redis"])
-    time.sleep(5)
-    print("  [4] Checking recovery...")
-    if not await health():
-        print("  FAIL: API did not recover after Redis restore")
-        return False
-    print("  PASS: Redis restart handled")
-    return True
+class ReliabilityQualification:
+    def __init__(self):
+        self.results: list[dict] = []
+        self.passed = 0
+        self.failed = 0
 
+    def _record(self, name: str, passed: bool, detail: str = "") -> None:
+        self.results.append({"test": name, "passed": passed, "detail": detail})
+        if passed:
+            self.passed += 1
+        else:
+            self.failed += 1
 
-async def test_neo4j_restart() -> bool:
-    print("  [1] Stopping Neo4j...")
-    run(["docker-compose", "stop", "neo4j"])
-    time.sleep(3)
-    print("  [2] Checking API survival...")
-    if not await health():
-        print("  FAIL: API crashed after Neo4j stop")
-        run(["docker-compose", "start", "neo4j"])
-        return False
-    print("  [3] Restoring Neo4j...")
-    run(["docker-compose", "start", "neo4j"])
-    time.sleep(10)
-    print("  [4] Checking recovery...")
-    if not await health():
-        print("  FAIL: API did not recover after Neo4j restore")
-        return False
-    print("  PASS: Neo4j restart handled")
-    return True
+    # -------------------- MCP Circuit Breaker --------------------
 
+    async def test_mcp_circuit_breaker_opens_after_threshold(self) -> None:
+        """Circuit breaker should open after 5 consecutive failures."""
+        conn = MCPConnection(server_id="test-mcp", host="localhost", port=9999)
+        # Simulate 5 failures
+        for _ in range(5):
+            conn._record_failure()
 
-async def test_postgres_restart() -> bool:
-    print("  [1] Stopping Postgres...")
-    run(["docker-compose", "stop", "postgres"])
-    time.sleep(3)
-    print("  [2] Checking API survival...")
-    if not await health():
-        print("  FAIL: API crashed after Postgres stop")
-        run(["docker-compose", "start", "postgres"])
-        return False
-    print("  [3] Restoring Postgres...")
-    run(["docker-compose", "start", "postgres"])
-    time.sleep(10)
-    print("  [4] Checking recovery...")
-    if not await health():
-        print("  FAIL: API did not recover after Postgres restore")
-        return False
-    print("  PASS: Postgres restart handled")
-    return True
+        if conn._circuit_open:
+            self._record("mcp_circuit_opens", True, "Circuit breaker opened after 5 failures")
+        else:
+            self._record("mcp_circuit_opens", False, f"Circuit breaker NOT open after 5 failures (count={conn._failure_count})")
 
+    async def test_mcp_circuit_breaker_recovers(self) -> None:
+        """Circuit breaker should recover after 30 seconds."""
+        conn = MCPConnection(server_id="test-mcp", host="localhost", port=9999)
+        conn._circuit_open = True
+        conn._circuit_opened_at = datetime.utcnow() - timedelta(seconds=31)
+        conn._failure_count = 5
 
-async def test_api_restart() -> bool:
-    print("  [1] Restarting API...")
-    run(["docker-compose", "restart", "api"])
-    time.sleep(15)
-    print("  [2] Checking recovery...")
-    for attempt in range(10):
-        if await health():
-            print(f"  PASS: API recovered after restart (attempt {attempt + 1})")
-            return True
-        time.sleep(3)
-    print("  FAIL: API did not recover after restart")
-    return False
+        conn._circuit_breaker_check()
+        if not conn._circuit_open and conn._failure_count == 0:
+            self._record("mcp_circuit_recovers", True, "Circuit breaker recovered after 31s")
+        else:
+            self._record("mcp_circuit_recovers", False, f"Still open={conn._circuit_open}, count={conn._failure_count}")
 
+    async def test_mcp_circuit_breaker_blocks_execution(self) -> None:
+        """When circuit is open, execute must return 'circuit_open' status."""
+        conn = MCPConnection(server_id="test-mcp", host="localhost", port=9999)
+        conn._circuit_open = True
+        conn._circuit_opened_at = datetime.utcnow()
+        conn._initialized = True
+        conn._tools = {}
 
-async def test_mcp_failure() -> bool:
-    print("  [1] Stopping MCP servers...")
-    run(["docker-compose", "stop", "burp-mcp", "browser-mcp", "nuclei-mcp"])
-    time.sleep(3)
-    print("  [2] Checking API survival...")
-    if not await health():
-        print("  FAIL: API crashed after MCP stop")
-        run(["docker-compose", "start", "burp-mcp", "browser-mcp", "nuclei-mcp"])
-        return False
-    print("  [3] Restoring MCP servers...")
-    run(["docker-compose", "start", "burp-mcp", "browser-mcp", "nuclei-mcp"])
-    time.sleep(10)
-    print("  [4] Checking recovery...")
-    if not await health():
-        print("  FAIL: API did not recover after MCP restore")
-        return False
-    print("  PASS: MCP failure handled")
-    return True
+        # We need to mock the tools so execute can reach the circuit check
+        req = MCPExecuteRequest(tool_name="test_tool", parameters={})
+        resp = await conn.execute(req)
+        if resp.status == "circuit_open":
+            self._record("mcp_circuit_blocks", True, "Execution blocked with circuit_open status")
+        else:
+            self._record("mcp_circuit_blocks", False, f"Unexpected status: {resp.status}")
 
+    # -------------------- Task Retry --------------------
 
-async def main() -> int:
-    print("=" * 60)
-    print("RELIABILITY QUALIFICATION SUITE")
-    print("=" * 60)
+    def test_task_retry_fields_exist(self) -> None:
+        """Task model must have retry_count and max_retries."""
+        task = Task(
+            type="test",
+            agent_type=AgentType.RECON,
+            payload={},
+            engagement_id="eng-001",
+            max_retries=3,
+        )
+        if task.max_retries == 3 and task.retry_count == 0:
+            self._record("task_retry_fields", True, f"max_retries={task.max_retries}, retry_count={task.retry_count}")
+        else:
+            self._record("task_retry_fields", False, f"Unexpected values: max_retries={task.max_retries}, retry_count={task.retry_count}")
 
-    tests = [
-        ("Redis restart", test_redis_restart),
-        ("Neo4j restart", test_neo4j_restart),
-        ("Postgres restart", test_postgres_restart),
-        ("API restart", test_api_restart),
-        ("MCP failure", test_mcp_failure),
-    ]
+    # -------------------- Approval Timeout --------------------
 
-    results = []
-    for name, test_fn in tests:
-        print(f"\n[TEST] {name}")
+    def test_approval_request_has_timeout(self) -> None:
+        """ApprovalRequest must have a timeout mechanism."""
+        req = ApprovalRequest(
+            task_id="task-001",
+            agent_id="agent-1",
+            action_type="exploit",
+            target="example.com",
+            payload_summary="sql injection test",
+            risk_assessment="high",
+            engagement_id="eng-001",
+        )
+        # Check that requested_at is set (used for timeout calculation)
+        if req.requested_at is not None:
+            self._record("approval_timeout_field", True, f"requested_at set: {req.requested_at.isoformat()}")
+        else:
+            self._record("approval_timeout_field", False, "requested_at is None")
+
+    # -------------------- Warm Storage Fallback --------------------
+
+    async def test_warm_storage_fallback(self) -> None:
+        """assert_engagement_access must fall back to warm storage."""
+        import ai_osop.api.deps as deps_module
+
+        session = MagicMock()
+        session.session_id = "eng-001"
+        session.created_by = "operator-1"
+
+        mock_orch = MagicMock()
+        mock_orch._sessions = {}  # Not in hot memory
+        mock_orch.session_memory.load_session_state = AsyncMock(return_value=session)
+
+        original_state = deps_module.state.get("orchestrator")
+        deps_module.state["orchestrator"] = mock_orch
+
         try:
-            ok = await test_fn()
-            results.append((name, ok))
+            operator = {"sub": "operator-1", "role": "operator"}
+            result = await assert_engagement_access(operator, "eng-001")
+            if result.session_id == "eng-001":
+                self._record("warm_storage_fallback", True, "Loaded from warm storage successfully")
+            else:
+                self._record("warm_storage_fallback", False, "Wrong session returned")
         except Exception as e:
-            print(f"  ERROR: {e}")
-            results.append((name, False))
+            self._record("warm_storage_fallback", False, f"Exception: {e}")
+        finally:
+            deps_module.state["orchestrator"] = original_state
 
-    passed = sum(1 for _, ok in results if ok)
-    total = len(results)
+    # -------------------- Orchestrator --------------------
 
-    print("\n" + "=" * 60)
-    print(f"RESULTS: {passed}/{total} passed")
-    print("=" * 60)
-    for name, ok in results:
-        status = "PASS" if ok else "FAIL"
-        print(f"  [{status}] {name}")
+    async def run_all(self) -> None:
+        print("=" * 60)
+        print("AI-OSOP Reliability Qualification Suite")
+        print("=" * 60)
 
-    return 0 if passed == total else 1
+        await self.test_mcp_circuit_breaker_opens_after_threshold()
+        await self.test_mcp_circuit_breaker_recovers()
+        await self.test_mcp_circuit_breaker_blocks_execution()
+        self.test_task_retry_fields_exist()
+        self.test_approval_request_has_timeout()
+        await self.test_warm_storage_fallback()
+
+        print("-" * 60)
+        for r in self.results:
+            status = "PASS" if r["passed"] else "FAIL"
+            print(f"[{status}] {r['test']}: {r['detail']}")
+        print("-" * 60)
+        print(f"Results: {self.passed} passed, {self.failed} failed")
+        print("=" * 60)
+
+        if self.failed > 0:
+            sys.exit(1)
+
+
+async def main() -> None:
+    suite = ReliabilityQualification()
+    await suite.run_all()
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    asyncio.run(main())

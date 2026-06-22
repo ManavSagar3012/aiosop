@@ -84,7 +84,7 @@ async def get_attack_paths(
     paths = await state["orchestrator"].graph_memory.find_attack_paths(
         entry_node_id=entry_node_id, goal_types=goal_types, max_depth=max_depth
     )
-    return [p.dict() for p in paths]
+    return [p.model_dump() for p in paths]
 
 
 @router.get("/intelligence/vulnerability-edu/{vuln_class}")

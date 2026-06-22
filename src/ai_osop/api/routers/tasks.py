@@ -7,7 +7,13 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ai_osop.api.deps import CreateTaskRequest, require_role, state, verify_token
+from ai_osop.api.deps import (
+    CreateTaskRequest,
+    assert_engagement_access,
+    require_role,
+    state,
+    verify_token,
+)
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 
@@ -20,6 +26,9 @@ async def create_task(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
 ):
     """Create and schedule a new task."""
+    # Ownership check: operator must own the engagement they're creating a task for
+    await assert_engagement_access(operator, request.engagement_id)
+
     try:
         agent_type = AgentType(request.agent_type)
     except ValueError:
@@ -40,9 +49,15 @@ async def create_task(
 
 
 @router.get("/{task_id}")
-async def get_task(task_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+async def get_task(
+    task_id: str,
+    operator: Dict[str, Any] = Depends(verify_token),
+):
     """Get task status and results."""
     task = state["orchestrator"]._tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    # Ownership check: operator must own the engagement this task belongs to
+    await assert_engagement_access(operator, task.engagement_id)
     return task

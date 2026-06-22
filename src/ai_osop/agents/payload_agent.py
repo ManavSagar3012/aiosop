@@ -93,13 +93,13 @@ class PayloadMutationAgent(BaseAgent):
 
         return {
             "status": "success",
-            "payloads": [p.dict() for p in refined_payloads],
+            "payloads": [p.model_dump() for p in refined_payloads],
             "semantic_hits": len(similar_payloads),
         }
 
     async def _mutate_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Mutate a specific payload (e.g., after a WAF block)."""
-        raw_payload = Payload.parse_obj(payload["payload"])
+        raw_payload = Payload.model_validate(payload["payload"])
         strategy = payload.get("strategy", "waf_bypass")
 
         mutated = await self.mcp_adapter.mutate_payload(
@@ -109,14 +109,14 @@ class PayloadMutationAgent(BaseAgent):
         return {
             "status": "success",
             "original_id": raw_payload.id,
-            "mutated_payload": mutated.dict(),
+            "mutated_payload": mutated.model_dump(),
         }
 
     async def _evolve_population(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Run evolutionary cycle on a payload group."""
         vuln_type = VulnClass(payload["vuln_type"])
         context = payload.get("context", {})
-        population = [Payload.parse_obj(p) for p in payload["population"]]
+        population = [Payload.model_validate(p) for p in payload["population"]]
 
         evolved = await self.engine.evolve_population(
             population=population,
@@ -129,7 +129,7 @@ class PayloadMutationAgent(BaseAgent):
             "status": "success",
             "evolved_count": len(evolved),
             "top_fitness": evolved[0].fitness_score if evolved else 0.0,
-            "population": [p.dict() for p in evolved],
+            "population": [p.model_dump() for p in evolved],
         }
 
     async def initialize(self) -> None:
@@ -157,7 +157,7 @@ class PayloadMutationAgent(BaseAgent):
 
         try:
             if isinstance(raw_payload_data, dict):
-                raw_payload = Payload.parse_obj(raw_payload_data)
+                raw_payload = Payload.model_validate(raw_payload_data)
             else:
                 # PATCH (REL-036, 2026-06-15): Was `from ai_osop.payload_engine.engine
                 # import Payload` here. That local import creates a function-scoped

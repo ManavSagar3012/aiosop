@@ -111,7 +111,7 @@ class ReconAgent(BaseAgent):
         return {
             "status": "success",
             "assets_discovered": len(assets),
-            "assets": [a.dict() for a in assets],
+            "assets": [a.model_dump() for a in assets],
             "domain": domain,
         }
 
