@@ -5,5 +5,6 @@ connection recovery utilities.
 """
 
 from ai_osop.reliability.dlq import DeadLetterQueue, DLQEntry
+from ai_osop.reliability.retry import retry_with_backoff, with_retry
 
-__all__ = ["DeadLetterQueue", "DLQEntry"]
+__all__ = ["DeadLetterQueue", "DLQEntry", "retry_with_backoff", "with_retry"]

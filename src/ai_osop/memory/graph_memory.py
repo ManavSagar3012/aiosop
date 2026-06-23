@@ -31,6 +31,7 @@ from ai_osop.core.models import (
     WorkflowTransition,
 )
 from ai_osop.core.tracing import trace_span
+from ai_osop.reliability.retry import retry_with_backoff
 
 
 class GraphMemory:
@@ -53,13 +54,26 @@ class GraphMemory:
         self._initialized = False
 
     async def connect(self) -> None:
-        """Initialize Neo4j connection."""
-        self._driver = AsyncGraphDatabase.driver(
-            settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
+        """Initialize Neo4j connection with exponential backoff retry.
+
+        Sprint 7: Survives Neo4j restarts during startup without crashing the platform.
+        """
+
+        async def _connect() -> None:
+            self._driver = AsyncGraphDatabase.driver(
+                settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
+            )
+            await self._driver.verify_connectivity()
+            self._initialized = True
+
+        await retry_with_backoff(
+            _connect,
+            max_retries=5,
+            base_delay=1.0,
+            max_delay=30.0,
+            exceptions=(Neo4jServiceUnavailable, Exception),
+            retry_name="neo4j.connect",
         )
-        # Verify connectivity
-        await self._driver.verify_connectivity()
-        self._initialized = True
 
         # Create indexes and constraints
         await self._setup_schema()

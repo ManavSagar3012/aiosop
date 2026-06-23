@@ -28,6 +28,7 @@ from ai_osop.core.metrics import (
     GRAPH_QUERY_DURATION,
     LLM_CALL_DURATION,
 )
+from ai_osop.reliability.dlq import DeadLetterQueue
 from ai_osop.core.telemetry import RequestContext, inject_trace_context
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.core.observability import (
@@ -148,6 +149,8 @@ class Orchestrator:
         # whether an engagement is authenticated (has imported user sessions) and
         # should run the capture_authenticated_surface -> extract_har_api_inventory chain.
         self.session_store = SessionStore(session_memory)
+        # Sprint 7: Dead Letter Queue for tasks that exhaust their retry budget
+        self.dlq = DeadLetterQueue(session_memory)
         # Idempotency for autonomous discovery is now Neo4j-backed (Reliability sprint):
         #  - chain dedupe: the (:Task)-[:SPAWNED]->(:Task) edge (graph_memory.task_has_spawned)
         #  - map-dispatch dedupe: an atomic (:AutoDiscoveryClaim) MERGE (claim_auto_discovery)
@@ -643,6 +646,15 @@ class Orchestrator:
         retry budget is exhausted and the failure is terminal.
         """
         if task.retry_count >= task.max_retries:
+            # Sprint 7: Send to Dead Letter Queue for operator review
+            try:
+                await self.dlq.enqueue(
+                    task,
+                    reason="retry_budget_exhausted",
+                    final_error=str(result.get("error") or result.get("status") or ""),
+                )
+            except Exception as e:
+                logger.error("dlq_enqueue_failed", task_id=task.id, error=str(e))
             return False
 
         task.retry_count += 1
@@ -1117,6 +1129,17 @@ class Orchestrator:
                 {"task_id": task.id, "agent_id": task.assigned_agent_id, "result": result},
                 "orchestrator",
             )
+
+            # Sprint 7: Safety fallback — send to DLQ if retries exhausted and not already sent
+            if task.retry_count >= task.max_retries:
+                try:
+                    await self.dlq.enqueue(
+                        task,
+                        reason="terminal_failure",
+                        final_error=str(result.get("error") or result.get("status") or ""),
+                    )
+                except Exception as e:
+                    logger.error("dlq_enqueue_fallback_failed", task_id=task.id, error=str(e))
 
             # Retry logic handled by agent
             # Orchestrator may escalate if critical

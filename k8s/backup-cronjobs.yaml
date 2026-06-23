@@ -1,0 +1,220 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ai-osop-postgres-backup
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: backup
+spec:
+  # Sprint 8: Hourly PostgreSQL backups
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          serviceAccountName: ai-osop-backup
+          containers:
+          - name: postgres-backup
+            image: postgres:15-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BACKUP_FILE="ai-osop-$(date +%Y%m%d-%H%M%S).sql.gz"
+              pg_dump "$DATABASE_URL" | gzip > /backup/"$BACKUP_FILE"
+              aws s3 cp /backup/"$BACKUP_FILE" s3://ai-osop-backups/postgres/
+              # Delete backups older than 7 days
+              aws s3 ls s3://ai-osop-backups/postgres/ | \
+                awk -v cutoff="$(date -d '7 days ago' +%Y-%m-%d)" \
+                '$1 < cutoff {print $4}' | \
+                xargs -r -I {} aws s3 rm s3://ai-osop-backups/postgres/{}
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-secrets
+                  key: postgres-uri
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: secret-access-key
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "250m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+            volumeMounts:
+            - name: backup-tmp
+              mountPath: /backup
+          volumes:
+          - name: backup-tmp
+            emptyDir: {}
+          restartPolicy: OnFailure
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ai-osop-neo4j-backup
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: backup
+spec:
+  # Sprint 8: Daily Neo4j backups at 2 AM
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          serviceAccountName: ai-osop-backup
+          containers:
+          - name: neo4j-backup
+            image: neo4j:5.18-community
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BACKUP_FILE="ai-osop-$(date +%Y%m%d).dump"
+              neo4j-admin database dump --to-path=/backup neo4j
+              mv /backup/neo4j.dump /backup/"$BACKUP_FILE"
+              aws s3 cp /backup/"$BACKUP_FILE" s3://ai-osop-backups/neo4j/
+              # Delete backups older than 30 days
+              aws s3 ls s3://ai-osop-backups/neo4j/ | \
+                awk -v cutoff="$(date -d '30 days ago' +%Y-%m-%d)" \
+                '$1 < cutoff {print $4}' | \
+                xargs -r -I {} aws s3 rm s3://ai-osop-backups/neo4j/{}
+            env:
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-secrets
+                  key: neo4j-password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: secret-access-key
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
+              limits:
+                memory: "2Gi"
+                cpu: "1000m"
+            volumeMounts:
+            - name: backup-tmp
+              mountPath: /backup
+          volumes:
+          - name: backup-tmp
+            emptyDir: {}
+          restartPolicy: OnFailure
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ai-osop-redis-backup
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: backup
+spec:
+  # Sprint 8: Redis backups every 6 hours
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          serviceAccountName: ai-osop-backup
+          containers:
+          - name: redis-backup
+            image: redis:7-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              # Trigger BGSAVE on the Redis server
+              redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" BGSAVE
+              # Wait for BGSAVE to complete (poll for lastsave to change)
+              LASTSAVE=$(redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" LASTSAVE)
+              sleep 2
+              for i in $(seq 1 30); do
+                NEWSAVE=$(redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" LASTSAVE)
+                if [ "$NEWSAVE" != "$LASTSAVE" ]; then
+                  break
+                fi
+                sleep 2
+              done
+              # Copy the RDB file
+              redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" --rdb /backup/dump.rdb
+              BACKUP_FILE="ai-osop-$(date +%Y%m%d-%H%M%S).rdb"
+              cp /backup/dump.rdb /backup/"$BACKUP_FILE"
+              aws s3 cp /backup/"$BACKUP_FILE" s3://ai-osop-backups/redis/
+              # Delete backups older than 3 days
+              aws s3 ls s3://ai-osop-backups/redis/ | \
+                awk -v cutoff="$(date -d '3 days ago' +%Y-%m-%d)" \
+                '$1 < cutoff {print $4}' | \
+                xargs -r -I {} aws s3 rm s3://ai-osop-backups/redis/{}
+            env:
+            - name: REDIS_HOST
+              value: "ai-osop-redis.ai-osop.svc.cluster.local"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: secret-access-key
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "250m"
+            volumeMounts:
+            - name: backup-tmp
+              mountPath: /backup
+          volumes:
+          - name: backup-tmp
+            emptyDir: {}
+          restartPolicy: OnFailure

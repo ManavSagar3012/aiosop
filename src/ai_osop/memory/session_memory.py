@@ -22,6 +22,11 @@ from ai_osop.core.exceptions import MemoryException
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
+from ai_osop.reliability.retry import retry_with_backoff
+
+import structlog
+
+logger = structlog.get_logger("ai_osop.memory.session_memory")
 
 Base = declarative_base()
 
@@ -116,41 +121,92 @@ class SessionMemory:
         self._async_session = None
 
     async def connect(self) -> None:
-        """Initialize all storage connections."""
-        # Redis
-        self._redis = redis.from_url(settings.redis_uri, decode_responses=True, max_connections=50)
+        """Initialize all storage connections with retry.
 
-        # PostgreSQL
-        self._pg_engine = create_async_engine(
-            settings.postgres_uri, pool_size=20, max_overflow=10, echo=False
-        )
-        self._async_session = sessionmaker(
-            self._pg_engine, class_=AsyncSession, expire_on_commit=False
+        Sprint 7: Survives Redis/Postgres restarts during startup without
+        crashing the platform. Uses exponential backoff for each tier.
+        """
+
+        # Redis with retry
+        async def _connect_redis() -> None:
+            self._redis = redis.from_url(
+                settings.redis_uri, decode_responses=True, max_connections=50
+            )
+            await self._redis.ping()
+
+        await retry_with_backoff(
+            _connect_redis,
+            max_retries=5,
+            base_delay=1.0,
+            max_delay=30.0,
+            exceptions=(Exception,),
+            retry_name="redis.connect",
         )
 
-        # Create tables
-        async with self._pg_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # PostgreSQL with retry
+        async def _connect_postgres() -> None:
+            self._pg_engine = create_async_engine(
+                settings.postgres_uri, pool_size=20, max_overflow=10, echo=False
+            )
+            self._async_session = sessionmaker(
+                self._pg_engine, class_=AsyncSession, expire_on_commit=False
+            )
+            # Verify connection by creating tables
+            async with self._pg_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+
+        await retry_with_backoff(
+            _connect_postgres,
+            max_retries=5,
+            base_delay=1.0,
+            max_delay=30.0,
+            exceptions=(Exception,),
+            retry_name="postgres.connect",
+        )
 
     # ============== HOT TIER (Redis) ==============
 
+    async def _ensure_redis(self) -> redis.Redis:
+        """Return a healthy Redis connection, reconnecting if needed.
+
+        Sprint 7: Auto-reconnect on Redis disconnect so the platform survives
+        Redis restarts without requiring an application restart.
+        """
+        if self._redis is None:
+            self._redis = redis.from_url(
+                settings.redis_uri, decode_responses=True, max_connections=50
+            )
+            return self._redis
+        try:
+            await self._redis.ping()
+            return self._redis
+        except Exception:
+            logger.warning("Redis connection lost, reconnecting...")
+            self._redis = redis.from_url(
+                settings.redis_uri, decode_responses=True, max_connections=50
+            )
+            return self._redis
+
     async def store_hot(self, key: str, value: Any, ttl: int = 3600) -> None:
         """Store in Redis with TTL."""
+        r = await self._ensure_redis()
         with trace_span("redis.setex", attributes={"ai_osop.redis.key": key}):
             serialized = json.dumps(value, default=str)
-            await self._redis.setex(key, ttl, serialized)
+            await r.setex(key, ttl, serialized)
 
     async def retrieve_hot(self, key: str) -> Optional[Any]:
         """Retrieve from Redis."""
+        r = await self._ensure_redis()
         with trace_span("redis.get", attributes={"ai_osop.redis.key": key}):
-            data = await self._redis.get(key)
+            data = await r.get(key)
             if data:
                 return json.loads(data)
             return None
 
     async def delete_hot(self, key: str) -> None:
         with trace_span("redis.delete", attributes={"ai_osop.redis.key": key}):
-            await self._redis.delete(key)
+            r = await self._ensure_redis()
+            await r.delete(key)
 
     async def store_session_state(self, state: SessionState) -> None:
         """Store active session state in Redis."""
@@ -178,24 +234,28 @@ class SessionMemory:
     async def publish_event(self, channel: str, event: Dict[str, Any]) -> None:
         """Publish event to Redis pub/sub."""
         with trace_span("redis.publish", attributes={"ai_osop.redis.channel": channel}):
-            await self._redis.publish(channel, json.dumps(event, default=str))
+            r = await self._ensure_redis()
+            await r.publish(channel, json.dumps(event, default=str))
 
     async def subscribe_events(self, channel: str):
         """Subscribe to Redis pub/sub channel."""
-        pubsub = self._redis.pubsub()
+        r = await self._ensure_redis()
+        pubsub = r.pubsub()
         await pubsub.subscribe(channel)
         return pubsub
 
     async def push_task_queue(self, queue_name: str, task: Dict[str, Any]) -> None:
         """Push task to priority queue."""
         with trace_span("redis.zadd", attributes={"ai_osop.redis.queue": queue_name}):
+            r = await self._ensure_redis()
             priority = task.get("priority", 5)
-            await self._redis.zadd(f"queue:{queue_name}", {json.dumps(task, default=str): priority})
+            await r.zadd(f"queue:{queue_name}", {json.dumps(task, default=str): priority})
 
     async def pop_task_queue(self, queue_name: str) -> Optional[Dict[str, Any]]:
         """Pop highest priority task from queue."""
         with trace_span("redis.zpopmax", attributes={"ai_osop.redis.queue": queue_name}):
-            result = await self._redis.zpopmax(f"queue:{queue_name}")
+            r = await self._ensure_redis()
+            result = await r.zpopmax(f"queue:{queue_name}")
             if result:
                 task_json, _ = result[0]
                 return json.loads(task_json)
