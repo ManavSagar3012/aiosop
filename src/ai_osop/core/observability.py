@@ -4,65 +4,55 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-# Task lifecycle
-TASKS_TOTAL = Counter("ai_osop_tasks_total", "Total tasks observed", ["status", "agent_type"])
-TASKS_COMPLETED_TOTAL = Counter("ai_osop_tasks_completed_total", "Completed tasks", ["agent_type"])
-TASKS_FAILED_TOTAL = Counter("ai_osop_tasks_failed_total", "Failed tasks", ["agent_type"])
-TASK_DURATION_SECONDS = Histogram(
-    "ai_osop_task_duration_seconds", "Task execution duration", ["agent_type"]
+from ai_osop.core.metrics import (
+    ACTIVE_AGENTS,
+    ACTIVE_ENGAGEMENTS,
+    AGENT_SUCCESS_RATE,
+    AGENT_THROUGHPUT,
+    AGENT_UTILIZATION,
+    APPROVALS_TOTAL,
+    APPROVAL_WAIT_TIME,
+    BROWSER_RUNTIME_SECONDS,
+    DENIED_ACTIONS_TOTAL,
+    ENGAGEMENT_COMPLETION_TIME,
+    ENGAGEMENT_COST_USD,
+    FAILED_TASKS,
+    GRAPH_WRITE_LATENCY_SECONDS,
+    LLM_CALLS_TOTAL,
+    LLM_COST_USD,
+    LLM_TOKENS_TOTAL,
+    MCP_ERRORS_TOTAL,
+    MCP_LATENCY_SECONDS,
+    MCP_SUCCESS_RATE,
+    OWNERSHIP_VIOLATIONS_TOTAL,
+    PENDING_APPROVALS,
+    POSTGRES_LATENCY_SECONDS,
+    QUEUED_TASKS,
+    RBAC_FAILURES_TOTAL,
+    RATE_LIMIT_EVENTS,
+    REDIS_LATENCY_SECONDS,
+    RUNNING_TASKS,
+    SANDBOX_BLOCKS_TOTAL,
+    SCOPE_VIOLATIONS_TOTAL,
+    TASKS_BY_STATUS,
+    TASKS_COMPLETED_TOTAL,
+    TASKS_FAILED_TOTAL,
+    TASKS_TOTAL,
+    TASK_COMPLETION_TIME,
+    TASK_DURATION_SECONDS,
+    TASK_THROUGHPUT,
 )
-RUNNING_TASKS = Gauge("ai_osop_running_tasks", "Currently running tasks")
-QUEUED_TASKS = Gauge("ai_osop_queued_tasks", "Currently queued tasks")
-FAILED_TASKS = Gauge("ai_osop_failed_tasks", "Currently failed tasks")
-
-# Agents
-ACTIVE_AGENTS = Gauge("ai_osop_active_agents", "Active registered agents")
-AGENT_UTILIZATION = Gauge("ai_osop_agent_utilization", "Agent utilization ratio", ["agent_type"])
-
-# Rate limiting
-RATE_LIMIT_EVENTS = Counter("ai_osop_rate_limit_events_total", "Rate limiting events", ["type"])
-
-# Infrastructure latency
-MCP_LATENCY_SECONDS = Histogram(
-    "ai_osop_mcp_latency_seconds", "MCP call latency", ["server_id", "method"]
-)
-GRAPH_WRITE_LATENCY_SECONDS = Histogram(
-    "ai_osop_graph_write_duration_seconds", "Neo4j write latency", ["operation"]
-)
-REDIS_LATENCY_SECONDS = Histogram(
-    "ai_osop_redis_latency_seconds", "Redis operation latency", ["operation"]
-)
-POSTGRES_LATENCY_SECONDS = Histogram(
-    "ai_osop_postgres_latency_seconds", "Postgres query latency", ["operation"]
-)
-
-# LLM / Cost
-LLM_CALLS_TOTAL = Counter("ai_osop_llm_calls_total", "LLM API calls", ["model", "operation"])
-LLM_TOKENS_TOTAL = Counter("ai_osop_llm_tokens_total", "LLM tokens consumed", ["model", "type"])
-LLM_COST_USD = Counter("ai_osop_llm_cost_usd_total", "Estimated LLM cost in USD", ["model"])
-ENGAGEMENT_COST_USD = Counter(
-    "ai_osop_engagement_cost_usd_total", "Total cost per engagement", ["engagement_id"]
-)
-
-# Browser / Sandbox
-BROWSER_RUNTIME_SECONDS = Histogram(
-    "ai_osop_browser_runtime_seconds", "Browser automation runtime", ["task_type"]
-)
-SANDBOX_RUNTIME_SECONDS = Histogram(
-    "ai_osop_sandbox_runtime_seconds", "Sandbox execution runtime", ["task_type"]
-)
-
 
 # ============== Public API ==============
-
 def record_task(status: str, agent_type: str, duration_seconds: float) -> None:
     """Record task completion metrics."""
     TASKS_TOTAL.labels(status=status, agent_type=agent_type).inc()
     TASK_DURATION_SECONDS.labels(agent_type=agent_type).observe(max(duration_seconds, 0.0))
     if status == "completed":
         TASKS_COMPLETED_TOTAL.labels(agent_type=agent_type).inc()
+        TASK_THROUGHPUT.labels(agent_type=agent_type).inc()
     elif status == "failed":
         TASKS_FAILED_TOTAL.labels(agent_type=agent_type).inc()
 
@@ -82,6 +72,103 @@ def update_active_agents(count: int) -> None:
 def update_agent_utilization(agent_type: str, utilization: float) -> None:
     """Set agent utilization ratio (0.0-1.0)."""
     AGENT_UTILIZATION.labels(agent_type=agent_type).set(max(0.0, min(1.0, utilization)))
+
+
+# Sprint 6B: New recording helpers
+
+
+class _EngagementMetricsState:
+    """In-memory state for engagement lifecycle metrics (not for production scale)."""
+
+    _start_times: Dict[str, float] = {}
+
+
+_engagement_state = _EngagementMetricsState()
+
+
+def record_engagement_started(engagement_id: str) -> None:
+    """Record engagement creation and increment active gauge."""
+    import time
+
+    ACTIVE_ENGAGEMENTS.inc()
+    _engagement_state._start_times[engagement_id] = time.monotonic()
+
+
+def record_engagement_completed(engagement_id: str) -> None:
+    """Record engagement completion, decrement active gauge, and observe duration."""
+    import time
+
+    ACTIVE_ENGAGEMENTS.dec()
+    start = _engagement_state._start_times.pop(engagement_id, None)
+    if start is not None:
+        ENGAGEMENT_COMPLETION_TIME.observe(time.monotonic() - start)
+
+
+def record_engagement_halted(engagement_id: str) -> None:
+    """Record engagement halt and decrement active gauge."""
+    ACTIVE_ENGAGEMENTS.dec()
+    _engagement_state._start_times.pop(engagement_id, None)
+
+
+def record_approval_requested(approval_id: str) -> None:
+    """Record new approval request and increment pending gauge."""
+    PENDING_APPROVALS.inc()
+
+
+def record_approval_resolved(decision: str, wait_seconds: Optional[float] = None) -> None:
+    """Record approval resolution and decrement pending gauge."""
+    PENDING_APPROVALS.dec()
+    APPROVALS_TOTAL.labels(decision=decision).inc()
+    if wait_seconds is not None and wait_seconds >= 0:
+        APPROVAL_WAIT_TIME.observe(wait_seconds)
+
+
+def record_task_status_change(status: str, delta: int = 1) -> None:
+    """Record task status transition for TASKS_BY_STATUS gauge."""
+    # Gauges don't support delta inc; we set based on current state if we track it,
+    # but for simplicity we use a counter-like approach by recording the current status.
+    TASKS_BY_STATUS.labels(status=status).set(delta)
+
+
+def record_agent_execution_started(agent_type: str) -> None:
+    """Record agent execution start."""
+    AGENT_THROUGHPUT.labels(agent_type=agent_type).inc()
+
+
+def record_mcp_call(server_id: str, method: str, latency_seconds: float, success: bool) -> None:
+    """Record MCP call latency and update success rate."""
+    MCP_LATENCY_SECONDS.labels(server_id=server_id, method=method).observe(max(latency_seconds, 0.0))
+    if success:
+        MCP_SUCCESS_RATE.labels(server_id=server_id).set(1.0)
+    else:
+        MCP_SUCCESS_RATE.labels(server_id=server_id).set(0.0)
+
+
+def record_circuit_breaker_state(server_id: str, is_open: bool) -> None:
+    """Record MCP circuit breaker state (0=closed, 1=open)."""
+    from ai_osop.core.metrics import MCP_CIRCUIT_BREAKER_STATE
+
+    MCP_CIRCUIT_BREAKER_STATE.labels(server_id=server_id).set(1.0 if is_open else 0.0)
+
+
+def record_rbac_failure(endpoint: str, required_role: str) -> None:
+    """Record RBAC authorization failure."""
+    RBAC_FAILURES_TOTAL.labels(endpoint=endpoint, required_role=required_role).inc()
+
+
+def record_ownership_violation(resource_type: str) -> None:
+    """Record ownership check failure."""
+    OWNERSHIP_VIOLATIONS_TOTAL.labels(resource_type=resource_type).inc()
+
+
+def record_scope_violation(rule: str) -> None:
+    """Record out-of-scope detection."""
+    SCOPE_VIOLATIONS_TOTAL.labels(rule=rule).inc()
+
+
+def record_sandbox_block(block_type: str) -> None:
+    """Record sandbox/eBPF block."""
+    SANDBOX_BLOCKS_TOTAL.labels(block_type=block_type).inc()
 
 
 def record_rate_limiter_metrics(metrics: Dict[str, int]) -> None:

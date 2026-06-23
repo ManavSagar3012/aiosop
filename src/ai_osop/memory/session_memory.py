@@ -20,6 +20,8 @@ from sqlalchemy.orm import sessionmaker
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import MemoryException
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.telemetry import RequestContext
+from ai_osop.core.tracing import trace_span
 
 Base = declarative_base()
 
@@ -134,18 +136,21 @@ class SessionMemory:
 
     async def store_hot(self, key: str, value: Any, ttl: int = 3600) -> None:
         """Store in Redis with TTL."""
-        serialized = json.dumps(value, default=str)
-        await self._redis.setex(key, ttl, serialized)
+        with trace_span("redis.setex", attributes={"ai_osop.redis.key": key}):
+            serialized = json.dumps(value, default=str)
+            await self._redis.setex(key, ttl, serialized)
 
     async def retrieve_hot(self, key: str) -> Optional[Any]:
         """Retrieve from Redis."""
-        data = await self._redis.get(key)
-        if data:
-            return json.loads(data)
-        return None
+        with trace_span("redis.get", attributes={"ai_osop.redis.key": key}):
+            data = await self._redis.get(key)
+            if data:
+                return json.loads(data)
+            return None
 
     async def delete_hot(self, key: str) -> None:
-        await self._redis.delete(key)
+        with trace_span("redis.delete", attributes={"ai_osop.redis.key": key}):
+            await self._redis.delete(key)
 
     async def store_session_state(self, state: SessionState) -> None:
         """Store active session state in Redis."""
@@ -154,10 +159,11 @@ class SessionMemory:
 
     async def get_session_state(self, session_id: str) -> Optional[SessionState]:
         """Retrieve active session state from Redis."""
-        data = await self.retrieve_hot(f"session:{session_id}")
-        if data:
-            return SessionState(**data)
-        return None
+        with trace_span("redis.get_session_state", attributes={"ai_osop.session_id": session_id}):
+            data = await self.retrieve_hot(f"session:{session_id}")
+            if data:
+                return SessionState(**data)
+            return None
 
     async def store_agent_state(
         self, agent_id: str, state: Dict[str, Any], ttl: int = 3600
@@ -171,7 +177,8 @@ class SessionMemory:
 
     async def publish_event(self, channel: str, event: Dict[str, Any]) -> None:
         """Publish event to Redis pub/sub."""
-        await self._redis.publish(channel, json.dumps(event, default=str))
+        with trace_span("redis.publish", attributes={"ai_osop.redis.channel": channel}):
+            await self._redis.publish(channel, json.dumps(event, default=str))
 
     async def subscribe_events(self, channel: str):
         """Subscribe to Redis pub/sub channel."""
@@ -181,16 +188,18 @@ class SessionMemory:
 
     async def push_task_queue(self, queue_name: str, task: Dict[str, Any]) -> None:
         """Push task to priority queue."""
-        priority = task.get("priority", 5)
-        await self._redis.zadd(f"queue:{queue_name}", {json.dumps(task, default=str): priority})
+        with trace_span("redis.zadd", attributes={"ai_osop.redis.queue": queue_name}):
+            priority = task.get("priority", 5)
+            await self._redis.zadd(f"queue:{queue_name}", {json.dumps(task, default=str): priority})
 
     async def pop_task_queue(self, queue_name: str) -> Optional[Dict[str, Any]]:
         """Pop highest priority task from queue."""
-        result = await self._redis.zpopmax(f"queue:{queue_name}")
-        if result:
-            task_json, _ = result[0]
-            return json.loads(task_json)
-        return None
+        with trace_span("redis.zpopmax", attributes={"ai_osop.redis.queue": queue_name}):
+            result = await self._redis.zpopmax(f"queue:{queue_name}")
+            if result:
+                task_json, _ = result[0]
+                return json.loads(task_json)
+            return None
 
     # ============== WARM TIER (PostgreSQL) ==============
 
@@ -250,54 +259,62 @@ class SessionMemory:
             return None
 
     async def write_audit_event(self, event: AuditEvent) -> None:
-        """Write cryptographically signed audit event."""
-        import hmac
+        """Write cryptographically signed audit event with tracing."""
+        with trace_span(
+            "postgres.write_audit_event",
+            attributes={
+                "ai_osop.event_id": event.event_id,
+                "ai_osop.engagement_id": event.engagement_id,
+                "ai_osop.event_type": event.event_type,
+            },
+        ):
+            import hmac
 
-        # Load the key - in production this would fetch from Vault using the path
-        # Fallback for dev/testing if not configured
-        secret_key = getattr(settings, "audit_secret_key", b"default-insecure-audit-key")
-        if isinstance(secret_key, str):
-            secret_key = secret_key.encode()
+            # Load the key - in production this would fetch from Vault using the path
+            # Fallback for dev/testing if not configured
+            secret_key = getattr(settings, "audit_secret_key", b"default-insecure-audit-key")
+            if isinstance(secret_key, str):
+                secret_key = secret_key.encode()
 
-        # Get the hash of the last event for the chain
-        last_hash = None
-        async with self._async_session() as session:
-            # We get the most recent event for this engagement to continue the chain
-            last_event = await session.execute(
-                select(AuditLogORM.integrity_hash)
-                .where(AuditLogORM.engagement_id == event.engagement_id)
-                .order_by(AuditLogORM.timestamp.desc())
-                .limit(1)
+            # Get the hash of the last event for the chain
+            last_hash = None
+            async with self._async_session() as session:
+                # We get the most recent event for this engagement to continue the chain
+                last_event = await session.execute(
+                    select(AuditLogORM.integrity_hash)
+                    .where(AuditLogORM.engagement_id == event.engagement_id)
+                    .order_by(AuditLogORM.timestamp.desc())
+                    .limit(1)
+                )
+                last_hash = last_event.scalar_one_or_none()
+
+            # Calculate integrity hash using HMAC with a secret key
+            # We match the chain format expected by scope.py
+            event_data = (
+                f"{event.event_id}:{event.timestamp.isoformat()}:{event.actor_id}:{event.event_type}"
             )
-            last_hash = last_event.scalar_one_or_none()
+            if last_hash:
+                event_data = f"{last_hash}:{event_data}"
 
-        # Calculate integrity hash using HMAC with a secret key
-        # We match the chain format expected by scope.py
-        event_data = (
-            f"{event.event_id}:{event.timestamp.isoformat()}:{event.actor_id}:{event.event_type}"
-        )
-        if last_hash:
-            event_data = f"{last_hash}:{event_data}"
+            integrity_hash = hmac.new(secret_key, event_data.encode(), hashlib.sha256).hexdigest()
+            event.integrity_hash = integrity_hash
 
-        integrity_hash = hmac.new(secret_key, event_data.encode(), hashlib.sha256).hexdigest()
-        event.integrity_hash = integrity_hash
-
-        async with self._async_session() as session:
-            stmt = insert(AuditLogORM).values(
-                event_id=event.event_id,
-                timestamp=event.timestamp,
-                event_type=event.event_type,
-                severity=event.severity,
-                actor_type=event.actor_type,
-                actor_id=event.actor_id,
-                action=event.action,
-                result=event.result,
-                context=event.context,
-                integrity_hash=integrity_hash,
-                engagement_id=event.engagement_id,
-            )
-            await session.execute(stmt)
-            await session.commit()
+            async with self._async_session() as session:
+                stmt = insert(AuditLogORM).values(
+                    event_id=event.event_id,
+                    timestamp=event.timestamp,
+                    event_type=event.event_type,
+                    severity=event.severity,
+                    actor_type=event.actor_type,
+                    actor_id=event.actor_id,
+                    action=event.action,
+                    result=event.result,
+                    context=event.context,
+                    integrity_hash=integrity_hash,
+                    engagement_id=event.engagement_id,
+                )
+                await session.execute(stmt)
+                await session.commit()
 
     async def query_audit_log(
         self,
@@ -343,41 +360,49 @@ class SessionMemory:
     # ============== APPROVAL REQUESTS ==============
 
     async def store_approval_request(self, request: ApprovalRequest) -> None:
-        """Persist approval request to hot + warm tier."""
-        # Hot tier (Redis)
-        await self.store_hot(f"approval:{request.id}", request.model_dump(), ttl=86400 * 7)
-        # Warm tier (Postgres)
-        async with self._async_session() as session:
-            stmt = (
-                insert(ApprovalRequestORM)
-                .values(
-                    id=request.id,
-                    task_id=request.task_id,
-                    agent_id=request.agent_id,
-                    action_type=request.action_type,
-                    target=request.target,
-                    payload_summary=request.payload_summary,
-                    risk_assessment=request.risk_assessment,
-                    evidence=request.evidence,
-                    status=request.status,
-                    operator_id=request.operator_id,
-                    operator_notes=request.operator_notes,
-                    requested_at=request.requested_at,
-                    responded_at=request.responded_at,
-                    engagement_id=request.engagement_id,
+        """Persist approval request to hot + warm tier with tracing."""
+        with trace_span(
+            "postgres.store_approval",
+            attributes={
+                "ai_osop.approval_id": request.id,
+                "ai_osop.engagement_id": request.engagement_id,
+                "ai_osop.status": request.status,
+            },
+        ):
+            # Hot tier (Redis)
+            await self.store_hot(f"approval:{request.id}", request.model_dump(), ttl=86400 * 7)
+            # Warm tier (Postgres)
+            async with self._async_session() as session:
+                stmt = (
+                    insert(ApprovalRequestORM)
+                    .values(
+                        id=request.id,
+                        task_id=request.task_id,
+                        agent_id=request.agent_id,
+                        action_type=request.action_type,
+                        target=request.target,
+                        payload_summary=request.payload_summary,
+                        risk_assessment=request.risk_assessment,
+                        evidence=request.evidence,
+                        status=request.status,
+                        operator_id=request.operator_id,
+                        operator_notes=request.operator_notes,
+                        requested_at=request.requested_at,
+                        responded_at=request.responded_at,
+                        engagement_id=request.engagement_id,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["id"],
+                        set_={
+                            "status": request.status,
+                            "operator_id": request.operator_id,
+                            "operator_notes": request.operator_notes,
+                            "responded_at": request.responded_at,
+                        },
+                    )
                 )
-                .on_conflict_do_update(
-                    index_elements=["id"],
-                    set_={
-                        "status": request.status,
-                        "operator_id": request.operator_id,
-                        "operator_notes": request.operator_notes,
-                        "responded_at": request.responded_at,
-                    },
-                )
-            )
-            await session.execute(stmt)
-            await session.commit()
+                await session.execute(stmt)
+                await session.commit()
 
     async def load_approval_request(self, request_id: str) -> Optional[ApprovalRequest]:
         """Load approval request from hot tier, fallback to warm."""
@@ -442,46 +467,47 @@ class SessionMemory:
 
     async def store_task(self, task: Task) -> None:
         """Persist task to hot + warm tier."""
-        # Hot tier (Redis)
-        await self.store_hot(f"task:{task.id}", task.model_dump(), ttl=86400 * 7)
-        # Warm tier (Postgres)
-        async with self._async_session() as session:
-            stmt = (
-                insert(TaskORM)
-                .values(
-                    id=task.id,
-                    type=task.type,
-                    priority=task.priority,
-                    agent_type=task.agent_type.value,
-                    payload=task.payload,
-                    dependencies=task.dependencies,
-                    max_retries=task.max_retries,
-                    timeout_seconds=task.timeout_seconds,
-                    scope_check=task.scope_check,
-                    approval_required=task.approval_required,
-                    status=task.status,
-                    result=task.result,
-                    retry_count=task.retry_count,
-                    created_at=task.created_at,
-                    started_at=task.started_at,
-                    completed_at=task.completed_at,
-                    engagement_id=task.engagement_id,
-                    assigned_agent_id=task.assigned_agent_id,
+        with trace_span("postgres.store_task", attributes={"ai_osop.task_id": task.id, "ai_osop.engagement_id": task.engagement_id}):
+            # Hot tier (Redis)
+            await self.store_hot(f"task:{task.id}", task.model_dump(), ttl=86400 * 7)
+            # Warm tier (Postgres)
+            async with self._async_session() as session:
+                stmt = (
+                    insert(TaskORM)
+                    .values(
+                        id=task.id,
+                        type=task.type,
+                        priority=task.priority,
+                        agent_type=task.agent_type.value,
+                        payload=task.payload,
+                        dependencies=task.dependencies,
+                        max_retries=task.max_retries,
+                        timeout_seconds=task.timeout_seconds,
+                        scope_check=task.scope_check,
+                        approval_required=task.approval_required,
+                        status=task.status,
+                        result=task.result,
+                        retry_count=task.retry_count,
+                        created_at=task.created_at,
+                        started_at=task.started_at,
+                        completed_at=task.completed_at,
+                        engagement_id=task.engagement_id,
+                        assigned_agent_id=task.assigned_agent_id,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["id"],
+                        set_={
+                            "status": task.status,
+                            "result": task.result,
+                            "retry_count": task.retry_count,
+                            "started_at": task.started_at,
+                            "completed_at": task.completed_at,
+                            "assigned_agent_id": task.assigned_agent_id,
+                        },
+                    )
                 )
-                .on_conflict_do_update(
-                    index_elements=["id"],
-                    set_={
-                        "status": task.status,
-                        "result": task.result,
-                        "retry_count": task.retry_count,
-                        "started_at": task.started_at,
-                        "completed_at": task.completed_at,
-                        "assigned_agent_id": task.assigned_agent_id,
-                    },
-                )
-            )
-            await session.execute(stmt)
-            await session.commit()
+                await session.execute(stmt)
+                await session.commit()
 
     async def load_task(self, task_id: str) -> Optional[Task]:
         """Load task from hot tier, fallback to warm."""

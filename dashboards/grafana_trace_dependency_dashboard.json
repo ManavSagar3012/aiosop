@@ -1,0 +1,121 @@
+{
+  "dashboard": {
+    "title": "AI-OSOP Trace & Dependency Health",
+    "tags": ["ai-osop", "trace", "dependency"],
+    "timezone": "utc",
+    "schemaVersion": 36,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Dependency Health Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_dependency_up",
+            "legendFormat": "{{name}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+              {"options": {"1": {"text": "UP"}}, "type": "value"}
+            ]
+          }
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "OTel Spans Exported",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_trace_spans_exported_total[5m])",
+            "legendFormat": "{{exporter}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 3,
+        "title": "OTel Span Export Failures",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_trace_spans_failed_total[5m])",
+            "legendFormat": "{{exporter}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "MCP Success Rate by Server",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "ai_osop_mcp_success_rate",
+            "legendFormat": "{{server_id}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 5,
+        "title": "Agent Success Rate by Type",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "ai_osop_agent_success_rate",
+            "legendFormat": "{{agent_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Redis Latency (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_redis_latency_seconds_bucket[5m]))",
+            "legendFormat": "{{operation}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24}
+      },
+      {
+        "id": 7,
+        "title": "Postgres Latency (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_postgres_latency_seconds_bucket[5m]))",
+            "legendFormat": "{{operation}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 24}
+      },
+      {
+        "id": 8,
+        "title": "Neo4j Graph Latency (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_graph_write_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{operation}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24}
+      }
+    ]
+  }
+}

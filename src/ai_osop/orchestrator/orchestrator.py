@@ -30,6 +30,15 @@ from ai_osop.core.metrics import (
 )
 from ai_osop.core.telemetry import RequestContext, inject_trace_context
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
+from ai_osop.core.observability import (
+    record_engagement_started,
+    record_engagement_halted,
+    record_engagement_completed,
+    record_approval_requested,
+    record_approval_resolved,
+    update_task_counts,
+    update_active_agents,
+)
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
@@ -255,6 +264,9 @@ class Orchestrator:
             await self.session_memory.persist_session_state(session)
 
             self._sessions[session.session_id] = session
+
+            # Sprint 6B: Record engagement metrics
+            record_engagement_started(session.session_id)
 
             # Audit log
             await self._audit_log(
@@ -548,7 +560,10 @@ class Orchestrator:
                         risk_assessment="high",
                         engagement_id=task.engagement_id,
                     )
-                    await self._raise_approval(request)
+                    # Sprint 6B: Record approval metrics
+            record_approval_requested(request.id)
+
+            await self._raise_approval(request)
                 return
 
             # Find + atomically claim an available agent (single sync critical section).
@@ -1210,6 +1225,12 @@ class Orchestrator:
             request.operator_notes = notes
             request.responded_at = datetime.utcnow()
 
+            # Sprint 6B: Record approval resolution metrics
+            wait_seconds = None
+            if request.requested_at:
+                wait_seconds = (request.responded_at - request.requested_at).total_seconds()
+            record_approval_resolved(decision, wait_seconds)
+
             # P0: Persist approval resolution so state survives restarts.
             await self.session_memory.store_approval_request(request)
 
@@ -1259,6 +1280,9 @@ class Orchestrator:
 
             session.phase = EngagementPhase.HALTED.value
             await self.session_memory.store_session_state(session)
+
+            # Sprint 6B: Record engagement halt metrics
+            record_engagement_halted(session_id)
 
             # Cancel all pending tasks
             for task in self._tasks.values():

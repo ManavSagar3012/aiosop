@@ -114,37 +114,45 @@ class GraphMemory:
                     logger.warning("DDL statement failed: %s | error: %s", cypher, e)
 
     async def add_asset(self, asset: Asset) -> str:
-        """Add or update an Asset node."""
-        cypher = """
-        MERGE (a:Asset {id: $id})
-        SET a.type = $type,
-            a.value = $value,
-            a.source = $source,
-            a.confidence = $confidence,
-            a.metadata = $metadata,
-            a.first_seen = CASE WHEN a.first_seen IS NULL THEN $first_seen ELSE a.first_seen END,
-            a.last_seen = $last_seen,
-            a.engagement_id = $engagement_id
-        RETURN a.id
-        """
+        """Add or update an Asset node with tracing."""
+        with trace_span(
+            "neo4j.add_asset",
+            attributes={
+                "ai_osop.asset_id": asset.id,
+                "ai_osop.engagement_id": asset.engagement_id,
+                "ai_osop.asset_type": asset.type,
+            },
+        ):
+            cypher = """
+            MERGE (a:Asset {id: $id})
+            SET a.type = $type,
+                a.value = $value,
+                a.source = $source,
+                a.confidence = $confidence,
+                a.metadata = $metadata,
+                a.first_seen = CASE WHEN a.first_seen IS NULL THEN $first_seen ELSE a.first_seen END,
+                a.last_seen = $last_seen,
+                a.engagement_id = $engagement_id
+            RETURN a.id
+            """
 
-        async with self._driver.session() as session:
-            result = await session.run(
-                cypher,
-                {
-                    "id": asset.id,
-                    "type": asset.type,
-                    "value": asset.value,
-                    "source": asset.source,
-                    "confidence": asset.confidence,
-                    "metadata": json.dumps(asset.metadata),
-                    "first_seen": asset.first_seen.isoformat(),
-                    "last_seen": asset.last_seen.isoformat(),
-                    "engagement_id": asset.engagement_id,
-                },
-            )
-            record = await result.single()
-            return record["a.id"]
+            async with self._driver.session() as session:
+                result = await session.run(
+                    cypher,
+                    {
+                        "id": asset.id,
+                        "type": asset.type,
+                        "value": asset.value,
+                        "source": asset.source,
+                        "confidence": asset.confidence,
+                        "metadata": json.dumps(asset.metadata),
+                        "first_seen": asset.first_seen.isoformat(),
+                        "last_seen": asset.last_seen.isoformat(),
+                        "engagement_id": asset.engagement_id,
+                    },
+                )
+                record = await result.single()
+                return record["a.id"]
 
     async def add_endpoint(self, endpoint: Endpoint) -> str:
         """Add or update an Endpoint node. Handles both web and api endpoint types."""

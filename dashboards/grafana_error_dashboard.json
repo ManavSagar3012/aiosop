@@ -1,0 +1,107 @@
+{
+  "dashboard": {
+    "title": "AI-OSOP Error & Security Analysis",
+    "tags": ["ai-osop", "errors", "security"],
+    "timezone": "utc",
+    "schemaVersion": 36,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "API Errors by Status Code",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_errors_total[5m])",
+            "legendFormat": "{{status_code}} {{path}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "MCP Errors by Server",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_mcp_errors_total[5m])",
+            "legendFormat": "{{server_id}} — {{error_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "RBAC Authorization Failures",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_rbac_failures_total[5m])",
+            "legendFormat": "{{endpoint}} (needs {{required_role}})"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Ownership Check Violations",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_ownership_violations_total[5m])",
+            "legendFormat": "{{resource_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Scope Violations (Out-of-Scope Blocks)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_scope_violations_total[5m])",
+            "legendFormat": "{{rule}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Sandbox / eBPF Blocks",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_sandbox_blocks_total[5m])",
+            "legendFormat": "{{block_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 7,
+        "title": "Approval Wait Time (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_approval_wait_time_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
+      },
+      {
+        "id": 8,
+        "title": "Denied Actions by Approval Gate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_denied_actions_total[5m])",
+            "legendFormat": "{{action_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}
+      }
+    ]
+  }
+}
