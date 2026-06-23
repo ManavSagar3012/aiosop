@@ -5,6 +5,8 @@ memory integration, and structured reasoning.
 """
 
 import asyncio
+import os
+import socket
 import json
 import time
 from abc import ABC, abstractmethod
@@ -442,18 +444,33 @@ class BaseAgent(ABC):
     async def _heartbeat_loop(self) -> None:
         """Periodic heartbeat for health monitoring."""
         while self._running:
-            self.ctx.last_heartbeat = datetime.utcnow()
-            await self.ctx.session_memory.store_agent_state(
-                self.ctx.agent_id,
-                {
-                    "status": self.ctx.status,
-                    "last_heartbeat": self.ctx.last_heartbeat.isoformat(),
-                    "current_task": self.ctx.current_task.id if self.ctx.current_task else None,
-                    "task_queue_depth": self._task_queue.qsize(),
-                },
-                ttl=60,
-            )
-            await asyncio.sleep(30)
+            try:
+                self.ctx.last_heartbeat = datetime.utcnow()
+
+                if self.ctx.current_task:
+                    self.ctx.current_task.lease_expires = datetime.utcnow() + timedelta(seconds=90)
+                    await self.ctx.session_memory.store_task(self.ctx.current_task)
+
+                await self.ctx.session_memory.update_agent_heartbeat(
+                    self.ctx.agent_id,
+                    {
+                        "agent_id": self.ctx.agent_id,
+                        "agent_type": str(self.ctx.agent_type),
+                        "status": self.ctx.status,
+                        "task_id": self.ctx.current_task.id if self.ctx.current_task else None,
+                        "engagement_id": self.ctx.session_id,
+                        "version": "8.0",
+                        "pid": os.getpid(),
+                        # socket.gethostname() is cross-platform; os.uname() does
+                        # not exist on Windows and previously killed this loop on
+                        # the first iteration, freezing all heartbeats.
+                        "hostname": socket.gethostname(),
+                    },
+                )
+            except Exception as e:
+                # One bad iteration must never permanently stop heartbeats.
+                agent_logger.warning("heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e))
+            await asyncio.sleep(5)
 
     async def shutdown(self) -> None:
         """Graceful shutdown with state preservation and leak prevention.

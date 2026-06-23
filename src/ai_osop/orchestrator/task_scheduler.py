@@ -8,7 +8,7 @@ and passes itself as context so the scheduler can access it.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timedelta
 from typing import Any, Dict, Optional
 
 import structlog
@@ -138,6 +138,7 @@ class TaskScheduler:
                 await self._orch.rate_limiter.acquire(tool="orchestrator")
 
             # Approval gate FIRST
+            logger.info("assign_task_attempt", task_id=task.id)
             if task.approval_required and not task.payload.get("operator_approved"):
                 if task.status != "awaiting_approval":
                     task.status = "awaiting_approval"
@@ -159,10 +160,14 @@ class TaskScheduler:
 
             # Find + atomically claim an available agent
             agent = await self._find_available_agent(task.agent_type, task.type)
+            logger.info("find_agent_result", agent=agent)
+            if not agent:
+                logger.info("no_agent_found", task_id=task.id)
             if agent:
                 task.assigned_agent_id = agent.ctx.agent_id
                 task.status = "running"
                 task.started_at = datetime.utcnow()
+                task.lease_expires = datetime.utcnow() + timedelta(seconds=90)
                 await self._orch.graph_memory.upsert_task(task)
                 await self._orch.session_memory.store_task(task)
                 await self._orch.coordination_bus.publish(
@@ -181,9 +186,8 @@ class TaskScheduler:
     ) -> Optional[Any]:
         """Find and atomically claim an idle agent."""
         for agent in self._orch._agents.values():
-            if agent.ctx.agent_id in self._orch._busy_agents:
-                continue
-            if agent.ctx.agent_type == agent_type and agent.ctx.status == "idle":
+            logger.info("matching_debug", agent_id=agent.ctx.agent_id, type_match=(str(agent.ctx.agent_type) == str(agent_type)), agent_type=str(agent.ctx.agent_type), target_type=str(agent_type), status=agent.ctx.status, status_match=(agent.ctx.status == "idle"))
+            if str(agent.ctx.agent_type) == str(agent_type) and agent.ctx.status == "idle":
                 if task_type and hasattr(agent, "supports_task_type"):
                     if not agent.supports_task_type(task_type):
                         continue
@@ -266,19 +270,32 @@ class TaskScheduler:
         from ai_osop.core.tracing import trace_span_with_parent
 
         parent_span_context = extract_trace_context(task.trace_context)
-        span_ctx = trace_span_with_parent if parent_span_context.is_valid else trace_span
+        
+        if parent_span_context.is_valid:
+            span_ctx = trace_span_with_parent(
+                "orchestrator._execute_via_agent",
+                parent_span_context=parent_span_context,
+                attributes={
+                    "task_id": task.id,
+                    "task_type": task.type,
+                    "agent_id": agent.ctx.agent_id,
+                    "agent_type": agent.ctx.agent_type.value,
+                    "engagement_id": task.engagement_id,
+                },
+            )
+        else:
+            span_ctx = trace_span(
+                "orchestrator._execute_via_agent",
+                attributes={
+                    "task_id": task.id,
+                    "task_type": task.type,
+                    "agent_id": agent.ctx.agent_id,
+                    "agent_type": agent.ctx.agent_type.value,
+                    "engagement_id": task.engagement_id,
+                },
+            )
 
-        with span_ctx(
-            "orchestrator._execute_via_agent",
-            parent_span_context=parent_span_context if parent_span_context.is_valid else None,
-            attributes={
-                "task_id": task.id,
-                "task_type": task.type,
-                "agent_id": agent.ctx.agent_id,
-                "agent_type": agent.ctx.agent_type.value,
-                "engagement_id": task.engagement_id,
-            },
-        ):
+        with span_ctx:
             try:
                 result = await agent.execute_task(task)
                 status = result.get("status") if isinstance(result, dict) else None
