@@ -7,8 +7,8 @@ import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { SwarmEvent } from './types';
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8200";
-const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://127.0.0.1:8200";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8081";
+const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://127.0.0.1:8081";
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error';
 
@@ -85,7 +85,7 @@ export class NetworkService {
     console.log(`[Network] Connecting to WS: ${WS_BASE}/ws/engagements/${sessionId}`);
     
     try {
-      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}`);
+      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}?token=dev-token`);
 
       this.ws.onopen = () => {
         console.log("[Network] WS Connected");

@@ -68,6 +68,7 @@ class DifferentialAuthEngine:
                 anonymous_evidence.get("body", {}),
             )
 
+        finding = None
         category = "unknown"
         confidence = 0.0
         needs_manual = False
@@ -91,13 +92,14 @@ class DifferentialAuthEngine:
             # If semantic divergence also exists, it's a stronger indicator of PE
             if semantic_divergence:
                 category = "unauthorized_action_visibility"
+                confidence = max(confidence, 0.75)
 
             # Calibrate confidence by strength of evidence.
             if ownership_proof:
-                confidence = 0.9  # B demonstrably received A's owned object
+                confidence = max(confidence, 0.9)  # B demonstrably received A's owned object
             elif semantic_divergence:
-                confidence = 0.75  # B sees capability A's view lacks
-            else:
+                confidence = max(confidence, 0.75)  # B sees capability A's view lacks
+            elif not confidence:
                 confidence = 0.5  # bare 2xx, no ownership proof
                 needs_manual = True
                 category = f"{category}_unconfirmed"

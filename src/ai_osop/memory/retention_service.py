@@ -130,8 +130,8 @@ class RetentionService:
             AuditLogORM,
             SessionStateORM,
             TaskORM,
-            UserSessionORM,
         )
+        from ai_osop.auth.session_store import UserSessionORM
 
         results = {}
 

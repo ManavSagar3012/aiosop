@@ -98,7 +98,7 @@ def test_metrics_endpoint(client):
     assert response.status_code == 200
     # Check for some expected prometheus metrics
     assert "ai_osop_tasks_total" in response.text
-    assert "ai_osop_active_agents" in response.text
+    assert "ai_osop_active_agent_count" in response.text
     assert response.headers["content-type"].startswith("text/plain")
 
 

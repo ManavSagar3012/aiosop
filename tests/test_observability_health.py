@@ -11,6 +11,13 @@ import pytest
 from ai_osop.api.health import router as health_router
 
 
+
+@pytest.fixture(autouse=True)
+def clean_state():
+    from ai_osop.api.deps import state
+    state.pop("orchestrator", None)
+    yield
+    state.pop("orchestrator", None)
 class TestHealthEndpoints:
     @pytest.fixture
     def app(self) -> FastAPI:

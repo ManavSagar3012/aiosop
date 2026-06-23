@@ -14,6 +14,7 @@ REFACTOR (2026-06-19): Decomposed from 1,539-line monolith into router modules:
 """
 
 import asyncio
+import logging
 import json
 import os
 import time
@@ -64,6 +65,42 @@ from ai_osop.safety.scope import SandboxManager
 
 
 # ============== MCP Server Registration ==============
+
+
+logger = logging.getLogger("ai_osop.api")
+
+
+from ai_osop.reliability.retry import retry_with_backoff
+
+
+logger = logging.getLogger("ai_osop.api")
+
+
+async def connect_with_retry(
+    connector,
+    name: str,
+    max_retries: int = 10,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0,
+) -> bool:
+    """Connect to a dependency with exponential backoff.
+
+    Sprint 8: Delegates to the shared retry_with_backoff utility to eliminate
+    code duplication and ensure consistent retry behavior across the platform.
+    """
+    try:
+        await retry_with_backoff(
+            connector,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            retry_name=f"{name}.connect",
+        )
+        logger.info(f"{name} connected successfully")
+        return True
+    except Exception as e:
+        logger.critical(f"{name} unavailable after {max_retries + 1} attempts: {e}")
+        return False
 
 
 async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
@@ -156,29 +193,6 @@ async def lifespan(app: FastAPI):
         mcp_registry = MCPRegistry()
         rate_limiter = RateLimiter()
         threat_intel_adapter = ThreatIntelAdapter()
-
-        # Sprint 7: Startup retry with exponential backoff
-        async def connect_with_retry(
-            connector,
-            name: str,
-            max_retries: int = 10,
-            base_delay: float = 1.0,
-            max_delay: float = 30.0,
-        ) -> bool:
-            """Connect to a dependency with exponential backoff."""
-            for attempt in range(1, max_retries + 1):
-                try:
-                    await connector()
-                    logger.info(f"{name} connected on attempt {attempt}")
-                    return True
-                except Exception as e:
-                    if attempt == max_retries:
-                        logger.critical(f"{name} unavailable after {max_retries} attempts: {e}")
-                        return False
-                    delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
-                    logger.warning(f"{name} connection attempt {attempt} failed, retrying in {delay}s: {e}")
-                    await asyncio.sleep(delay)
-            return False
 
         # 1. Redis (critical)
         redis_ok = await connect_with_retry(
@@ -315,7 +329,7 @@ async def lifespan(app: FastAPI):
                     mcp_registry=mcp_registry,
                     rate_limiter=rate_limiter,
                     threat_intel_adapter=threat_intel_adapter,
-                    audit_callback=orch.write_audit_event,
+                    audit_callback=orch._audit_log,
                     coordination_bus=orch.coordination_bus,
                 )
                 agent_inst = agent_cls(ctx)

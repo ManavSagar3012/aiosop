@@ -88,6 +88,7 @@ class SessionStateORM(Base):
     created_by = Column(String(64), nullable=True)
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
+    last_accessed = Column(DateTime, default=datetime.utcnow)
 
 
 class AuditLogORM(Base):
@@ -105,6 +106,35 @@ class AuditLogORM(Base):
     integrity_hash = Column(String(128))
     engagement_id = Column(String(64), index=True)
 
+
+class DLQEntryORM(Base):
+    __tablename__ = "dlq_entries"
+
+    id = Column(String(64), primary_key=True)
+    task_id = Column(String(64), index=True)
+    engagement_id = Column(String(64), index=True)
+    task_type = Column(String(64))
+    agent_type = Column(String(64))
+    reason = Column(String(128))
+    final_error = Column(String(2048))
+    task_payload = Column(JSON)
+    status = Column(String(32), index=True)  # pending_review, requeued, discarded
+    operator_notes = Column(String(2048), nullable=True)
+    created_at = Column(DateTime)
+    resolved_at = Column(DateTime, nullable=True)
+
+class FindingCorpusORM(Base):
+    __tablename__ = "finding_corpus"
+
+    id = Column(String(64), primary_key=True)
+    original_finding_id = Column(String(64), index=True)
+    category = Column(String(64), index=True)
+    severity = Column(String(16))
+    outcome = Column(String(32), index=True) # accepted, duplicate, etc.
+    payload = Column(JSON)
+    engagement_id = Column(String(64), index=True)
+    created_at = Column(DateTime)
+    finalized_at = Column(DateTime)
 
 class SessionMemory:
     """
@@ -207,6 +237,27 @@ class SessionMemory:
         with trace_span("redis.delete", attributes={"ai_osop.redis.key": key}):
             r = await self._ensure_redis()
             await r.delete(key)
+
+    async def acquire_lock(self, lock_key: str, lock_value: str, ttl_seconds: int = 30) -> bool:
+        """Acquire a distributed Redis lock."""
+        r = await self._ensure_redis()
+        with trace_span("redis.acquire_lock", attributes={"ai_osop.redis.key": lock_key}):
+            result = await r.set(lock_key, lock_value, nx=True, ex=ttl_seconds)
+            return bool(result)
+
+    async def release_lock(self, lock_key: str, lock_value: str) -> bool:
+        """Release a distributed Redis lock safely, ensuring only the owner can release it."""
+        r = await self._ensure_redis()
+        with trace_span("redis.release_lock", attributes={"ai_osop.redis.key": lock_key}):
+            lua_script = """
+            if redis.call("get", KEYS[1]) == ARGV[1] then
+                return redis.call("del", KEYS[1])
+            else
+                return 0
+            end
+            """
+            result = await r.eval(lua_script, 1, lock_key, lock_value)
+            return bool(result)
 
     async def store_session_state(self, state: SessionState) -> None:
         """Store active session state in Redis."""
@@ -522,6 +573,154 @@ class SessionMemory:
                     )
                 )
             return approvals
+
+    # ============== DLQ ==============
+
+    async def store_dlq_entry(self, entry: Any) -> None:
+        """Persist DLQ entry to hot (Redis) + warm (Postgres) tier."""
+        from ai_osop.reliability.dlq import DLQEntry
+        with trace_span("postgres.store_dlq_entry", attributes={"ai_osop.dlq_id": entry.id, "ai_osop.engagement_id": entry.engagement_id}):
+            # Hot tier (Redis cache)
+            await self.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+            # Warm tier (Postgres)
+            async with self._async_session() as session:
+                stmt = (
+                    insert(DLQEntryORM)
+                    .values(
+                        id=entry.id,
+                        task_id=entry.task_id,
+                        engagement_id=entry.engagement_id,
+                        task_type=entry.task_type,
+                        agent_type=entry.agent_type,
+                        reason=entry.reason,
+                        final_error=entry.final_error,
+                        task_payload=entry.task_payload,
+                        status=entry.status,
+                        operator_notes=entry.operator_notes,
+                        created_at=entry.created_at,
+                        resolved_at=entry.resolved_at,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["id"],
+                        set_={
+                            "status": entry.status,
+                            "operator_notes": entry.operator_notes,
+                            "resolved_at": entry.resolved_at,
+                        },
+                    )
+                )
+                await session.execute(stmt)
+                await session.commit()
+
+    async def get_dlq_entry(self, entry_id: str) -> Optional[Any]:
+        """Retrieve DLQ entry from hot (Redis) falling back to warm (Postgres) tier."""
+        from ai_osop.reliability.dlq import DLQEntry
+        with trace_span("postgres.get_dlq_entry", attributes={"ai_osop.dlq_id": entry_id}):
+            # 1. Hot tier check
+            data = await self.retrieve_hot(f"dlq:{entry_id}")
+            if data:
+                return DLQEntry(**data)
+
+            # 2. Warm tier fallback
+            async with self._async_session() as session:
+                result = await session.execute(select(DLQEntryORM).where(DLQEntryORM.id == entry_id))
+                orm = result.scalar_one_or_none()
+                if orm:
+                    entry = DLQEntry(
+                        id=orm.id,
+                        task_id=orm.task_id,
+                        engagement_id=orm.engagement_id,
+                        task_type=orm.task_type,
+                        agent_type=orm.agent_type,
+                        reason=orm.reason,
+                        final_error=orm.final_error,
+                        task_payload=orm.task_payload,
+                        status=orm.status,
+                        operator_notes=orm.operator_notes,
+                        created_at=orm.created_at,
+                        resolved_at=orm.resolved_at,
+                    )
+                    # Cache back to Redis
+                    await self.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+                    return entry
+            return None
+
+    async def list_dlq_entries(
+        self, engagement_id: Optional[str] = None, status: Optional[str] = None
+    ) -> List[Any]:
+        """List DLQ entries from warm tier (Postgres)."""
+        from ai_osop.reliability.dlq import DLQEntry
+        with trace_span("postgres.list_dlq_entries"):
+            async with self._async_session() as session:
+                query = select(DLQEntryORM)
+                if engagement_id:
+                    query = query.where(DLQEntryORM.engagement_id == engagement_id)
+                if status:
+                    query = query.where(DLQEntryORM.status == status)
+                # Sort by created_at descending
+                query = query.order_by(DLQEntryORM.created_at.desc())
+                result = await session.execute(query)
+                entries = []
+                for orm in result.scalars():
+                    entries.append(
+                        DLQEntry(
+                            id=orm.id,
+                            task_id=orm.task_id,
+                            engagement_id=orm.engagement_id,
+                            task_type=orm.task_type,
+                            agent_type=orm.agent_type,
+                            reason=orm.reason,
+                            final_error=orm.final_error,
+                            task_payload=orm.task_payload,
+                            status=orm.status,
+                            operator_notes=orm.operator_notes,
+                            created_at=orm.created_at,
+                            resolved_at=orm.resolved_at,
+                        )
+                    )
+                return entries
+
+    async def get_dlq_stats(self) -> Dict[str, int]:
+        """Get DLQ status counts from warm tier (Postgres)."""
+        with trace_span("postgres.get_dlq_stats"):
+            async with self._async_session() as session:
+                # Group by status to compute stats
+                from sqlalchemy import func
+                query = select(DLQEntryORM.status, func.count(DLQEntryORM.id)).group_by(DLQEntryORM.status)
+                result = await session.execute(query)
+                stats = {"pending": 0, "requeued": 0, "discarded": 0}
+                for status, count in result.all():
+                    if status == "pending_review":
+                        stats["pending"] = count
+                    elif status == "requeued":
+                        stats["requeued"] = count
+                    elif status == "discarded":
+                        stats["discarded"] = count
+                return stats
+
+    async def upsert_corpus_finding(self, finding_data: Dict[str, Any]) -> None:
+        """Upsert aggregated finding into Postgres corpus."""
+        async with self._async_session() as session:
+            stmt = (
+                insert(FindingCorpusORM)
+                .values(
+                    id=str(uuid.uuid4()),
+                    original_finding_id=finding_data.get("id"),
+                    category=finding_data.get("category"),
+                    severity=finding_data.get("severity", "medium"),
+                    outcome="accepted",
+                    payload=finding_data,
+                    engagement_id=finding_data.get("engagement_id"),
+                    created_at=datetime.utcnow(),
+                    finalized_at=datetime.utcnow(),
+                )
+                .on_conflict_do_update(
+                    index_elements=["original_finding_id"],
+                    set_={"payload": finding_data, "finalized_at": datetime.utcnow()},
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
 
     # ============== TASKS ==============
 

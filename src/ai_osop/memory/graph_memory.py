@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.graph import Node, Path, Relationship
+from neo4j.exceptions import ServiceUnavailable
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import GraphQueryError, MemoryException
@@ -71,7 +72,7 @@ class GraphMemory:
             max_retries=5,
             base_delay=1.0,
             max_delay=30.0,
-            exceptions=(Neo4jServiceUnavailable, Exception),
+            exceptions=(ServiceUnavailable, Exception),
             retry_name="neo4j.connect",
         )
 
@@ -666,7 +667,10 @@ class GraphMemory:
             d.evidence_diff = $evidence_diff,
             d.confidence = $confidence,
             d.engagement_id = $engagement_id,
-            d.created_at = $created_at
+            d.created_at = $created_at,
+            d.outcome = $outcome,
+            d.outcome_notes = $outcome_notes,
+            d.outcome_at = $outcome_at
         WITH d
         OPTIONAL MATCH (e:Endpoint {id: $resource_id})
         FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
@@ -692,7 +696,10 @@ class GraphMemory:
                     "evidence_diff": json.dumps(finding.evidence_diff, default=str),
                     "confidence": finding.confidence,
                     "engagement_id": finding.engagement_id,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": finding.created_at.isoformat(),
+                    "outcome": finding.outcome,
+                    "outcome_notes": finding.outcome_notes,
+                    "outcome_at": finding.outcome_at.isoformat() if finding.outcome_at else None,
                 },
             )
             record = await result.single()

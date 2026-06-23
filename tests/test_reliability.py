@@ -152,7 +152,7 @@ class TestDeadLetterQueue:
             async def keys(self, pattern):
                 return [k for k in store.keys() if k.startswith("dlq:")]
 
-        mem = MagicMock()
+        mem = MagicMock(spec=["store_hot", "retrieve_hot", "_redis"])
         mem.store_hot = AsyncMock(side_effect=store_hot)
         mem.retrieve_hot = AsyncMock(side_effect=retrieve_hot)
         mem._redis = FakeRedis()
@@ -175,8 +175,8 @@ class TestDeadLetterQueue:
         entry_id = await dlq.enqueue(sample_task, reason="retry_exhausted", final_error="timeout")
 
         assert entry_id.startswith("dlq-")
-        assert entry_id in store
-        data = store[entry_id]
+        assert f"dlq:{entry_id}" in store
+        data = store[f"dlq:{entry_id}"]
         assert data["task_id"] == sample_task.id
         assert data["reason"] == "retry_exhausted"
         assert data["final_error"] == "timeout"
@@ -198,8 +198,8 @@ class TestDeadLetterQueue:
 
         entry_id = await dlq.enqueue(sample_task, reason="retry_exhausted", final_error="timeout")
         # Simulate the task having been retried before
-        store[entry_id]["task_payload"]["retry_count"] = 3
-        store[entry_id]["task_payload"]["status"] = "failed"
+        store[f"dlq:{entry_id}"]["task_payload"]["retry_count"] = 3
+        store[f"dlq:{entry_id}"]["task_payload"]["status"] = "failed"
 
         task = await dlq.requeue(entry_id)
 
@@ -213,7 +213,7 @@ class TestDeadLetterQueue:
         dlq = DeadLetterQueue(mem)
 
         entry_id = await dlq.enqueue(sample_task, reason="retry_exhausted", final_error="timeout")
-        store[entry_id]["status"] = "requeued"
+        store[f"dlq:{entry_id}"]["status"] = "requeued"
 
         task = await dlq.requeue(entry_id)
         assert task is None
@@ -225,7 +225,7 @@ class TestDeadLetterQueue:
         entry_id = await dlq.enqueue(sample_task, reason="retry_exhausted", final_error="timeout")
         await dlq.discard(entry_id, operator_notes="False positive")
 
-        data = store[entry_id]
+        data = store[f"dlq:{entry_id}"]
         assert data["status"] == "discarded"
         assert data["operator_notes"] == "False positive"
         assert data["resolved_at"] is not None
@@ -251,7 +251,7 @@ class TestDeadLetterQueue:
         long_error = "x" * 5000
         entry_id = await dlq.enqueue(sample_task, reason="retry_exhausted", final_error=long_error)
 
-        data = store[entry_id]
+        data = store[f"dlq:{entry_id}"]
         assert len(data["final_error"]) <= 2000
 
 
@@ -432,32 +432,32 @@ class TestSystemRouter:
         from ai_osop.api.routers.system import router
 
         routes = [r.path for r in router.routes]
-        assert "/mcp/health" in routes
+        assert "/system/mcp/health" in routes
 
     def test_dlq_stats_endpoint_exists(self):
         """The system router should have /dlq/stats endpoint."""
         from ai_osop.api.routers.system import router
 
         routes = [r.path for r in router.routes]
-        assert "/dlq/stats" in routes
+        assert "/system/dlq/stats" in routes
 
     def test_dlq_entries_endpoint_exists(self):
         """The system router should have /dlq/entries endpoint."""
         from ai_osop.api.routers.system import router
 
         routes = [r.path for r in router.routes]
-        assert "/dlq/entries" in routes
+        assert "/system/dlq/entries" in routes
 
     def test_dlq_requeue_endpoint_exists(self):
         """The system router should have /dlq/requeue endpoint."""
         from ai_osop.api.routers.system import router
 
         routes = [r.path for r in router.routes]
-        assert "/dlq/requeue" in routes
+        assert "/system/dlq/requeue" in routes
 
     def test_dlq_discard_endpoint_exists(self):
         """The system router should have /dlq/discard endpoint."""
         from ai_osop.api.routers.system import router
 
         routes = [r.path for r in router.routes]
-        assert "/dlq/discard" in routes
+        assert "/system/dlq/discard" in routes
