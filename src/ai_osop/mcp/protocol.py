@@ -286,16 +286,23 @@ class MCPRegistry:
         parameters: Dict[str, Any],
         timeout_override: Optional[int] = None,
     ) -> MCPExecuteResponse:
-        """Execute a tool on a specific server."""
-        conn = self._servers.get(server_id)
-        if not conn:
-            raise MCPConnectionError(f"Server {server_id} not registered")
+        """Execute a tool on a specific server with tracing."""
+        with trace_span(
+            f"mcp_registry.execute_tool",
+            attributes={
+                "ai_osop.mcp.server_id": server_id,
+                "ai_osop.mcp.tool_name": tool_name,
+            },
+        ):
+            conn = self._servers.get(server_id)
+            if not conn:
+                raise MCPConnectionError(f"Server {server_id} not registered")
 
-        self.call_counts[server_id] = self.call_counts.get(server_id, 0) + 1
-        request = MCPExecuteRequest(
-            tool_name=tool_name, parameters=parameters, timeout_override=timeout_override
-        )
-        return await conn.execute(request)
+            self.call_counts[server_id] = self.call_counts.get(server_id, 0) + 1
+            request = MCPExecuteRequest(
+                tool_name=tool_name, parameters=parameters, timeout_override=timeout_override
+            )
+            return await conn.execute(request)
 
     async def broadcast_execute(
         self,
@@ -303,26 +310,32 @@ class MCPRegistry:
         parameters: Dict[str, Any],
         server_filter: Optional[Callable[[MCPConnection], bool]] = None,
     ) -> Dict[str, MCPExecuteResponse]:
-        """Execute a tool across multiple servers."""
-        results = {}
-        tasks = []
+        """Execute a tool across multiple servers with tracing."""
+        with trace_span(
+            f"mcp_registry.broadcast_execute",
+            attributes={
+                "ai_osop.mcp.tool_name": tool_name,
+            },
+        ):
+            results = {}
+            tasks = []
 
-        for server_id, conn in self._servers.items():
-            if server_filter and not server_filter(conn):
-                continue
-            if tool_name in conn._tools:
-                task = conn.execute(MCPExecuteRequest(tool_name=tool_name, parameters=parameters))
-                tasks.append((server_id, task))
+            for server_id, conn in self._servers.items():
+                if server_filter and not server_filter(conn):
+                    continue
+                if tool_name in conn._tools:
+                    task = conn.execute(MCPExecuteRequest(tool_name=tool_name, parameters=parameters))
+                    tasks.append((server_id, task))
 
-        for server_id, task in tasks:
-            try:
-                results[server_id] = await task
-            except Exception as e:
-                results[server_id] = MCPExecuteResponse(
-                    request_id="broadcast", status="error", error=str(e)
-                )
+            for server_id, task in tasks:
+                try:
+                    results[server_id] = await task
+                except Exception as e:
+                    results[server_id] = MCPExecuteResponse(
+                        request_id="broadcast", status="error", error=str(e)
+                    )
 
-        return results
+            return results
 
     def get_server(self, server_id: str) -> Optional[MCPConnection]:
         return self._servers.get(server_id)

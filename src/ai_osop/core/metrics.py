@@ -119,6 +119,76 @@ SLO_LATENCY_P95 = Gauge(
     ["path"],
 )
 
+# Sprint 6B: New SLO metrics
+TASK_COMPLETION_TIME = Histogram(
+    "ai_osop_task_completion_time_seconds",
+    "End-to-end task duration (schedule → complete)",
+    ["agent_type", "task_type"],
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
+)
+ENGAGEMENT_COMPLETION_TIME = Histogram(
+    "ai_osop_engagement_completion_time_seconds",
+    "Engagement duration (create → complete)",
+    buckets=[60.0, 300.0, 600.0, 1800.0, 3600.0, 7200.0, 14400.0, 28800.0, 86400.0],
+)
+AGENT_SUCCESS_RATE = Gauge(
+    "ai_osop_agent_success_rate",
+    "Agent success ratio (completed / total)",
+    ["agent_type"],
+)
+MCP_SUCCESS_RATE = Gauge(
+    "ai_osop_mcp_success_rate",
+    "MCP success ratio (success / total)",
+    ["server_id"],
+)
+APPROVAL_WAIT_TIME = Histogram(
+    "ai_osop_approval_wait_time_seconds",
+    "Time from approval request to resolution",
+    buckets=[1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0],
+)
+TASK_THROUGHPUT = Counter(
+    "ai_osop_task_throughput_total",
+    "Tasks completed per unit time",
+    ["agent_type"],
+)
+AGENT_THROUGHPUT = Counter(
+    "ai_osop_agent_throughput_total",
+    "Agent executions per unit time",
+    ["agent_type"],
+)
+
+# Security & Operations metrics
+APPROVALS_TOTAL = Counter(
+    "ai_osop_approvals_total",
+    "Total approval decisions",
+    ["decision"],
+)
+DENIED_ACTIONS_TOTAL = Counter(
+    "ai_osop_denied_actions_total",
+    "Blocked actions by approval gate",
+    ["action_type"],
+)
+RBAC_FAILURES_TOTAL = Counter(
+    "ai_osop_rbac_failures_total",
+    "RBAC authorization rejections",
+    ["endpoint", "required_role"],
+)
+OWNERSHIP_VIOLATIONS_TOTAL = Counter(
+    "ai_osop_ownership_violations_total",
+    "Ownership check failures",
+    ["resource_type"],
+)
+SANDBOX_BLOCKS_TOTAL = Counter(
+    "ai_osop_sandbox_blocks_total",
+    "Sandbox/eBPF blocks",
+    ["block_type"],
+)
+SCOPE_VIOLATIONS_TOTAL = Counter(
+    "ai_osop_scope_violations_total",
+    "Out-of-scope detections",
+    ["rule"],
+)
+
 # Dependency health (1=up, 0=down)
 DEPENDENCY_UP = Gauge(
     "ai_osop_dependency_up",

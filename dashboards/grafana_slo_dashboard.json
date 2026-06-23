@@ -1,0 +1,131 @@
+{
+  "dashboard": {
+    "title": "AI-OSOP SLO / Availability",
+    "tags": ["ai-osop", "slo", "availability"],
+    "timezone": "utc",
+    "schemaVersion": 36,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Availability SLO (rolling 1h)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_slo_availability_ratio{window=\"1h\"}",
+            "legendFormat": "1h"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 0.95},
+                {"color": "green", "value": 0.99}
+              ]
+            },
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Availability SLO (rolling 24h)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_slo_availability_ratio{window=\"24h\"}",
+            "legendFormat": "24h"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 0.95},
+                {"color": "green", "value": 0.99}
+              ]
+            },
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Error Budget Remaining",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_slo_error_budget_remaining",
+            "legendFormat": "{{slo_name}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 0.25},
+                {"color": "green", "value": 0.5}
+              ]
+            },
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "API Latency p99 by Route",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.99, rate(ai_osop_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{path}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "API Latency p95 by Route",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{path}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 6,
+        "title": "Engagement Completion Time (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_engagement_completion_time_seconds_bucket[1h]))",
+            "legendFormat": "p95"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 7,
+        "title": "Task Completion Time (p95) by Agent Type",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_task_completion_time_seconds_bucket[5m]))",
+            "legendFormat": "{{agent_type}} / {{task_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      }
+    ]
+  }
+}
