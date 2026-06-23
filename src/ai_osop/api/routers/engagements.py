@@ -15,6 +15,7 @@ from ai_osop.api.deps import (
     state,
     verify_token,
 )
+from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.models import ScopeDefinition, SessionState
 from ai_osop.orchestrator.orchestrator import EngagementPhase
 
@@ -70,6 +71,26 @@ async def get_engagement(session_id: str, operator: Dict[str, Any] = Depends(ver
     """Get engagement details."""
     session = await assert_engagement_access(operator, session_id)
     return session
+
+
+@router.get("/{session_id}/audit-log")
+async def get_audit_log(
+    session_id: str,
+    limit: int = 1000,
+    operator: Dict[str, Any] = Depends(verify_token),
+):
+    """Return the audit trail for an engagement.
+
+    The dashboard (ui/src/services/network.ts) fetches this by session_id, but
+    audit events are persisted keyed by scope.engagement_id, so resolve the
+    session first and query by that id.
+    """
+    session = await assert_engagement_access(operator, session_id)
+    engagement_id = session.scope.engagement_id
+    events = await state["orchestrator"].session_memory.query_audit_log(
+        engagement_id=engagement_id, limit=limit
+    )
+    return [e.model_dump(mode="json") for e in events]
 
 
 @router.post("/{session_id}/transition")

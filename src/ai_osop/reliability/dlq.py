@@ -62,7 +62,7 @@ class DeadLetterQueue:
             agent_type=task.agent_type.value,
             reason=reason,
             final_error=final_error[:2000],  # truncate to avoid huge payloads
-            task_payload=task.model_dump(),
+            task_payload=task.model_dump(mode='json'),
         )
 
         # Store in hot + warm tier

@@ -94,11 +94,19 @@ class RecoveryService:
         """Restart recovery: restore in-memory state from durable stores."""
         recovered = {"engagements": 0, "tasks": 0, "agents": 0}
         try:
-            sessions = await self._orch.session_memory.list_all_sessions()
-            for session in sessions:
+            # list_all_sessions() returns raw Redis keys ("session:<id>"); hydrate
+            # each into a real SessionState before storing it in memory.
+            session_keys = await self._orch.session_memory.list_all_sessions()
+            for key in session_keys:
+                session_id = key.split("session:", 1)[-1] if "session:" in key else key
+                session = await self._orch.session_memory.get_session_state(session_id)
+                if session is None:
+                    continue
                 self._orch._sessions[session.session_id] = session
                 recovered["engagements"] += 1
-            tasks = await self._orch.session_memory.list_all_tasks()
+            # load_all_active_tasks() returns Task objects already filtered to
+            # non-terminal status (list_all_tasks() only returns raw key strings).
+            tasks = await self._orch.session_memory.load_all_active_tasks()
             for task in tasks:
                 if task.status in ("pending", "running"):
                     task.assigned_agent_id = None
