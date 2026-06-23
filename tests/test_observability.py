@@ -32,6 +32,16 @@ from ai_osop.core.telemetry import (
 )
 from ai_osop.core.tracing import get_tracer, init_tracing, shutdown_tracing, trace_span, trace_span_with_parent
 
+@pytest.fixture(scope="module", autouse=True)
+def setup_test_tracing():
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    try:
+        otel_trace.set_tracer_provider(TracerProvider())
+    except Exception:
+        pass
+    yield
+
 
 # =============================================================================
 # CorrelationIdMiddleware tests
@@ -110,13 +120,16 @@ class TestTelemetryCarrier:
         """Inject into carrier, extract back, verify trace continuity."""
         init_tracing()
         try:
-            carrier = {}
-            TelemetryCarrier.inject(carrier)
-            assert "traceparent" in carrier
-            assert carrier["traceparent"].startswith("00-")
+            from opentelemetry import trace as otel_trace
+            tracer = otel_trace.get_tracer("test")
+            with tracer.start_as_current_span("test-span"):
+                carrier = {}
+                TelemetryCarrier.inject(carrier)
+                assert "traceparent" in carrier
+                assert carrier["traceparent"].startswith("00-")
 
-            span_context = TelemetryCarrier.extract(carrier)
-            assert span_context.is_valid
+                span_context = TelemetryCarrier.extract(carrier)
+                assert span_context.is_valid
 
             # Extract from empty carrier returns invalid
             invalid = TelemetryCarrier.extract({})
@@ -154,9 +167,12 @@ class TestTraceSpans:
     def test_trace_span_with_parent_continues_trace(self):
         init_tracing()
         try:
-            carrier = {}
-            TelemetryCarrier.inject(carrier)
-            parent = TelemetryCarrier.extract(carrier)
+            from opentelemetry import trace as otel_trace
+            tracer = otel_trace.get_tracer("test")
+            with tracer.start_as_current_span("parent-span"):
+                carrier = {}
+                TelemetryCarrier.inject(carrier)
+                parent = TelemetryCarrier.extract(carrier)
 
             with trace_span_with_parent("child.span", parent_span_context=parent) as span:
                 assert span.is_recording()

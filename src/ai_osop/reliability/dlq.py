@@ -65,9 +65,12 @@ class DeadLetterQueue:
             task_payload=task.model_dump(),
         )
 
-        # Store in Redis (hot) — fast lookup by engagement
-        redis_key = f"dlq:{entry.id}"
-        await self._session_memory.store_hot(redis_key, entry.model_dump(), ttl=86400 * 7)
+        # Store in hot + warm tier
+        if hasattr(self._session_memory, "store_dlq_entry"):
+            await self._session_memory.store_dlq_entry(entry)
+        else:
+            redis_key = f"dlq:{entry.id}"
+            await self._session_memory.store_hot(redis_key, entry.model_dump(), ttl=86400 * 7)
 
         # Also add to engagement-scoped list
         list_key = f"dlq:list:{task.engagement_id}"
@@ -86,6 +89,9 @@ class DeadLetterQueue:
         If engagement_id is provided, only entries for that engagement are returned.
         If status is provided, only entries with that status are returned.
         """
+        if hasattr(self._session_memory, "list_dlq_entries"):
+            return await self._session_memory.list_dlq_entries(engagement_id, status)
+
         if engagement_id:
             list_key = f"dlq:list:{engagement_id}"
             entry_ids = await self._session_memory._redis.lrange(list_key, 0, -1)
@@ -117,11 +123,15 @@ class DeadLetterQueue:
         Resets retry_count to 0 and updates the DLQ entry status.
         Returns the requeued Task or None if not found.
         """
-        data = await self._session_memory.retrieve_hot(f"dlq:{dlq_entry_id}")
-        if not data:
+        if hasattr(self._session_memory, "get_dlq_entry"):
+            entry = await self._session_memory.get_dlq_entry(dlq_entry_id)
+        else:
+            data = await self._session_memory.retrieve_hot(f"dlq:{dlq_entry_id}")
+            entry = DLQEntry(**data) if data else None
+
+        if not entry:
             return None
 
-        entry = DLQEntry(**data)
         if entry.status != "pending_review":
             return None
 
@@ -137,26 +147,41 @@ class DeadLetterQueue:
         # Update DLQ entry status
         entry.status = "requeued"
         entry.resolved_at = datetime.utcnow()
-        await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+
+        if hasattr(self._session_memory, "store_dlq_entry"):
+            await self._session_memory.store_dlq_entry(entry)
+        else:
+            await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
 
         return task
 
     @trace_span("dlq.discard")
     async def discard(self, dlq_entry_id: str, operator_notes: str) -> None:
         """Permanently discard a DLQ entry."""
-        data = await self._session_memory.retrieve_hot(f"dlq:{dlq_entry_id}")
-        if not data:
+        if hasattr(self._session_memory, "get_dlq_entry"):
+            entry = await self._session_memory.get_dlq_entry(dlq_entry_id)
+        else:
+            data = await self._session_memory.retrieve_hot(f"dlq:{dlq_entry_id}")
+            entry = DLQEntry(**data) if data else None
+
+        if not entry:
             return
 
-        entry = DLQEntry(**data)
         entry.status = "discarded"
         entry.resolved_at = datetime.utcnow()
         entry.operator_notes = operator_notes
-        await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+
+        if hasattr(self._session_memory, "store_dlq_entry"):
+            await self._session_memory.store_dlq_entry(entry)
+        else:
+            await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
 
     @trace_span("dlq.get_stats")
     async def get_stats(self) -> Dict[str, int]:
         """Return DLQ stats: pending, requeued, discarded counts."""
+        if hasattr(self._session_memory, "get_dlq_stats"):
+            return await self._session_memory.get_dlq_stats()
+
         # Scan all DLQ entries
         keys = await self._session_memory._redis.keys("dlq:dlq-*")
         pending = requeued = discarded = 0

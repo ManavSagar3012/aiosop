@@ -141,6 +141,27 @@ export const Administration: React.FC = () => {
             </div>
          </div>
         </Card>
+        <Card title="Dead Letter Queue">
+           <div className="flex flex-col gap-3">
+               <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all">VIEW DLQ ENTRIES</button>
+               <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all">REQUEUE ALL PENDING</button>
+           </div>
+        </Card>
+        <Card title="Engagement Control Panel">
+           <div className="flex flex-col gap-3">
+               <input type="text" placeholder="Engagement ID" className="w-full p-2 bg-black/40 border border-outline" id="eng-id-input" />
+               <button className="w-full py-2 border border-red-500 text-red-500 hover:bg-red-500/10 transition-all" onClick={() => {
+                   const id = (document.getElementById('eng-id-input') as HTMLInputElement).value;
+                   fetch(`${API_BASE}/engagements/${id}/halt`, { method: 'POST', headers: { 'Authorization': 'Bearer dev-token' }});
+               }}>HALT ENGAGEMENT</button>
+               <input type="text" placeholder="Phase (e.g., exploitation)" className="w-full p-2 bg-black/40 border border-outline" id="phase-input" />
+               <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all" onClick={() => {
+                   const id = (document.getElementById('eng-id-input') as HTMLInputElement).value;
+                   const phase = (document.getElementById('phase-input') as HTMLInputElement).value;
+                   fetch(`${API_BASE}/engagements/${id}/transition`, { method: 'POST', headers: { 'Authorization': 'Bearer dev-token' }, body: JSON.stringify({ phase })});
+               }}>TRANSITION PHASE</button>
+           </div>
+        </Card>
       </div>
     </div>
   );

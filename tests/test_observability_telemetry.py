@@ -16,6 +16,16 @@ from ai_osop.core.telemetry import (
 )
 
 
+@pytest.fixture(scope="module", autouse=True)
+def setup_test_tracing():
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    try:
+        otel_trace.set_tracer_provider(TracerProvider())
+    except Exception:
+        pass
+    yield
+
 class TestRequestContext:
     def test_bind_sets_contextvars(self) -> None:
         """Binding IDs should set contextvars and be retrievable."""
@@ -84,10 +94,13 @@ class TestExtractTraceIdFromTraceparent:
 class TestTelemetryCarrier:
     def test_inject_puts_traceparent(self) -> None:
         """Inject should add traceparent to carrier dict."""
-        carrier: dict = {}
-        inject_trace_context(carrier)
-        assert "traceparent" in carrier
-        assert carrier["traceparent"].startswith("00-")
+        from opentelemetry import trace as otel_trace
+        tracer = otel_trace.get_tracer("test")
+        with tracer.start_as_current_span("test-span"):
+            carrier: dict = {}
+            inject_trace_context(carrier)
+            assert "traceparent" in carrier
+            assert carrier["traceparent"].startswith("00-")
 
     def test_extract_from_empty_returns_invalid(self) -> None:
         """Extract from empty dict should return invalid span context."""
@@ -96,7 +109,10 @@ class TestTelemetryCarrier:
 
     def test_roundtrip_inject_extract(self) -> None:
         """Inject then extract should yield a valid span context."""
-        carrier: dict = {}
-        inject_trace_context(carrier)
-        span_ctx = extract_trace_context(carrier)
-        assert span_ctx.is_valid
+        from opentelemetry import trace as otel_trace
+        tracer = otel_trace.get_tracer("test")
+        with tracer.start_as_current_span("test-span"):
+            carrier: dict = {}
+            inject_trace_context(carrier)
+            span_ctx = extract_trace_context(carrier)
+            assert span_ctx.is_valid

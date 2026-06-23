@@ -29,6 +29,11 @@ from ai_osop.core.metrics import (
     LLM_CALL_DURATION,
 )
 from ai_osop.reliability.dlq import DeadLetterQueue
+from ai_osop.orchestrator.task_scheduler import TaskScheduler
+from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
+from ai_osop.orchestrator.phase_monitor import PhaseMonitor
+from ai_osop.orchestrator.engagement_manager import EngagementManager
+from ai_osop.orchestrator.recovery_service import RecoveryService
 from ai_osop.core.telemetry import RequestContext, inject_trace_context
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.core.observability import (
@@ -54,15 +59,7 @@ from ai_osop.safety.rate_limiter import RateLimiter
 logger = structlog.get_logger("ai_osop.orchestrator")
 
 
-class EngagementPhase(str, Enum):
-    INITIALIZED = "initialized"
-    RECONNAISSANCE = "reconnaissance"
-    VULNERABILITY_DISCOVERY = "vulnerability_discovery"
-    EXPLOITATION = "exploitation"
-    POST_EXPLOITATION = "post_exploitation"
-    REPORTING = "reporting"
-    COMPLETED = "completed"
-    HALTED = "halted"
+from ai_osop.core.config import AgentType, EngagementPhase
 
 
 class Orchestrator:
@@ -168,6 +165,13 @@ class Orchestrator:
         # driving two coroutines through one agent and clobbering shared self.ctx.
         self._busy_agents: set[str] = set()
 
+        # Sprint 9: Extracted sub-components for Architecture Excellence
+        self.task_scheduler = TaskScheduler(self)
+        self.approval_coordinator = ApprovalCoordinator(self)
+        self.phase_monitor = PhaseMonitor(self)
+        self.engagement_manager = EngagementManager(self)
+        self.recovery_service = RecoveryService(self)
+
         self._running = False
         self._scheduler_task: Optional[asyncio.Task] = None
         self._reaper_task: Optional[asyncio.Task] = None
@@ -182,7 +186,7 @@ class Orchestrator:
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                self._phase_monitor_task = loop.create_task(self._phase_monitor())
+                self._phase_monitor_task = loop.create_task(self.phase_monitor._phase_monitor())
         except RuntimeError:
             pass
 
@@ -211,7 +215,7 @@ class Orchestrator:
         # is already running at construction; start it here (idempotently) so the
         # canonical construct-then-initialize path can never leave it dead.
         if self._phase_monitor_task is None or self._phase_monitor_task.done():
-            self._phase_monitor_task = asyncio.create_task(self._phase_monitor())
+            self._phase_monitor_task = asyncio.create_task(self.phase_monitor._phase_monitor())
 
         # P0: Recovery sprint — restore in-flight state from warm tier so restarts
         # don't lose pending approvals or active tasks.
@@ -220,7 +224,7 @@ class Orchestrator:
             for apr in pending_approvals:
                 self._approval_requests[apr.id] = apr
                 # Re-spawn timeout watcher so stale approvals still fail correctly
-                asyncio.create_task(self._await_approval_outcome(apr.id))
+                asyncio.create_task(self.approval_coordinator._await_approval_outcome(apr.id))
             active_tasks = await self.session_memory.load_all_active_tasks()
             for task in active_tasks:
                 self._tasks[task.id] = task
@@ -564,9 +568,8 @@ class Orchestrator:
                         engagement_id=task.engagement_id,
                     )
                     # Sprint 6B: Record approval metrics
-            record_approval_requested(request.id)
-
-            await self._raise_approval(request)
+                    record_approval_requested(request.id)
+                    await self._raise_approval(request)
                 return
 
             # Find + atomically claim an available agent (single sync critical section).
@@ -614,8 +617,17 @@ class Orchestrator:
                 if task_type and hasattr(agent, "supports_task_type"):
                     if not agent.supports_task_type(task_type):
                         continue
-                # Synchronous claim — no await before this point in the loop body.
+                
+                # Sprint 6A: Distributed Lock — acquire lock in Redis
+                lock_key = f"lock:agent:{agent.ctx.agent_id}"
+                lock_value = f"orch-{id(self)}"
+                acquired = await self.session_memory.acquire_lock(lock_key, lock_value, ttl_seconds=60)
+                if not acquired:
+                    continue  # Locked by another replica
+
+                # Synchronous claim
                 self._busy_agents.add(agent.ctx.agent_id)
+                agent._current_lock_value = lock_value
                 return agent
         return None
 
@@ -623,7 +635,12 @@ class Orchestrator:
         """Release an agent claim made by _find_available_agent (P0-1)."""
         if agent_id:
             self._busy_agents.discard(agent_id)
-
+            agent = self._agents.get(agent_id)
+            if agent and hasattr(agent, "_current_lock_value"):
+                lock_value = agent._current_lock_value
+                asyncio.create_task(
+                    self.session_memory.release_lock(f"lock:agent:{agent_id}", lock_value)
+                )
     @staticmethod
     def _strip_stale_approval(task: Task) -> None:
         """P1-2 (approval bypass on recovery/retry): drop any persisted approval grant

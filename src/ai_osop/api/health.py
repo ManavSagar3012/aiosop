@@ -6,20 +6,30 @@ Provides:
 
 The /ready endpoint is what Kubernetes uses to determine if the pod can receive traffic.
 It checks Redis, Neo4j, Postgres, and MCP registry connectivity.
+
+Sprint 8 enhancements:
+- ai_osop_ready_status metric (1=ready, 0=not_ready, 0.5=degraded)
+- Readiness history tracking (last 5 checks for flapping detection)
+- Dependency-specific threshold reporting
 """
 
 from __future__ import annotations
 
 import time
+from collections import deque
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Deque, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ai_osop.api.deps import state
+from ai_osop.core.metrics import READY_STATUS
 from ai_osop.core.telemetry import RequestContext
 
 router = APIRouter(tags=["health"])
+
+# Sprint 8: readiness history for flapping detection
+_readiness_history: Deque[Dict[str, Any]] = deque(maxlen=5)
 
 
 async def _check_redis() -> Dict[str, Any]:
@@ -115,6 +125,11 @@ async def ready() -> Dict[str, Any]:
     Verifies all critical dependencies are reachable before returning 200.
     If any dependency is unhealthy, returns 503 with detailed breakdown.
     Kubernetes uses this to decide whether to send traffic to the pod.
+
+    Sprint 8:
+    - Emits ai_osop_ready_status metric (1/0/0.5)
+    - Tracks last 5 checks for flapping detection
+    - Reports degraded (not not_ready) when only non-critical deps are unhealthy
     """
     checks = {
         "redis": await _check_redis(),
@@ -123,28 +138,54 @@ async def ready() -> Dict[str, Any]:
         "mcp_registry": await _check_mcp_registry(),
     }
 
-    all_healthy = all(
-        c["status"] in ("healthy", "unknown") for c in checks.values()
-    )
-    # If any critical dependency is unhealthy, we are not ready
+    # Critical dependencies: Redis, Neo4j, Postgres
     critical_unhealthy = any(
         c["status"] == "unhealthy"
         for name, c in checks.items()
         if name in ("redis", "neo4j", "postgres")
     )
 
+    # Non-critical: MCP registry
+    non_critical_degraded = any(
+        c["status"] in ("degraded", "unhealthy")
+        for name, c in checks.items()
+        if name not in ("redis", "neo4j", "postgres")
+    )
+
     if critical_unhealthy:
+        READY_STATUS.set(0.0)
+        _readiness_history.append({
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "not_ready",
+            "checks": {name: c["status"] for name, c in checks.items()},
+        })
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "status": "not_ready",
                 "timestamp": datetime.utcnow().isoformat(),
                 "checks": checks,
+                "history": list(_readiness_history),
             },
         )
 
+    # Determine overall status
+    if non_critical_degraded:
+        overall_status = "degraded"
+        READY_STATUS.set(0.5)
+    else:
+        overall_status = "ready"
+        READY_STATUS.set(1.0)
+
+    _readiness_history.append({
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": overall_status,
+        "checks": {name: c["status"] for name, c in checks.items()},
+    })
+
     return {
-        "status": "ready" if all_healthy else "degraded",
+        "status": overall_status,
         "timestamp": datetime.utcnow().isoformat(),
         "checks": checks,
+        "history": list(_readiness_history),
     }

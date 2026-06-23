@@ -16,7 +16,7 @@ class TestDeadLetterQueue:
     @pytest.fixture
     def mock_session_memory(self):
         """Mock session memory with Redis-like interface."""
-        mem = MagicMock()
+        mem = MagicMock(spec=["store_hot", "retrieve_hot", "_redis"])
         mem._redis = MagicMock()
         mem._redis.rpush = AsyncMock()
         mem._redis.lrange = AsyncMock(return_value=[])

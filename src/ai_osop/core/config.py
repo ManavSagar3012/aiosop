@@ -326,3 +326,12 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+class EngagementPhase(str, Enum):
+    INITIALIZED = "initialized"
+    RECONNAISSANCE = "reconnaissance"
+    VULNERABILITY_DISCOVERY = "vulnerability_discovery"
+    EXPLOITATION = "exploitation"
+    POST_EXPLOITATION = "post_exploitation"
+    REPORTING = "reporting"
+    COMPLETED = "completed"
+    HALTED = "halted"

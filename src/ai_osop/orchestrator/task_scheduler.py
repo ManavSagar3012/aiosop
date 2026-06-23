@@ -1,0 +1,428 @@
+"""TaskScheduler — extracted from Orchestrator for Sprint 9 Architecture Excellence.
+
+Handles all task scheduling, assignment, execution, retry, and lifecycle management.
+The Orchestrator retains ownership of shared state (agents, tasks, busy_agents)
+and passes itself as context so the scheduler can access it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+import structlog
+
+from ai_osop.core.config import AgentType
+from ai_osop.core.models import ApprovalRequest, AuditEvent, Task
+from ai_osop.core.telemetry import RequestContext
+from ai_osop.core.tracing import trace_span
+from ai_osop.core.observability import record_task, update_task_counts
+
+logger = structlog.get_logger("ai_osop.orchestrator.task_scheduler")
+
+
+class TaskScheduler:
+    """Schedule, assign, execute, and retry tasks."""
+
+    # Terminal failure statuses that should not trigger retry success path
+    _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
+
+    def __init__(self, orchestrator: Any) -> None:
+        self._orch = orchestrator
+
+    async def schedule_task(self, task: Task) -> Task:
+        """Schedule a task for execution."""
+        from ai_osop.core.telemetry import inject_trace_context
+
+        if not task.trace_context:
+            inject_trace_context(task.trace_context)
+        RequestContext.bind(
+            task_id=task.id,
+            engagement_id=task.engagement_id,
+            trace_id=task.trace_context.get("traceparent", "").split("-")[1]
+            if task.trace_context.get("traceparent")
+            else "",
+        )
+
+        with trace_span(
+            "orchestrator.schedule_task",
+            attributes={
+                "task_id": task.id,
+                "task_type": task.type,
+                "agent_type": task.agent_type.value,
+                "engagement_id": task.engagement_id,
+                "approval_required": task.approval_required,
+            },
+        ):
+            # Force approval for exploit-class tasks
+            if task.type in ("validate_exploit", "exploit_validation") and not task.approval_required:
+                task.approval_required = True
+
+            self._orch._tasks[task.id] = task
+            await self._orch.graph_memory.upsert_task(task)
+            await self._orch.session_memory.store_task(task)
+            await self._orch.coordination_bus.publish(
+                "task.scheduled",
+                {"task_id": task.id, "task_type": task.type, "agent_type": task.agent_type.value},
+                "orchestrator",
+            )
+            await self._orch.session_memory.push_task_queue(
+                f"tasks:{task.engagement_id}", task.model_dump()
+            )
+
+            if self._orch.temporal_enabled and self._orch.temporal_scheduler:
+                workflow_id = await self._orch.temporal_scheduler.start_task_workflow(task.model_dump())
+                task.status = "scheduled"
+                task.result = {"workflow_id": workflow_id, "durable": True}
+                return task
+
+            if not task.dependencies:
+                await self._assign_task(task)
+
+            return task
+
+    async def _execute_task_durable(self, task: Task) -> Dict[str, Any]:
+        """Execute task durably, waiting for an available agent if necessary, with timeout."""
+        self._orch._tasks[task.id] = task
+        start_time = asyncio.get_event_loop().time()
+        timeout = task.timeout_seconds or 300
+
+        while True:
+            agent = await self._find_available_agent(task.agent_type, task.type)
+            if agent:
+                task.assigned_agent_id = agent.ctx.agent_id
+                task.status = "running"
+                try:
+                    result = await agent.execute_task(task)
+                    status = result.get("status") if isinstance(result, dict) else None
+                    if status in self._FAILURE_STATUSES:
+                        task.status = "failed"
+                        task.result = result
+                    else:
+                        task.status = "completed"
+                        task.result = (
+                            result if isinstance(result, dict) else {"status": "success", "raw": result}
+                        )
+                    await self._orch.session_memory.store_task(task)
+                    return task.result
+                except Exception as e:
+                    task.status = "failed"
+                    task.result = {"status": "failed", "error": str(e)}
+                    await self._orch.session_memory.store_task(task)
+                    return task.result
+                finally:
+                    self._release_agent(agent.ctx.agent_id)
+
+            if asyncio.get_event_loop().time() - start_time > timeout:
+                task.status = "failed"
+                task.result = {"status": "failed", "error": "Timeout waiting for agent"}
+                await self._orch.session_memory.store_task(task)
+                return task.result
+
+            await asyncio.sleep(0.5)
+
+    async def _assign_task(self, task: Task) -> None:
+        """Assign task to appropriate agent."""
+        with trace_span(
+            "orchestrator._assign_task",
+            attributes={
+                "task_id": task.id,
+                "task_type": task.type,
+                "agent_type": task.agent_type.value,
+                "engagement_id": task.engagement_id,
+                "approval_required": task.approval_required,
+            },
+        ):
+            if hasattr(self._orch, "rate_limiter") and self._orch.rate_limiter:
+                await self._orch.rate_limiter.acquire(tool="orchestrator")
+
+            # Approval gate FIRST
+            if task.approval_required and not task.payload.get("operator_approved"):
+                if task.status != "awaiting_approval":
+                    task.status = "awaiting_approval"
+                    await self._orch.graph_memory.upsert_task(task)
+                    await self._orch.session_memory.store_task(task)
+                    request = ApprovalRequest(
+                        task_id=task.id,
+                        agent_id="",
+                        action_type=task.type,
+                        target=str(task.payload.get("url", task.payload.get("target", "unknown"))),
+                        payload_summary=str(task.payload),
+                        risk_assessment="high",
+                        engagement_id=task.engagement_id,
+                    )
+                    from ai_osop.core.observability import record_approval_requested
+                    record_approval_requested(request.id)
+                    await self._orch.approval_coordinator._raise_approval(request)
+                    return
+
+            # Find + atomically claim an available agent
+            agent = await self._find_available_agent(task.agent_type, task.type)
+            if agent:
+                task.assigned_agent_id = agent.ctx.agent_id
+                task.status = "running"
+                task.started_at = datetime.utcnow()
+                await self._orch.graph_memory.upsert_task(task)
+                await self._orch.session_memory.store_task(task)
+                await self._orch.coordination_bus.publish(
+                    "task.assigned",
+                    {"task_id": task.id, "agent_id": agent.ctx.agent_id},
+                    "orchestrator",
+                )
+                asyncio.create_task(self._execute_via_agent(agent, task))
+            else:
+                task.status = "pending"
+                await self._orch.graph_memory.upsert_task(task)
+                await self._orch.session_memory.store_task(task)
+
+    async def _find_available_agent(
+        self, agent_type: AgentType, task_type: str = ""
+    ) -> Optional[Any]:
+        """Find and atomically claim an idle agent."""
+        for agent in self._orch._agents.values():
+            if agent.ctx.agent_id in self._orch._busy_agents:
+                continue
+            if agent.ctx.agent_type == agent_type and agent.ctx.status == "idle":
+                if task_type and hasattr(agent, "supports_task_type"):
+                    if not agent.supports_task_type(task_type):
+                        continue
+                self._orch._busy_agents.add(agent.ctx.agent_id)
+                return agent
+        return None
+
+    def _release_agent(self, agent_id: Optional[str]) -> None:
+        """Release an agent claim."""
+        if agent_id:
+            self._orch._busy_agents.discard(agent_id)
+
+    @staticmethod
+    def _strip_stale_approval(task: Task) -> None:
+        """Drop persisted approval grant so gate re-fires."""
+        if task.approval_required and isinstance(task.payload, dict):
+            task.payload.pop("operator_approved", None)
+            task.payload.pop("approval_id", None)
+
+    async def _maybe_retry(self, task: Task, result: Dict[str, Any]) -> bool:
+        """Requeue a failed task if retry budget remains."""
+        if task.retry_count >= task.max_retries:
+            try:
+                await self._orch.dlq.enqueue(
+                    task,
+                    reason="retry_budget_exhausted",
+                    final_error=str(result.get("error") or result.get("status") or ""),
+                )
+            except Exception as e:
+                logger.error("dlq_enqueue_failed", task_id=task.id, error=str(e))
+            return False
+
+        task.retry_count += 1
+        backoff = min(2**task.retry_count, 30)
+        await self._orch._audit_log(
+            AuditEvent(
+                event_type="task_retry",
+                severity="warning",
+                actor_type="system",
+                actor_id="orchestrator",
+                action={
+                    "task_id": task.id,
+                    "task_type": task.type,
+                    "attempt": task.retry_count,
+                    "max_retries": task.max_retries,
+                    "backoff_seconds": backoff,
+                    "error": str(result.get("error") or result.get("status") or "")[:300],
+                },
+                result={"requeued": True},
+                context={"engagement_id": task.engagement_id},
+                engagement_id=task.engagement_id,
+            )
+        )
+        logger.info(
+            "retrying_task",
+            task_id=task.id,
+            task_type=task.type,
+            attempt=task.retry_count,
+            max_retries=task.max_retries,
+            backoff=backoff,
+        )
+
+        task.status = "pending"
+        task.assigned_agent_id = None
+        self._strip_stale_approval(task)
+        await self._orch.graph_memory.upsert_task(
+            task, result_summary={"retry_attempt": task.retry_count}
+        )
+        await self._retry_sleep(backoff)
+        await self._assign_task(task)
+        return True
+
+    async def _retry_sleep(self, seconds: float) -> None:
+        """Sleep for retry backoff with short wake-ups for responsiveness."""
+        await asyncio.sleep(seconds)
+
+    async def _execute_via_agent(self, agent: Any, task: Task) -> None:
+        """Execute task through assigned agent."""
+        from ai_osop.core.telemetry import extract_trace_context
+        from ai_osop.core.tracing import trace_span_with_parent
+
+        parent_span_context = extract_trace_context(task.trace_context)
+        span_ctx = trace_span_with_parent if parent_span_context.is_valid else trace_span
+
+        with span_ctx(
+            "orchestrator._execute_via_agent",
+            parent_span_context=parent_span_context if parent_span_context.is_valid else None,
+            attributes={
+                "task_id": task.id,
+                "task_type": task.type,
+                "agent_id": agent.ctx.agent_id,
+                "agent_type": agent.ctx.agent_type.value,
+                "engagement_id": task.engagement_id,
+            },
+        ):
+            try:
+                result = await agent.execute_task(task)
+                status = result.get("status") if isinstance(result, dict) else None
+                if status in self._FAILURE_STATUSES:
+                    normalized = result if isinstance(result, dict) else {"status": "failed"}
+                    if not await self._maybe_retry(task, normalized):
+                        await self._on_task_failure(task, normalized)
+                else:
+                    normalized = (
+                        result if isinstance(result, dict) else {"status": "success", "raw": result}
+                    )
+                    await self._on_task_success(task, normalized)
+
+            except asyncio.CancelledError:
+                await self._on_task_failure(
+                    task, {"error": "execution cancelled", "error_type": "CancelledError"}
+                )
+                raise
+            except Exception as e:
+                err = {"error": str(e)}
+                if not await self._maybe_retry(task, err):
+                    await self._on_task_failure(task, err)
+            finally:
+                self._release_agent(agent.ctx.agent_id)
+
+    async def _on_task_success(self, task: Task, result: Dict[str, Any]) -> None:
+        """Handle task completion."""
+        with trace_span(
+            "orchestrator._on_task_success",
+            attributes={
+                "task_id": task.id,
+                "task_type": task.type,
+                "agent_id": task.assigned_agent_id,
+                "engagement_id": task.engagement_id,
+            },
+        ):
+            task.result = result
+            task.status = "completed"
+            task.completed_at = datetime.utcnow()
+            await self._orch.graph_memory.upsert_task(task, result_summary=result)
+            await self._orch.session_memory.store_task(task)
+            await self._orch.coordination_bus.publish(
+                "task.completed",
+                {
+                    "task_id": task.id,
+                    "agent_id": task.assigned_agent_id,
+                    "result": result,
+                },
+                "orchestrator",
+            )
+            record_task(
+                "completed",
+                task.agent_type.value,
+                (
+                    (task.completed_at - task.started_at).total_seconds()
+                    if task.completed_at and task.started_at
+                    else 0.0
+                ),
+            )
+            # Trigger downstream
+            await self._trigger_downstream_tasks(task)
+            await self._chain_authenticated_surface(task)
+            await self._orch.graph_memory.upsert_task(
+                task, result_summary={"downstream_triggered": True}
+            )
+            await self._orch.session_memory.store_task(task)
+
+    async def _on_task_failure(self, task: Task, result: Dict[str, Any]) -> None:
+        """Handle task failure."""
+        with trace_span(
+            "orchestrator._on_task_failure",
+            attributes={
+                "task_id": task.id,
+                "task_type": task.type,
+                "agent_id": task.assigned_agent_id,
+                "engagement_id": task.engagement_id,
+                "error": str(result.get("error", ""))[:120],
+            },
+        ):
+            task.result = result
+            task.status = "failed"
+            task.completed_at = datetime.utcnow()
+            await self._orch.graph_memory.upsert_task(
+                task, result_summary={"error": str(result.get("error", ""))[:300]}
+            )
+            await self._orch.session_memory.store_task(task)
+            await self._orch.coordination_bus.publish(
+                "task.failed",
+                {"task_id": task.id, "agent_id": task.assigned_agent_id, "result": result},
+                "orchestrator",
+            )
+            if task.retry_count >= task.max_retries:
+                try:
+                    await self._orch.dlq.enqueue(
+                        task,
+                        reason="terminal_failure",
+                        final_error=str(result.get("error") or result.get("status") or ""),
+                    )
+                except Exception as e:
+                    logger.error("dlq_enqueue_fallback_failed", task_id=task.id, error=str(e))
+
+    async def _trigger_downstream_tasks(self, parent: Task) -> None:
+        """Launch child tasks that depend on parent completion."""
+        # Use Neo4j as the ground-truth dependency graph so restart recovery and
+        # concurrent scheduling have the same source of truth.
+        try:
+            child_ids = await self._orch.graph_memory.get_task_dependencies(parent.id)
+        except Exception as e:
+            logger.error("graph_lookup_failed", parent_id=parent.id, error=str(e))
+            return
+        for child_id in child_ids:
+            child = self._orch._tasks.get(child_id)
+            if child and child.status == "pending":
+                all_deps = await self._orch.graph_memory.get_task_dependencies(child.id)
+                if all(
+                    self._orch._tasks.get(dep_id, Task(id=dep_id, type="", agent_type=AgentType.RECON, engagement_id="")).status
+                    in ("completed", "failed")
+                    for dep_id in all_deps
+                ):
+                    await self._assign_task(child)
+
+    async def _chain_authenticated_surface(self, task: Task) -> None:
+        """If the just-completed task was auth_diff, auto-discover the authenticated surface."""
+        if task.type != "auth_diff":
+            return
+        engagement_id = task.engagement_id
+        if not await self._orch.engagement_manager._engagement_is_authenticated(engagement_id):
+            return
+
+        # Find an available recon agent and dispatch it as an autonomous task
+        recon_agent = await self._find_available_agent(AgentType.RECON)
+        if not recon_agent:
+            logger.info("no_recon_agent_for_chained_surface", engagement_id=engagement_id)
+            return
+
+        auth_user_label = await self._orch.engagement_manager._pick_auth_user_label(engagement_id)
+        if not auth_user_label:
+            logger.info("no_auth_user_label_for_chained_surface", engagement_id=engagement_id)
+            return
+
+        await self._orch.engagement_manager.claim_auto_discovery(
+            engagement_id, auth_user_label, task.id
+        )
+
+    async def _persist_task_dependency(self, parent: Task, child: Task) -> None:
+        """Persist a parent→child dependency in the graph."""
+        await self._orch.graph_memory.link_task_dependency(parent.id, child.id)

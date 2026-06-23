@@ -4,8 +4,16 @@ Provides counters, histograms, and gauges for API, tasks, agents, MCPs,
 graph operations, and LLM calls. Imported by api/main.py and key modules.
 """
 
-from prometheus_client import Counter, Histogram, Gauge, Info
+from prometheus_client import Counter, Histogram, Gauge, Info, REGISTRY
 
+# Clean up any previously registered metrics starting with 'ai_osop_' to allow clean reloading
+for collector in list(REGISTRY._collector_to_names.keys()):
+    names = REGISTRY._collector_to_names[collector]
+    if any(name.startswith("ai_osop_") for name in names):
+        try:
+            REGISTRY.unregister(collector)
+        except KeyError:
+            pass
 # API metrics
 REQUESTS_TOTAL = Counter(
     "ai_osop_requests_total",
@@ -43,9 +51,53 @@ TASK_SCHEDULE_DURATION = Histogram(
     "Task scheduling latency",
     buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
 )
+TASKS_TOTAL = Counter(
+    "ai_osop_tasks_total",
+    "Total tasks",
+    ["status", "agent_type"],
+)
+TASKS_COMPLETED_TOTAL = Counter(
+    "ai_osop_tasks_completed_total",
+    "Total completed tasks",
+    ["agent_type"],
+)
+TASKS_FAILED_TOTAL = Counter(
+    "ai_osop_tasks_failed_total",
+    "Total failed tasks",
+    ["agent_type"],
+)
+TASK_DURATION_SECONDS = Histogram(
+    "ai_osop_task_duration_seconds",
+    "Task execution duration",
+    ["agent_type"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0],
+)
+TASK_THROUGHPUT = Counter(
+    "ai_osop_task_throughput_total",
+    "Tasks completed per unit time",
+    ["agent_type"],
+)
+TASK_COMPLETION_TIME = Histogram(
+    "ai_osop_task_completion_time_seconds",
+    "End-to-end task duration (schedule → complete)",
+    ["agent_type", "task_type"],
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
+)
+QUEUED_TASKS = Gauge(
+    "ai_osop_queued_tasks",
+    "Number of queued tasks",
+)
+RUNNING_TASKS = Gauge(
+    "ai_osop_running_tasks",
+    "Number of running tasks",
+)
+FAILED_TASKS = Gauge(
+    "ai_osop_failed_tasks",
+    "Number of failed tasks",
+)
 
 # Agent metrics
-ACTIVE_AGENT_COUNT = Gauge(
+ACTIVE_AGENTS = ACTIVE_AGENT_COUNT = Gauge(
     "ai_osop_active_agent_count",
     "Number of active agents",
     ["agent_type"],
@@ -56,12 +108,33 @@ AGENT_EXECUTION_DURATION = Histogram(
     ["agent_type"],
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0],
 )
+AGENT_UTILIZATION = Gauge(
+    "ai_osop_agent_utilization",
+    "Agent utilization ratio (0.0-1.0)",
+    ["agent_type"],
+)
+AGENT_THROUGHPUT = Counter(
+    "ai_osop_agent_throughput_total",
+    "Agent executions per unit time",
+    ["agent_type"],
+)
+AGENT_SUCCESS_RATE = Gauge(
+    "ai_osop_agent_success_rate",
+    "Agent success ratio (completed / total)",
+    ["agent_type"],
+)
 
 # MCP metrics
 MCP_CALL_DURATION = Histogram(
     "ai_osop_mcp_call_duration_seconds",
     "MCP call latency",
     ["server_id", "tool_name"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+MCP_LATENCY_SECONDS = Histogram(
+    "ai_osop_mcp_latency_seconds",
+    "MCP call latency (legacy alias)",
+    ["server_id", "method"],
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
 )
 MCP_CIRCUIT_BREAKER_STATE = Gauge(
@@ -74,12 +147,37 @@ MCP_ERRORS_TOTAL = Counter(
     "Total MCP errors",
     ["server_id", "error_type"],
 )
+MCP_SUCCESS_RATE = Gauge(
+    "ai_osop_mcp_success_rate",
+    "MCP success ratio (success / total)",
+    ["server_id"],
+)
 
 # Graph metrics
 GRAPH_QUERY_DURATION = Histogram(
     "ai_osop_graph_query_duration_seconds",
     "Neo4j query latency",
     ["query_type"],
+    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+)
+GRAPH_WRITE_LATENCY_SECONDS = Histogram(
+    "ai_osop_graph_write_latency_seconds",
+    "Neo4j write latency",
+    ["operation"],
+    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+)
+
+# Redis / Postgres / Session metrics
+REDIS_LATENCY_SECONDS = Histogram(
+    "ai_osop_redis_latency_seconds",
+    "Redis operation latency",
+    ["operation"],
+    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
+)
+POSTGRES_LATENCY_SECONDS = Histogram(
+    "ai_osop_postgres_latency_seconds",
+    "Postgres query latency",
+    ["operation"],
     buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
 )
 
@@ -89,6 +187,114 @@ LLM_CALL_DURATION = Histogram(
     "LLM call latency",
     ["model"],
     buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0],
+)
+LLM_CALLS_TOTAL = Counter(
+    "ai_osop_llm_calls_total",
+    "Total LLM calls",
+    ["model", "operation"],
+)
+LLM_TOKENS_TOTAL = Counter(
+    "ai_osop_llm_tokens_total",
+    "Total LLM tokens",
+    ["model", "type"],
+)
+LLM_COST_USD = Counter(
+    "ai_osop_llm_cost_usd",
+    "Total LLM cost in USD",
+    ["model"],
+)
+
+# Engagement metrics
+ENGAGEMENT_COMPLETION_TIME = Histogram(
+    "ai_osop_engagement_completion_time_seconds",
+    "Engagement duration (create → complete)",
+    buckets=[60.0, 300.0, 600.0, 1800.0, 3600.0, 7200.0, 14400.0, 28800.0, 86400.0],
+)
+ENGAGEMENT_COST_USD = Counter(
+    "ai_osop_engagement_cost_usd",
+    "Total engagement cost in USD",
+    ["engagement_id"],
+)
+APPROVAL_WAIT_TIME = Histogram(
+    "ai_osop_approval_wait_time_seconds",
+    "Time from approval request to resolution",
+    buckets=[1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0],
+)
+APPROVALS_TOTAL = Counter(
+    "ai_osop_approvals_total",
+    "Total approval decisions",
+    ["decision"],
+)
+
+# Browser / Sandbox metrics
+BROWSER_RUNTIME_SECONDS = Histogram(
+    "ai_osop_browser_runtime_seconds",
+    "Browser automation runtime",
+    ["task_type"],
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
+)
+SANDBOX_RUNTIME_SECONDS = Histogram(
+    "ai_osop_sandbox_runtime_seconds",
+    "Sandbox execution runtime",
+    ["task_type"],
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
+)
+
+# Security & Operations metrics
+DENIED_ACTIONS_TOTAL = Counter(
+    "ai_osop_denied_actions_total",
+    "Blocked actions by approval gate",
+    ["action_type"],
+)
+RBAC_FAILURES_TOTAL = Counter(
+    "ai_osop_rbac_failures_total",
+    "RBAC authorization rejections",
+    ["endpoint", "required_role"],
+)
+OWNERSHIP_VIOLATIONS_TOTAL = Counter(
+    "ai_osop_ownership_violations_total",
+    "Ownership check failures",
+    ["resource_type"],
+)
+SANDBOX_BLOCKS_TOTAL = Counter(
+    "ai_osop_sandbox_blocks_total",
+    "Sandbox/eBPF blocks",
+    ["block_type"],
+)
+SCOPE_VIOLATIONS_TOTAL = Counter(
+    "ai_osop_scope_violations_total",
+    "Out-of-scope detections",
+    ["rule"],
+)
+RATE_LIMIT_EVENTS = Counter(
+    "ai_osop_rate_limit_events",
+    "Rate limiter events",
+    ["type"],
+)
+
+# Dependency health (1=up, 0=down)
+DEPENDENCY_UP = Gauge(
+    "ai_osop_dependency_up",
+    "Dependency health (1=up, 0=down)",
+    ["name"],
+)
+
+# Trace export
+TRACE_SPANS_EXPORTED = Counter(
+    "ai_osop_trace_spans_exported_total",
+    "OTel spans successfully exported",
+    ["exporter"],
+)
+TRACE_SPANS_FAILED = Counter(
+    "ai_osop_trace_spans_failed_total",
+    "OTel span export failures",
+    ["exporter"],
+)
+
+# Readiness metric (1=ready, 0=not_ready, 0.5=degraded)
+READY_STATUS = Gauge(
+    "ai_osop_ready_status",
+    "Pod readiness status: 1=ready, 0=not_ready, 0.5=degraded",
 )
 
 # Build info
@@ -117,93 +323,4 @@ SLO_LATENCY_P95 = Gauge(
     "ai_osop_slo_latency_p95_seconds",
     "p95 latency per route",
     ["path"],
-)
-
-# Sprint 6B: New SLO metrics
-TASK_COMPLETION_TIME = Histogram(
-    "ai_osop_task_completion_time_seconds",
-    "End-to-end task duration (schedule → complete)",
-    ["agent_type", "task_type"],
-    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
-)
-ENGAGEMENT_COMPLETION_TIME = Histogram(
-    "ai_osop_engagement_completion_time_seconds",
-    "Engagement duration (create → complete)",
-    buckets=[60.0, 300.0, 600.0, 1800.0, 3600.0, 7200.0, 14400.0, 28800.0, 86400.0],
-)
-AGENT_SUCCESS_RATE = Gauge(
-    "ai_osop_agent_success_rate",
-    "Agent success ratio (completed / total)",
-    ["agent_type"],
-)
-MCP_SUCCESS_RATE = Gauge(
-    "ai_osop_mcp_success_rate",
-    "MCP success ratio (success / total)",
-    ["server_id"],
-)
-APPROVAL_WAIT_TIME = Histogram(
-    "ai_osop_approval_wait_time_seconds",
-    "Time from approval request to resolution",
-    buckets=[1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0],
-)
-TASK_THROUGHPUT = Counter(
-    "ai_osop_task_throughput_total",
-    "Tasks completed per unit time",
-    ["agent_type"],
-)
-AGENT_THROUGHPUT = Counter(
-    "ai_osop_agent_throughput_total",
-    "Agent executions per unit time",
-    ["agent_type"],
-)
-
-# Security & Operations metrics
-APPROVALS_TOTAL = Counter(
-    "ai_osop_approvals_total",
-    "Total approval decisions",
-    ["decision"],
-)
-DENIED_ACTIONS_TOTAL = Counter(
-    "ai_osop_denied_actions_total",
-    "Blocked actions by approval gate",
-    ["action_type"],
-)
-RBAC_FAILURES_TOTAL = Counter(
-    "ai_osop_rbac_failures_total",
-    "RBAC authorization rejections",
-    ["endpoint", "required_role"],
-)
-OWNERSHIP_VIOLATIONS_TOTAL = Counter(
-    "ai_osop_ownership_violations_total",
-    "Ownership check failures",
-    ["resource_type"],
-)
-SANDBOX_BLOCKS_TOTAL = Counter(
-    "ai_osop_sandbox_blocks_total",
-    "Sandbox/eBPF blocks",
-    ["block_type"],
-)
-SCOPE_VIOLATIONS_TOTAL = Counter(
-    "ai_osop_scope_violations_total",
-    "Out-of-scope detections",
-    ["rule"],
-)
-
-# Dependency health (1=up, 0=down)
-DEPENDENCY_UP = Gauge(
-    "ai_osop_dependency_up",
-    "Dependency health (1=up, 0=down)",
-    ["name"],
-)
-
-# Trace export
-TRACE_SPANS_EXPORTED = Counter(
-    "ai_osop_trace_spans_exported_total",
-    "OTel spans successfully exported",
-    ["exporter"],
-)
-TRACE_SPANS_FAILED = Counter(
-    "ai_osop_trace_spans_failed_total",
-    "OTel span export failures",
-    ["exporter"],
 )

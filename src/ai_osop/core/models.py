@@ -227,6 +227,10 @@ class DiffAuthFinding(BaseModel):
     observed_result: str  # e.g. "200 OK"
     evidence_diff: Dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0)
+    # Sprint 7: Outcome Feedback
+    outcome: Optional[str] = None # e.g., "accepted", "duplicate", "informative", "na"
+    outcome_notes: Optional[str] = None
+    outcome_at: Optional[datetime] = None
     engagement_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

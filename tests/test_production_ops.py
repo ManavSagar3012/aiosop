@@ -12,6 +12,13 @@ from ai_osop.api.health import ready
 from ai_osop.core.config import settings
 
 
+
+@pytest.fixture(autouse=True)
+def clean_state():
+    from ai_osop.api.deps import state
+    state.pop("orchestrator", None)
+    yield
+    state.pop("orchestrator", None)
 class TestReadinessProbe:
     async def test_ready_returns_200_when_all_healthy(self):
         """ready should return 200 when all dependencies are healthy."""
@@ -19,7 +26,10 @@ class TestReadinessProbe:
         mock_orchestrator.session_memory = MagicMock()
         mock_orchestrator.session_memory._redis = AsyncMock()
         mock_orchestrator.session_memory._redis.ping = AsyncMock()
-        mock_orchestrator.session_memory._pg_engine = AsyncMock()
+        mock_conn = AsyncMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__aenter__.return_value = mock_conn
+        mock_orchestrator.session_memory._pg_engine = mock_engine
         mock_orchestrator.graph_memory = MagicMock()
         mock_orchestrator.graph_memory._driver = AsyncMock()
         mock_orchestrator.graph_memory._driver.verify_connectivity = AsyncMock()
@@ -57,7 +67,10 @@ class TestReadinessProbe:
         mock_orchestrator.session_memory = MagicMock()
         mock_orchestrator.session_memory._redis = AsyncMock()
         mock_orchestrator.session_memory._redis.ping = AsyncMock()
-        mock_orchestrator.session_memory._pg_engine = AsyncMock()
+        mock_conn = AsyncMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__aenter__.return_value = mock_conn
+        mock_orchestrator.session_memory._pg_engine = mock_engine
         mock_orchestrator.graph_memory = MagicMock()
         mock_orchestrator.graph_memory._driver = AsyncMock()
         mock_orchestrator.graph_memory._driver.verify_connectivity = AsyncMock()
@@ -182,3 +195,138 @@ class TestBackupCronJobs:
         for doc in docs:
             command = doc["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["command"]
             assert any("aws s3 rm" in str(c) for c in command), f"Missing cleanup in {doc['metadata']['name']}"
+
+
+
+class TestReadinessMetric:
+    """Sprint 8: ai_osop_ready_status metric and history tracking."""
+
+    @pytest.fixture(autouse=True)
+    def reset_history(self):
+        """Reset readiness history before each test."""
+        from ai_osop.api.health import _readiness_history
+        _readiness_history.clear()
+        yield
+        _readiness_history.clear()
+
+    async def test_ready_emits_metric_1(self):
+        """When all deps are healthy, READY_STATUS should be set to 1.0."""
+        from ai_osop.api.health import ready, _readiness_history
+        from ai_osop.core.metrics import READY_STATUS
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.session_memory = MagicMock()
+        mock_orchestrator.session_memory._redis = AsyncMock()
+        mock_orchestrator.session_memory._redis.ping = AsyncMock()
+        mock_conn = AsyncMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__aenter__.return_value = mock_conn
+        mock_orchestrator.session_memory._pg_engine = mock_engine
+        mock_orchestrator.graph_memory = MagicMock()
+        mock_orchestrator.graph_memory._driver = AsyncMock()
+        mock_orchestrator.graph_memory._driver.verify_connectivity = AsyncMock()
+        mock_orchestrator.mcp_registry = MagicMock()
+        mock_orchestrator.mcp_registry._servers = {"test-mcp": MagicMock(_session=MagicMock())}
+
+        from ai_osop.api.deps import state
+        state["orchestrator"] = mock_orchestrator
+
+        result = await ready()
+        assert result["status"] == "ready"
+        assert len(result["history"]) == 1
+        assert result["history"][0]["status"] == "ready"
+        assert all(c == "healthy" for c in result["history"][0]["checks"].values())
+
+    async def test_degraded_emits_metric_0_5(self):
+        """When MCP is degraded but critical deps are OK, READY_STATUS should be 0.5."""
+        from ai_osop.api.health import ready, _readiness_history
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.session_memory = MagicMock()
+        mock_orchestrator.session_memory._redis = AsyncMock()
+        mock_orchestrator.session_memory._redis.ping = AsyncMock()
+        mock_conn = AsyncMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__aenter__.return_value = mock_conn
+        mock_orchestrator.session_memory._pg_engine = mock_engine
+        mock_orchestrator.graph_memory = MagicMock()
+        mock_orchestrator.graph_memory._driver = AsyncMock()
+        mock_orchestrator.graph_memory._driver.verify_connectivity = AsyncMock()
+        # MCP degraded: no healthy servers
+        mock_orchestrator.mcp_registry = MagicMock()
+        mock_orchestrator.mcp_registry._servers = {"test-mcp": MagicMock(_session=None)}
+
+        from ai_osop.api.deps import state
+        state["orchestrator"] = mock_orchestrator
+
+        result = await ready()
+        assert result["status"] == "degraded"
+        assert len(result["history"]) == 1
+        assert result["history"][0]["status"] == "degraded"
+        assert result["checks"]["mcp_registry"]["status"] == "degraded"
+
+    async def test_not_ready_emits_metric_0(self):
+        """When a critical dep is unhealthy, READY_STATUS should be 0.0 and history recorded."""
+        from ai_osop.api.health import ready, _readiness_history
+        from fastapi import HTTPException
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.session_memory = MagicMock()
+        mock_orchestrator.session_memory._redis = AsyncMock()
+        mock_orchestrator.session_memory._redis.ping = AsyncMock(side_effect=Exception("Connection refused"))
+        mock_orchestrator.session_memory._pg_engine = None
+        mock_orchestrator.graph_memory = None
+        mock_orchestrator.mcp_registry = None
+
+        from ai_osop.api.deps import state
+        state["orchestrator"] = mock_orchestrator
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ready()
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail["status"] == "not_ready"
+        # History should include the failed check
+        assert len(exc_info.value.detail["history"]) >= 1
+        assert exc_info.value.detail["history"][-1]["status"] == "not_ready"
+
+    async def test_history_tracks_last_5_checks(self):
+        """Readiness history should retain at most 5 entries."""
+        from ai_osop.api.health import ready, _readiness_history
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.session_memory = MagicMock()
+        mock_orchestrator.session_memory._redis = AsyncMock()
+        mock_orchestrator.session_memory._redis.ping = AsyncMock()
+        mock_conn = AsyncMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__aenter__.return_value = mock_conn
+        mock_orchestrator.session_memory._pg_engine = mock_engine
+        mock_orchestrator.graph_memory = MagicMock()
+        mock_orchestrator.graph_memory._driver = AsyncMock()
+        mock_orchestrator.graph_memory._driver.verify_connectivity = AsyncMock()
+        mock_orchestrator.mcp_registry = MagicMock()
+        mock_orchestrator.mcp_registry._servers = {}
+
+        from ai_osop.api.deps import state
+        state["orchestrator"] = mock_orchestrator
+
+        # Call ready 7 times
+        for _ in range(7):
+            await ready()
+
+        # History should be capped at 5
+        assert len(list(_readiness_history)) == 5
+
+
+class TestConnectWithRetryUsesSharedUtility:
+    """Sprint 8: connect_with_retry delegates to retry_with_backoff."""
+
+    def test_connect_with_retry_imports_retry_with_backoff(self):
+        """connect_with_retry should import and use retry_with_backoff."""
+        import inspect
+
+        from ai_osop.api.main import connect_with_retry
+
+        source = inspect.getsource(connect_with_retry)
+        assert "retry_with_backoff" in source
+        assert "ai_osop.reliability.retry" in source or "from ai_osop.reliability.retry import retry_with_backoff" in source

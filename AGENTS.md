@@ -1,176 +1,227 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Project Overview
 
-This is a Python 3.11 Poetry project using a `src` layout. Application code lives under `src/ai_osop/`:
-- `api/` — FastAPI routes + lifespan bootstrap (`main.py`, `routers/`)
-- `agents/` — Agent ecosystem extending `BaseAgent` (recon, vuln, payload, exploit, etc.)
-- `orchestrator/` — Central orchestrator, task scheduling, approval coordination
-- `adapters/` — MCP server integrations (burp, recon, nuclei, shodan, browser, cloud, etc.)
-- `mcp/` — MCP protocol layer (client, server abstractions)
-- `memory/` — Redis hot state (`session_memory`), Postgres audit, Neo4j graph (`graph_memory`)
-- `payload_engine/` — Template/LLM payload generation, encoding chains, fitness evaluation
-- `safety/` — Scope enforcement, sandbox management, approval gates, audit integrity, eBPF filtering
-- `core/` — Shared models (`models.py`), config (`config.py`), exceptions (`exceptions.py`), LLM client, etc.
-- `reporting/` — Report generation
-- `auth/` — Authentication (JWT + API token)
+The AI Offensive Security Orchestration Platform (AI-OSOP) is a multi-agent system designed for automated vulnerability discovery, differential authorization testing, and exploit validation. It coordinates task execution across specialized agents (such as Recon, VulnAnalysis, ExploitValidation, etc.) connected to local stateful databases and external tools integrated via the Model Context Protocol (MCP). The platform maintains a global attack graph, implements custom sandbox isolation, and enforces human-in-the-loop approval gates.
 
-Tests live in `tests/` (35+ test files). Deployment: `Dockerfile`, `docker-compose.yml`, `k8s/`. UI: `ui/` (Vite React app).
+---
 
-## High-Level Architecture
+## Architecture & Data Flow
 
-- **API gateway** (`api/main.py`) bootstraps the system in FastAPI lifespan: builds the Orchestrator with SessionMemory (Redis/Postgres), GraphMemory (Neo4j), MCPRegistry, and LiteLLM, then exposes engagement/task/agent/approval endpoints plus a WebSocket stream.
-- **Orchestrator** (`orchestrator/orchestrator.py`) enforces engagement phase transitions, schedules tasks, assigns agents by `AgentType`, and coordinates approval requests; task queues live in Redis via `SessionMemory`.
-- **Agent ecosystem** (`agents/`) extends `BaseAgent` to execute tasks; agents delegate tool work through MCP adapters (`adapters/`) and persist findings into GraphMemory or SessionMemory.
-- **Memory layers** combine Redis hot state + Postgres audit/session data (`memory/session_memory.py`) with Neo4j attack-graph modeling (`memory/graph_memory.py`).
-- **Payload pipeline** (`payload_engine/engine.py` + `adapters/payload_mcp.py`) handles template/LLM payload generation, encoding chains, and fitness evaluation.
-- **Approval console UI** (`ui/`) is a Vite React app that calls `/approvals/*` and assumes API port 8200 and UI port 5173.
+AI-OSOP is structured as a phase-enforced multi-agent network that handles tasks concurrently, records security telemetry, and enforces boundary constraints.
 
-## Key Dependencies
+```mermaid
+flowchart TD
+    API[FastAPI Gateway] -->|Creates Engagement| CO[Orchestrator]
+    CO -->|Fetch Task Queue| Redis[(Redis Hot Store)]
+    CO -->|Durable Logs/Audit| PG[(PostgreSQL Warm Store)]
+    CO -->|Schedules Tasks| AC[Agent Context]
+    AC -->|Loads Agents| Agents[Agent Ecosystem]
+    Agents -->|Tool Execution| Adapters[MCP Adapters]
+    Adapters -->|Crawl/Scan/Fuzz| Target[External Target]
+    Agents -->|Store Findings| Graph[(Neo4j Graph Memory)]
+    CO -->|Human Gate| Approval[Approval Gate]
+```
 
-| Layer | Packages |
-|-------|----------|
-| API | `fastapi`, `uvicorn`, `pydantic`, `pydantic-settings` |
-| AI/LLM | `litellm`, `langgraph`, `langchain`, `langchain-openai`, `jinja2` |
-| Storage | `neo4j`, `redis`, `sqlalchemy[asyncio]`, `asyncpg` |
-| Auth | `python-jose[cryptography]`, `passlib[bcrypt]` |
-| Observability | `structlog`, `prometheus-client`, `opentelemetry-*` |
-| Infra | `docker`, `httpx`, `aiohttp`, `websockets` |
+### Core Architecture Components
 
-## Commands
+1. **API Gateway (FastAPI)**: Serves as the operator control center, exposing REST endpoints and WebSockets for real-time task streams. Its `lifespan` context manager handles startup connectivity checks (with backoffs) and hooks all database engines.
+2. **Orchestrator**: Executes a central task consumer loop. Tasks are loaded from a Redis sorted set queue sorted by `Task.priority` (1-10). It enforces engagement phase transitions defined in `Orchestrator.VALID_TRANSITIONS` across the following phases:
+   `initialized` $\rightarrow$ `reconnaissance` $\rightarrow$ `vulnerability_discovery` $\rightarrow$ `exploitation` $\rightarrow$ `post_exploitation` $\rightarrow$ `reporting` $\rightarrow$ `completed` / `halted`.
+3. **Agent Ecosystem**: Extension of `BaseAgent` exposing background task workers. Active agents are registered on startup. The orchestrator uses in-memory locking to prevent concurrent access to the same agent instance.
+4. **Multi-Tier Memory Tiers**:
+   - **Hot Tier (Redis)**: Stores task queues (`queue:tasks:{engagement_id}`), session keys, heartbeats, and Dead Letter Queue (DLQ) buffers.
+   - **Warm Tier (PostgreSQL + pgvector)**: Stores relational entity tables, vector embeddings for similarity-based lookups, and session audit trails.
+   - **Graph Tier (Neo4j)**: Maps security relationship nodes modeling attack paths:
+     `(:Asset)-[:HAS_ENDPOINT]->(:Endpoint)-[:HAS_VULNERABILITY]->(:Vulnerability)-[:EXPLOITED_BY]->(:Exploit)`.
+5. **Temporal Orchestrator**: Toggleable workflow coordinator (via `OSOP_TEMPORAL_ENABLED`) enabling durable distributed workflow tracking.
 
-### Build / Install
-- `poetry install` — install runtime + dev dependencies
-- `docker build -t ai-osop:latest .` — build container image
+---
 
-### Configuration
-- `cp .env.example .env` — create local config from template (edit values after)
+## Key Directories
 
-### Infrastructure
-- `docker-compose up -d neo4j postgres redis` — start local backing services (Neo4j on 7474/7687, Postgres on 5432, Redis on 6379)
+*   **`src/ai_osop/core/`**: Shared core configs (`config.py`), domain entities (`models.py`), custom exceptions (`exceptions.py`), metrics, and observability.
+*   **`src/ai_osop/api/`**: FastAPI routers, middleware, and dependency injection parameters (`deps.py`).
+*   **`src/ai_osop/orchestrator/`**: Tasks schedulers, coordination buses, and workflow workers.
+*   **`src/ai_osop/agents/`**: Core and experimental agents (e.g. `ReconAgent`, `VulnAnalysisAgent`, `CodeQLAgent`, `GraphQLAgent`).
+*   **`src/ai_osop/memory/`**: Adapters for Redis, Postgres, and Neo4j databases, plus data retention worker engines.
+*   **`src/ai_osop/safety/`**: Scope controllers, Docker sandbox managers, prompt sanitizers, and eBPF tracing/filtering generators.
+*   **`src/ai_osop/auth/`**: Token verifiers, session clients, and browser session collectors.
+*   **`src/ai_osop/adapters/`**: Model Context Protocol (MCP) server connectors linking the agents to execution tools.
+*   **`src/ai_osop/payload_engine/`**: LLM payload builders, encoders, and evaluation helpers.
+*   **`src/ai_osop/reliability/`**: Exponential backoff decorators and DLQ managers.
+*   **`tests/`**: Unit, integration, and mocks for testing the application code.
+*   **`ui/`**: Vite React single page application for the approval console.
+*   **`scripts/`**: Subfolders containing operations, debug, chaos, and qualification testing utilities.
+*   **`k8s/`**: High-availability Kubernetes configurations (HPA, PDB, resource quotas, and cron backups).
 
-### Run
-- `poetry run uvicorn ai_osop.api.main:app --reload --port 8200` — run API locally (hot-reload, port 8200)
-- `poetry run ai-osop --help` — inspect the CLI interface (entry: `ai_osop.cli:main`)
-- `npm --prefix ui run dev` — start React approval console (port 5173)
-- `npm --prefix ui run build` — build UI for production
-- `npm --prefix ui run preview` — preview production UI build locally
+---
 
-### Lint & Format
-- `poetry run black src tests` — auto-format (line-length 100, py311 target)
-- `poetry run isort src tests` — sort imports (black profile, 100 char lines)
-- `poetry run mypy src` — static type checking (flags: `warn_return_any`, `warn_unused_configs`, `disallow_untyped_defs`)
-- `poetry run flake8 src` — linting
+## Development Commands
 
-### Test
-- `poetry run pytest` — run all tests (src auto-added to `pythonpath`, default `--cov` with `term-missing`)
-- `poetry run pytest tests/test_smoke.py` — run a single test file
-- `poetry run pytest tests/test_smoke.py::test_settings_load_mcp_defaults -vv` — run a single test function
-- `poetry run pytest tests/test_scope.py -k "test_scope_enforcer" -vv` — run tests matching a keyword
-- `poetry run pytest --co --durations=5` — show 5 slowest tests
-- `poetry run pytest --no-cov` — run without coverage (faster iteration)
+### Installation & Build
+```bash
+# Install Python dependencies and CLI
+poetry install
 
-### Pre-commit
-Before opening a PR, run: `poetry run black src tests && poetry run isort src tests && poetry run mypy src && poetry run pytest`
+# Create environment config
+cp .env.example .env
 
-## Coding Style
+# Install UI dependencies
+npm --prefix ui install
 
-### Formatting & Imports
-- **Black** with `line-length = 100`, `target-version = py311`
-- **isort** with `profile = "black"`, `line_length = 100`
-- Group imports: stdlib → third-party → local. Use absolute imports.
-- Example:
-  ```python
-  import hashlib
-  from datetime import datetime
-  from typing import Any, Dict, Optional
+# Build production container image
+docker build -t ai-osop:latest .
+```
 
-  import httpx
-  import pytest
-  from pydantic import BaseModel, Field
+### Running Backing Infrastructure
+```bash
+# Spin up Neo4j, PostgreSQL, and Redis databases
+docker-compose up -d neo4j postgres redis
+```
 
-  from ai_osop.core.config import settings
-  from ai_osop.core.exceptions import OutOfScopeError
-  ```
+### Execution
+```bash
+# Run API Gateway locally (port 8200)
+poetry run uvicorn ai_osop.api.main:app --reload --port 8200
 
-### Type Hints
-- All function signatures **must** have type annotations (`disallow_untyped_defs = true`)
-- Use `Optional[X]` for nullable fields, not `X | None`
-- Prefer `list[str]` over `List[str]` for function args (Python 3.11+), but `List[str]` is still used in pydantic `Field(default_factory=list)`
-- Use `from __future__ import annotations` in class definitions that need deferred evaluation
-- `warn_return_any = true` is enabled — avoid returning `Any` without explicit annotation
+# Start Vite React UI Console (port 5173)
+npm --prefix ui run dev
+
+# Run Operator CLI Commands
+poetry run ai-osop --help
+```
+
+### Code Verification & Quality Gates
+```bash
+# Auto-format code matching black specification
+poetry run black src tests
+
+# Sort imports matching black profile
+poetry run isort src tests
+
+# Lint Python code for style issues
+poetry run flake8 src
+
+# Strict static type check
+poetry run mypy src
+```
+
+### Testing
+```bash
+# Run the complete test suite
+poetry run pytest
+
+# Run a specific test file
+poetry run pytest tests/test_smoke.py
+
+# Run a specific test with verbose output and no traceback truncation
+poetry run pytest tests/test_smoke.py::test_settings_load_mcp_defaults -vv --tb=short
+
+# Run tests without coverage evaluation (faster iteration)
+poetry run pytest --no-cov
+```
+
+---
+
+## Code Conventions & Common Patterns
+
+### ID Prefix Patterns
+All cross-component identifiers must be prefixed to denote their entity type:
+*   `eng-` : Engagement Session State
+*   `asset-` : Discovered Host/Asset
+*   `ep-` / `endpoint-` : HTTP API Endpoint
+*   `vuln-` : Discovered Vulnerability
+*   `payload-` : Mutated Payload Template
+*   `task-` : Enqueued/Scheduled Task
+*   `apr-` : Human Operator Approval Request
+*   `evt-` : System Audit Event Log
+*   `dlq-` : Dead Letter Queue Entry
 
 ### Naming Conventions
-- `snake_case` for modules, functions, variables, test names
-- `PascalCase` for classes and enums
-- `UPPER_CASE` for constants
-- ID prefixes for models: `asset-`, `ep-`, `vuln-`, `task-`, `apr-`, `payload-`
-- Test files: `test_<unit>.py`, test functions: `def test_<behavior>():`
+*   `snake_case` for module filenames, variables, function signatures, and tests.
+*   `PascalCase` for classes, models, and Enum definitions.
+*   `UPPER_CASE` for global constant declarations.
+*   Private class attributes or internal module functions **must** be prefixed with a single leading underscore (e.g. `_run_task_worker`).
 
-### Error Handling
-- Custom exception hierarchy rooted in `OSOException` (see `core/exceptions.py`):
-  ```
-  OSOException → MCPException(MCPConnectionError, MCPTimeoutError)
-              → ScopeException(OutOfScopeError, ScopeValidationError)
-              → AgentException(AgentTaskFailed, AgentHallucinationDetected)
-              → SafetyException(ApprovalDeniedError, SandboxEscapeDetected)
-              → MemoryException(GraphQueryError)
-              → WorkflowException(WorkflowTransitionError)
-  ```
-- All custom exceptions accept `(message: str, details: dict = None)`
-- `pytest.raises(ExpectedException)` for testing error paths
-- Avoid bare `except:` — catch specific exception types
+### Type Annotation Style
+*   All signatures **must** declare type annotations (`disallow_untyped_defs = true`).
+*   Nullable references must use Pydantic/Python stdlib `Optional[T]` rather than `T | None`.
+*   Group imports: standard library first $\rightarrow$ third-party modules $\rightarrow$ local packages, utilizing absolute paths (e.g., `from ai_osop.core.config import settings`).
 
-### Enums & Config
-- Enums inherit from `str, Enum` for JSON serialization
-- Settings use `pydantic_settings.BaseSettings` with `SettingsConfigDict(env_file=".env")`
-- Environment variable aliases use `validation_alias="OSOP_UPPER_CASE"` pattern
-- `AgentType`, `VulnClass`, `Severity`, `LogLevel` enums live in `core/config.py`
+### Error Handling Hierarchy
+All custom errors must inherit from `OSOException` (defined in `core/exceptions.py`) and support passing an error message and optional context dictionaries:
+$$\text{OSOException} \longrightarrow \begin{cases} 
+\text{MCPException} & \text{(MCPConnectionError, MCPTimeoutError)} \\
+\text{ScopeException} & \text{(OutOfScopeError, ScopeValidationError)} \\
+\text{AgentException} & \text{(AgentTaskFailed, AgentHallucinationDetected)} \\
+\text{SafetyException} & \text{(ApprovalDeniedError, SandboxEscapeDetected)} \\
+\text{MemoryException} & \text{(GraphQueryError)} \\
+\text{WorkflowException} & \text{(WorkflowTransitionError)}
+\end{cases}$$
+*Always* avoid bare `except:` statements. Intercept specific types and log context variables.
 
-### Pydantic Models
-- All cross-component models in `core/models.py` use `pydantic.BaseModel`
-- Use `Field(default_factory=...)` for mutable defaults (lists, dicts)
-- Use `Field(ge=..., le=...)` for numeric constraints
-- Use `validator` decorators for cross-field validation
-- `datetime.utcnow` is the standard for timestamps
+### Async & Concurrency
+*   All I/O bound methods (DB access, HTTP client request, MCP calls) must be defined with `async def` and called with `await`.
+*   **Orchestrator claim lock**: Before running an agent task, the agent must be claimed via `Orchestrator._busy_agents` in-memory lock.
+*   **Clean Teardown**: Tasks must use `asyncio.wait(..., timeout=5.0)` or `asyncio.wait_for` to cancel execution loops on shutdown cleanly instead of blocking.
+*   **Retries**: Use the `@with_retry` exponential backoff decorator for transient services.
+*   **DLQ Routing**: Unrecoverable failures exceeding the maximum task retry limit must be caught and routed to the Dead Letter Queue.
 
-### Async Patterns
-- Use `async def` and `await` for I/O (HTTP calls, DB queries, MCP calls)
-- Async test functions use the built-in `asyncio_mode = "auto"` (no `@pytest.mark.asyncio` needed)
-- Mock async dependencies with `AsyncMock` and `patch`
-- Task queues are Redis sorted sets (`queue:tasks:{engagement_id}`) with priority 1-10
+### State & Configuration Management
+*   **Pydantic Settings**: Configuration is declared via Pydantic `BaseSettings` classes in `core/config.py`. All variables utilize `validation_alias="OSOP_UPPER_CASE"` to read from the environment.
+*   **SessionStore & Client**: Cookie rotations, header caches, and auth tokens are persisted inside `SessionStore`. The `SessionClient` wraps the HTTPX AsyncClient to inject active auth contexts.
+*   **Differential Authorization Verification**: Auth validation checks require explicit resource ownership mapping comparing response payloads from vertical/horizontal privileges before reporting vulnerabilities to avoid false positives.
 
-### Engagement Phases & MCP
-- Phase transitions must follow `Orchestrator.VALID_TRANSITIONS` using `EngagementPhase` enum
-- MCP server IDs are fixed strings (`burp-mcp`, `recon-mcp`, `payload-mcp`, `nuclei-mcp`, `shodan-mcp`)
-- MCP servers are registered on startup; missing servers are skipped gracefully (not crashed)
+---
 
-### Docstrings
-- Module-level docstring: `"""Brief description."""`
-- Class docstring: `"""Purpose. Optional details."""`
-- Method docstrings: short description, `Raises:` section if applicable (see `safety/scope.py`)
+## Important Files
 
-### Security
-- Never commit `.env`, API keys, Burp credentials, or target data
-- Keep offensive behavior behind scope enforcement (`ScopeEnforcer`) and approval gates (`ApprovalGate`)
-- Sandbox all agent tool execution via `SandboxManager`
-- Bug-bounty platform sync defaults to `SIMULATION=true` (set `OSOP_BUG_BOUNTY_SIMULATION=false` for live)
-- JWT auth (HS256) with fallback to API token shared-secret
+*   `src/ai_osop/api/main.py`: Main FastAPI entry point and system lifespan manager.
+*   `src/ai_osop/cli.py`: Click CLI manager mapping operations console commands.
+*   `src/ai_osop/core/config.py`: Core application settings, server defaults, and MCP mappings.
+*   `src/ai_osop/core/models.py`: Shared platform Pydantic schemas.
+*   `src/ai_osop/orchestrator/orchestrator.py`: Main loop orchestrator, task queues consumer, and phase guard rails.
+*   `src/ai_osop/safety/scope.py`: Scope checker targets parser and Docker container manager.
+*   `src/ai_osop/memory/session_memory.py`: Multi-tier storage connector linking Redis and PostgreSQL.
+*   `src/ai_osop/memory/graph_memory.py`: Neo4j Cypher connector for mapping attack graphs.
+*   `src/ai_osop/auth/api_inventory.py`: Parser converting HAR captures to API endpoints in GraphMemory.
 
-### Testing Guidelines
-- Write tests in `tests/`, mirroring source structure
-- Focus on public behavior, safety boundaries, async workflows
-- Use fixtures for shared setup (`@pytest.fixture`)
-- Mock external services (MCP servers, Docker, network calls) with `AsyncMock` / `MagicMock`
-- Use `pytest.raises` for expected exceptions
-- Coverage defaults to `--cov=src/ai_osop --cov-report=term-missing` via pyproject.toml `addopts`
+---
 
-### UI & CORS Configuration
-- UI uses Vite env vars `VITE_API_BASE` (default: `http://localhost:8200`) and `VITE_OSOP_TOKEN`
-- API CORS allowlist expects `http://localhost:5173` (Vite dev server)
-- UI approval console calls `/approvals/*` endpoints
+## Runtime/Tooling Preferences
 
-### Logging
-- Use `structlog` throughout (configured in settings)
-- Log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `AUDIT` (custom level)
-- Structured logging: pass key-value pairs, not f-strings
+*   **Python**: Version `^3.11`
+*   **Package Manager**: Poetry
+*   **UI Runtime**: NodeJS & NPM (Vite React UI)
+*   **Databases**: PostgreSQL (with pgvector), Redis (7-alpine), Neo4j (5.18-community, apoc plugin active), and Temporal (optional).
+*   **Model Context Protocol (MCP) Servers**:
+    *   *Critical (Port)*: `browser-mcp` (8091), `source-map-mcp` (8096), `cloud-mcp` (8097), `turbo-intruder-mcp` (8098), `nuclei-mcp` (8084).
+    *   *Optional (Port)*: `burp-mcp` (8081), `recon-mcp` (8082), `payload-mcp` (8083), `shodan-mcp` (8085), `security-bridge` (8087), `threat-intel-mcp` (8086).
+*   **LLM Model Registry**: Interfaced via `litellm`. Defaults to `gpt-4o` (primary) and `gpt-4o-mini` (fallback).
+*   **Mocking Mode**: For development and testing loops, set `OSOP_MOCK_LLM=true` to redirect LLM completion calls to simulated mock templates.
+
+---
+
+## Testing & QA
+
+AI-OSOP enforces strict verification gates at multiple development tiers:
+
+1. **Unit & Integration Layer**
+   - Located in the `tests/` directory.
+   - Executed using `poetry run pytest`.
+   - Async testing runs under `asyncio_mode = "auto"` in `pyproject.toml`.
+   - Uses `unittest.mock` (`AsyncMock`, `MagicMock`, `patch`) to mock database connections and third-party API callbacks.
+
+2. **Chaos Testing**
+   - Located in `scripts/chaos/`.
+   - Orchestrated via `poetry run python scripts/chaos/run_chaos.py`.
+   - Triggers network drops, Redis process kills, Postgres failovers, and MCP crash loops, certifying resilient degradation.
+   - Outputs verification summary to `CHAOS_CERTIFICATE.md`.
+
+3. **Production Qualification Suite**
+   - Located in `scripts/qualification/`.
+   - Orchestrated via `poetry run python scripts/qualification/run_all.py`.
+   - Runs integration suites evaluating API security (JWT validation, RBAC, algorithm check bypasses), reliability, multi-tenant resource isolation (`test_ownership.py`), and high-throughput serialization scaling (`test_scale.py`).
+   - Runs `test_self_pentest.py` to launch simulated SQL injection and IDOR attacks against the live application.
+   - Generates `PRODUCTION_READINESS_REPORT.md` (readiness score) and `RELEASE_CERTIFICATE.md` containing formatting, linting, and typecheck status.
