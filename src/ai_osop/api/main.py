@@ -157,22 +157,53 @@ async def lifespan(app: FastAPI):
         rate_limiter = RateLimiter()
         threat_intel_adapter = ThreatIntelAdapter()
 
-        # 1. Redis
-        try:
-            await session_memory.connect()
-            await session_memory._redis.ping()
-            health_status["redis"] = "healthy"
-        except Exception as e:
-            health_status["redis"] = f"unhealthy: {e}"
-            logger.critical(f"Redis connection failed: {e}")
+        # Sprint 7: Startup retry with exponential backoff
+        async def connect_with_retry(
+            connector,
+            name: str,
+            max_retries: int = 10,
+            base_delay: float = 1.0,
+            max_delay: float = 30.0,
+        ) -> bool:
+            """Connect to a dependency with exponential backoff."""
+            for attempt in range(1, max_retries + 1):
+                try:
+                    await connector()
+                    logger.info(f"{name} connected on attempt {attempt}")
+                    return True
+                except Exception as e:
+                    if attempt == max_retries:
+                        logger.critical(f"{name} unavailable after {max_retries} attempts: {e}")
+                        return False
+                    delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+                    logger.warning(f"{name} connection attempt {attempt} failed, retrying in {delay}s: {e}")
+                    await asyncio.sleep(delay)
+            return False
 
-        # 2. Neo4j
-        try:
-            await graph_memory.connect()
+        # 1. Redis (critical)
+        redis_ok = await connect_with_retry(
+            session_memory.connect, "redis", max_retries=10
+        )
+        if redis_ok:
+            try:
+                await session_memory._redis.ping()
+                health_status["redis"] = "healthy"
+            except Exception as e:
+                health_status["redis"] = f"unhealthy: {e}"
+                logger.warning(f"Redis ping failed: {e}")
+        else:
+            health_status["redis"] = "unhealthy: exhausted retries"
+            logger.critical("Redis unavailable after retries — proceeding in degraded mode")
+
+        # 2. Neo4j (critical)
+        neo4j_ok = await connect_with_retry(
+            graph_memory.connect, "neo4j", max_retries=10
+        )
+        if neo4j_ok:
             health_status["neo4j"] = "healthy"
-        except Exception as e:
-            health_status["neo4j"] = f"unhealthy: {e}"
-            logger.critical(f"Neo4j connection failed: {e}")
+        else:
+            health_status["neo4j"] = "unhealthy: exhausted retries"
+            logger.critical("Neo4j unavailable after retries — proceeding in degraded mode")
 
         # 3. Vector Memory (pgvector)
         try:

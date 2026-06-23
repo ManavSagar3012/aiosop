@@ -87,6 +87,7 @@ class BaseAgent(ABC):
     def __init__(self, context: AgentContext):
         self.ctx = context
         self._running = False
+        self._shutting_down = False  # Sprint 7: prevent new tasks during shutdown
         self._task_queue: asyncio.Queue = asyncio.Queue()
         self._max_concurrent_tasks = 3
         self._active_tasks: Dict[str, asyncio.Task] = {}
@@ -133,12 +134,24 @@ class BaseAgent(ABC):
         ]
 
     async def _task_worker(self) -> None:
-        """Background worker to process tasks from the queue."""
+        """Background worker to process tasks from the queue.
+
+        Sprint 7: Uses sentinel (None) for graceful shutdown to prevent
+        the worker from blocking forever on an empty queue when the agent
+        is shutting down. The shutdown() method injects a sentinel to wake
+        the worker so it can observe _running=False and exit cleanly.
+        """
         while self._running:
             try:
                 task = await self._task_queue.get()
+                if task is None:
+                    # Sentinel: shutdown signal, exit the loop
+                    self._task_queue.task_done()
+                    break
                 await self.execute_task(task)
                 self._task_queue.task_done()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 agent_logger.error("worker_error", agent_id=self.ctx.agent_id, error=str(e))
                 await asyncio.sleep(5)
@@ -443,36 +456,72 @@ class BaseAgent(ABC):
             await asyncio.sleep(30)
 
     async def shutdown(self) -> None:
-        """Graceful shutdown with state preservation."""
+        """Graceful shutdown with state preservation and leak prevention.
+
+        Sprint 7: Fixed shutdown leaks by:
+        - Tracking shutdown state to prevent new tasks during shutdown
+        - Injecting sentinel (None) into task queue to wake blocked worker
+        - Using asyncio.wait with timeout instead of bare await
+        - Handling CancelledError explicitly in active task cleanup
+        """
+        if self._shutting_down:
+            return
+        self._shutting_down = True
         self._running = False
         self.ctx.status = "shutting_down"
 
-        # Cancel active tasks
-        for task in self._active_tasks.values():
-            task.cancel()
+        # Wake the task worker if it's blocked on queue.get()
+        try:
+            self._task_queue.put_nowait(None)
+        except Exception:
+            pass
+
+        # Cancel active tasks with timeout
+        for task in list(self._active_tasks.values()):
+            if not task.done():
+                task.cancel()
+
+        if self._active_tasks:
+            try:
+                await asyncio.wait(
+                    [t for t in self._active_tasks.values() if not t.done()],
+                    timeout=5.0,
+                    return_when=asyncio.ALL_COMPLETED,
+                )
+            except Exception:
+                pass
 
         # Cancel background worker + heartbeat loops and await their teardown so
         # they don't outlive the agent (AIOSOP-AUDIT-2026-06-16).
-        for bg in self._bg_tasks:
-            bg.cancel()
-        for bg in self._bg_tasks:
+        for bg in list(self._bg_tasks):
+            if not bg.done():
+                bg.cancel()
+
+        if self._bg_tasks:
             try:
-                await bg
-            except (asyncio.CancelledError, Exception):
+                await asyncio.wait(
+                    [bg for bg in self._bg_tasks if not bg.done()],
+                    timeout=5.0,
+                    return_when=asyncio.ALL_COMPLETED,
+                )
+            except Exception:
                 pass
         self._bg_tasks = []
 
         # Persist final state
-        await self.ctx.session_memory.store_agent_state(
-            self.ctx.agent_id,
-            {
-                "working_memory": self.ctx.working_memory,
-                "task_history": self.ctx.task_history,
-                "status": "shutdown",
-                "shutdown_at": datetime.utcnow().isoformat(),
-            },
-            ttl=86400,
-        )
+        try:
+            await self.ctx.session_memory.store_agent_state(
+                self.ctx.agent_id,
+                {
+                    "working_memory": self.ctx.working_memory,
+                    "task_history": self.ctx.task_history,
+                    "status": "shutdown",
+                    "shutdown_at": datetime.utcnow().isoformat(),
+                },
+                ttl=86400,
+            )
+        except Exception:
+            pass
 
         await self._cleanup_resources()
 

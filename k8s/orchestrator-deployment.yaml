@@ -85,17 +85,28 @@ spec:
             port: 8200
           initialDelaySeconds: 30
           periodSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
         readinessProbe:
           httpGet:
             path: /ready
             port: 8200
-          initialDelaySeconds: 5
+          # Sprint 8: Extended initial delay to account for startup retry with exponential backoff
+          initialDelaySeconds: 15
           periodSeconds: 5
+          # Allow 15s of dependency flapping before marking pod unready
+          failureThreshold: 3
+          # Require 2 consecutive successes before marking ready
+          successThreshold: 2
         volumeMounts:
         - name: tmp
           mountPath: /tmp
         - name: vault-token
           mountPath: /vault/token
+          readOnly: true
+        - name: log-config
+          mountPath: /app/config/log-retention.json
+          subPath: log-retention.json
           readOnly: true
       volumes:
       - name: tmp
@@ -107,6 +118,9 @@ spec:
               path: vault-token
               expirationSeconds: 600
               audience: vault
+      - name: log-config
+        configMap:
+          name: ai-osop-log-config
 ---
 apiVersion: v1
 kind: Service

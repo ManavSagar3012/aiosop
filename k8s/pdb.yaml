@@ -1,0 +1,32 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ai-osop-orchestrator
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: orchestrator
+spec:
+  # Sprint 8: Ensure at least 1 orchestrator pod is always available
+  # during node drains, cluster upgrades, or voluntary disruptions
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ai-osop
+      component: orchestrator
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ai-osop-agents
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: agents
+spec:
+  # Agents are stateless workers — tolerate more disruption
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: ai-osop
+      component: agents

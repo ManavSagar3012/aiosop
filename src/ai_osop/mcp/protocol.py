@@ -89,7 +89,7 @@ class MCPStateResponse(BaseModel):
 
 @dataclass
 class MCPConnection:
-    """Managed connection to an MCP server with circuit breaker."""
+    """Managed connection to an MCP server with circuit breaker v2 (half-open support)."""
 
     server_id: str
     host: str
@@ -100,40 +100,91 @@ class MCPConnection:
     _initialized: bool = False
     _capabilities: List[str] = field(default_factory=list)
     _tools: Dict[str, MCPToolDefinition] = field(default_factory=dict)
-    # Circuit breaker state (P5 fix)
+    # Circuit breaker state v2 (Sprint 7)
     _failure_count: int = field(default=0)
     _success_count: int = field(default=0)
     _circuit_open: bool = field(default=False)
     _circuit_opened_at: Optional[datetime] = field(default=None)
+    _half_open: bool = field(default=False)
+    _recovery_attempts: int = field(default=0)
+    _last_success_at: Optional[datetime] = field(default=None)
+    _last_failure_at: Optional[datetime] = field(default=None)
+    _consecutive_successes: int = field(default=0)
     CIRCUIT_THRESHOLD: int = field(default=5)
     CIRCUIT_RECOVERY_SECONDS: int = field(default=30)
+    CIRCUIT_HALF_OPEN_MAX_ATTEMPTS: int = field(default=3)
+    CIRCUIT_HALF_OPEN_SUCCESS_REQUIRED: int = field(default=2)
 
     def _circuit_breaker_check(self) -> None:
-        if not self._circuit_open:
+        """Check circuit state and transition OPEN -> HALF-OPEN if recovery time elapsed."""
+        if not self._circuit_open and not self._half_open:
             return
+        # If we're in half-open, let the next call through as a probe
+        if self._half_open:
+            return
+        # OPEN state: check if recovery time has elapsed
         if self._circuit_opened_at is None:
             self._circuit_open = False
             return
         elapsed = (datetime.utcnow() - self._circuit_opened_at).total_seconds()
         if elapsed >= self.CIRCUIT_RECOVERY_SECONDS:
+            # Transition to HALF-OPEN for probing
             self._circuit_open = False
-            self._failure_count = 0
-            self._circuit_opened_at = None
+            self._half_open = True
+            self._recovery_attempts += 1
+            self._consecutive_successes = 0
 
     def _record_success(self) -> None:
+        """Record a successful call and update circuit state."""
+        old_state = self.get_circuit_state()
         self._success_count += 1
-        self._failure_count = 0
+        self._last_success_at = datetime.utcnow()
+        if self._half_open:
+            self._consecutive_successes += 1
+            if self._consecutive_successes >= self.CIRCUIT_HALF_OPEN_SUCCESS_REQUIRED:
+                # Transition back to CLOSED
+                self._half_open = False
+                self._failure_count = 0
+                self._consecutive_successes = 0
+                self._circuit_opened_at = None
+        else:
+            self._failure_count = 0
+        new_state = self.get_circuit_state()
+        if old_state != new_state:
+            from ai_osop.core.observability import record_circuit_breaker_state
+            record_circuit_breaker_state(self.server_id, is_open=(new_state == "open"))
 
     def _record_failure(self) -> None:
+        """Record a failed call and update circuit state."""
+        old_state = self.get_circuit_state()
         self._failure_count += 1
-        if self._failure_count >= self.CIRCUIT_THRESHOLD:
+        self._last_failure_at = datetime.utcnow()
+        if self._half_open:
+            # Any failure in half-open goes back to OPEN
+            self._half_open = False
             self._circuit_open = True
             self._circuit_opened_at = datetime.utcnow()
+            self._consecutive_successes = 0
+        elif self._failure_count >= self.CIRCUIT_THRESHOLD:
+            self._circuit_open = True
+            self._circuit_opened_at = datetime.utcnow()
+        new_state = self.get_circuit_state()
+        if old_state != new_state:
+            from ai_osop.core.observability import record_circuit_breaker_state
+            record_circuit_breaker_state(self.server_id, is_open=(new_state == "open"))
+
+    def get_circuit_state(self) -> str:
+        """Return current circuit state as a string: closed, open, or half_open."""
+        if self._circuit_open:
+            return "open"
+        if self._half_open:
+            return "half_open"
+        return "closed"
 
     async def connect(self) -> None:
         """Establish HTTP and WebSocket connections."""
         self._circuit_breaker_check()
-        if self._circuit_open:
+        if self._circuit_open and not self._half_open:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
         try:
             self._session = aiohttp.ClientSession(
@@ -160,7 +211,7 @@ class MCPConnection:
     async def initialize(self, request: MCPInitializeRequest) -> MCPInitializeResponse:
         """Initialize server with scope and credentials."""
         self._circuit_breaker_check()
-        if self._circuit_open:
+        if self._circuit_open and not self._half_open:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
         if not self._session:
             await self.connect()
@@ -183,7 +234,7 @@ class MCPConnection:
     async def execute(self, request: MCPExecuteRequest) -> MCPExecuteResponse:
         """Execute a tool with timeout, error handling, circuit breaker, and tracing."""
         self._circuit_breaker_check()
-        if self._circuit_open:
+        if self._circuit_open and not self._half_open:
             return MCPExecuteResponse(
                 request_id=request.request_id,
                 status="circuit_open",
