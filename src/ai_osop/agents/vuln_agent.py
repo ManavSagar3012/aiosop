@@ -353,15 +353,24 @@ class VulnAnalysisAgent(BaseAgent):
         if isinstance(targets, str):
             targets = [targets]
         templates = payload.get("templates", [])
+        severity = payload.get("severity", "")  # e.g. "critical,high,medium"
+        tags = payload.get("tags", "")
         engagement_id = payload.get("engagement_id") or (
             self.ctx.current_task.engagement_id if self.ctx.current_task else None
         )
 
-        # Execute via MCP
+        # Execute via MCP. Forward severity/tags so the orchestrator's high-signal
+        # scoping (AIOSOP-NUCLEI-TIMEOUT-2026-06-24) actually reaches nuclei and the
+        # scan completes within budget instead of running the full template set.
+        scan_params = {"targets": targets, "templates": templates, "rate_limit": 150}
+        if severity:
+            scan_params["severity"] = severity
+        if tags:
+            scan_params["tags"] = tags
         response = await self.ctx.mcp_registry.execute_tool(
             "nuclei-mcp",
             "scan",
-            {"targets": targets, "templates": templates, "rate_limit": 150},
+            scan_params,
             timeout_override=settings.nuclei_mcp_timeout,
         )
 

@@ -1,61 +1,59 @@
-"""
-Attack Graph MCP Server
-Provides tool-based access to the Neo4j attack graph.
-"""
+import sys
+import json
+import asyncio
+from neo4j import AsyncGraphDatabase
+from typing import Any, Dict
 
-import uuid
-from typing import Any, Dict, List, Optional
+# Neo4j Driver (shared with AI-OSOP Core if possible, but for MCP it's isolated)
+URI = "bolt://127.0.0.1:7687"
+AUTH = ("neo4j", "password")
 
-from fastapi import FastAPI
-from pydantic import BaseModel
+async def execute_query(query, params=None):
+    async with AsyncGraphDatabase.driver(URI, auth=AUTH) as driver:
+        async with driver.session() as session:
+            result = await session.run(query, params or {})
+            return await result.data()
 
-app = FastAPI(title="Attack Graph MCP Server")
-
-@app.get("/health")
-async def health():
-    return {"status": "ready", "server": "attack-graph-mcp"}
-
-class MCPExecuteRequest(BaseModel):
-    tool_name: str
-    parameters: Optional[Dict[str, Any]] = None
-    request_id: Optional[str] = None
-
-@app.post("/mcp/initialize")
-async def mcp_initialize():
-    return {
-        "server_id": "attack-graph-mcp",
-        "version": "1.0",
-        "tools": [
-            {
-                "name": "query_graph",
-                "description": "Run a Cypher query against the attack graph.",
-                "parameters": [
-                    {"name": "query", "type": "string", "required": True},
-                    {"name": "params", "type": "object", "required": False}
-                ]
-            },
-            {
-                "name": "get_neighbors",
-                "description": "Find connected nodes for a specific entity.",
-                "parameters": [{"name": "node_id", "type": "string", "required": True}]
-            }
-        ]
-    }
-
-@app.post("/mcp/execute")
-async def mcp_execute(req: MCPExecuteRequest):
-    request_id = req.request_id or str(uuid.uuid4())
-    # Simulation: In a real agent loop, this would call the shared GraphMemory class
-    return {
-        "request_id": request_id,
-        "status": "success",
-        "result": {"nodes": [], "edges": [], "msg": "Graph query executed (Simulated)"}
-    }
+async def handle_request(tool, params):
+    if tool == "health":
+        return {"status": "healthy"}
+    elif tool == "query_graph":
+        try:
+            return await execute_query(params["query"], params.get("params"))
+        except Exception as e:
+            return {"error": str(e)}
+    elif tool == "get_neighbors":
+        try:
+            query = "MATCH (n {id: $node_id})-[r]->(m) RETURN r, m"
+            return await execute_query(query, {"node_id": params["node_id"]})
+        except Exception as e:
+            return {"error": str(e)}
+    return {"error": f"unknown tool: {tool}"}
 
 if __name__ == "__main__":
-    import uvicorn
+    import socket
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8093)
     args = parser.parse_args()
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", args.port))
+    server.listen(1)
+    print(f"Attack Graph MCP running on port {args.port}")
+    sys.stdout.flush()
+    
+    loop = asyncio.get_event_loop()
+    
+    while True:
+        conn, addr = server.accept()
+        with conn:
+            data = conn.recv(65536)
+            if not data: continue
+            try:
+                req = json.loads(data.decode())
+                if "method" in req:
+                    result = loop.run_until_complete(handle_request(req["method"], req.get("params", {})))
+                    conn.send(json.dumps({"jsonrpc": "2.0", "result": result, "id": req.get("id")}).encode())
+            except Exception as e:
+                conn.send(json.dumps({"error": str(e)}).encode())

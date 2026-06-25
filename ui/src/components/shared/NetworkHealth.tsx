@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { API_BASE, AUTH_TOKEN } from '../../services/api';
 import { NetworkService, ConnectionStatus } from '../../services/network';
 import { Activity, Wifi, WifiOff, RefreshCcw } from 'lucide-react';
 
@@ -9,14 +10,18 @@ export const NetworkHealth: React.FC = () => {
   useEffect(() => {
     const fetchAndConnect = async () => {
       try {
-        const response = await fetch('http://127.0.0.1:8200/engagements', {
-            headers: { "Authorization": "Bearer dev-token" }
+        const response = await fetch(`${API_BASE}/engagements`, {
+            headers: { "Authorization": `Bearer ${AUTH_TOKEN}` }
         });
         if (response.ok) {
           const sessions = await response.json();
           if (Array.isArray(sessions)) {
             const activeSessions = sessions.filter((s: any) => s.session_id !== 'global' && !s.session_id.includes('test'));
-            const latestId = activeSessions.length > 0 ? activeSessions[0].session_id : "current-session";
+            if (activeSessions.length === 0) {
+              setStatus('disconnected');
+              return;
+            }
+            const latestId = activeSessions[0].session_id;
             
             const net = new NetworkService((newStatus) => setStatus(newStatus));
             net.connect(latestId);
@@ -35,8 +40,8 @@ export const NetworkHealth: React.FC = () => {
       } catch (e) {
         console.error("Failed to fetch sessions for network health", e);
         // Fallback to manual connect if API is down
-        const net = new NetworkService((newStatus) => setStatus(newStatus));
-        net.connect("current-session");
+        // No active mission; keep status as 'disconnected'
+        setStatus('disconnected');
       }
     };
 

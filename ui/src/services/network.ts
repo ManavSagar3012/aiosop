@@ -7,8 +7,8 @@ import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { SwarmEvent } from './types';
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8081";
-const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://127.0.0.1:8081";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8200";
+const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://127.0.0.1:8200";
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error';
 

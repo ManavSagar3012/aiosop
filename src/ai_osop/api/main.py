@@ -36,6 +36,7 @@ from ai_osop.api.health import router as health_router, run_startup_self_test
 from ai_osop.api.routers import (
     agents,
     approvals,
+    dlq,
     engagements,
     findings,
     intelligence,
@@ -111,54 +112,47 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
         ("payload-mcp", settings.payload_mcp_host, settings.payload_mcp_port, None),
         ("nuclei-mcp", settings.nuclei_mcp_host, settings.nuclei_mcp_port, None),
         ("shodan-mcp", settings.shodan_mcp_host, settings.shodan_mcp_port, settings.shodan_api_key),
-        ("browser-mcp", settings.browser_mcp_host, settings.browser_mcp_port, None),
+        ("browser-mcp", "127.0.0.1", 8091, None),
         ("security-bridge", settings.security_bridge_host, settings.security_bridge_port, None),
         ("threat-intel-mcp", settings.threat_intel_mcp_host, settings.threat_intel_mcp_port, None),
-        # "browser-mcp", # Temporarily disabled critical check
         ("cloud-mcp", settings.cloud_mcp_host, settings.cloud_mcp_port, None),
-        (
-            "turbo-intruder-mcp",
-            settings.turbo_intruder_mcp_host,
-            settings.turbo_intruder_mcp_port,
-            None,
-        ),
+        ("turbo-intruder-mcp", settings.turbo_intruder_mcp_host, settings.turbo_intruder_mcp_port, None),
     ]
+    # Critical MCPs whose ABSENCE is logged loudly. NOTE: this set only governs
+    # log severity on failure — it must NOT gate whether a server is initialized.
+    # (AIOSOP-RECON-PERSIST-2026-06-24)
     critical_mcps = {
+        "recon-mcp",
         "nuclei-mcp",
+        "burp-mcp",
+        "browser-mcp",
         "source-map-mcp",
         "cloud-mcp",
         "turbo-intruder-mcp",
     }
+    import logging
+
+    mcp_log = logging.getLogger("ai_osop.mcp")
     for server_id, host, port, token in servers:
         is_critical = server_id in critical_mcps
         try:
+    async def init_server(server_id, host, port, token, is_critical):
+        try:
             await mcp_registry.register_server(server_id, host, port, token)
-            if is_critical:
-                await mcp_registry.initialize_server(
-                    server_id,
-                    scope={},
-                    credentials={},
-                    session_id="api-bootstrap",
-                )
-            import logging
-
-            logging.getLogger("ai_osop.mcp").info(f"MCP server {server_id} registered.")
+            await mcp_registry.initialize_server(
+                server_id,
+                scope={},
+                credentials={},
+                session_id="api-bootstrap",
+            )
+            mcp_log.info(f"MCP server {server_id} registered and initialized.")
         except Exception as exc:
-            import logging
+            (mcp_log.critical if is_critical else mcp_log.warning)(
+                f"MCP server {server_id} at {host}:{port} registration/init failed: {exc}"
+            )
 
-            if is_critical:
-                # Degraded mode: a critical MCP being absent must NOT kill API
-                # startup (this function is non-blocking by contract). Log loudly
-                # so the dashboard/health surfaces it, then continue — mirrors the
-                # Redis/Neo4j degraded-mode handling in lifespan().
-                logging.getLogger("ai_osop.mcp").critical(
-                    f"Critical MCP server {server_id} at {host}:{port} unavailable "
-                    f"— proceeding in degraded mode: {exc}"
-                )
-            else:
-                logging.getLogger("ai_osop.mcp").warning(
-                    f"Skipping MCP server {server_id} at {host}:{port}: {exc}"
-                )
+    tasks = [init_server(s, h, p, t, s in critical_mcps) for s, h, p, t in servers]
+    await asyncio.gather(*tasks)
 
 
 # ============== Lifespan ==============
@@ -185,6 +179,20 @@ async def lifespan(app: FastAPI):
 
     # 0. OpenTelemetry tracing
     init_tracing()
+
+    # 0a. Sentry — only when SENTRY_DSN is set and not in development
+    if settings.sentry_dsn and settings.environment.lower() not in ("development", "dev", "local", "test"):
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.environment,
+            traces_sample_rate=settings.sentry_traces_sample_rate,
+            profiles_sample_rate=settings.sentry_profiles_sample_rate,
+        )
+        logger.info("Sentry SDK initialized", environment=settings.environment)
+    else:
+        logger.info("Sentry SDK disabled (no SENTRY_DSN or development environment)")
+
     with trace_span("api.startup", attributes={"version": "1.0.0"}):
         session_memory = SessionMemory()
         graph_memory = GraphMemory()
@@ -241,7 +249,7 @@ async def lifespan(app: FastAPI):
         startup_results = await run_startup_self_test()
         if startup_results["status"] != "healthy":
             logger.critical(f"Startup self-test failed: {startup_results}")
-            # raise RuntimeError("Startup self-test failed")
+            raise RuntimeError("Startup self-test failed — critical dependency unavailable")
 
         # 6. Session Store (user sessions for DiffAuth)
         try:
@@ -252,10 +260,20 @@ async def lifespan(app: FastAPI):
 
         # 7. Skill Engine
         try:
+            import ai_osop.agents as _agents_pkg
             from ai_osop.core.skill_engine import SkillEngine
 
-            _skill_engine_ref = SkillEngine(graph_memory, session_memory)
+            # SkillEngine's first positional arg is the skills directory (str path),
+            # NOT memory objects. The prior call passed GraphMemory/SessionMemory,
+            # raising "expected str, bytes or os.PathLike, not GraphMemory" and
+            # silently disabling the skill library. Resolve the bundled skills dir
+            # from the agents package so it is CWD-independent.
+            skills_dir = os.path.join(os.path.dirname(_agents_pkg.__file__), "skills")
+            _skill_engine_ref = SkillEngine(skills_dir, llm_client=llm_client)
             state["skill_engine"] = _skill_engine_ref
+            logger.info(
+                "SkillEngine initialized",
+            )
         except Exception as e:
             logger.warning(f"SkillEngine initialization failed: {e}")
 
@@ -459,6 +477,7 @@ app.include_router(engagements.router)
 app.include_router(tasks.router)
 app.include_router(agents.router)
 app.include_router(approvals.router)
+app.include_router(dlq.router)
 app.include_router(sessions.router)
 app.include_router(findings.router)
 app.include_router(intelligence.router)

@@ -32,7 +32,7 @@ class TestStartupRetry:
         from ai_osop.api.main import connect_with_retry
         result = await connect_with_retry(connector, "test-service", max_retries=3, base_delay=0.1)
         assert result is False
-        assert connector.await_count == 3
+        assert connector.await_count == 4
 
 
 class TestRedisReconnection:

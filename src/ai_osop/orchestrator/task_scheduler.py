@@ -191,6 +191,13 @@ class TaskScheduler:
                 if task_type and hasattr(agent, "supports_task_type"):
                     if not agent.supports_task_type(task_type):
                         continue
+                
+                # Acquire distributed lock to prevent multi-orchestrator collisions
+                lock_key = f"lock:agent:{agent.ctx.agent_id}"
+                success = await self._orch.session_memory.acquire_lock(lock_key, "locked")
+                if not success:
+                    continue
+                
                 self._orch._busy_agents.add(agent.ctx.agent_id)
                 return agent
         return None
@@ -199,7 +206,9 @@ class TaskScheduler:
         """Release an agent claim."""
         if agent_id:
             self._orch._busy_agents.discard(agent_id)
-
+            lock_key = f"lock:agent:{agent_id}"
+            import asyncio
+            asyncio.create_task(self._orch.session_memory.release_lock(lock_key, "locked"))
     @staticmethod
     def _strip_stale_approval(task: Task) -> None:
         """Drop persisted approval grant so gate re-fires."""
@@ -256,8 +265,8 @@ class TaskScheduler:
         await self._orch.graph_memory.upsert_task(
             task, result_summary={"retry_attempt": task.retry_count}
         )
-        await self._retry_sleep(backoff)
-        await self._assign_task(task)
+        await self._orch._retry_sleep(backoff)
+        await self._orch._assign_task(task)
         return True
 
     async def _retry_sleep(self, seconds: float) -> None:
@@ -400,9 +409,12 @@ class TaskScheduler:
     async def _trigger_downstream_tasks(self, parent: Task) -> None:
         """Launch child tasks that depend on parent completion."""
         # Use Neo4j as the ground-truth dependency graph so restart recovery and
-        # concurrent scheduling have the same source of truth.
+        # concurrent scheduling have the same source of truth. We need the parent's
+        # DEPENDENTS (tasks that list parent.id as a dependency), not the parent's
+        # own dependencies — the prior call used get_task_dependencies, which (a) did
+        # not exist on GraphMemory and (b) is the wrong direction.
         try:
-            child_ids = await self._orch.graph_memory.get_task_dependencies(parent.id)
+            child_ids = await self._orch.graph_memory.get_task_dependents(parent.id)
         except Exception as e:
             logger.error("graph_lookup_failed", parent_id=parent.id, error=str(e))
             return
@@ -417,29 +429,124 @@ class TaskScheduler:
                 ):
                     await self._assign_task(child)
 
-    async def _chain_authenticated_surface(self, task: Task) -> None:
-        """If the just-completed task was auth_diff, auto-discover the authenticated surface."""
-        if task.type != "auth_diff":
-            return
-        engagement_id = task.engagement_id
-        if not await self._orch.engagement_manager._engagement_is_authenticated(engagement_id):
+    async def _chain_authenticated_surface(
+        self, task: Task, result: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Chain authenticated surface discovery tasks automatically."""
+        if not result:
+            result = {}
+
+        eid = task.engagement_id
+
+        # 1. auth_diff -> autonomous discovery
+        if task.type == "auth_diff":
+            if not await self._orch._engagement_is_authenticated(eid):
+                return
+
+            recon_agent = await self._find_available_agent(AgentType.RECON)
+            if not recon_agent:
+                logger.info("no_recon_agent_for_chained_surface", engagement_id=eid)
+                return
+
+            auth_user_label = await self._orch._pick_auth_user_label(eid)
+            if not auth_user_label:
+                logger.info("no_auth_user_label_for_chained_surface", engagement_id=eid)
+                return
+
+            await self._orch.claim_auto_discovery(
+                eid, auth_user_label, task.id
+            )
             return
 
-        # Find an available recon agent and dispatch it as an autonomous task
-        recon_agent = await self._find_available_agent(AgentType.RECON)
-        if not recon_agent:
-            logger.info("no_recon_agent_for_chained_surface", engagement_id=engagement_id)
+        # 2. map_workflow -> capture_authenticated_surface
+        elif task.type == "map_workflow":
+            if not await self._orch._engagement_is_authenticated(eid):
+                return
+            workflow_id = result.get("workflow_id")
+            if not workflow_id:
+                return
+
+            child = Task(
+                type="capture_authenticated_surface",
+                priority=6,
+                agent_type=AgentType.WORKFLOW,
+                payload={
+                    "url": task.payload.get("url", ""),
+                    "user_label": task.payload.get("user_label", "guest"),
+                    "workflow_id": workflow_id,
+                },
+                dependencies=[task.id],
+                engagement_id=eid,
+            )
+
+        # 3. capture_authenticated_surface -> extract_har_api_inventory
+        elif task.type == "capture_authenticated_surface":
+            har_path = result.get("har_path")
+            if not har_path:
+                return
+
+            child = Task(
+                type="extract_har_api_inventory",
+                priority=6,
+                agent_type=AgentType.WORKFLOW,
+                payload={
+                    "har_path": har_path,
+                    "user_label": task.payload.get("user_label", "guest"),
+                    "workflow_id": task.payload.get("workflow_id", ""),
+                },
+                dependencies=[task.id],
+                engagement_id=eid,
+            )
+
+        # 4. extract_har_api_inventory -> replay_for_diff_auth
+        elif task.type == "extract_har_api_inventory":
+            workflow_id = task.payload.get("workflow_id")
+            if not workflow_id:
+                return
+
+            child = Task(
+                type="replay_for_diff_auth",
+                priority=6,
+                agent_type=AgentType.WORKFLOW,
+                payload={
+                    "workflow_id": workflow_id,
+                },
+                dependencies=[task.id],
+                engagement_id=eid,
+            )
+        else:
             return
 
-        auth_user_label = await self._orch.engagement_manager._pick_auth_user_label(engagement_id)
-        if not auth_user_label:
-            logger.info("no_auth_user_label_for_chained_surface", engagement_id=engagement_id)
+        # Deduplicate using graph_memory.task_has_spawned
+        if await self._orch.graph_memory.task_has_spawned(task.id):
             return
 
-        await self._orch.engagement_manager.claim_auto_discovery(
-            engagement_id, auth_user_label, task.id
+        # Persist spawned edge in Neo4j
+        async with self._orch.graph_memory._driver.session() as g_session:
+            await g_session.run(
+                "MATCH (p:Task {id: $parent_id}), (c:Task {id: $child_id}) MERGE (p)-[:SPAWNED]->(c)",
+                {"parent_id": task.id, "child_id": child.id}
+            )
+
+        # Audit log event
+        await self._orch._audit_log(
+            AuditEvent(
+                event_type="auto_task_chain",
+                severity="info",
+                actor_type="system",
+                actor_id="orchestrator",
+                action={
+                    "trigger_task_id": task.id,
+                    "created_type": child.type,
+                },
+                result={"success": True},
+                context={"engagement_id": eid},
+                engagement_id=eid,
+            )
         )
 
+        # Schedule the child task
+        await self._orch.schedule_task(child)
     async def _persist_task_dependency(self, parent: Task, child: Task) -> None:
         """Persist a parent→child dependency in the graph."""
         await self._orch.graph_memory.link_task_dependency(parent.id, child.id)

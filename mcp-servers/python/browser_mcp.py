@@ -252,6 +252,24 @@ manager = BrowserManager()
 
 @app.on_event("startup")
 async def startup():
+    # Durable interpreter provenance for tooling-reality audits: prove which
+    # Python + which playwright package this server actually loaded (the API's
+    # .venv vs system Python). Logged once at boot so reviewers don't have to
+    # infer it from OS process metadata (Windows venv launchers re-exec the base
+    # interpreter, making `wmic ExecutablePath` misleading).
+    import sys
+
+    try:
+        import playwright as _pw
+
+        _pw_file = getattr(_pw, "__file__", "unknown")
+    except Exception as _e:  # pragma: no cover
+        _pw_file = f"import-failed: {_e}"
+    print(
+        f"[browser-mcp provenance] python={sys.executable} "
+        f"playwright={_pw_file} venv={'.venv' in (_pw_file or '').lower()}",
+        flush=True,
+    )
     await manager.start()
 
 @app.on_event("shutdown")

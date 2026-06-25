@@ -111,7 +111,7 @@ class TestDeadLetterQueue:
         call_args = mock_session_memory.store_hot.call_args[0][1]
         assert call_args["status"] == "discarded"
         assert call_args["operator_notes"] == "operator_decided_to_skip"
-        assert call_args["resolved_at"] is not None
+        assert call_args["updated_at"] is not None
 
     async def test_get_stats_empty(self, dlq, mock_session_memory):
         """get_stats should return zeros for empty DLQ."""

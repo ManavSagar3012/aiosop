@@ -1,121 +1,67 @@
-"""
-Cloud MCP Server
-Provides cloud environment enumeration and IAM privilege escalation analysis.
-Wraps tools like CloudFox/Pacu or provides simulated responses for agent testing.
-"""
+import sys
+import json
+import asyncio
+import boto3
+from typing import Any, Dict
 
-import uuid
-from typing import Any, Dict, List, Optional
+# AWS
+async def analyze_aws_iam(account_id):
+    iam = boto3.client("iam")
+    try:
+        roles = iam.list_roles()
+        results = []
+        for role in roles["Roles"]:
+            policy = iam.get_role(RoleName=role["RoleName"])["Role"]["AssumeRolePolicyDocument"]
+            if "*" in str(policy):
+                results.append({"role": role["Arn"], "issue": "Overly permissive trust policy", "risk": "HIGH"})
+        return {"findings": results}
+    except Exception as e:
+        return {"error": str(e)}
 
-from fastapi import FastAPI
-from pydantic import BaseModel
+# Stubbing Azure/GCP for now as the infrastructure is not configured
+async def analyze_azure_iam():
+    return {"status": "not_implemented", "msg": "Azure IAM discovery pending"}
 
-app = FastAPI(title="Cloud MCP Server")
+async def analyze_gcp_iam():
+    return {"status": "not_implemented", "msg": "GCP IAM discovery pending"}
 
-@app.get("/health")
-async def health():
-    return {"status": "ready", "server": "cloud-mcp"}
-
-class MCPExecuteRequest(BaseModel):
-    tool_name: str
-    parameters: Optional[Dict[str, Any]] = None
-    request_id: Optional[str] = None
-
-@app.post("/mcp/initialize")
-async def mcp_initialize():
-    return {
-        "server_id": "cloud-mcp",
-        "version": "1.0",
-        "capabilities": ["cloud_enumeration", "iam_analysis"],
-        "status": "ready",
-        "tools": [
-            {
-                "name": "analyze_iam_trust_policies",
-                "description": "Analyze AWS IAM trust policies for cross-account or overly permissive access.",
-                "parameters": [
-                    {"name": "account_id", "type": "string", "description": "The target AWS account ID", "required": False}
-                ],
-                "returns": {"type": "object", "description": "IAM analysis results"}
-            },
-            {
-                "name": "discover_privilege_escalation",
-                "description": "Scan an AWS account for known IAM privilege escalation paths.",
-                "parameters": [
-                    {"name": "principal_arn", "type": "string", "description": "The ARN of the starting principal to check paths for", "required": False}
-                ],
-                "returns": {"type": "object", "description": "Privilege escalation paths"}
-            }
-        ]
-    }
-
-async def analyze_iam(account_id: Optional[str]) -> Dict[str, Any]:
-    # Simulated CloudFox/Pacu output for IAM trust analysis
-    return {
-        "findings": [
-            {
-                "role": "arn:aws:iam::123456789012:role/DeveloperRole",
-                "issue": "Overly permissive trust policy",
-                "trusted_entities": ["*"],
-                "risk": "HIGH"
-            },
-            {
-                "role": "arn:aws:iam::123456789012:role/CrossAccountAccess",
-                "issue": "Trusts unknown external account",
-                "trusted_entities": ["arn:aws:iam::999999999999:root"],
-                "risk": "MEDIUM"
-            }
-        ]
-    }
-
-async def discover_privesc(principal_arn: Optional[str]) -> Dict[str, Any]:
-    # Simulated privilege escalation paths
-    return {
-        "paths": [
-            {
-                "technique": "iam:PassRole",
-                "target": "arn:aws:iam::123456789012:role/EC2AdminRole",
-                "description": "Principal can pass EC2AdminRole to a new EC2 instance and access it to escalate privileges.",
-                "risk": "CRITICAL"
-            },
-            {
-                "technique": "iam:CreateAccessKey",
-                "target": "arn:aws:iam::123456789012:user/admin",
-                "description": "Principal can create new access keys for the admin user.",
-                "risk": "CRITICAL"
-            }
-        ]
-    }
-
-@app.post("/mcp/execute")
-async def mcp_execute(req: MCPExecuteRequest):
-    request_id = req.request_id or str(uuid.uuid4())
-    params = req.parameters or {}
-    
-    if req.tool_name == "analyze_iam_trust_policies":
-        result = await analyze_iam(params.get("account_id"))
-        return {
-            "request_id": request_id,
-            "status": "success",
-            "result": result
-        }
-    elif req.tool_name == "discover_privilege_escalation":
-        result = await discover_privesc(params.get("principal_arn"))
-        return {
-            "request_id": request_id,
-            "status": "success",
-            "result": result
-        }
-
-    return {
-        "request_id": request_id,
-        "status": "error",
-        "error": f"Unknown tool: {req.tool_name}"
-    }
+async def handle_request(tool, params):
+    if tool == "health":
+        return {"status": "healthy"}
+    elif tool == "analyze_iam_trust_policies":
+        provider = params.get("provider", "aws")
+        if provider == "aws":
+            return await analyze_aws_iam(params.get("account_id"))
+        elif provider == "azure":
+            return await analyze_azure_iam()
+        elif provider == "gcp":
+            return await analyze_gcp_iam()
+    return {"error": f"unknown tool: {tool}"}
 
 if __name__ == "__main__":
-    import uvicorn
+    import socket
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8097)
     args = parser.parse_args()
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", args.port))
+    server.listen(1)
+    print(f"Cloud MCP running on port {args.port}")
+    sys.stdout.flush()
+    
+    loop = asyncio.get_event_loop()
+    
+    while True:
+        conn, addr = server.accept()
+        with conn:
+            data = conn.recv(65536)
+            if not data: continue
+            try:
+                req = json.loads(data.decode())
+                if "method" in req:
+                    result = loop.run_until_complete(handle_request(req["method"], req.get("params", {})))
+                    conn.send(json.dumps({"jsonrpc": "2.0", "result": result, "id": req.get("id")}).encode())
+            except Exception as e:
+                conn.send(json.dumps({"error": str(e)}).encode())

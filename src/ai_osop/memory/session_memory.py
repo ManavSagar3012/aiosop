@@ -22,8 +22,10 @@ from ai_osop.core.exceptions import MemoryException
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
+from ai_osop.core.observability import record_redis_latency, record_postgres_latency
 from ai_osop.reliability.retry import retry_with_backoff
 
+import time
 import structlog
 
 logger = structlog.get_logger("ai_osop.memory.session_memory")
@@ -120,8 +122,9 @@ class DLQEntryORM(Base):
     task_payload = Column(JSON)
     status = Column(String(32), index=True)  # pending_review, requeued, discarded
     operator_notes = Column(String(2048), nullable=True)
+    retry_count = Column(Integer, nullable=True)
     created_at = Column(DateTime)
-    resolved_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, nullable=True)
 
 class FindingCorpusORM(Base):
     __tablename__ = "finding_corpus"
@@ -136,7 +139,61 @@ class FindingCorpusORM(Base):
     created_at = Column(DateTime)
     finalized_at = Column(DateTime)
 
+
+class _TimedPostgresSession:
+    """Wraps an async session context manager to record Postgres latency."""
+    def __init__(self, session, operation_name: str = "transaction"):
+        self._session = session
+        self._operation_name = operation_name
+        self._start = None
+
+    async def __aenter__(self):
+        self._start = time.perf_counter()
+        return await self._session.__aenter__()
+
+    async def __aexit__(self, *args):
+        result = await self._session.__aexit__(*args)
+        if self._start is not None:
+            record_postgres_latency(self._operation_name, time.perf_counter() - self._start)
+        return result
+
+
+class _TimedPostgresSessionMaker:
+    """Wraps sessionmaker to return timed sessions."""
+    def __init__(self, sessionmaker, operation_name: str = "transaction"):
+        self._sm = sessionmaker
+        self._operation_name = operation_name
+
+    def __call__(self, *args, **kwargs):
+        return _TimedPostgresSession(self._sm(*args, **kwargs), self._operation_name)
+
+
+def _wrap_redis_for_metrics(redis_client):
+    """Monkey-patch common Redis async methods to record latency metrics."""
+    import time as _time
+    methods = [
+        "get", "set", "rpush", "lrange", "keys", "lrem", "delete", "ping",
+        "setnx", "eval", "hset", "hgetall", "hincrby", "publish", "zadd",
+        "zrange", "zrem", "hget", "hdel", "sadd", "sismember", "smembers",
+    ]
+    write_methods = {"set", "rpush", "lrem", "delete", "setnx", "hset", "hincrby",
+                     "publish", "zadd", "zrem", "hdel", "sadd"}
+    for method_name in methods:
+        original = getattr(redis_client, method_name, None)
+        if original is None:
+            continue
+        async def _timed_wrapper(*args, __original=original, __name=method_name, **kwargs):
+            start = _time.perf_counter()
+            result = await __original(*args, **kwargs)
+            op_type = "write" if __name in write_methods else "read"
+            record_redis_latency(op_type, _time.perf_counter() - start)
+            return result
+        setattr(redis_client, method_name, _timed_wrapper)
+    return redis_client
+
+
 class SessionMemory:
+
     """
     Multi-tier session memory with hot/warm/cold storage.
 
@@ -162,6 +219,7 @@ class SessionMemory:
             self._redis = redis.from_url(
                 settings.redis_uri, decode_responses=True, max_connections=50
             )
+            self._redis = _wrap_redis_for_metrics(self._redis)
             await self._redis.ping()
 
         await retry_with_backoff(
@@ -178,8 +236,10 @@ class SessionMemory:
             self._pg_engine = create_async_engine(
                 settings.postgres_uri, pool_size=20, max_overflow=10, echo=False
             )
-            self._async_session = sessionmaker(
-                self._pg_engine, class_=AsyncSession, expire_on_commit=False
+            self._async_session = _TimedPostgresSessionMaker(
+                sessionmaker(
+                    self._pg_engine, class_=AsyncSession, expire_on_commit=False
+                )
             )
             # Verify connection by creating tables
             async with self._pg_engine.begin() as conn:
@@ -206,6 +266,7 @@ class SessionMemory:
             self._redis = redis.from_url(
                 settings.redis_uri, decode_responses=True, max_connections=50
             )
+            self._redis = _wrap_redis_for_metrics(self._redis)
             return self._redis
         try:
             await self._redis.ping()
@@ -215,6 +276,7 @@ class SessionMemory:
             self._redis = redis.from_url(
                 settings.redis_uri, decode_responses=True, max_connections=50
             )
+            self._redis = _wrap_redis_for_metrics(self._redis)
             return self._redis
 
     async def store_hot(self, key: str, value: Any, ttl: int = 3600) -> None:
@@ -238,11 +300,12 @@ class SessionMemory:
             r = await self._ensure_redis()
             await r.delete(key)
 
-    async def acquire_lock(self, lock_key: str, lock_value: str, ttl_seconds: int = 30) -> bool:
+    async def acquire_lock(self, lock_key: str, lock_value: str = "locked", ttl_seconds: int = 30, ttl: Optional[int] = None) -> bool:
         """Acquire a distributed Redis lock."""
+        actual_ttl = ttl if ttl is not None else ttl_seconds
         r = await self._ensure_redis()
         with trace_span("redis.acquire_lock", attributes={"ai_osop.redis.key": lock_key}):
-            result = await r.set(lock_key, lock_value, nx=True, ex=ttl_seconds)
+            result = await r.set(lock_key, lock_value, nx=True, ex=actual_ttl)
             return bool(result)
 
     async def release_lock(self, lock_key: str, lock_value: str) -> bool:
@@ -597,15 +660,17 @@ class SessionMemory:
                         task_payload=entry.task_payload,
                         status=entry.status,
                         operator_notes=entry.operator_notes,
+                        retry_count=entry.retry_count,
                         created_at=entry.created_at,
-                        resolved_at=entry.resolved_at,
+                        updated_at=entry.updated_at,
                     )
                     .on_conflict_do_update(
                         index_elements=["id"],
                         set_={
                             "status": entry.status,
                             "operator_notes": entry.operator_notes,
-                            "resolved_at": entry.resolved_at,
+                            "retry_count": entry.retry_count,
+                            "updated_at": entry.updated_at,
                         },
                     )
                 )
@@ -637,8 +702,9 @@ class SessionMemory:
                         task_payload=orm.task_payload,
                         status=orm.status,
                         operator_notes=orm.operator_notes,
+                        retry_count=orm.retry_count,
                         created_at=orm.created_at,
-                        resolved_at=orm.resolved_at,
+                        updated_at=orm.updated_at,
                     )
                     # Cache back to Redis
                     await self.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
@@ -674,8 +740,9 @@ class SessionMemory:
                             task_payload=orm.task_payload,
                             status=orm.status,
                             operator_notes=orm.operator_notes,
+                            retry_count=orm.retry_count,
                             created_at=orm.created_at,
-                            resolved_at=orm.resolved_at,
+                            updated_at=orm.updated_at,
                         )
                     )
                 return entries
@@ -873,8 +940,76 @@ class SessionMemory:
         await self.store_session_state(state)
         return state
 
+
+    async def list_all_sessions(self) -> List[str]:
+        r = await self._ensure_redis()
+        return await r.keys("session:*")
+
+
+    async def list_all_tasks(self) -> List[str]:
+        r = await self._ensure_redis()
+        return await r.keys("task:*")
+
     async def close(self) -> None:
         if self._redis:
             await self._redis.close()
         if self._pg_engine:
             await self._pg_engine.dispose()
+
+
+    async def update_agent_heartbeat(self, agent_id: str, data: Dict[str, Any]) -> None:
+        """Update agent heartbeat with ownership and state."""
+        if "last_seen" not in data:
+            data["last_seen"] = datetime.utcnow().isoformat()
+        await self.store_hot(f"agent:heartbeat:{agent_id}", data, ttl=60)
+
+    async def get_agent_heartbeat(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve agent heartbeat."""
+        return await self.retrieve_hot(f"agent:heartbeat:{agent_id}")
+
+
+    async def update_agent_heartbeat(self, agent_id: str, data: Dict[str, Any]) -> None:
+        """Update agent heartbeat with ownership and state."""
+        if "last_seen" not in data:
+            data["last_seen"] = datetime.utcnow().isoformat()
+        await self.store_hot(f"agent:heartbeat:{agent_id}", data, ttl=60)
+
+    async def get_agent_heartbeat(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve agent heartbeat."""
+        return await self.retrieve_hot(f"agent:heartbeat:{agent_id}")
+
+    async def get_all_agents(self) -> Dict[str, Any]:
+        r = await self._ensure_redis()
+        keys = await r.keys("agent:*")
+        agents = {}
+        for key in keys:
+            if not key.startswith("agent:heartbeat:"):
+                data = await self.retrieve_hot(key)
+                agents[key.replace("agent:", "")] = data
+        return agents
+
+    async def find_tasks_by_agent(self, agent_id: str) -> List[Any]:
+        r = await self._ensure_redis()
+        task_keys = await r.keys("task:*")
+        tasks = []
+        for key in task_keys:
+            task = await self.retrieve_hot(key)
+            if task.get("assigned_agent_id") == agent_id:
+                tasks.append(task)
+        return tasks
+
+
+    async def update_agent_status(self, agent_id: str, status: str) -> None:
+        """Update agent status in Redis."""
+        key = f"agent:{agent_id}"
+        data = await self.retrieve_hot(key)
+        if data:
+            data["status"] = status
+            await self.store_hot(key, data)
+        else:
+            await self.store_hot(key, {"status": status})
+
+    async def release_lock_simple(self, key: str) -> None:
+        """Release a lock without ownership check (simple delete)."""
+        r = await self._ensure_redis()
+        await r.delete(f"lock:{key}")

@@ -77,13 +77,14 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             ):
                 # 5. Process request
                 response = await call_next(request)
+
+                # 6. Attach request ID to response
+                response.headers["X-Request-ID"] = request_id
+
+            return response
         finally:
-            # 6. Attach request ID to response
-            response.headers["X-Request-ID"] = request_id
             # 7. Cleanup contextvars for this request
             RequestContext.clear()
-
-        return response
 
     @staticmethod
     def _extract_request_id(request: Request) -> str:
