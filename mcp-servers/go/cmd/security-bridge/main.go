@@ -82,16 +82,27 @@ func main() {
 		},
 		Returns: map[string]any{"results": "array", "status": "string"},
 		Handler: func(params map[string]any) any {
+			url, _ := params["url"].(string)
+			wordlist, ok := params["wordlist"].(string)
+			if !ok || wordlist == "" {
+				wordlist = "common_wordlist.txt"
+			}
 			
 			_, err := exec.LookPath("ffuf")
 			if err != nil {
 				return map[string]any{"status": "error", "error": "ffuf not installed"}
 			}
 
-			return map[string]any{"status": "success", "msg": "Real ffuf execution would happen here"}
+			// Real execution of ffuf
+			args := []string{"-u", url, "-w", wordlist, "-s"}
+			output, execErr := exec.Command("ffuf", args...).CombinedOutput()
+			var errStr string
+			if execErr != nil {
+				errStr = execErr.Error()
+			}
+			return map[string]any{"status": "success", "raw": string(output), "error": errStr}
 		},
 	})
-
 	// Masscan Tool
 	server.Register(sdk.Tool{
 		Name:           "masscan",
@@ -102,88 +113,36 @@ func main() {
 			{"name": "target", "type": "string", "description": "Target IP range", "required": true},
 			{"name": "ports", "type": "string", "description": "Ports to scan", "required": true},
 		},
-		Returns: map[string]any{"status": "string", "hosts": "array"},
+		Returns: map[string]any{"status": "string", "raw": "string"},
 		Handler: func(params map[string]any) any {
-			return map[string]any{"status": "success", "hosts": []any{}}
+			target, _ := params["target"].(string)
+			ports, _ := params["ports"].(string)
+			output, err := exec.Command("masscan", target, "-p", ports).CombinedOutput()
+			if err != nil {
+				return map[string]any{"status": "error", "error": err.Error()}
+			}
+			return map[string]any{"status": "success", "raw": string(output)}
 		},
 	})
-
+	
 	// Gobuster Tool
 	server.Register(sdk.Tool{
 		Name:           "gobuster",
-		Description:    "Directory/File, DNS and VHost busting tool.",
+		Description:    "Directory/File busting tool.",
 		TimeoutSeconds: 600,
 		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "url", "type": "string", "description": "Target URL", "required": true},
 		},
-		Returns: map[string]any{"status": "string", "found": "array"},
+		Returns: map[string]any{"status": "string", "raw": "string"},
 		Handler: func(params map[string]any) any {
-			return map[string]any{"status": "success", "found": []any{}}
+			url, _ := params["url"].(string)
+			output, err := exec.Command("gobuster", "dir", "-u", url, "-w", "common_wordlist.txt").CombinedOutput()
+			if err != nil {
+				return map[string]any{"status": "error", "error": err.Error()}
+			}
+			return map[string]any{"status": "success", "raw": string(output)}
 		},
 	})
-
-	// Nikto Tool
-	server.Register(sdk.Tool{
-		Name:           "nikto",
-		Description:    "Web server scanner which performs comprehensive tests.",
-		TimeoutSeconds: 1200,
-		ScopeCheck:     true,
-		Parameters: []map[string]any{
-			{"name": "host", "type": "string", "description": "Target host", "required": true},
-		},
-		Returns: map[string]any{"status": "string", "vulnerabilities": "array"},
-		Handler: func(params map[string]any) any {
-			return map[string]any{"status": "success", "vulnerabilities": []any{}}
-		},
-	})
-
-    // WPScan Tool
-	server.Register(sdk.Tool{
-		Name:           "wpscan",
-		Description:    "WordPress security scanner.",
-		TimeoutSeconds: 1200,
-		ScopeCheck:     true,
-		Parameters: []map[string]any{
-			{"name": "url", "type": "string", "description": "Target WordPress URL", "required": true},
-		},
-		Returns: map[string]any{"status": "string", "findings": "array"},
-		Handler: func(params map[string]any) any {
-			return map[string]any{"status": "success", "findings": []any{}}
-		},
-	})
-
-    // Katana Crawler Tool
-	server.Register(sdk.Tool{
-		Name:           "katana_crawl",
-		Description:    "Deep web crawler to discover hidden endpoints and JS files.",
-		TimeoutSeconds: 600,
-		ScopeCheck:     true,
-		Parameters: []map[string]any{
-			{"name": "url", "type": "string", "description": "Starting URL", "required": true},
-			{"name": "depth", "type": "integer", "description": "Crawl depth", "required": false},
-            {"name": "js_crawl", "type": "boolean", "description": "Enable JavaScript crawling", "required": false},
-		},
-		Returns: map[string]any{"status": "string", "endpoints": "array", "js_files": "array"},
-		Handler: func(params map[string]any) any {
-			return map[string]any{"status": "success", "endpoints": []string{}, "js_files": []string{}}
-		},
-	})
-
-    // JS Analyzer Tool (LinkFinder + SecretFinder logic)
-	server.Register(sdk.Tool{
-		Name:           "js_analyze",
-		Description:    "Extract API routes, secrets, and variables from JS files.",
-		TimeoutSeconds: 300,
-		ScopeCheck:     true,
-		Parameters: []map[string]any{
-			{"name": "js_url", "type": "string", "description": "URL of the JS file to analyze", "required": true},
-		},
-		Returns: map[string]any{"status": "string", "routes": "array", "secrets": "array", "metadata": "object"},
-		Handler: func(params map[string]any) any {
-			return map[string]any{"status": "success", "routes": []string{}, "secrets": []any{}}
-		},
-	})
-
 	_ = server.Run(":8087")
 }

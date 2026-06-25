@@ -10,7 +10,7 @@ import socket
 import json
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 import structlog
@@ -540,7 +540,22 @@ class BaseAgent(ABC):
         except Exception:
             pass
 
-        await self._cleanup_resources()
+        from ai_osop.core.config import settings
+        try:
+            await asyncio.wait_for(
+                self._cleanup_resources(),
+                timeout=settings.agent_cleanup_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "agent_cleanup_timed_out",
+                agent_id=self.ctx.agent_id,
+                timeout_seconds=settings.agent_cleanup_timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("cleanup_resources_error", agent_id=self.ctx.agent_id, error=str(e))
 
     @abstractmethod
     async def _cleanup_resources(self) -> None:

@@ -228,7 +228,7 @@ class TestDeadLetterQueue:
         data = store[f"dlq:{entry_id}"]
         assert data["status"] == "discarded"
         assert data["operator_notes"] == "False positive"
-        assert data["resolved_at"] is not None
+        assert data["updated_at"] is not None
 
     async def test_get_stats(self, mock_session_memory, sample_task):
         mem, store, _ = mock_session_memory

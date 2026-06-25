@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_BASE, AUTH_TOKEN } from '../../services/api';
 import { useSwarmStore } from '../../store/useSwarmStore';
 import { Bell, Activity, PauseCircle, Rocket } from 'lucide-react';
 import { NewMissionModal } from '../shared/NewMissionModal';
@@ -26,11 +27,11 @@ export const Header: React.FC = () => {
 
   const handleLaunchMission = async (domain: string) => {
     try {
-      const response = await fetch('http://127.0.0.1:8200/engagements', {
+      const response = await fetch(`${API_BASE}/engagements`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer dev-token'
+          'Authorization': `Bearer ${AUTH_TOKEN}`
         },
         body: JSON.stringify({
           engagement_id: `dash-mission-${Date.now()}`,
@@ -72,7 +73,7 @@ export const Header: React.FC = () => {
 
   const handlePrintReport = async () => {
      if (!currentSessionId) return;
-     window.open(`http://127.0.0.1:8200/engagements/${currentSessionId}/report?token=dev-token`, '_blank');
+     window.open(`${API_BASE}/engagements/${currentSessionId}/report?token=${AUTH_TOKEN}`, '_blank');
   };
 
   return (

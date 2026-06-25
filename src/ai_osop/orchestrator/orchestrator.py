@@ -34,6 +34,7 @@ from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
 from ai_osop.orchestrator.phase_monitor import PhaseMonitor
 from ai_osop.orchestrator.engagement_manager import EngagementManager
 from ai_osop.orchestrator.recovery_service import RecoveryService
+from ai_osop.reliability.agent_reaper import AgentReaper
 from ai_osop.core.telemetry import RequestContext, inject_trace_context
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.core.observability import (
@@ -171,6 +172,7 @@ class Orchestrator:
         self.phase_monitor = PhaseMonitor(self)
         self.engagement_manager = EngagementManager(self)
         self.recovery_service = RecoveryService(self)
+        self.agent_reaper = AgentReaper(self)
 
         self._running = False
         self._scheduler_task: Optional[asyncio.Task] = None
@@ -202,9 +204,13 @@ class Orchestrator:
             self.temporal_scheduler = self.temporal_scheduler or TemporalTaskScheduler()
             await self.temporal_scheduler.connect()
 
+        # Sprint 6B: Restore in-flight engagement state
+        await self.recover_state()
+
         self._running = True
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
         # Reliability sprint: background stuck-task reaper.
+        self._agent_reaper_task = asyncio.create_task(self.agent_reaper.run())
         self._reaper_task = asyncio.create_task(self._reaper_loop())
         # Retention service: automated cleanup of old data
         from ai_osop.memory.retention_service import RetentionService
@@ -247,91 +253,14 @@ class Orchestrator:
     async def create_engagement(
         self, scope: ScopeDefinition, roe: Dict[str, Any], created_by: Optional[str] = None
     ) -> SessionState:
-        """Create new engagement session."""
-        with trace_span(
-            "orchestrator.create_engagement",
-            attributes={
-                "engagement_id": scope.engagement_id,
-                "created_by": created_by or "system",
-            },
-        ):
-            session = SessionState(
-                session_id=f"eng-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{scope.engagement_id}",
-                scope=scope,
-                roe=roe,
-                phase=EngagementPhase.INITIALIZED.value,
-                agents={},
-                checkpoint_id=None,
-                audit_log_position="0",
-                created_by=created_by,
-            )
-
-            # Persist session
-            await self.session_memory.store_session_state(session)
-            await self.session_memory.persist_session_state(session)
-
-            self._sessions[session.session_id] = session
-
-            # Sprint 6B: Record engagement metrics
-            record_engagement_started(session.session_id)
-
-            # Audit log
-            await self._audit_log(
-                AuditEvent(
-                    event_type="engagement_created",
-                    severity="info",
-                    actor_type="system",
-                    actor_id="orchestrator",
-                    action={"scope": scope.model_dump(), "roe": roe},
-                    result={"session_id": session.session_id},
-                    context={"phase": session.phase},
-                    engagement_id=scope.engagement_id,
-                )
-            )
-
-            return session
+        """Create new engagement session. Delegated to EngagementManager."""
+        return await self.engagement_manager.create_engagement(scope, roe, created_by)
 
     async def transition_phase(self, session_id: str, new_phase: EngagementPhase) -> SessionState:
-        """Transition engagement to new phase with validation."""
-        session = self._sessions.get(session_id)
-        if not session:
-            raise WorkflowException(f"Session {session_id} not found")
-
-        current = EngagementPhase(session.phase)
-
-        if new_phase not in self.VALID_TRANSITIONS.get(current, []):
-            raise WorkflowTransitionError(
-                f"Invalid transition: {current.value} -> {new_phase.value}"
-            )
-
-        # Phase-specific validation
-        if new_phase == EngagementPhase.EXPLOITATION:
-            # Check if findings exist
-            stats = await self.graph_memory.get_graph_stats(session_id)
-            if stats.get("vulnerabilities", 0) == 0:
-                raise WorkflowException("Cannot transition to exploitation without vulnerabilities")
-
-        session.phase = new_phase.value
-        session.updated_at = datetime.utcnow()
-
-        await self.session_memory.store_session_state(session)
-        await self.session_memory.persist_session_state(session)
-
-        # Trigger phase-specific tasks
-        await self._on_phase_enter(session, new_phase)
-
-        await self._audit_log(
-            AuditEvent(
-                event_type="phase_transition",
-                severity="info",
-                actor_type="system",
-                actor_id="orchestrator",
-                action={"from_phase": current.value, "to_phase": new_phase.value},
-                result={"success": True},
-                context={"session_id": session_id},
-                engagement_id=session.scope.engagement_id,
-            )
-        )
+        """Transition engagement to new phase with validation. Delegated to EngagementManager."""
+        return await self.engagement_manager.transition_phase(session_id, new_phase)
+        # The previous lines were corrupted and lacked context for the AuditEvent
+        # Removed them as create_engagement is now delegated to EngagementManager.
 
         return session
 
@@ -357,30 +286,94 @@ class Orchestrator:
             await self.ensure_authenticated_discovery(session.session_id, url_hint=url_hint)
 
         elif phase == EngagementPhase.VULNERABILITY_DISCOVERY:
-            # Auto-create scan tasks for discovered assets
-            cypher = "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain"
+            # Sprint 15A/15B — value-ordered, batched endpoint scanning.
+            #
+            # Previously this scanned host ASSETS (one nuclei + one burp per asset),
+            # which (a) ignored the rich discovered ENDPOINT surface entirely and
+            # (b) fanned out one task per asset. Now we scan the discovered endpoints,
+            # ranked by the Attack Surface Value Engine and chunked into a BOUNDED
+            # number of batches so 1,000 endpoints become ~10 high-value scan jobs
+            # rather than 1,000 tasks. Falls back to per-asset scanning when no
+            # endpoints were discovered (e.g. WAF-fronted target).
+            from ai_osop.core.value_engine import batch_endpoints_for_scan
+
+            # 1) Per-asset Burp scan of the host(s) — Burp crawls from the root.
+            assets: List[str] = []
             async with self.graph_memory._driver.session() as g_session:
-                result = await g_session.run(cypher, {"sid": session.session_id})
+                result = await g_session.run(
+                    "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain",
+                    {"sid": session.session_id},
+                )
                 async for record in result:
-                    domain = record["domain"]
+                    assets.append(record["domain"])
 
-                    # Schedule Burp Scan
-                    burp_task = Task(
-                        type="burp_scan",
-                        priority=7,
+            for domain in assets:
+                burp_task = Task(
+                    type="burp_scan",
+                    priority=7,
+                    agent_type=AgentType.VULN_ANALYSIS,
+                    payload={"url": f"https://{domain}"},
+                    engagement_id=session.session_id,
+                    timeout_seconds=600,
+                )
+                await self.schedule_task(burp_task)
+
+            # 2) Endpoint-aware Nuclei scans, value-ordered + batched.
+            endpoints: List[Dict[str, Any]] = []
+            async with self.graph_memory._driver.session() as g_session:
+                result = await g_session.run(
+                    """MATCH (e:Endpoint {engagement_id: $sid})
+                       RETURN e.url AS url, e.method AS method,
+                              e.status_code AS status_code, e.technologies AS technologies""",
+                    {"sid": session.session_id},
+                )
+                async for r in result:
+                    if r["url"]:
+                        endpoints.append({
+                            "url": r["url"],
+                            "method": r["method"] or "GET",
+                            "status_code": r["status_code"],
+                            "technologies": r["technologies"] or [],
+                        })
+
+            batches = batch_endpoints_for_scan(endpoints, batch_size=20, max_targets=200)
+
+            if batches:
+                logger.info(
+                    "value_batched_scan",
+                    session_id=session.session_id,
+                    endpoints=len(endpoints),
+                    batches=len(batches),
+                )
+                for i, batch in enumerate(batches):
+                    nuclei_task = Task(
+                        type="nuclei_scan",
+                        # Earlier (higher-value) batches scan first.
+                        priority=9 if i == 0 else 7,
                         agent_type=AgentType.VULN_ANALYSIS,
-                        payload={"url": f"https://{domain}"},
+                        payload={
+                            "targets": batch,
+                            "severity": "critical,high,medium",
+                            "batch_index": i,
+                        },
                         engagement_id=session.session_id,
+                        timeout_seconds=settings.nuclei_mcp_timeout + 120,
                     )
-                    await self.schedule_task(burp_task)
-
-                    # Schedule Nuclei Scan
+                    await self.schedule_task(nuclei_task)
+            else:
+                # Fallback: no endpoints discovered → scan the host assets directly
+                # (timeout-aligned + severity-scoped, per the nuclei self-heal).
+                for domain in assets:
                     nuclei_task = Task(
                         type="nuclei_scan",
                         priority=7,
                         agent_type=AgentType.VULN_ANALYSIS,
-                        payload={"targets": [f"https://{domain}"]},
+                        payload={
+                            "targets": [f"https://{domain}"],
+                            "severity": "critical,high,medium",
+                        },
                         engagement_id=session.session_id,
+                        timeout_seconds=settings.nuclei_mcp_timeout + 120,
                     )
                     await self.schedule_task(nuclei_task)
 
@@ -430,10 +423,8 @@ class Orchestrator:
             await self.schedule_task(task)
 
     async def schedule_task(self, task: Task) -> Task:
-        """Schedule a task for execution."""
-        # Sprint 6: propagate trace context into the task so the agent can continue the trace
-        if not task.trace_context:
-            inject_trace_context(task.trace_context)
+        """Schedule a task for execution. Delegated to TaskScheduler."""
+        return await self.task_scheduler.schedule_task(task)
         # Also bind the task IDs into RequestContext for downstream logging
         RequestContext.bind(
             task_id=task.id,
@@ -535,7 +526,57 @@ class Orchestrator:
             await asyncio.sleep(0.5)
 
     async def _assign_task(self, task: Task) -> None:
-        """Assign task to appropriate agent."""
+        """Assign task to appropriate agent. Delegated to TaskScheduler."""
+        return await self.task_scheduler._assign_task(task)
+
+    async def _find_available_agent(self, agent_type: AgentType, task_type: str = "") -> Optional[Any]:
+        """Find and atomically claim an idle agent. Delegated to TaskScheduler."""
+        return await self.task_scheduler._find_available_agent(agent_type, task_type)
+
+    def _release_agent(self, agent_id: Optional[str]) -> None:
+        """Release an agent claim. Delegated to TaskScheduler."""
+        return self.task_scheduler._release_agent(agent_id)
+
+    @staticmethod
+    def _strip_stale_approval(task: Task) -> None:
+        """Drop persisted approval grant so gate re-fires. Delegated to ApprovalCoordinator."""
+        return ApprovalCoordinator._strip_stale_approval(task)
+
+    async def _maybe_retry(self, task: Task, result: Dict[str, Any]) -> bool:
+        """Requeue a failed task if retry budget remains. Delegated to TaskScheduler."""
+        return await self.task_scheduler._maybe_retry(task, result)
+
+    async def _execute_via_agent(self, agent: Any, task: Task) -> None:
+        """Execute task through assigned agent. Delegated to TaskScheduler."""
+        return await self.task_scheduler._execute_via_agent(agent, task)
+
+    async def _on_task_success(self, task: Task, result: Dict[str, Any]) -> None:
+        """Handle task completion. Delegated to TaskScheduler."""
+        return await self.task_scheduler._on_task_success(task, result)
+
+    async def _on_task_failure(self, task: Task, result: Dict[str, Any]) -> None:
+        """Handle task failure. Delegated to TaskScheduler."""
+        return await self.task_scheduler._on_task_failure(task, result)
+
+    async def _trigger_downstream_tasks(self, completed_task: Task) -> None:
+        """Trigger tasks that depend on completed task. Delegated to TaskScheduler."""
+        return await self.task_scheduler._trigger_downstream_tasks(completed_task)
+
+    async def _chain_authenticated_surface(self, task: Task, result: Optional[Dict[str, Any]] = None) -> None:
+        """Chain authenticated surface discovery. Delegated to TaskScheduler."""
+        return await self.task_scheduler._chain_authenticated_surface(task, result)
+
+    async def _persist_task_dependency(self, parent: Task, child: Task) -> None:
+        """Persist a parent→child dependency. Delegated to TaskScheduler."""
+        return await self.task_scheduler._persist_task_dependency(parent, child)
+
+    async def _execute_task_durable(self, task: Task) -> Dict[str, Any]:
+        """Execute task durably. Delegated to TaskScheduler."""
+        return await self.task_scheduler._execute_task_durable(task)
+
+    async def _retry_sleep(self, seconds: float) -> None:
+        """Sleep for retry backoff. Delegated to TaskScheduler."""
+        return await self.task_scheduler._retry_sleep(seconds)
         with trace_span(
             "orchestrator._assign_task",
             attributes={
@@ -596,183 +637,6 @@ class Orchestrator:
                 await self.graph_memory.upsert_task(task)
                 # P0: Persist pending so recovery knows it needs assignment.
                 await self.session_memory.store_task(task)
-
-    async def _find_available_agent(
-        self, agent_type: AgentType, task_type: str = ""
-    ) -> Optional[Any]:
-        """Find an idle, unclaimed agent of the specified type that supports the task type,
-        and atomically CLAIM it (P0-1).
-
-        The find+claim is a single synchronous critical section: this method awaits
-        nothing between selecting an agent and marking it busy, so two concurrent
-        _assign_task coroutines can never both receive the same agent. Callers that
-        obtain an agent here OWN the claim and MUST release it via _release_agent
-        (done in _execute_via_agent's finally). Callers that decide not to dispatch
-        (e.g. an approval gate) must release it themselves before returning.
-        """
-        for agent in self._agents.values():
-            if agent.ctx.agent_id in self._busy_agents:
-                continue
-            if agent.ctx.agent_type == agent_type and agent.ctx.status == "idle":
-                if task_type and hasattr(agent, "supports_task_type"):
-                    if not agent.supports_task_type(task_type):
-                        continue
-                
-                # Sprint 6A: Distributed Lock — acquire lock in Redis
-                lock_key = f"lock:agent:{agent.ctx.agent_id}"
-                lock_value = f"orch-{id(self)}"
-                acquired = await self.session_memory.acquire_lock(lock_key, lock_value, ttl_seconds=60)
-                if not acquired:
-                    continue  # Locked by another replica
-
-                # Synchronous claim
-                self._busy_agents.add(agent.ctx.agent_id)
-                agent._current_lock_value = lock_value
-                return agent
-        return None
-
-    def _release_agent(self, agent_id: Optional[str]) -> None:
-        """Release an agent claim made by _find_available_agent (P0-1)."""
-        if agent_id:
-            self._busy_agents.discard(agent_id)
-            agent = self._agents.get(agent_id)
-            if agent and hasattr(agent, "_current_lock_value"):
-                lock_value = agent._current_lock_value
-                asyncio.create_task(
-                    self.session_memory.release_lock(f"lock:agent:{agent_id}", lock_value)
-                )
-    @staticmethod
-    def _strip_stale_approval(task: Task) -> None:
-        """P1-2 (approval bypass on recovery/retry): drop any persisted approval grant
-        from an approval_required task so _assign_task's gate re-fires and a FRESH human
-        decision is demanded. Without this, a previously-approved (or payload-tampered)
-        exploit task re-runs autonomously on restart recovery / retry with no new
-        operator decision — safety-critical."""
-        if task.approval_required and isinstance(task.payload, dict):
-            task.payload.pop("operator_approved", None)
-            task.payload.pop("approval_id", None)
-
-    _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
-
-    async def _maybe_retry(self, task: Task, result: Dict[str, Any]) -> bool:
-        """Requeue a failed task if it still has retry budget (Phase 2 reliability).
-
-        Respects Task.max_retries / retry_count, records each attempt in audit
-        history, and re-assigns with exponential backoff (capped). Returns True if
-        the task was requeued (caller must NOT then mark it failed), False when the
-        retry budget is exhausted and the failure is terminal.
-        """
-        if task.retry_count >= task.max_retries:
-            # Sprint 7: Send to Dead Letter Queue for operator review
-            try:
-                await self.dlq.enqueue(
-                    task,
-                    reason="retry_budget_exhausted",
-                    final_error=str(result.get("error") or result.get("status") or ""),
-                )
-            except Exception as e:
-                logger.error("dlq_enqueue_failed", task_id=task.id, error=str(e))
-            return False
-
-        task.retry_count += 1
-        backoff = min(2**task.retry_count, 30)
-        await self._audit_log(
-            AuditEvent(
-                event_type="task_retry",
-                severity="warning",
-                actor_type="system",
-                actor_id="orchestrator",
-                action={
-                    "task_id": task.id,
-                    "task_type": task.type,
-                    "attempt": task.retry_count,
-                    "max_retries": task.max_retries,
-                    "backoff_seconds": backoff,
-                    "error": str(result.get("error") or result.get("status") or "")[:300],
-                },
-                result={"requeued": True},
-                context={"engagement_id": task.engagement_id},
-                engagement_id=task.engagement_id,
-            )
-        )
-        logger.info(
-            "retrying_task",
-            task_id=task.id,
-            task_type=task.type,
-            attempt=task.retry_count,
-            max_retries=task.max_retries,
-            backoff=backoff,
-        )
-
-        # Reset for re-dispatch, then requeue after backoff.
-        task.status = "pending"
-        task.assigned_agent_id = None
-        # P1-2: a retried approval-required task must get a FRESH human decision —
-        # strip any prior approval so _assign_task's gate re-fires.
-        self._strip_stale_approval(task)
-        await self.graph_memory.upsert_task(
-            task, result_summary={"retry_attempt": task.retry_count}
-        )
-        await self._retry_sleep(backoff)
-        await self._assign_task(task)
-        return True
-
-    async def _retry_sleep(self, seconds: float) -> None:
-        """Backoff sleep for retries — isolated so tests can stub it without
-        patching the global asyncio.sleep (which the phase monitor also uses)."""
-        await asyncio.sleep(seconds)
-
-    async def _execute_via_agent(self, agent: Any, task: Task) -> None:
-        """Execute task through assigned agent."""
-        # Sprint 6: extract trace context from task to continue the trace
-        from ai_osop.core.telemetry import extract_trace_context
-
-        parent_span_context = extract_trace_context(task.trace_context)
-
-        with trace_span_with_parent(
-            "orchestrator._execute_via_agent",
-            parent_span_context=parent_span_context,
-            attributes={
-                "task_id": task.id,
-                "task_type": task.type,
-                "agent_id": agent.ctx.agent_id,
-                "agent_type": agent.ctx.agent_type.value,
-                "engagement_id": task.engagement_id,
-            },
-        ):
-            try:
-                result = await agent.execute_task(task)
-
-                # Agents return varied success markers ("success", "authenticated",
-                # "workflow_recorded", ...). Treat only the explicit failure set as
-                # failure; everything else (including a missing status) as success.
-                status = result.get("status") if isinstance(result, dict) else None
-                if status in self._FAILURE_STATUSES:
-                    normalized = result if isinstance(result, dict) else {"status": "failed"}
-                    if not await self._maybe_retry(task, normalized):
-                        await self._on_task_failure(task, normalized)
-                else:
-                    normalized = (
-                        result if isinstance(result, dict) else {"status": "success", "raw": result}
-                    )
-                    await self._on_task_success(task, normalized)
-
-            except asyncio.CancelledError:
-                # Don't leak "running" tasks when dispatch is cancelled (Issue 4).
-                # Cancellation is intentional shutdown — never retry it.
-                await self._on_task_failure(
-                    task, {"error": "execution cancelled", "error_type": "CancelledError"}
-                )
-                raise
-            except Exception as e:
-                err = {"error": str(e)}
-                if not await self._maybe_retry(task, err):
-                    await self._on_task_failure(task, err)
-            finally:
-                # P0-1: release the agent claim regardless of outcome (success/failure/
-                # cancel/retry) so the agent becomes selectable again. _maybe_retry
-                # re-dispatches on a fresh selection that re-claims as needed.
-                self._release_agent(agent.ctx.agent_id)
 
     async def validate_workflow_completion(self, task: Task, result: Dict[str, Any]) -> bool:
         """Verify workflow node, steps, and evidence exist in Neo4j."""
@@ -907,280 +771,29 @@ class Orchestrator:
         logger.info("auto_map_dispatched", task_id=task.id, engagement_id=engagement_id, url=url)
         return task
 
-    async def _persist_task_dependency(self, parent: Task, child: Task) -> None:
-        """Record (:Task)-[:SPAWNED]->(:Task) in Neo4j so the automation chain is
-        auditable in the graph alongside the Workflow/APIEndpoint nodes it produces."""
-        cypher = """
-        MERGE (p:Task {id: $parent_id})
-          SET p.type = $parent_type, p.engagement_id = $eid
-        MERGE (c:Task {id: $child_id})
-          SET c.type = $child_type, c.engagement_id = $eid,
-              c.status = $child_status, c.created_at = $created_at
-        MERGE (p)-[:SPAWNED]->(c)
-        RETURN c.id AS id
-        """
-        try:
-            async with self.graph_memory._driver.session() as g:
-                await g.run(
-                    cypher,
-                    {
-                        "parent_id": parent.id,
-                        "parent_type": parent.type,
-                        "child_id": child.id,
-                        "child_type": child.type,
-                        "eid": child.engagement_id,
-                        "child_status": child.status,
-                        "created_at": child.created_at.isoformat(),
-                    },
-                )
-        except Exception as e:
-            logger.debug("persist_task_dependency_failed", error=str(e))
-
-    async def _chain_authenticated_surface(self, task: Task, result: Dict[str, Any]) -> None:
-        """Auto-create the next link in the authenticated-surface automation chain.
-
-        Idempotent + restart-safe: the durable (:Task)-[:SPAWNED]->(:Task) edge is the
-        dedupe marker. If this task already has a SPAWNED child (in Neo4j), a re-delivered
-        or post-restart completion never creates the child twice.
-        """
-        # Duplicate-completion protection (graph-backed; survives process restart).
-        if await self.graph_memory.task_has_spawned(task.id):
-            return
-
-        next_task: Optional[Task] = None
-
-        if task.type == "map_workflow":
-            # Only chain for authenticated engagements.
-            if not await self._engagement_is_authenticated(task.engagement_id):
-                return
-            user_label = (
-                task.payload.get("user_label")
-                or await self._pick_auth_user_label(task.engagement_id)
-                or "guest"
-            )
-            workflow_id = result.get("workflow_id", "")
-            url = task.payload.get("url") or task.payload.get("target_url") or ""
-            next_task = Task(
-                type="capture_authenticated_surface",
-                priority=6,
-                agent_type=AgentType.WORKFLOW,
-                payload={
-                    "url": url,
-                    "user_label": user_label,
-                    "workflow_id": workflow_id,
-                    "engagement_id": task.engagement_id,
-                },
-                dependencies=[task.id],
-                engagement_id=task.engagement_id,
-            )
-
-        elif task.type == "capture_authenticated_surface":
-            har_path = result.get("har_path", "")
-            if not har_path:
-                logger.debug("capture_authenticated_surface_no_har_path", task_id=task.id)
-                return
-            next_task = Task(
-                type="extract_har_api_inventory",
-                priority=6,
-                agent_type=AgentType.WORKFLOW,
-                payload={
-                    "har_path": har_path,
-                    "user_label": task.payload.get("user_label", "guest"),
-                    "workflow_id": task.payload.get("workflow_id", ""),
-                    "engagement_id": task.engagement_id,
-                },
-                dependencies=[task.id],
-                engagement_id=task.engagement_id,
-            )
-
-        elif task.type == "extract_har_api_inventory":
-            # Final link: run differential-authorization (BOLA/IDOR) analysis over the
-            # inventoried API surface. Without this the autonomous pipeline builds an API
-            # map and stops one step short of the findings it exists to produce.
-            workflow_id = task.payload.get("workflow_id") or result.get("workflow_id") or ""
-            if not workflow_id:
-                logger.debug("extract_har_api_inventory_no_workflow_id", task_id=task.id)
-                return
-            next_task = Task(
-                type="replay_for_diff_auth",
-                priority=6,
-                agent_type=AgentType.WORKFLOW,
-                payload={
-                    "workflow_id": workflow_id,
-                    "engagement_id": task.engagement_id,
-                },
-                dependencies=[task.id],
-                engagement_id=task.engagement_id,
-            )
-
-        if next_task is None:
-            return
-
-        # The SPAWNED edge written by _persist_task_dependency (below, before the child
-        # is scheduled) is the durable dedupe marker checked at the top of this method.
-        # Persist dependency in Neo4j + record an engagement-history (audit) entry,
-        # then schedule. dependencies=[task.id] is already satisfied (task just
-        # completed) so schedule_task assigns it as soon as a WORKFLOW agent is free.
-        await self._persist_task_dependency(task, next_task)
-        await self._audit_log(
-            AuditEvent(
-                event_type="auto_task_chain",
-                severity="info",
-                actor_type="system",
-                actor_id="orchestrator",
-                action={
-                    "trigger_task_id": task.id,
-                    "trigger_type": task.type,
-                    "created_task_id": next_task.id,
-                    "created_type": next_task.type,
-                },
-                result={"success": True},
-                context={"engagement_id": task.engagement_id},
-                engagement_id=task.engagement_id,
-            )
-        )
-        await self.schedule_task(next_task)
-        logger.info(
-            "auto_chained",
-            parent_task_type=task.type,
-            parent_task_id=task.id,
-            child_task_type=next_task.type,
-            child_task_id=next_task.id,
-        )
-
-    async def _on_task_success(self, task: Task, result: Dict[str, Any]) -> None:
-        """Handle successful task completion."""
-        with trace_span(
-            "orchestrator._on_task_success",
-            attributes={
-                "task_id": task.id,
-                "task_type": task.type,
-                "agent_id": task.assigned_agent_id,
-                "engagement_id": task.engagement_id,
-                "workflow_id": result.get("workflow_id", ""),
-            },
-        ):
-            if not await self.validate_workflow_completion(task, result):
-                await self._on_task_failure(
-                    task,
-                    {
-                        "error": "Workflow invariant validation failed (missing nodes or evidence in Neo4j)",
-                        "result": result,
-                    },
-                )
-                return
-
-            task.result = result
-            task.status = "completed"
-            task.completed_at = datetime.utcnow()
-            # Persist completion BEFORE chaining so restart recovery + dedupe see ground truth.
-            # result_summary carries what recovery needs to resume the next chain link.
-            await self.graph_memory.upsert_task(
-                task,
-                result_summary={
-                    "workflow_id": result.get("workflow_id", ""),
-                    "har_path": result.get("har_path", ""),
-                    "user_label": task.payload.get("user_label", ""),
-                    "url": task.payload.get("url", ""),
-                },
-            )
-            # P0: Persist completed task to warm tier so recovery knows it's done.
-            await self.session_memory.store_task(task)
-            await self.coordination_bus.publish(
-                "task.completed",
-                {"task_id": task.id, "agent_id": task.assigned_agent_id},
-                "orchestrator",
-            )
-
-            # Trigger path discovery if relevant
-            if task.type in ["burp_scan", "nuclei_scan", "exploit_validation"]:
-                path_task = Task(
-                    type="discover_paths",
-                    priority=6,
-                    agent_type=AgentType.ATTACK_CHAIN,
-                    payload={"engagement_id": task.engagement_id},
-                    engagement_id=task.engagement_id,
-                )
-                await self.schedule_task(path_task)
-
-            # Phase 1 Bug Bounty Upgrade: authenticated-surface automation chain.
-            #   map_workflow ─▶ capture_authenticated_surface ─▶ extract_har_api_inventory
-            # Each link is created only when its predecessor succeeds, carries the
-            # predecessor's id as a dependency, and is persisted to Neo4j + audit history.
-            await self._chain_authenticated_surface(task, result)
-
-            # Check for downstream tasks
-            await self._trigger_downstream_tasks(task)
-
-            # Update session state
-            session = self._sessions.get(task.engagement_id)
-            if session:
-                session.agents[task.assigned_agent_id] = {
-                    "last_task": task.id,
-                    "last_result": "success",
-                    "timestamp": datetime.utcnow().isoformat(),
-                }
-
-    async def _on_task_failure(self, task: Task, result: Dict[str, Any]) -> None:
-        """Handle task failure."""
-        with trace_span(
-            "orchestrator._on_task_failure",
-            attributes={
-                "task_id": task.id,
-                "task_type": task.type,
-                "agent_id": task.assigned_agent_id,
-                "engagement_id": task.engagement_id,
-                "error": str(result.get("error", ""))[:120],
-            },
-        ):
-            task.result = result
-            task.status = "failed"
-            task.completed_at = datetime.utcnow()
-            await self.graph_memory.upsert_task(
-                task, result_summary={"error": str(result.get("error", ""))[:300]}
-            )
-            # P0: Persist task state so failure is recorded across restarts.
-            await self.session_memory.store_task(task)
-            await self.coordination_bus.publish(
-                "task.failed",
-                {"task_id": task.id, "agent_id": task.assigned_agent_id, "result": result},
-                "orchestrator",
-            )
-
-            # Sprint 7: Safety fallback — send to DLQ if retries exhausted and not already sent
-            if task.retry_count >= task.max_retries:
-                try:
-                    await self.dlq.enqueue(
-                        task,
-                        reason="terminal_failure",
-                        final_error=str(result.get("error") or result.get("status") or ""),
-                    )
-                except Exception as e:
-                    logger.error("dlq_enqueue_fallback_failed", task_id=task.id, error=str(e))
-
-            # Retry logic handled by agent
-            # Orchestrator may escalate if critical
-            if task.approval_required:
-                # Notify operator
-                pass
-
-    async def _trigger_downstream_tasks(self, completed_task: Task) -> None:
-        """Trigger tasks that depend on completed task."""
-        for task in self._tasks.values():
-            if completed_task.id in task.dependencies:
-                # Check if all dependencies satisfied
-                all_deps_complete = all(
-                    self._tasks[dep_id].status == "completed" for dep_id in task.dependencies
-                )
-                if all_deps_complete:
-                    await self._assign_task(task)
-
     async def request_approval(self, request: ApprovalRequest) -> ApprovalRequest:
-        """Submit approval request and BLOCK until the operator decides (or timeout).
+        """Submit approval request and BLOCK until operator decides. Delegated to ApprovalCoordinator."""
+        return await self.approval_coordinator.request_approval(request)
 
-        Direct callers (API/CLI) use this blocking form. The scheduler must NOT
-        block on approval (P0-3) — it uses _raise_approval instead.
-        """
+    async def _register_approval(self, request: ApprovalRequest) -> None:
+        """Register approval request. Delegated to ApprovalCoordinator."""
+        return await self.approval_coordinator._register_approval(request)
+
+    async def _raise_approval(self, request: ApprovalRequest) -> None:
+        """Non-blocking approval. Delegated to ApprovalCoordinator."""
+        return await self.approval_coordinator._raise_approval(request)
+
+    async def _await_approval_outcome(self, request_id: str) -> None:
+        """Background approval timeout watcher. Delegated to ApprovalCoordinator."""
+        return await self.approval_coordinator._await_approval_outcome(request_id)
+
+    async def _wait_for_approval(self, request_id: str) -> None:
+        """Wait for approval request to be resolved. Delegated to ApprovalCoordinator."""
+        return await self.approval_coordinator._wait_for_approval(request_id)
+
+    async def resolve_approval(self, request_id: str, decision: str, operator_id: str, notes: Optional[str] = None) -> ApprovalRequest:
+        """Resolve an approval request. Delegated to ApprovalCoordinator."""
+        return await self.approval_coordinator.resolve_approval(request_id, decision, operator_id, notes)
         await self._register_approval(request)
 
         # Wait for operator response (with timeout)
@@ -1194,119 +807,34 @@ class Orchestrator:
 
         return request
 
-    async def _register_approval(self, request: ApprovalRequest) -> None:
-        """Register an approval request and fan it out to operator-notification
-        callbacks (UI, email, ...). Does NOT wait for a decision."""
-        self._approval_requests[request.id] = request
-        # P0: Persist approval so it survives restarts.
-        await self.session_memory.store_approval_request(request)
-        for callback in self._approval_callbacks:
-            try:
-                await callback(request)
-            except Exception:
-                pass
-
-    async def _raise_approval(self, request: ApprovalRequest) -> None:
-        """Non-blocking approval used by the scheduler (P0-3). Registers + notifies,
-        then spawns a background watcher so a denial/timeout fails the parked task
-        WITHOUT stalling the scheduler. Approval is re-driven by resolve_approval."""
-        await self._register_approval(request)
-        asyncio.create_task(self._await_approval_outcome(request.id))
-
-    async def _await_approval_outcome(self, request_id: str) -> None:
-        """Background: wait out the approval timeout; on timeout/denial fail the parked
-        task so it isn't left in awaiting_approval forever. Approval is handled by
-        resolve_approval (which re-assigns); we only act on the non-approval outcome."""
-        try:
-            await asyncio.wait_for(
-                self._wait_for_approval(request_id), timeout=settings.approval_timeout_seconds
-            )
-        except asyncio.TimeoutError:
-            request = self._approval_requests.get(request_id)
-            if request and request.status not in ("approved", "rejected", "modified"):
-                request.status = "timeout"
-                request.operator_notes = "Auto-rejected due to timeout"
-                # P0: Persist timeout so restart recovery sees it.
-                await self.session_memory.store_approval_request(request)
-        request = self._approval_requests.get(request_id)
-        if not request or request.status == "approved":
-            return
-        # Denied / timed out -> fail the parked task (only if still awaiting).
-        task = self._tasks.get(request.task_id)
-        if task and task.status == "awaiting_approval":
-            await self._on_task_failure(task, {"error": f"Approval denied: {request.status}"})
-
-    async def _wait_for_approval(self, request_id: str) -> None:
-        """Wait for approval request to be resolved."""
-        while True:
-            request = self._approval_requests.get(request_id)
-            if request and request.status in ["approved", "rejected", "modified"]:
-                return
-            await asyncio.sleep(1)
-
-    async def resolve_approval(
-        self, request_id: str, decision: str, operator_id: str, notes: Optional[str] = None
-    ) -> ApprovalRequest:
-        """Resolve an approval request with operator decision."""
-        with trace_span(
-            "orchestrator.resolve_approval",
-            attributes={
-                "request_id": request_id,
-                "decision": decision,
-                "operator_id": operator_id,
-            },
-        ):
-            request = self._approval_requests.get(request_id)
-            if not request:
-                raise WorkflowException(f"Approval request {request_id} not found")
-
-            request.status = decision
-            request.operator_id = operator_id
-            request.operator_notes = notes
-            request.responded_at = datetime.utcnow()
-
-            # Sprint 6B: Record approval resolution metrics
-            wait_seconds = None
-            if request.requested_at:
-                wait_seconds = (request.responded_at - request.requested_at).total_seconds()
-            record_approval_resolved(decision, wait_seconds)
-
-            # P0: Persist approval resolution so state survives restarts.
-            await self.session_memory.store_approval_request(request)
-
-            # Update task payload if approved
-            if decision == "approved":
-                task = self._tasks.get(request.task_id)
-                if task:
-                    task.payload["operator_approved"] = True
-                    task.payload["approval_id"] = request.id
-                    # Now that it's approved, we can assign it
-                    await self._assign_task(task)
-                    # Persist task so the approval metadata survives.
-                    await self.session_memory.store_task(task)
-
-            # Audit log
-            await self._audit_log(
-                AuditEvent(
-                    event_type="approval_resolved",
-                    severity="info" if decision == "approved" else "warning",
-                    actor_type="operator",
-                    actor_id=operator_id,
-                    action={
-                        "request_id": request_id,
-                        "task_id": request.task_id,
-                        "decision": decision,
-                    },
-                    result={"status": decision, "notes": notes},
-                    context={"engagement_id": request.engagement_id},
-                    engagement_id=request.engagement_id,
-                )
-            )
-
-            return request
-
     async def halt_engagement(self, session_id: str, reason: str) -> None:
-        """Emergency halt of engagement."""
+        """Emergency halt of engagement. Delegated to EngagementManager."""
+        return await self.engagement_manager.halt_engagement(session_id, reason)
+
+    async def claim_auto_discovery(self, engagement_id: str, auth_user_label: str, source_task_id: str) -> None:
+        """Claim autonomous discovery. Delegated to EngagementManager."""
+        return await self.engagement_manager.claim_auto_discovery(engagement_id, auth_user_label, source_task_id)
+
+
+    async def _on_phase_enter(self, session: SessionState, phase: EngagementPhase) -> None:
+        """Trigger automatic tasks when entering a phase. Delegated to PhaseMonitor."""
+        return await self.phase_monitor._on_phase_enter(session, phase)
+
+    async def _phase_monitor(self) -> None:
+        """Background phase monitor. Delegated to PhaseMonitor."""
+        return await self.phase_monitor._phase_monitor()
+
+    async def _reaper_loop(self) -> None:
+        """Background reaper for stuck tasks. Delegated to RecoveryService."""
+        return await self.recovery_service._reaper_loop()
+
+    async def _reap_stuck_tasks(self) -> int:
+        """Detect and recover stuck tasks. Delegated to RecoveryService."""
+        return await self.recovery_service._reap_stuck_tasks()
+
+    async def recover_state(self) -> Dict[str, Any]:
+        """Restart recovery. Delegated to RecoveryService."""
+        return await self.recovery_service.recover_state()
         with trace_span(
             "orchestrator.halt_engagement",
             attributes={
@@ -1351,64 +879,6 @@ class Orchestrator:
 
     REAPER_INTERVAL_SECONDS = 30
 
-    async def _reaper_loop(self) -> None:
-        """Background reaper: periodically recover/fail tasks stuck past their timeout."""
-        while self._running:
-            try:
-                await asyncio.sleep(self.REAPER_INTERVAL_SECONDS)
-                await self._reap_stuck_tasks()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error("reaper_loop_error", error=str(e))
-
-    async def _reap_stuck_tasks(self) -> int:
-        """Detect pending/running tasks older than their timeout and recover or fail them.
-
-        running + retry budget  -> requeue via _maybe_retry (recover)
-        otherwise               -> mark failed (timeout) + task_reaped audit
-        Returns the number of tasks reaped.
-        """
-        now = datetime.utcnow()
-        reaped = 0
-        for task in list(self._tasks.values()):
-            if task.status not in ("pending", "running"):
-                continue
-            ref = (
-                task.started_at
-                if (task.status == "running" and task.started_at)
-                else task.created_at
-            )
-            if not ref:
-                continue
-            age = (now - ref).total_seconds()
-            timeout = task.timeout_seconds or 300
-            if age <= timeout:
-                continue
-
-            # Recover a stuck running task if it still has retry budget.
-            if task.status == "running" and task.retry_count < task.max_retries:
-                await self._audit_log(self._reaper_audit(task, age, "recovering"))
-                reaped += 1
-                await self._maybe_retry(
-                    task, {"error": f"reaper: stuck {int(age)}s > {timeout}s timeout"}
-                )
-                continue
-
-            # Otherwise fail it terminally.
-            task.status = "failed"
-            task.completed_at = now
-            task.result = {"status": "failed", "error": f"reaper timeout after {int(age)}s"}
-            await self.graph_memory.upsert_task(
-                task, result_summary={"reaped": True, "age_seconds": int(age)}
-            )
-            await self._audit_log(self._reaper_audit(task, age, "failed"))
-            reaped += 1
-        if reaped:
-            logger.info("reaper_reaped_stuck_tasks", count=reaped)
-        return reaped
-
-    @staticmethod
     def _reaper_audit(task: Task, age: float, action: str) -> AuditEvent:
         return AuditEvent(
             event_type="task_reaped",
@@ -1427,67 +897,6 @@ class Orchestrator:
             context={"engagement_id": task.engagement_id},
             engagement_id=task.engagement_id,
         )
-
-    async def recover_state(self) -> Dict[str, Any]:
-        """Restart recovery (Reliability sprint), called once at startup.
-
-        1. Reset tasks left 'running' by a dead process to 'interrupted'.
-        2. Resume incomplete autonomous-discovery chains: a completed parent missing its
-           next SPAWNED child gets that child re-created from the persisted result_summary.
-        Re-dispatch flows through the same Neo4j dedupe, so nothing is duplicated.
-        """
-        summary = {
-            "interrupted_reset": 0,
-            "redispatched": 0,
-            "failed_over_cap": 0,
-            "chains_resumed": 0,
-            "resumed": [],
-        }
-        try:
-            interrupted = await self.graph_memory.reset_interrupted_tasks()
-            summary["interrupted_reset"] = len(interrupted)
-            for t in interrupted:
-                await self._audit_log(
-                    AuditEvent(
-                        event_type="task_recovered",
-                        severity="warning",
-                        actor_type="system",
-                        actor_id="orchestrator-recovery",
-                        action={
-                            "task_id": t.get("id"),
-                            "task_type": t.get("type"),
-                            "from": "running",
-                            "to": "interrupted",
-                        },
-                        result={"recovered": True},
-                        context={"engagement_id": t.get("engagement_id")},
-                        engagement_id=t.get("engagement_id") or "system",
-                    )
-                )
-                # AIOSOP-AUDIT-2026-06-16: actually RE-DISPATCH the interrupted task so
-                # the engagement does not stall. Capped to avoid crash-loops: a task that
-                # has already been recovered MAX_RECOVERY_ATTEMPTS times is failed instead.
-                redispatched = await self._redispatch_interrupted_task(t)
-                if redispatched is True:
-                    summary["redispatched"] += 1
-                elif redispatched is False:
-                    summary["failed_over_cap"] += 1
-
-            for parent in await self.graph_memory.find_incomplete_chains():
-                child = await self._resume_chain_link(parent)
-                if child:
-                    summary["chains_resumed"] += 1
-                    summary["resumed"].append(
-                        {"parent": parent.get("id"), "child_type": child.type}
-                    )
-        except Exception as e:
-            logger.error("recover_state_error", error=str(e))
-        logger.info("recovery_complete", summary=summary)
-        return summary
-
-    # Max times restart-recovery will re-dispatch the same interrupted task before
-    # giving up and failing it (prevents a poison task from crash-looping the system).
-    MAX_RECOVERY_ATTEMPTS = 3
 
     async def _redispatch_interrupted_task(self, rec: Dict[str, Any]) -> Optional[bool]:
         """Reconstruct an interrupted Task from its persisted Neo4j props and re-schedule
@@ -1637,6 +1046,8 @@ class Orchestrator:
         """Background task scheduler."""
         while self._running:
             try:
+                logger.info("scheduler_debug", tasks_count=len(self._tasks), sessions_count=len(self._sessions))
+                # 1. Process pending tasks already in memory (Issue 15: task leakage)
                 # 1. Process pending tasks already in memory (Issue 15: task leakage)
                 for task in list(self._tasks.values()):
                     if task.status == "pending":
@@ -1697,38 +1108,6 @@ class Orchestrator:
     # ever-growing (capped) tick interval until the phase changes and resets state.
     AUTO_TRANSITION_MAX_ATTEMPTS = 5
     AUTO_TRANSITION_MAX_BACKOFF_TICKS = 30
-
-    async def _phase_monitor(self) -> None:
-        """Monitor engagement phases and trigger auto-transitions."""
-        tick = 0
-        while self._running:
-            try:
-                await asyncio.sleep(10)
-                tick += 1
-                for session_id, session in list(self._sessions.items()):
-                    phase = EngagementPhase(session.phase)
-                    policy = self.PHASE_POLICY.get(phase)
-
-                    if policy and policy["auto_next"]:
-                        # Check if all tasks for current phase are complete
-                        if await self._is_phase_complete(session_id, phase):
-                            next_phase = await self._resolve_auto_next(
-                                session_id, phase, policy["auto_next"]
-                            )
-                            if next_phase is None:
-                                continue
-                            if not self._auto_transition_ready(session_id, phase, tick):
-                                continue
-                            try:
-                                await self.transition_phase(session_id, next_phase)
-                                logger.info(
-                                    "auto_transition", session_id=session_id, phase=next_phase.value
-                                )
-                                self._auto_transition_failures.pop(session_id, None)
-                            except Exception as e:
-                                self._record_auto_transition_failure(session_id, phase, tick, e)
-            except Exception as loop_err:
-                logger.error("phase_monitor_loop_error", error=str(loop_err))
 
     def _auto_transition_ready(self, session_id: str, phase: "EngagementPhase", tick: int) -> bool:
         """Backoff gate: skip an auto-transition attempt while a prior failure for this

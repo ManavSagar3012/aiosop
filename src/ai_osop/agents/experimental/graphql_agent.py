@@ -35,6 +35,9 @@ class GraphQLAgent(BaseAgent):
         # For now, we use a string or map to existing VULN_ANALYSIS if needed.
         return AgentType.VULN_ANALYSIS
 
+    def supports_task_type(self, task_type: str) -> bool:
+        return task_type in ["gql_discover_schema", "gql_test_authorization", "gql_find_hidden"]
+
     async def _setup_resources(self) -> None:
         self.discovered_schemas: Dict[str, GraphQLSchema] = {}
 

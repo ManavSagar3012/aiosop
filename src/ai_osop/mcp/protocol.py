@@ -186,7 +186,8 @@ class MCPConnection:
         self._circuit_breaker_check()
         if self._circuit_open and not self._half_open:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
-        try:
+        from ai_osop.reliability.retry import retry_with_backoff
+        async def _do_connect():
             self._session = aiohttp.ClientSession(
                 headers={"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
             )
@@ -194,15 +195,16 @@ class MCPConnection:
                 f"http://{self.host}:{self.port}/health", timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
-                    self._record_failure()
-                    raise MCPConnectionError(
-                        f"MCP server {self.server_id} health check failed: {resp.status}"
-                    )
+                    raise MCPConnectionError(f"Health check failed: {resp.status}")
+        
+        try:
+            await retry_with_backoff(
+                _do_connect,
+                max_retries=5,
+                base_delay=1,
+                retry_name=f"mcp_connect_{self.server_id}"
+            )
             self._record_success()
-        except asyncio.TimeoutError:
-            self._record_failure()
-            await self.close()
-            raise MCPTimeoutError(f"MCP server {self.server_id} connection timed out")
         except Exception as e:
             self._record_failure()
             await self.close()
@@ -315,6 +317,8 @@ class MCPRegistry:
         conn = MCPConnection(server_id=server_id, host=host, port=port, auth_token=auth_token)
         await conn.connect()
         self._servers[server_id] = conn
+        import logging
+        logging.getLogger("ai_osop.mcp").info(f"Registered server: {server_id}")
         return conn
 
     async def initialize_server(

@@ -7,9 +7,10 @@ import hashlib
 import json
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from ai_osop.api.deps import assert_engagement_access, require_role, state, verify_token
+from ai_osop.core.findings_quality import FindingConversionEngine
+
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 
@@ -150,6 +151,20 @@ async def verify_finding(
         raise HTTPException(status_code=404, detail="Finding not found for this engagement")
     await state["orchestrator"].graph_memory.validate_vulnerability(finding_id)
     return {"status": "verified", "finding_id": finding_id, "session_id": session_id}
+
+
+@router.post("/{session_id}/findings/{finding_id}/resolve")
+async def resolve_finding(
+    session_id: str,
+    finding_id: str,
+    status: str = Body(...),
+    operator: Dict[str, Any] = Depends(verify_token)
+):
+    """Operator resolves a finding's outcome."""
+    await assert_engagement_access(operator, session_id)
+    return await FindingConversionEngine.resolve_finding(
+        finding_id, status, state["session_memory"], state["graph_memory"]
+    )
 
 
 @router.post("/{session_id}/findings/{finding_id}/replay")

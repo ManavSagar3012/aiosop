@@ -163,6 +163,9 @@ class Settings(BaseSettings):
 
     redis_uri: str = Field(default="redis://localhost:6379/0", validation_alias="OSOP_REDIS_URI")
 
+    # Agent / Safety
+    agent_cleanup_timeout_seconds: float = Field(default=10.0, validation_alias="OSOP_AGENT_CLEANUP_TIMEOUT")
+
     # LLM / AI
     llm_primary_provider: str = Field(default="openai", validation_alias="OSOP_LLM_PRIMARY")
     llm_primary_model: str = Field(default="gpt-4o", validation_alias="OSOP_LLM_PRIMARY_MODEL")
@@ -249,7 +252,7 @@ class Settings(BaseSettings):
     # platform calls (requires valid h1/bc credentials).
     bug_bounty_simulation: bool = Field(default=True, validation_alias="OSOP_BUG_BOUNTY_SIMULATION")
 
-    browser_mcp_host: str = Field(default="localhost", validation_alias="OSOP_BROWSER_MCP_HOST")
+    browser_mcp_host: str = Field(default="127.0.0.1", validation_alias="OSOP_BROWSER_MCP_HOST")
     browser_mcp_port: int = Field(default=8091, validation_alias="OSOP_BROWSER_MCP_PORT")
     security_bridge_host: str = Field(
         default="localhost", validation_alias="OSOP_SECURITY_BRIDGE_HOST"
@@ -318,6 +321,11 @@ class Settings(BaseSettings):
     trace_propagation_enabled: bool = Field(default=True, validation_alias="OSOP_TRACE_PROPAGATION_ENABLED")
     otel_sampling_rate: float = Field(default=1.0, validation_alias="OSOP_OTEL_SAMPLING_RATE")
 
+    # Sentry
+    sentry_dsn: Optional[str] = Field(default=None, validation_alias="SENTRY_DSN")
+    sentry_traces_sample_rate: float = Field(default=1.0, validation_alias="SENTRY_TRACES_SAMPLE_RATE")
+    sentry_profiles_sample_rate: float = Field(default=0.0, validation_alias="SENTRY_PROFILES_SAMPLE_RATE")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,
@@ -335,3 +343,12 @@ class EngagementPhase(str, Enum):
     REPORTING = "reporting"
     COMPLETED = "completed"
     HALTED = "halted"
+
+
+class AgentState(str, Enum):
+    IDLE = "idle"
+    ASSIGNED = "assigned"
+    RUNNING = "running"
+    DEGRADED = "degraded"
+    OFFLINE = "offline"
+    RECOVERING = "recovering"

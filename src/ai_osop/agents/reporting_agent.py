@@ -38,10 +38,13 @@ class ReportingAgent(BaseAgent):
 
         if task_type == "generate_report":
             return await self._generate_report(payload)
+        elif task_type == "generate_yield_report":
+            return await self._generate_yield_report(payload)
         elif task_type == "compile_evidence":
             return await self._compile_evidence(payload)
         else:
             raise AgentException(f"Unknown reporting task type: {task_type}")
+
 
     async def _generate_report(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate full assessment report."""
@@ -83,8 +86,8 @@ class ReportingAgent(BaseAgent):
 
         # 2. Generate Risk Narrative via LLM
         stats = {
-            "assets_count": graph_stats.get("total_assets", 0),
-            "endpoints_count": graph_stats.get("total_endpoints", 0),
+            "assets_count": graph_stats.get("assets", 0),
+            "endpoints_count": graph_stats.get("endpoints", 0),
             "critical_count": sum(1 for f in findings if f["severity"] == "CRITICAL"),
             "high_count": sum(1 for f in findings if f["severity"] == "HIGH"),
         }
@@ -121,20 +124,47 @@ class ReportingAgent(BaseAgent):
 
         # 4. Generate Attack Graph Visualization
         # Mocking graph data for visualization
+        # 4. Generate Attack Graph Visualization
         graph_data = {"nodes": [], "edges": []}
         try:
-            query = "MATCH (n) WHERE n.engagement_id = $eid RETURN n"
+            query_nodes = "MATCH (n) WHERE n.engagement_id = $eid RETURN n.id AS id, labels(n) AS labels"
+            query_edges = "MATCH (n)-[r]->(m) WHERE n.engagement_id = $eid AND m.engagement_id = $eid RETURN n.id AS source, m.id AS target, type(r) AS type"
             async with self.ctx.graph_memory._driver.session() as session:
-                result = await session.run(query, eid=engagement_id)
-                for record in await result.data():
-                    n = record["n"]
-                    graph_data["nodes"].append(
-                        {"id": n.get("id", "unknown"), "labels": list(n.labels)}
-                    )
-        except Exception:
-            pass
+                res_nodes = await session.run(query_nodes, eid=engagement_id)
+                for record in await res_nodes.data():
+                    graph_data["nodes"].append({
+                        "id": record.get("id") or "unknown",
+                        "labels": list(record.get("labels") or [])
+                    })
+                res_edges = await session.run(query_edges, eid=engagement_id)
+                for record in await res_edges.data():
+                    graph_data["edges"].append({
+                        "source": record.get("source") or "unknown",
+                        "target": record.get("target") or "unknown",
+                        "type": record.get("type") or "unknown"
+                    })
+        except Exception as e:
+            print(f"WARN: Failed to compile attack graph: {e}")
 
         graph_html = self.exporter.render_attack_graph(graph_data, engagement_id)
+
+        # 4.5. Generate Mission Quality Certificate (Sprint 11)
+        try:
+            from ai_osop.core.findings_quality import FindingCertificationEngine
+            await FindingCertificationEngine.generate_mission_certificate(
+                engagement_id, self.ctx.session_memory, self.ctx.graph_memory
+            )
+        except Exception as e:
+            print(f"WARN: Failed to generate Mission Quality Certificate: {e}")
+
+        # 4.6. Generate Attack Surface Coverage Certificate (Sprint 12)
+        try:
+            from ai_osop.core.findings_quality import AttackSurfaceCertifier
+            await AttackSurfaceCertifier.generate_attack_surface_certificate(
+                engagement_id, self.ctx.session_memory, self.ctx.graph_memory
+            )
+        except Exception as e:
+            print(f"WARN: Failed to generate Attack Surface Coverage Certificate: {e}")
 
         # 5. Save generated assets — in-memory AND on disk so the report
         # survives restart and operators can inspect drafts before approval.
@@ -148,6 +178,89 @@ class ReportingAgent(BaseAgent):
         }
 
         import os
+        reports_dir = os.path.join("reports", engagement_id)
+        os.makedirs(reports_dir, exist_ok=True)
+        artifacts: Dict[str, str] = {}
+        for ext, content in (
+            ("md", full_md),
+            ("html", html_report),
+            ("graph.html", graph_html),
+            ("json", json_blob),
+        ):
+            path = os.path.join(reports_dir, f"{report_id}.{ext}")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            artifacts[ext] = os.path.abspath(path)
+
+        return {
+            "status": "success",
+            "report_id": report_id,
+            "version": version,
+            "findings_included": len(findings),
+            "requires_approval": True,
+            "report_paths": artifacts,
+            "report_path": artifacts["json"],
+            "message": "Report drafts persisted to disk; awaiting operator sign-off before final export.",
+        }
+
+    async def _generate_yield_report(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate findings conversion and yield report (Sprint 14)."""
+        from ai_osop.core.findings_quality import FindingConversionEngine
+        engagement_id = self.ctx.current_task.engagement_id
+        
+        # 1. Fetch Findings (already fetched in _generate_report or here)
+        # Mocking finding fetch for this demonstration
+        # 1. Fetch Findings (already fetched in _generate_report or here)
+        # Fetch outcomes from finding_corpus (Sprint 15)
+        outcomes = []
+        try:
+            from sqlalchemy import text
+            async with self.ctx.session_memory._async_session() as session:
+                res = await session.execute(
+                    text("SELECT original_finding_id AS finding_id, outcome AS status FROM finding_corpus WHERE engagement_id = :eid"),
+                    {"engagement_id": engagement_id}
+                )
+                outcomes = [dict(r._mapping) for r in res.all()]
+        except Exception as e:
+            print(f"WARN: Failed to fetch outcomes: {e}")
+            
+        # 2. Calculate Yield
+        stats = FindingConversionEngine.calculate_yield(
+            discovery_inputs=payload.get("discovery_inputs", 100),
+            raw_findings=len(outcomes),
+            certified_findings=len([o for o in outcomes if o["status"] == "accepted"])
+        )
+        
+        heatmap = FindingConversionEngine.generate_yield_heatmap([
+            {"id": o["finding_id"], "certification": {"status": o["status"]}} for o in outcomes
+        ])
+        
+        
+        # 3. Save Report
+        md_content = f"""# FINDING YIELD INTELLIGENCE REPORT
+**Engagement ID:** `{engagement_id}`
+
+## 1. Finding Conversion Ratio (FCR)
+| Metric | Value |
+|---|---|
+| **Raw Conversion** | {stats['raw_conversion']:.2f} |
+| **Validation Conversion** | {stats['certification_conversion']:.2f} |
+| **Finding Conversion Ratio** | {stats['finding_conversion_ratio']:.2f} |
+
+## 2. Yield Heatmap
+| Privilege Level | Finding Count |
+|---|---|
+| Anonymous | {heatmap['anonymous']} |
+| Authenticated | {heatmap['authenticated']} |
+| Admin | {heatmap['admin']} |
+"""
+        reports_dir = os.path.join("reports", engagement_id)
+        os.makedirs(reports_dir, exist_ok=True)
+        report_path = os.path.join(reports_dir, "FINDING_YIELD_REPORT.md")
+        with open(report_path, "w", encoding="utf-8") as fh:
+            fh.write(md_content)
+            
+        return {"status": "success", "report_path": os.path.abspath(report_path)}
 
         reports_dir = os.path.join("reports", engagement_id)
         os.makedirs(reports_dir, exist_ok=True)

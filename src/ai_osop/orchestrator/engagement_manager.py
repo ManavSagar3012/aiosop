@@ -29,6 +29,15 @@ class EngagementManager:
         self, scope: ScopeDefinition, roe: Dict[str, Any], created_by: Optional[str] = None
     ) -> SessionState:
         """Create new engagement session."""
+        try:
+            return await self._create_engagement_unsafe(scope, roe, created_by)
+        except Exception as e:
+            logger.error("engagement_creation_failed", error=str(e), exc_info=True)
+            raise
+
+    async def _create_engagement_unsafe(
+        self, scope: ScopeDefinition, roe: Dict[str, Any], created_by: Optional[str] = None
+    ) -> SessionState:
         with trace_span(
             "orchestrator.create_engagement",
             attributes={

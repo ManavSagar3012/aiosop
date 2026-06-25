@@ -87,6 +87,7 @@ class Vulnerability(BaseModel):
     correlated_ids: List[str] = Field(default_factory=list)
     engagement_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    yield_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Payload(BaseModel):
@@ -157,6 +158,7 @@ class Task(BaseModel):
     assigned_agent_id: Optional[str] = None
     # Sprint 6: trace context propagation across async boundaries
     trace_context: Dict[str, Any] = Field(default_factory=dict)
+    lease_expires: Optional[datetime] = None
 
 
 class ApprovalRequest(BaseModel):
@@ -319,14 +321,13 @@ class Observation(BaseModel):
 
 
 class OutcomeStatus(str, Enum):
-    PAID = "paid"
-    TRIAGED = "triaged"
-    SUBMITTED = "submitted"
-    VERIFIED = "verified"
-    # AIOSOP-AUDIT-2026-06-16: referenced by BugBountyAdapter.sync_outcomes for
-    # reports a program closes as not-applicable/duplicate/informative. Was missing,
-    # which would raise AttributeError on the live H1 sync path.
+    ACCEPTED = "accepted"
+    DUPLICATE = "duplicate"
+    INFORMATIVE = "informative"
+    NA = "na"
     REJECTED = "rejected"
+    TRIAGED = "triaged"
+    PAID = "paid"
 
 
 class OutcomeRecord(BaseModel):

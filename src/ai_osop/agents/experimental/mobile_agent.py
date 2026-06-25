@@ -26,6 +26,9 @@ class MobileAnalysisAgent(BaseAgent):
     def agent_type(self) -> AgentType:
         return AgentType.VULN_ANALYSIS
 
+    def supports_task_type(self, task_type: str) -> bool:
+        return task_type in ["analyze_deep_links", "intercept_mobile_traffic"]
+
     async def _setup_resources(self) -> None:
         """Initialize mobile analysis resources."""
         self.analyzed_deep_links: List[str] = []

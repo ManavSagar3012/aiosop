@@ -324,3 +324,9 @@ SLO_LATENCY_P95 = Gauge(
     "p95 latency per route",
     ["path"],
 )
+
+from prometheus_client import Counter
+AGENT_RECOVERIES_TOTAL = Counter("ai_osop_agent_recoveries_total", "Total agent recoveries")
+AGENT_TIMEOUTS_TOTAL = Counter("ai_osop_agent_timeouts_total", "Total agent timeouts")
+TASK_REQUEUES_TOTAL = Counter("ai_osop_task_requeues_total", "Total task requeues")
+STALE_LEASES_TOTAL = Counter("ai_osop_stale_leases_total", "Total stale task leases detected")

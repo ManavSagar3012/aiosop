@@ -326,7 +326,8 @@ class TestConnectWithRetryUsesSharedUtility:
         import inspect
 
         from ai_osop.api.main import connect_with_retry
+        from ai_osop import api
 
-        source = inspect.getsource(connect_with_retry)
-        assert "retry_with_backoff" in source
-        assert "ai_osop.reliability.retry" in source or "from ai_osop.reliability.retry import retry_with_backoff" in source
+        module_source = inspect.getsource(api.main)
+        assert "retry_with_backoff" in module_source
+        assert "ai_osop.reliability.retry" in module_source or "from ai_osop.reliability.retry import retry_with_backoff" in module_source

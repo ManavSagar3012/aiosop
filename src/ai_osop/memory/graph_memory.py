@@ -450,41 +450,45 @@ class GraphMemory:
         LIMIT 10
         """
 
-        async with self._driver.session() as session:
-            result = await session.run(
-                cypher,
-                {
-                    "entry_id": entry_node_id,
-                    "goal_types": goal_types,
-                    "min_conf": min_confidence,
-                    "max_depth": max_depth,
-                },
-            )
-
-            paths = []
-            async for record in result:
-                # Ensure no NaN
-                conf = (
-                    record["confidence"]
-                    if not isinstance(record["confidence"], float)
-                    or not (record["confidence"] != record["confidence"])
-                    else 0.5
+        with trace_span(
+            "graph_memory.find_attack_paths",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(
+                    cypher,
+                    {
+                        "entry_id": entry_node_id,
+                        "goal_types": goal_types,
+                        "min_conf": min_confidence,
+                        "max_depth": max_depth,
+                    },
                 )
 
-                path = AttackPath(
-                    node_ids=record["node_ids"],
-                    edge_ids=[f"{e['type']}-{i}" for i, e in enumerate(record["edges"])],
-                    confidence=min(max(conf, 0.0), 1.0),
-                    risk_score=min(max(conf * 10, 0.0), 10.0),
-                    total_time_estimate=record["total_time"],
-                    detection_risk=0.5,  # Default for now
-                    entry_node_id=record["entry_id"],
-                    goal_node_id=record["goal_id"],
-                    engagement_id="",
-                )
-                paths.append(path)
+                paths = []
+                async for record in result:
+                    # Ensure no NaN
+                    conf = (
+                        record["confidence"]
+                        if not isinstance(record["confidence"], float)
+                        or not (record["confidence"] != record["confidence"])
+                        else 0.5
+                    )
 
-            return paths
+                    path = AttackPath(
+                        node_ids=record["node_ids"],
+                        edge_ids=[f"{e['type']}-{i}" for i, e in enumerate(record["edges"])],
+                        confidence=min(max(conf, 0.0), 1.0),
+                        risk_score=min(max(conf * 10, 0.0), 10.0),
+                        total_time_estimate=record["total_time"],
+                        detection_risk=0.5,  # Default for now
+                        entry_node_id=record["entry_id"],
+                        goal_node_id=record["goal_id"],
+                        engagement_id="",
+                    )
+                    paths.append(path)
+
+                return paths
 
     async def get_attack_surface(self, node_id: str) -> List[Dict[str, Any]]:
         """Get all reachable nodes from a given position."""
@@ -565,10 +569,14 @@ class GraphMemory:
             count(DISTINCT CASE WHEN n:Exploit THEN n END) as exploits
         """
 
-        async with self._driver.session() as session:
-            result = await session.run(cypher, {"engagement_id": engagement_id})
-            record = await result.single()
-            return dict(record) if record else {}
+        with trace_span(
+            "graph_memory.get_graph_stats",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                record = await result.single()
+                return dict(record) if record else {}
 
     async def add_workflow(self, workflow: Workflow) -> str:
         """Persist a Workflow node."""
@@ -1092,6 +1100,20 @@ class GraphMemory:
                     }
                 )
         return out
+
+    async def get_task_dependents(self, parent_id: str) -> List[str]:
+        """Return IDs of tasks that were SPAWNED by the given parent task."""
+        cypher = """
+        MATCH (parent:Task {id: $pid})-[:SPAWNED]->(child:Task)
+        RETURN child.id AS id
+        """
+        try:
+            async with self._driver.session() as s:
+                res = await s.run(cypher, {"pid": parent_id})
+                return [rec["id"] async for rec in res]
+        except Exception as e:
+            logger.debug("get_task_dependents_failed", error=str(e))
+            return []
 
     async def close(self) -> None:
         if self._driver:

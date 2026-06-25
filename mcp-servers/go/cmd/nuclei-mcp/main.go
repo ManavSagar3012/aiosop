@@ -9,14 +9,19 @@ import (
 
 func main() {
 	server := sdk.NewServer("nuclei-mcp")
+
+	// scan: run nuclei against scoped targets, optionally restricting templates,
+	// severity, and tags — all forwarded to the real nuclei engine.
 	server.Register(sdk.Tool{
 		Name:           "scan",
-		Description:    "Run nuclei against scoped targets.",
+		Description:    "Run nuclei against scoped targets with optional template/severity/tag filters.",
 		TimeoutSeconds: 900,
-		ScopeCheck:      true,
+		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "targets", "type": "array", "description": "Target URLs or hosts", "required": true},
 			{"name": "templates", "type": "array", "description": "Optional template IDs or paths", "required": false},
+			{"name": "severity", "type": "string", "description": "Optional severity filter: info,low,medium,high,critical (comma-separated)", "required": false},
+			{"name": "tags", "type": "string", "description": "Optional tag filter (comma-separated)", "required": false},
 		},
 		Returns: map[string]any{"findings": "array"},
 		Handler: func(params map[string]any) any {
@@ -28,13 +33,77 @@ func main() {
 			for _, target := range targets {
 				args = append(args, "-target", target)
 			}
+			// Honor the optional `templates` parameter. Previously it was declared
+			// but never forwarded to nuclei, so every MCP scan silently ran the full
+			// template set (~13k templates) — turning targeted capability tests into
+			// multi-minute full scans. Pass each requested template via -t.
+			for _, tmpl := range stringSlice(params["templates"]) {
+				args = append(args, "-t", tmpl)
+			}
+			// Severity filter (-severity) and tag filter (-tags) forwarded to nuclei.
+			if sev, ok := params["severity"].(string); ok && strings.TrimSpace(sev) != "" {
+				args = append(args, "-severity", strings.TrimSpace(sev))
+			}
+			if tags, ok := params["tags"].(string); ok && strings.TrimSpace(tags) != "" {
+				args = append(args, "-tags", strings.TrimSpace(tags))
+			}
 			output, err := exec.Command("nuclei", args...).CombinedOutput()
 			if err != nil {
 				return map[string]any{"findings": []any{}, "error": err.Error(), "raw": string(output)}
 			}
-			return map[string]any{"findings": strings.Split(strings.TrimSpace(string(output)), "\n")}
+			lines := []string{}
+			for _, l := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+				if strings.TrimSpace(l) != "" {
+					lines = append(lines, l)
+				}
+			}
+			return map[string]any{"findings": lines, "count": len(lines)}
 		},
 	})
+
+	// list_templates: enumerate available templates (optionally filtered), via the
+	// real nuclei template store (-tl). Proves template-list capability through MCP.
+	server.Register(sdk.Tool{
+		Name:           "list_templates",
+		Description:    "List available nuclei templates, optionally filtered by tags or severity.",
+		TimeoutSeconds: 120,
+		ScopeCheck:     false,
+		Parameters: []map[string]any{
+			{"name": "tags", "type": "string", "description": "Optional tag filter (comma-separated)", "required": false},
+			{"name": "severity", "type": "string", "description": "Optional severity filter", "required": false},
+			{"name": "limit", "type": "integer", "description": "Optional max templates to return (default 100)", "required": false},
+		},
+		Returns: map[string]any{"templates": "array", "total": "integer"},
+		Handler: func(params map[string]any) any {
+			args := []string{"-tl", "-silent"}
+			if tags, ok := params["tags"].(string); ok && strings.TrimSpace(tags) != "" {
+				args = append(args, "-tags", strings.TrimSpace(tags))
+			}
+			if sev, ok := params["severity"].(string); ok && strings.TrimSpace(sev) != "" {
+				args = append(args, "-severity", strings.TrimSpace(sev))
+			}
+			output, err := exec.Command("nuclei", args...).CombinedOutput()
+			if err != nil {
+				return map[string]any{"templates": []any{}, "error": err.Error(), "raw": string(output)[:min(len(string(output)), 300)]}
+			}
+			all := []string{}
+			for _, l := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+				if strings.TrimSpace(l) != "" {
+					all = append(all, strings.TrimSpace(l))
+				}
+			}
+			limit := 100
+			if lf, ok := params["limit"].(float64); ok && int(lf) > 0 {
+				limit = int(lf)
+			}
+			shown := all
+			if len(shown) > limit {
+				shown = shown[:limit]
+			}
+			return map[string]any{"templates": shown, "total": len(all), "returned": len(shown)}
+		},
+	})
+
 	_ = server.Run(":8084")
 }
 
@@ -50,4 +119,11 @@ func stringSlice(value any) []string {
 		}
 	}
 	return out
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -4,7 +4,7 @@ from ai_osop.payload_engine.engine import EncodingPipeline
 
 
 def test_settings_load_mcp_defaults():
-    assert settings.burp_mcp_host == "localhost"
+    assert settings.burp_mcp_host == "127.0.0.1"
     assert settings.nuclei_mcp_port == 8084
 
 

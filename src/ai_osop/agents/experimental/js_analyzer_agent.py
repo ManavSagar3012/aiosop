@@ -28,6 +28,9 @@ class JSAnalyzerAgent(BaseAgent):
     def agent_type(self) -> AgentType:
         return AgentType.VULN_ANALYSIS
 
+    def supports_task_type(self, task_type: str) -> bool:
+        return task_type in ["analyze_js", "extract_endpoints_from_js", "detect_secrets_in_js"]
+
     async def _setup_resources(self) -> None:
         """Initialize JS resources."""
         self.discovered_endpoints: List[str] = []
