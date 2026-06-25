@@ -48,6 +48,21 @@ async def health_system():
         "platform": await health_platform(),
         "mcp": await health_mcp()
     }
+@router.get("/health/metrics")
+async def health_metrics():
+    """Expose high-level platform performance and engagement metrics."""
+    from ai_osop.core.metrics import (
+        ACTIVE_ENGAGEMENTS,
+        TASK_THROUGHPUT,
+        AGENT_SUCCESS_RATE,
+        READY_STATUS
+    )
+    return {
+        "active_engagements": ACTIVE_ENGAGEMENTS._value.get(),
+        "task_throughput": TASK_THROUGHPUT._value.get(),
+        "agent_success_rate": AGENT_SUCCESS_RATE._value.get(),
+        "overall_readiness": READY_STATUS._value.get(),
+    }
 
 # Sprint 8: readiness history for flapping detection
 _readiness_history: Deque[Dict[str, Any]] = deque(maxlen=5)

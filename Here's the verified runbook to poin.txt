@@ -1,0 +1,69 @@
+Here's the verified runbook to point AI-OSOP at a testing domain, based on how the platform actually behaves in this environment.
+
+  Prerequisites (one-time, already true in your setup)
+
+  - Docker infra running: Redis 6379, Postgres 5432, Neo4j 7474/7687 (docker ps shows ai-osop-redis/postgres/neo4j). Never restart these mid-run.
+  - Python venv at .venv/.
+
+  ---
+  Step 1 — Start the MCP servers
+
+  For platform validation (safe, no real scanning): stubs.
+  python scripts/ops/supervisor.py --no-api    # launches all 11 stubs, keeps them alive
+
+  For real recon against an authorized target: swap the relevant stub for the real Go binary.
+  # stop the recon stub, then:
+  ./recon-mcp.exe --port 8082        # real tools: amass_passive, nmap_scan, ...
+  # (binary ignores --port and hardcodes 8082; free that port first)
+  Verify: curl -s http://127.0.0.1:8082/health → {"status":"ready"}
+
+  Step 2 — Start the API (after MCPs are up)
+
+  .venv/Scripts/python.exe -m uvicorn ai_osop.api.main:app --port 8200
+  Or let the supervisor manage both: python scripts/ops/supervisor.py
+  Verify: curl -s http://localhost:8200/health → {"status":"healthy"}
+  And curl -s http://localhost:8200/ready → confirms Redis/Neo4j/Postgres + mcp 10/10.
+
+  Step 3 — Create an engagement for the domain
+
+  Auth is Bearer dev-token. Use a fresh, unique engagement_id — recon auto-dispatches on entering the reconnaissance phase, so a new engagement is the
+  reliable trigger.
+  curl -s -X POST http://localhost:8200/engagements \
+    -H 'Authorization: Bearer dev-token' -H 'Content-Type: application/json' \
+    -d '{
+      "engagement_id": "TARGET-recon-001",
+      "domains": ["your-test-domain.example.com"],
+      "allowed_techniques": ["recon","passive"],
+      "authorization_ref": "your-authz-ref"
+    }'
+  Returns a session_id like eng-YYYYMMDDhhmmss-TARGET-recon-001. Save it.
+
+  Step 4 — Drive it into reconnaissance
+
+  EID=<session_id from step 3>
+  curl -s -X POST http://localhost:8200/engagements/$EID/discovery/trigger \
+    -H 'Authorization: Bearer dev-token' -H 'Content-Type: application/json' -d '{}'
+  This transitions initialized → reconnaissance and enqueues full_recon tasks, which the orchestrator assigns to recon-agent-001.
+
+  Step 5 — Monitor (verify real work)
+
+  H='Authorization: Bearer dev-token'; B=http://localhost:8200
+  curl -s -H "$H" $B/engagements/$EID            # phase
+  curl -s -H "$H" $B/agents/recon-agent-001      # status + last_heartbeat (should advance)
+  curl -s -H "$H" $B/engagements/$EID/findings   # findings as they land
+  curl -s -H "$H" $B/engagements/$EID/audit-log  # audit trail
+  curl -s -H "$H" $B/system/dlq/stats            # failures (if recon tooling errors)
+  Live logs: tail the uvicorn log for scheduler_debug, assign_task_attempt, find_agent_result.
+
+  ---
+  Important notes
+
+  - Reconnaissance runs with allowed_techniques: ["recon","passive"]. Exploitation is gated — those tasks carry approval_required=True and wait on POST
+  /approvals/{id}/resolve. The platform will not auto-attack; you approve each escalation.
+  - Stubs vs real: with stubs, the full control plane runs but full_recon produces no findings and lands in the DLQ. Real findings require the real
+  *-mcp.exe binaries.
+  - Authorization: only point this at domains you're authorized to test (uat-bugbounty.nonprod.syfe.com is a sanctioned bug-bounty UAT surface;
+  allowed_techniques/exclusions in the scope enforce ROE).
+  - Dashboard (optional): cd ui && npm run dev — it's wired to http://127.0.0.1:8200 + ws://127.0.0.1:8200 with token dev-token.
+
+  Want me to package Steps 1–4 into a single scripts/ops/start_engagement.sh <domain> <engagement_id> helper so you can launch a new target in one command?

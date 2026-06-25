@@ -1,0 +1,85 @@
+name: Tooling Reality Gate
+
+# Fails CI if a core MCP server reverts from REAL to stub/mock. Builds the real
+# Go servers, starts the CI-able tooling (recon, nuclei, browser — all headless),
+# and runs tests/qualification in STRICT mode. Burp is a licensed desktop app and
+# is validated in the operator environment, so it runs non-strict here (skips).
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'mcp-servers/**'
+      - 'src/ai_osop/adapters/**'
+      - 'src/ai_osop/api/health.py'
+      - 'tests/qualification/**'
+      - '.github/workflows/tooling-reality.yml'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  tooling-reality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install nuclei
+        run: |
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Warm nuclei templates
+        run: nuclei -update-templates -silent || true
+
+      - name: Install Python tooling deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest httpx fastapi "uvicorn[standard]" pydantic playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Build real Go MCP servers
+        working-directory: mcp-servers/go
+        run: |
+          go build -o recon-mcp.exe ./cmd/recon-mcp
+          go build -o nuclei-mcp.exe ./cmd/nuclei-mcp
+
+      - name: Start real MCP servers
+        run: |
+          ./mcp-servers/go/recon-mcp.exe &
+          ./mcp-servers/go/nuclei-mcp.exe &
+          python mcp-servers/python/browser_mcp.py --port 8091 &
+          python mcp-servers/python/source_map_mcp.py --port 8096 &
+          python mcp-servers/python/turbo_intruder_mcp.py --port 8098 &
+          # Wait for readiness
+          for p in 8082 8084 8091 8096 8098; do
+            for i in $(seq 1 30); do
+              curl -sf "http://127.0.0.1:$p/health" >/dev/null && break
+              sleep 1
+            done
+          done
+          for p in 8082 8084 8091 8096 8098; do curl -s "http://127.0.0.1:$p/health"; echo; done
+
+      - name: Qualification gate (recon, nuclei, browser, source-map, turbo-intruder) — STRICT
+        env:
+          OSOP_QUALIFICATION_STRICT: '1'
+        run: |
+          pytest --no-cov -v \
+            tests/qualification/test_recon_mcp.py \
+            tests/qualification/test_nuclei_mcp.py \
+            tests/qualification/test_browser_mcp.py \
+            tests/qualification/test_source_map_mcp.py \
+            tests/qualification/test_turbo_intruder_mcp.py
+
+      - name: Burp qualification (non-strict; skips without a live Burp)
+        run: pytest --no-cov -v tests/qualification/test_burp_mcp.py

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter-config
+  namespace: ai-osop
+data:
+  config.yaml: |
+    rules:
+    - seriesQuery: 'ai_osop_queued_tasks'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "ai_osop_queued_tasks"
+        as: "ai_osop_queued_tasks"
+      metricsQuery: 'ai_osop_queued_tasks{<<.LabelMatchers>>}'
+    - seriesQuery: 'ai_osop_running_tasks'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "ai_osop_running_tasks"
+        as: "ai_osop_running_tasks"
+      metricsQuery: 'ai_osop_running_tasks{<<.LabelMatchers>>}'
