@@ -1,0 +1,39 @@
+=== CONSOLIDATED RUNTIME SNAPSHOT 2026-06-23T18:24:56Z ===
+[infra]
+ai-osop-redis: Up 2 hours
+ai-osop-postgres: Up 2 hours
+ai-osop-neo4j: Up 2 hours
+[api] health:
+{"status":"healthy","timestamp":"2026-06-23T18:24:56.756073"}
+[ready] mcp summary:
+  redis=healthy neo4j=healthy postgres=healthy mcp=10/10
+[engagement]:
+  eng-20260623181023-syfe-uat-runtime-validation phase=reconnaissance
+[dlq]:
+{"pending":102,"requeued":0,"discarded":0}
+[trust]:
+{"trust_score":97,"readiness":"ready","last_audited":"2026-06-23T15:00:00Z"}
+[agents]:
+  count= 20
+    attack-chain-agent-001 idle
+    recon-agent-001 idle
+    vuln-agent-001 idle
+    human-oversight-agent-001 idle
+    exploit-agent-001 idle
+    payload-agent-001 idle
+    reporting-agent-001 idle
+    context-manager-agent-001 idle
+    concurrency-agent-001 idle
+    stack-profiler-agent-001 idle
+    playwright-agent-001 idle
+    cloud-agent-001 idle
+    codeql-agent-001 idle
+    graphql-agent-001 idle
+    js-analyzer-agent-001 idle
+    mobile-agent-001 idle
+    nextjs-agent-001 idle
+    react-agent-001 idle
+    stateful-logic-agent-001 idle
+    visual-agent-001 idle
+[stubs up]:
+   11 /11
