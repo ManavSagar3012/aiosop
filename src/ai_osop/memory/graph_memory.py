@@ -247,7 +247,9 @@ class GraphMemory:
                         "content_type": endpoint.content_type,
                         "body_schema_keys": endpoint.body_schema_keys,
                         "auth_class": endpoint.auth_class,
-                        "request_headers_sample": json.dumps(endpoint.request_headers_sample),
+                        "request_headers_sample": json.dumps(
+                            endpoint.request_headers_sample
+                        ),
                         "status_codes_seen": endpoint.status_codes_seen,
                         "response_size_avg": endpoint.response_size_avg,
                         "response_content_type": endpoint.response_content_type,
@@ -263,6 +265,21 @@ class GraphMemory:
 
     async def add_vulnerability(self, vuln: Vulnerability) -> str:
         """Add a Vulnerability and link to its Endpoint."""
+        # OSOP-P0-02: refuse to persist simulated/mock findings into the real graph unless
+        # explicitly allowed. Without this, fabricated findings flow into the corpus,
+        # reports, and dashboard counts as if they were real observations.
+        from ai_osop.core.config import settings as _settings
+
+        if vuln.is_simulated() and not getattr(_settings, "allow_simulated_findings", False):
+            logger.warning(
+                "rejected_simulated_vulnerability id=%s tool_source=%s title=%s engagement=%s",
+                vuln.id,
+                vuln.tool_source,
+                vuln.title,
+                vuln.engagement_id,
+            )
+            return vuln.id
+
         cypher = """
         MERGE (v:Vulnerability {id: $id})
         SET v.cwe = $cwe,
@@ -335,7 +352,9 @@ class GraphMemory:
         RETURN v.id
         """
         async with self._driver.session() as session:
-            await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
+            await session.run(
+                cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()}
+            )
 
     async def add_exploit(self, exploit: Exploit) -> str:
         """Add an Exploit and link to Vulnerability and Payload."""
@@ -408,7 +427,8 @@ class GraphMemory:
                     "to_id": path.node_ids[i + 1],
                     "type": "exploit_chain",
                     "probability": path.confidence,
-                    "time_estimate": path.total_time_estimate // max(len(path.node_ids) - 1, 1),
+                    "time_estimate": path.total_time_estimate
+                    // max(len(path.node_ids) - 1, 1),
                     "detection_risk": path.detection_risk,
                 }
             )
@@ -424,6 +444,7 @@ class GraphMemory:
         goal_types: List[str],
         max_depth: int = 5,
         min_confidence: float = 0.5,
+        engagement_id: Optional[str] = None,
     ) -> List[AttackPath]:
         """
         Find attack paths from entry node to high-value targets.
@@ -450,9 +471,12 @@ class GraphMemory:
         LIMIT 10
         """
 
+        attrs = {}
+        if engagement_id:
+            attrs["engagement_id"] = engagement_id
         with trace_span(
             "graph_memory.find_attack_paths",
-            attributes={"engagement_id": engagement_id},
+            attributes=attrs,
         ):
             async with self._driver.session() as session:
                 result = await session.run(
@@ -477,7 +501,9 @@ class GraphMemory:
 
                     path = AttackPath(
                         node_ids=record["node_ids"],
-                        edge_ids=[f"{e['type']}-{i}" for i, e in enumerate(record["edges"])],
+                        edge_ids=[
+                            f"{e['type']}-{i}" for i, e in enumerate(record["edges"])
+                        ],
                         confidence=min(max(conf, 0.0), 1.0),
                         risk_score=min(max(conf * 10, 0.0), 10.0),
                         total_time_estimate=record["total_time"],
@@ -505,7 +531,11 @@ class GraphMemory:
             nodes = []
             async for record in result:
                 nodes.append(
-                    {"id": record["id"], "type": record["type"], "confidence": record["confidence"]}
+                    {
+                        "id": record["id"],
+                        "type": record["type"],
+                        "confidence": record["confidence"],
+                    }
                 )
             return nodes
 
@@ -528,7 +558,9 @@ class GraphMemory:
         """
 
         async with self._driver.session() as session:
-            await session.run(cypher, {"exploit_id": exploit_id, "impact_score": impact_score})
+            await session.run(
+                cypher, {"exploit_id": exploit_id, "impact_score": impact_score}
+            )
 
     async def get_node_details(self, node_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve details for a node by ID."""
@@ -707,7 +739,9 @@ class GraphMemory:
                     "created_at": finding.created_at.isoformat(),
                     "outcome": finding.outcome,
                     "outcome_notes": finding.outcome_notes,
-                    "outcome_at": finding.outcome_at.isoformat() if finding.outcome_at else None,
+                    "outcome_at": finding.outcome_at.isoformat()
+                    if finding.outcome_at
+                    else None,
                 },
             )
             record = await result.single()
@@ -832,7 +866,9 @@ class GraphMemory:
 
     # ---- Reliability sprint: durable task lifecycle + dedupe + recovery ----
 
-    async def upsert_task(self, task: Any, result_summary: Optional[Dict[str, Any]] = None) -> bool:
+    async def upsert_task(
+        self, task: Any, result_summary: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """Persist a Task's lifecycle state to Neo4j. Ground truth for the stuck-task
         reaper, restart recovery, and graph-backed dedupe (replaces in-memory only state)."""
         # AIOSOP-AUDIT-2026-06-16: persist payload + priority so restart recovery can
@@ -859,13 +895,19 @@ class GraphMemory:
             "max_retries": getattr(task, "max_retries", 0),
             "timeout_seconds": getattr(task, "timeout_seconds", 300),
             "created_at": (
-                task.created_at.isoformat() if getattr(task, "created_at", None) else None
+                task.created_at.isoformat()
+                if getattr(task, "created_at", None)
+                else None
             ),
             "started_at": (
-                task.started_at.isoformat() if getattr(task, "started_at", None) else None
+                task.started_at.isoformat()
+                if getattr(task, "started_at", None)
+                else None
             ),
             "completed_at": (
-                task.completed_at.isoformat() if getattr(task, "completed_at", None) else None
+                task.completed_at.isoformat()
+                if getattr(task, "completed_at", None)
+                else None
             ),
             "updated_at": datetime.utcnow().isoformat(),
             "result_summary": json.dumps(result_summary or {}, default=str),
@@ -896,7 +938,9 @@ class GraphMemory:
                 # All callers ignore the return value, so re-raising would change
                 # behavior (and could crash lifecycle transitions); return False
                 # after logging at ERROR so the dropped write stays observable.
-                logger.error("upsert_task failed for task %s after retries: %s", task.id, e)
+                logger.error(
+                    "upsert_task failed for task %s after retries: %s", task.id, e
+                )
                 return False
 
     async def task_has_spawned(self, task_id: str) -> bool:
@@ -904,7 +948,8 @@ class GraphMemory:
         try:
             async with self._driver.session() as s:
                 res = await s.run(
-                    "MATCH (t:Task {id:$id})-[:SPAWNED]->() RETURN count(*) AS c", {"id": task_id}
+                    "MATCH (t:Task {id:$id})-[:SPAWNED]->() RETURN count(*) AS c",
+                    {"id": task_id},
                 )
                 rec = await res.single()
                 return bool(rec and rec["c"] > 0)
@@ -965,7 +1010,11 @@ class GraphMemory:
             async with self._driver.session() as s:
                 await s.run(
                     "MATCH (t:Task {id:$id}) SET t.status=$status, t.updated_at=$ts",
-                    {"id": task_id, "status": status, "ts": datetime.utcnow().isoformat()},
+                    {
+                        "id": task_id,
+                        "status": status,
+                        "ts": datetime.utcnow().isoformat(),
+                    },
                 )
         except Exception as e:
             logger.debug("mark_task_status_failed", error=str(e))
@@ -1000,7 +1049,9 @@ class GraphMemory:
     ) -> str:
         """Create an Evidence node and link it to a WorkflowStep and parent Workflow.
         Returns the evidence node id. Idempotent on (step_id, path)."""
-        evidence_id = f"ev-{hashlib.sha1(f'{step_id}|{path}'.encode()).hexdigest()[:16]}"
+        evidence_id = (
+            f"ev-{hashlib.sha1(f'{step_id}|{path}'.encode()).hexdigest()[:16]}"
+        )
         cypher = """
         MERGE (ev:Evidence {id: $id})
         SET ev.type = $type,
@@ -1039,7 +1090,10 @@ class GraphMemory:
             return record["id"]
 
     async def add_business_invariant(
-        self, invariant: BusinessInvariant, engagement_id: str, is_violated: bool = False
+        self,
+        invariant: BusinessInvariant,
+        engagement_id: str,
+        is_violated: bool = False,
     ) -> str:
         """Persist a BusinessInvariant so it can be surfaced on the Research
         Intelligence dashboard. Idempotent on invariant id."""
@@ -1075,7 +1129,9 @@ class GraphMemory:
 
     async def mark_invariant_violated(self, invariant_id: str) -> None:
         """Flag a previously-persisted invariant as violated."""
-        cypher = "MATCH (i:BusinessInvariant {id: $id}) SET i.is_violated = true RETURN i.id"
+        cypher = (
+            "MATCH (i:BusinessInvariant {id: $id}) SET i.is_violated = true RETURN i.id"
+        )
         async with self._driver.session() as session:
             await session.run(cypher, {"id": invariant_id})
 

@@ -6,10 +6,13 @@ Dashboard endpoints for vulnerability findings, diff-auth, evidence vault, and a
 import hashlib
 import json
 from typing import Any, Dict, List
+import structlog
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from ai_osop.api.deps import assert_engagement_access, require_role, state, verify_token
 from ai_osop.core.findings_quality import FindingConversionEngine
+
+logger = structlog.get_logger("ai_osop.findings")
 
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
@@ -26,7 +29,8 @@ def _vuln_node_to_finding(v: Dict[str, Any]) -> Dict[str, Any]:
     try:
         ev = json.loads(ev_raw) if isinstance(ev_raw, str) else (ev_raw or [])
         ev_count = len(ev) if isinstance(ev, list) else (1 if ev else 0)
-    except Exception:
+    except Exception as e:
+        logger.warning("failed_to_parse_evidence", finding_id=v.get("id"), error=str(e))
         ev_count = 1 if ev_raw else 0
     confidence = float(v.get("confidence") or 0.0)
     tool_source = v.get("tool_source") or ""
@@ -55,12 +59,12 @@ async def _finding_exists(session_id: str, finding_id: str) -> bool:
 
 
 @router.get("/{session_id}/findings")
-async def get_findings(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+async def get_findings(
+    session_id: str, operator: Dict[str, Any] = Depends(verify_token)
+):
     """All Vulnerability nodes for an engagement, shaped for the UI."""
     await assert_engagement_access(operator, session_id)
-    cypher = (
-        "MATCH (v:Vulnerability) WHERE v.engagement_id = $sid RETURN v ORDER BY v.created_at DESC"
-    )
+    cypher = "MATCH (v:Vulnerability) WHERE v.engagement_id = $sid RETURN v ORDER BY v.created_at DESC"
     findings: List[Dict[str, Any]] = []
     async with state["orchestrator"].graph_memory._driver.session() as session:
         result = await session.run(cypher, {"sid": session_id})
@@ -72,12 +76,12 @@ async def get_findings(session_id: str, operator: Dict[str, Any] = Depends(verif
 
 
 @router.get("/{session_id}/diff-auth")
-async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+async def get_diff_auth_findings(
+    session_id: str, operator: Dict[str, Any] = Depends(verify_token)
+):
     """Differential-authorization findings for an engagement."""
     await assert_engagement_access(operator, session_id)
-    cypher = (
-        "MATCH (d:DiffAuthFinding) WHERE d.engagement_id = $sid RETURN d ORDER BY d.created_at DESC"
-    )
+    cypher = "MATCH (d:DiffAuthFinding) WHERE d.engagement_id = $sid RETURN d ORDER BY d.created_at DESC"
     out: List[Dict[str, Any]] = []
     async with state["orchestrator"].graph_memory._driver.session() as session:
         result = await session.run(cypher, {"sid": session_id})
@@ -88,7 +92,11 @@ async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Dep
             d = dict(d)
             diff_raw = d.get("evidence_diff")
             try:
-                diff = json.loads(diff_raw) if isinstance(diff_raw, str) else (diff_raw or {})
+                diff = (
+                    json.loads(diff_raw)
+                    if isinstance(diff_raw, str)
+                    else (diff_raw or {})
+                )
             except Exception:
                 diff = {}
             out.append(
@@ -109,28 +117,36 @@ async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Dep
 
 
 @router.get("/{session_id}/uncertainty")
-async def get_uncertainties(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+async def get_uncertainties(
+    session_id: str, operator: Dict[str, Any] = Depends(verify_token)
+):
     """Open uncertainties for an engagement."""
     await assert_engagement_access(operator, session_id)
     return []
 
 
 @router.get("/{session_id}/invariants")
-async def get_invariants(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+async def get_invariants(
+    session_id: str, operator: Dict[str, Any] = Depends(verify_token)
+):
     """Business-logic invariants discovered for an engagement."""
     await assert_engagement_access(operator, session_id)
     return await state["orchestrator"].graph_memory.get_invariants(session_id)
 
 
 @router.get("/{session_id}/payouts")
-async def get_payouts(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+async def get_payouts(
+    session_id: str, operator: Dict[str, Any] = Depends(verify_token)
+):
     """Predicted/realised bug-bounty payouts for an engagement."""
     await assert_engagement_access(operator, session_id)
     return []
 
 
 @router.post("/{session_id}/discovery/trigger")
-async def trigger_discovery(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+async def trigger_discovery(
+    session_id: str, operator: Dict[str, Any] = Depends(verify_token)
+):
     """Kick off authenticated discovery for the engagement."""
     await assert_engagement_access(operator, session_id)
     from ai_osop.api.routers.sessions import _trigger_authenticated_discovery
@@ -148,7 +164,9 @@ async def verify_finding(
     """Operator force-verify: mark the vulnerability validated in the graph."""
     await assert_engagement_access(operator, session_id)
     if not await _finding_exists(session_id, finding_id):
-        raise HTTPException(status_code=404, detail="Finding not found for this engagement")
+        raise HTTPException(
+            status_code=404, detail="Finding not found for this engagement"
+        )
     await state["orchestrator"].graph_memory.validate_vulnerability(finding_id)
     return {"status": "verified", "finding_id": finding_id, "session_id": session_id}
 
@@ -158,7 +176,7 @@ async def resolve_finding(
     session_id: str,
     finding_id: str,
     status: str = Body(...),
-    operator: Dict[str, Any] = Depends(verify_token)
+    operator: Dict[str, Any] = Depends(verify_token),
 ):
     """Operator resolves a finding's outcome."""
     await assert_engagement_access(operator, session_id)
@@ -176,7 +194,9 @@ async def replay_finding(
     """Queue an exploit-validation (replay) task for a finding."""
     await assert_engagement_access(operator, session_id)
     if not await _finding_exists(session_id, finding_id):
-        raise HTTPException(status_code=404, detail="Finding not found for this engagement")
+        raise HTTPException(
+            status_code=404, detail="Finding not found for this engagement"
+        )
     task = Task(
         type="validate_exploit",
         agent_type=AgentType.EXPLOIT_VALIDATION,
@@ -207,7 +227,9 @@ async def get_finding_vault(
         vres = await session.run(vuln_q, {"fid": finding_id, "sid": session_id})
         vrec = await vres.single()
         if not vrec:
-            raise HTTPException(status_code=404, detail="Finding not found for this engagement")
+            raise HTTPException(
+                status_code=404, detail="Finding not found for this engagement"
+            )
         v = dict(vrec["v"])
         ev_raw = v.get("evidence")
         try:
@@ -230,13 +252,23 @@ async def get_finding_vault(
             ev = dict(record["ev"])
             etype = (ev.get("type") or "").lower()
             path = ev.get("path") or ""
-            if any(k in etype or k in path.lower() for k in ("screenshot", "png", "jpg", "dom")):
+            if any(
+                k in etype or k in path.lower()
+                for k in ("screenshot", "png", "jpg", "dom")
+            ):
                 screenshots.append(path)
-            workflow_trace.append({"type": ev.get("type"), "path": path, "id": ev.get("id")})
+            workflow_trace.append(
+                {"type": ev.get("type"), "path": path, "id": ev.get("id")}
+            )
 
     integrity_hash = hashlib.sha256(
         json.dumps(
-            {"f": finding_id, "rq": raw_requests, "rs": raw_responses, "sc": screenshots},
+            {
+                "f": finding_id,
+                "rq": raw_requests,
+                "rs": raw_responses,
+                "sc": screenshots,
+            },
             sort_keys=True,
             default=str,
         ).encode()

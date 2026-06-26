@@ -84,7 +84,7 @@ class StackProfilerAgent(BaseAgent):
 
         try:
             self.current_profile = json.loads(profile_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError):
             self.current_profile = {"error": "Failed to parse profile reasoning"}
 
         # 3. Store the profile in the graph

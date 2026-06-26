@@ -8,8 +8,11 @@ from ai_osop.core.models import OutcomeRecord, OutcomeStatus
 
 @pytest.mark.asyncio
 async def test_sync_outcomes_simulated() -> None:
-    # Setup
-    with patch("ai_osop.core.config.settings.h1_api_key", "test-key"):
+    # Setup. bug_bounty_simulation now defaults to False (OSOP-P1-06 secure default), so
+    # this test of SIMULATED behavior must opt into simulation explicitly.
+    with patch("ai_osop.core.config.settings.bug_bounty_simulation", True), patch(
+        "ai_osop.core.config.settings.h1_api_key", "test-key"
+    ):
         adapter = BugBountyAdapter()
         engagement_id = "eng-123"
 
@@ -39,10 +42,13 @@ async def test_sync_outcomes_no_key() -> None:
 
 @pytest.mark.asyncio
 async def test_submit_finding() -> None:
-    adapter = BugBountyAdapter()
-    finding = {"id": "f-1", "title": "Test XSS"}
+    # Simulated submission path (no live HackerOne call). Must opt into simulation now
+    # that it defaults off (OSOP-P1-06).
+    with patch("ai_osop.core.config.settings.bug_bounty_simulation", True):
+        adapter = BugBountyAdapter()
+        finding = {"id": "f-1", "title": "Test XSS"}
 
-    result = await adapter.submit_finding(finding, platform="h1")
+        result = await adapter.submit_finding(finding, platform="h1")
 
     assert result["status"] == "submitted"
     assert "H1-" in result["external_id"]

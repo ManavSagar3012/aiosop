@@ -13,6 +13,7 @@ from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task
 import re
+from ai_osop.agents.retrieval_agent import RetrievalAgent
 import hashlib
 import aiohttp
 from html.parser import HTMLParser
@@ -68,12 +69,26 @@ class ReconAgent(BaseAgent):
         """Reason about the current context using specialized skills."""
         skills_content = "\n\n".join([self._load_skill(s) for s in skill_names])
 
+        # Retrieve methodology
+        retrieval_agent = RetrievalAgent(self.ctx)
+        await retrieval_agent._setup_resources()
+        methodologies = retrieval_agent.search("Other")
+        
+        # Filter for recon-related methodology
+        recon_methodologies = [m for m in methodologies if any(tool in m.get("command_pattern", "") for tool in ["subfinder", "httpx", "nuclei", "katana"])]
+        
+        # Add retrieved methodology to context
+        retrieved_patterns = "\n".join([m.get("command_pattern", "") for m in recon_methodologies])
+        retrieved_prerequisites = "\n".join([str(p) for m in recon_methodologies for p in m.get("prerequisites", [])])
+        
+        enriched_context = f"{context}\n\nRetrieved Recon Methodology:\n{retrieved_patterns}\n\nRetrieved Recon Prerequisites:\n{retrieved_prerequisites}"
+
         messages = [
             {
                 "role": "system",
                 "content": f"You are an AI Reconnaissance Agent. Use the following specialized skills to perform your analysis:\n\n{skills_content}",
             },
-            {"role": "user", "content": context},
+            {"role": "user", "content": enriched_context},
         ]
 
         return await self.ctx.llm_client.complete(messages)

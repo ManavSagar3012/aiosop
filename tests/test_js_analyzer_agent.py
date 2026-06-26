@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ai_osop.agents.base import AgentContext
-from ai_osop.agents.experimental.js_analyzer_agent import JSAnalyzerAgent
+from ai_osop.agents.js_analyzer_agent import JSAnalyzerAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 

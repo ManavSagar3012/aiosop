@@ -201,3 +201,9 @@ mock_bundle.js*
 test_playwright*.png
 aero_live_*.txt
 nul
+/-
+/nul
+full_file.txt
+original_file.txt
+update_*.py
+fix_*.py

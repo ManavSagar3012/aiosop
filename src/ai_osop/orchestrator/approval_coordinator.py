@@ -33,12 +33,12 @@ class ApprovalCoordinator:
         if not session:
             raise WorkflowException(f"Engagement {request.engagement_id} not found")
         
-        # Verify scope signature
-        secret_key = getattr(settings, "audit_secret_key", b"default-insecure-audit-key")
-        if isinstance(secret_key, str):
-            secret_key = secret_key.encode()
-        
-        if not session.scope.verify_signature(secret_key):
+        # Verify scope signature with the SINGLE shared signing key (OSOP-P0-03), so
+        # verification can never diverge from how engagement_manager signed it. This
+        # fail-closes in production when OSOP_AUDIT_SECRET_KEY is unset.
+        from ai_osop.core.config import scope_signing_key
+
+        if not session.scope.verify_signature(scope_signing_key()):
             raise WorkflowException("Scope signature verification failed")
 
         # Audit log approval_requested

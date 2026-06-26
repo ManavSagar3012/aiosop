@@ -43,12 +43,7 @@ class LiteLLMClient:
 
         safe_messages = sanitize_messages(messages)
 
-        if settings.mock_llm:
-            target = "unknown"
-            for m in safe_messages:
-                if m["role"] == "user":
-                    target = m["content"][:100]
-            return f"[MOCK REASONING] Analyzing context for {target}. Recommended approach: Adaptive payload mutation using semantic memory."
+
 
         selected_model = model or self.primary_model
         try:

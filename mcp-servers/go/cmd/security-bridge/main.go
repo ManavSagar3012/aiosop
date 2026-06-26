@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
+	"regexp"
 
 	"github.com/ai-osop/mcp-servers/sdk"
 )
@@ -26,14 +28,10 @@ func main() {
 		Returns: map[string]any{"data": "object", "status": "string"},
 		Handler: func(params map[string]any) any {
 			url, _ := params["url"].(string)
-			
-			// Check if sqlmap is installed
 			_, err := exec.LookPath("sqlmap")
 			if err != nil {
 				return map[string]any{"status": "error", "error": "sqlmap not installed"}
 			}
-
-			// Real execution (simplified)
 			args := []string{"-u", url, "--batch", "--random-agent"}
 			if dump, ok := params["dump"].(bool); ok && dump {
 				args = append(args, "--dump")
@@ -56,12 +54,10 @@ func main() {
 		Returns: map[string]any{"hosts": "array", "status": "string"},
 		Handler: func(params map[string]any) any {
 			target, _ := params["target"].(string)
-			
 			_, err := exec.LookPath("nmap")
 			if err != nil {
 				return map[string]any{"status": "error", "error": "nmap not installed"}
 			}
-
 			args := []string{"-sV", "-T4", "-oJ", "-", target}
 			output, _ := exec.Command("nmap", args...).Output()
 			var res any
@@ -83,26 +79,22 @@ func main() {
 		Returns: map[string]any{"results": "array", "status": "string"},
 		Handler: func(params map[string]any) any {
 			url, _ := params["url"].(string)
-			wordlist, ok := params["wordlist"].(string)
-			if !ok || wordlist == "" {
-				wordlist = "common_wordlist.txt"
+			wordlist, _ := params["wordlist"].(string)
+			if wordlist == "" {
+				wordlist = "common.txt"
 			}
-			
 			_, err := exec.LookPath("ffuf")
 			if err != nil {
 				return map[string]any{"status": "error", "error": "ffuf not installed"}
 			}
-
-			// Real execution of ffuf
-			args := []string{"-u", url, "-w", wordlist, "-s"}
+			args := []string{"-u", url, "-w", wordlist, "-o", "-", "-of", "json"}
 			output, execErr := exec.Command("ffuf", args...).CombinedOutput()
-			var errStr string
-			if execErr != nil {
-				errStr = execErr.Error()
-			}
-			return map[string]any{"status": "success", "raw": string(output), "error": errStr}
+			var res any
+			_ = json.Unmarshal(output, &res)
+			return map[string]any{"status": "success", "data": res, "raw": string(output), "error": fmt.Sprintf("%v", execErr)}
 		},
 	})
+
 	// Masscan Tool
 	server.Register(sdk.Tool{
 		Name:           "masscan",
@@ -113,36 +105,211 @@ func main() {
 			{"name": "target", "type": "string", "description": "Target IP range", "required": true},
 			{"name": "ports", "type": "string", "description": "Ports to scan", "required": true},
 		},
-		Returns: map[string]any{"status": "string", "raw": "string"},
+		Returns: map[string]any{"status": "string", "hosts": "array"},
 		Handler: func(params map[string]any) any {
 			target, _ := params["target"].(string)
 			ports, _ := params["ports"].(string)
-			output, err := exec.Command("masscan", target, "-p", ports).CombinedOutput()
+			_, err := exec.LookPath("masscan")
 			if err != nil {
-				return map[string]any{"status": "error", "error": err.Error()}
+				return map[string]any{"status": "error", "error": "masscan not installed"}
 			}
-			return map[string]any{"status": "success", "raw": string(output)}
+			args := []string{target, "-p", ports, "-oJ", "-"}
+			output, execErr := exec.Command("masscan", args...).CombinedOutput()
+			var res any
+			_ = json.Unmarshal(output, &res)
+			return map[string]any{"status": "success", "data": res, "raw": string(output), "error": fmt.Sprintf("%v", execErr)}
 		},
 	})
-	
+
 	// Gobuster Tool
 	server.Register(sdk.Tool{
 		Name:           "gobuster",
-		Description:    "Directory/File busting tool.",
+		Description:    "Directory/File, DNS and VHost busting tool.",
 		TimeoutSeconds: 600,
 		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "url", "type": "string", "description": "Target URL", "required": true},
+			{"name": "wordlist", "type": "string", "description": "Path to wordlist", "required": false},
+			{"name": "mode", "type": "string", "description": "Mode: dir, dns, fuzz, vhost (default: dir)", "required": false},
 		},
-		Returns: map[string]any{"status": "string", "raw": "string"},
+		Returns: map[string]any{"status": "string", "found": "array"},
 		Handler: func(params map[string]any) any {
 			url, _ := params["url"].(string)
-			output, err := exec.Command("gobuster", "dir", "-u", url, "-w", "common_wordlist.txt").CombinedOutput()
-			if err != nil {
-				return map[string]any{"status": "error", "error": err.Error()}
+			wordlist, _ := params["wordlist"].(string)
+			mode, _ := params["mode"].(string)
+			if mode == "" {
+				mode = "dir"
 			}
-			return map[string]any{"status": "success", "raw": string(output)}
+			if wordlist == "" {
+				wordlist = "common.txt"
+			}
+			_, err := exec.LookPath("gobuster")
+			if err != nil {
+				return map[string]any{"status": "error", "error": "gobuster not installed"}
+			}
+			args := []string{mode, "-u", url, "-w", wordlist, "-o", "-"}
+			output, execErr := exec.Command("gobuster", args...).CombinedOutput()
+			var res any
+			_ = json.Unmarshal(output, &res)
+			return map[string]any{"status": "success", "data": res, "raw": string(output), "error": fmt.Sprintf("%v", execErr)}
 		},
 	})
+
+	// Nikto Tool
+	server.Register(sdk.Tool{
+		Name:           "nikto",
+		Description:    "Web server scanner which performs comprehensive tests.",
+		TimeoutSeconds: 1200,
+		ScopeCheck:     true,
+		Parameters: []map[string]any{
+			{"name": "host", "type": "string", "description": "Target host", "required": true},
+		},
+		Returns: map[string]any{"status": "string", "vulnerabilities": "array"},
+		Handler: func(params map[string]any) any {
+			host, _ := params["host"].(string)
+			_, err := exec.LookPath("nikto")
+			if err != nil {
+				return map[string]any{"status": "error", "error": "nikto not installed"}
+			}
+			output, execErr := exec.Command("nikto", "-h", host, "-Format", "json").CombinedOutput()
+			var res any
+			_ = json.Unmarshal(output, &res)
+			return map[string]any{"status": "success", "data": res, "raw": string(output), "error": fmt.Sprintf("%v", execErr)}
+		},
+	})
+
+	// WPScan Tool
+	server.Register(sdk.Tool{
+		Name:           "wpscan",
+		Description:    "WordPress security scanner.",
+		TimeoutSeconds: 1200,
+		ScopeCheck:     true,
+		Parameters: []map[string]any{
+			{"name": "url", "type": "string", "description": "Target WordPress URL", "required": true},
+		},
+		Returns: map[string]any{"status": "string", "findings": "array"},
+		Handler: func(params map[string]any) any {
+			url, _ := params["url"].(string)
+			_, err := exec.LookPath("wpscan")
+			if err != nil {
+				return map[string]any{"status": "error", "error": "wpscan not installed"}
+			}
+			output, execErr := exec.Command("wpscan", "--url", url, "--format", "json").CombinedOutput()
+			var res any
+			_ = json.Unmarshal(output, &res)
+			return map[string]any{"status": "success", "data": res, "raw": string(output), "error": fmt.Sprintf("%v", execErr)}
+		},
+	})
+
+	// Katana Crawler Tool
+	server.Register(sdk.Tool{
+		Name:           "katana_crawl",
+		Description:    "Deep web crawler to discover hidden endpoints and JS files.",
+		TimeoutSeconds: 600,
+		ScopeCheck:     true,
+		Parameters: []map[string]any{
+			{"name": "url", "type": "string", "description": "Starting URL", "required": true},
+			{"name": "depth", "type": "integer", "description": "Crawl depth", "required": false},
+			{"name": "js_crawl", "type": "boolean", "description": "Enable JavaScript crawling", "required": false},
+		},
+		Returns: map[string]any{"status": "string", "endpoints": "array", "js_files": "array"},
+		Handler: func(params map[string]any) any {
+			url, _ := params["url"].(string)
+			depth, _ := params["depth"].(float64)
+			jsCrawl, _ := params["js_crawl"].(bool)
+			if depth == 0 {
+				depth = 3
+			}
+			_, err := exec.LookPath("katana")
+			if err != nil {
+				return map[string]any{"status": "error", "error": "katana not installed"}
+			}
+			args := []string{"-u", url, "-d", fmt.Sprintf("%d", int(depth)), "-j"}
+			if jsCrawl {
+				args = append(args, "-js-crawl")
+			}
+			output, execErr := exec.Command("katana", args...).CombinedOutput()
+			var res any
+			_ = json.Unmarshal(output, &res)
+			return map[string]any{"status": "success", "data": res, "raw": string(output), "error": fmt.Sprintf("%v", execErr)}
+		},
+	})
+
+	// JS Analyzer Tool (Pure Go - no external dependency)
+	server.Register(sdk.Tool{
+		Name:           "js_analyze",
+		Description:    "Extract API routes, secrets, and variables from JS files.",
+		TimeoutSeconds: 300,
+		ScopeCheck:     true,
+		Parameters: []map[string]any{
+			{"name": "js_url", "type": "string", "description": "URL of the JS file to analyze", "required": true},
+		},
+		Returns: map[string]any{"status": "string", "routes": "array", "secrets": "array", "metadata": "object"},
+		Handler: func(params map[string]any) any {
+			jsURL, _ := params["js_url"].(string)
+			if jsURL == "" {
+				return map[string]any{"status": "error", "error": "js_url is required"}
+			}
+			resp, err := http.Get(jsURL)
+			if err != nil {
+				return map[string]any{"status": "error", "error": fmt.Sprintf("failed to fetch JS: %v", err)}
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != 200 {
+				return map[string]any{"status": "error", "error": fmt.Sprintf("HTTP %d", resp.StatusCode)}
+			}
+			var body []byte
+			buf := make([]byte, 1024*1024)
+			n, _ := resp.Body.Read(buf)
+			body = buf[:n]
+			jsContent := string(body)
+
+			routeRe := regexp.MustCompile(`[\x27\x22](/api/[a-zA-Z0-9_\\-\\/]+)[\x27\x22]`)
+			routes := routeRe.FindAllStringSubmatch(jsContent, -1)
+			var routeList []string
+			for _, match := range routes {
+				if len(match) > 1 {
+					routeList = append(routeList, match[1])
+				}
+			}
+
+			apiKeyRe := regexp.MustCompile(`(?i)(api[_-]?key|apikey)[\\s]*[:=][\\s]*[\x27\x22]([a-zA-Z0-9_-]{16,})[\x27\x22]`)
+			bearerRe := regexp.MustCompile(`(?i)(bearer|token)[\\s]*[:=][\\s]*[\x27\x22]([a-zA-Z0-9_.-]{20,})[\x27\x22]`)
+			awsRe := regexp.MustCompile(`(?i)(AKIA[0-9A-Z]{16})`)
+			jwtRe := regexp.MustCompile(`eyJ[a-zA-Z0-9_-]*\\.eyJ[a-zA-Z0-9_-]*\\.[a-zA-Z0-9_-]*`)
+			secretPatterns := map[string]*regexp.Regexp{
+				"api_key":      apiKeyRe,
+				"bearer_token": bearerRe,
+				"aws_key":      awsRe,
+				"jwt":          jwtRe,
+			}
+			var secrets []map[string]any
+			for spName, spPattern := range secretPatterns {
+				matches := spPattern.FindAllStringSubmatch(jsContent, -1)
+				for _, match := range matches {
+					var val string
+					if len(match) > 2 {
+						val = match[2]
+					} else if len(match) > 1 {
+						val = match[1]
+					} else {
+						val = match[0]
+					}
+					secrets = append(secrets, map[string]any{
+						"type":    spName,
+						"value":   val,
+						"context": jsURL,
+					})
+				}
+			}
+			return map[string]any{
+				"status":   "success",
+				"routes":   routeList,
+				"secrets":  secrets,
+				"metadata": map[string]any{"url": jsURL, "size_bytes": len(body)},
+			}
+		},
+	})
+
 	_ = server.Run(":8087")
 }

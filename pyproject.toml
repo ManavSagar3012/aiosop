@@ -60,6 +60,15 @@ pre-commit = "^3.6.0"
 [tool.poetry.scripts]
 ai-osop = "ai_osop.cli:main"
 
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E722 bans bare `except:`; the rest catch common silent-failure / dead-code smells.
+# Enforced in CI; a pytest AST guard (tests/test_lint_guards.py) enforces E722 locally too.
+select = ["E722", "F811", "F841"]
+
 [tool.black]
 line-length = 100
 target-version = ['py311']
