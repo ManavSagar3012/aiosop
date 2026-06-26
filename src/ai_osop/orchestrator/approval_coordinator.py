@@ -28,6 +28,36 @@ class ApprovalCoordinator:
 
     async def request_approval(self, request: ApprovalRequest) -> ApprovalRequest:
         """Submit approval request and BLOCK until the operator decides (or timeout)."""
+        # Get engagement session to verify scope signature
+        session = await self._orch.session_memory.get_session_by_engagement_id(request.engagement_id)
+        if not session:
+            raise WorkflowException(f"Engagement {request.engagement_id} not found")
+        
+        # Verify scope signature
+        secret_key = getattr(settings, "audit_secret_key", b"default-insecure-audit-key")
+        if isinstance(secret_key, str):
+            secret_key = secret_key.encode()
+        
+        if not session.scope.verify_signature(secret_key):
+            raise WorkflowException("Scope signature verification failed")
+
+        # Audit log approval_requested
+        await self._orch._audit_log(
+            AuditEvent(
+                event_type="approval_requested",
+                severity="info",
+                actor_type="system",
+                actor_id="system",
+                action={
+                    "request_id": request.id,
+                    "task_id": request.task_id,
+                },
+                result={"status": "pending"},
+                context={"engagement_id": request.engagement_id},
+                engagement_id=request.engagement_id,
+            )
+        )
+
         await self._register_approval(request)
         try:
             await asyncio.wait_for(
@@ -141,6 +171,24 @@ class ApprovalCoordinator:
             )
 
             return request
+
+    def is_task_approved(self, task_id: str) -> bool:
+        """Single source of authority for whether a task may run.
+
+        Returns True ONLY if an ApprovalRequest for this task was resolved
+        "approved" by a named operator. This deliberately does NOT consult
+        ``task.payload["operator_approved"]`` — that field is agent-writable and
+        persisted to Neo4j/Redis, so trusting it is the GAP-2-1/GAP-2-2 bypass.
+        Approval lives in the (operator-resolved) ApprovalRequest record only.
+        """
+        for req in self._orch._approval_requests.values():
+            if (
+                req.task_id == task_id
+                and req.status == "approved"
+                and req.operator_id
+            ):
+                return True
+        return False
 
     @staticmethod
     def _strip_stale_approval(task) -> None:

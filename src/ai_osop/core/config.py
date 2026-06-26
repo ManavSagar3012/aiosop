@@ -35,9 +35,11 @@ class AgentType(str, Enum):
     CONCURRENCY = "concurrency"
     NEXTJS_SPECIALIST = "nextjs_specialist"
     REACT_SPECIALIST = "react_specialist"
+    RETRIEVAL = "retrieval"
 
 
 class VulnClass(str, Enum):
+    UNKNOWN = "unknown"
     SQLI = "sqli"
     XSS = "xss"
     SSRF = "ssrf"
@@ -115,7 +117,12 @@ TASK_SKILL_MAP = {
         "jwt_security",
     ],
     "web_pentest": ["web_pentest"],
-    "api_security": ["api_security", "bola_testing", "auth_testing", "graphql_security"],
+    "api_security": [
+        "api_security",
+        "bola_testing",
+        "auth_testing",
+        "graphql_security",
+    ],
     "ad_pentest": ["active_directory", "lateral_movement", "privilege_escalation"],
     "cloud_pentest": ["cloud_pentest", "serverless_security", "kubernetes_security"],
     "infra_scan": ["vuln_scanning"],
@@ -149,26 +156,40 @@ class Settings(BaseSettings):
     # Infrastructure
     app_name: str = "ai-osop"
     environment: str = Field(default="development", validation_alias="OSOP_ENV")
-    log_level: LogLevel = Field(default=LogLevel.INFO, validation_alias="OSOP_LOG_LEVEL")
+    log_level: LogLevel = Field(
+        default=LogLevel.INFO, validation_alias="OSOP_LOG_LEVEL"
+    )
 
     # Database
-    neo4j_uri: str = Field(default="bolt://localhost:7687", validation_alias="OSOP_NEO4J_URI")
+    neo4j_uri: str = Field(
+        default="bolt://localhost:7687", validation_alias="OSOP_NEO4J_URI"
+    )
     neo4j_user: str = Field(default="neo4j", validation_alias="OSOP_NEO4J_USER")
-    neo4j_password: str = Field(default="change-me-local", validation_alias="OSOP_NEO4J_PASSWORD")
+    neo4j_password: str = Field(
+        default="change-me-local", validation_alias="OSOP_NEO4J_PASSWORD"
+    )
 
     postgres_uri: str = Field(
         default="postgresql+asyncpg://osop:osop@localhost:5432/osop",
         validation_alias="OSOP_POSTGRES_URI",
     )
 
-    redis_uri: str = Field(default="redis://localhost:6379/0", validation_alias="OSOP_REDIS_URI")
+    redis_uri: str = Field(
+        default="redis://localhost:6379/0", validation_alias="OSOP_REDIS_URI"
+    )
 
     # Agent / Safety
-    agent_cleanup_timeout_seconds: float = Field(default=10.0, validation_alias="OSOP_AGENT_CLEANUP_TIMEOUT")
+    agent_cleanup_timeout_seconds: float = Field(
+        default=10.0, validation_alias="OSOP_AGENT_CLEANUP_TIMEOUT"
+    )
 
     # LLM / AI
-    llm_primary_provider: str = Field(default="openai", validation_alias="OSOP_LLM_PRIMARY")
-    llm_primary_model: str = Field(default="gpt-4o", validation_alias="OSOP_LLM_PRIMARY_MODEL")
+    llm_primary_provider: str = Field(
+        default="openai", validation_alias="OSOP_LLM_PRIMARY"
+    )
+    llm_primary_model: str = Field(
+        default="gpt-4o", validation_alias="OSOP_LLM_PRIMARY_MODEL"
+    )
     llm_fallback_model: str = Field(
         default="gpt-4o-mini", validation_alias="OSOP_LLM_FALLBACK_MODEL"
     )
@@ -201,19 +222,27 @@ class Settings(BaseSettings):
     max_tasks_per_second: int = 100
     task_default_timeout: int = 300
     approval_timeout_seconds: int = 1800  # 30 minutes
-    temporal_enabled: bool = Field(default=False, validation_alias="OSOP_TEMPORAL_ENABLED")
+    temporal_enabled: bool = Field(
+        default=False, validation_alias="OSOP_TEMPORAL_ENABLED"
+    )
     temporal_address: str = Field(
         default="localhost:7233", validation_alias="OSOP_TEMPORAL_ADDRESS"
     )
-    temporal_namespace: str = Field(default="default", validation_alias="OSOP_TEMPORAL_NAMESPACE")
+    temporal_namespace: str = Field(
+        default="default", validation_alias="OSOP_TEMPORAL_NAMESPACE"
+    )
     temporal_task_queue: str = Field(
         default="ai-osop-tasks", validation_alias="OSOP_TEMPORAL_TASK_QUEUE"
     )
 
     # Burp Suite
-    burp_mcp_host: str = Field(default="localhost", validation_alias="OSOP_BURP_MCP_HOST")
+    burp_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_BURP_MCP_HOST"
+    )
     burp_mcp_port: int = Field(default=8081, validation_alias="OSOP_BURP_MCP_PORT")
-    burp_api_key: Optional[str] = Field(default=None, validation_alias="OSOP_BURP_API_KEY")
+    burp_api_key: Optional[str] = Field(
+        default=None, validation_alias="OSOP_BURP_API_KEY"
+    )
 
     # PATCH (AIOSOP-SEC-001, 2026-06-15): API bearer-token shared secret —
     # stopgap kept as fallback when OSOP_JWT_SECRET is unset.
@@ -227,18 +256,32 @@ class Settings(BaseSettings):
     # preserving the dev workflow without re-opening the auth-bypass hole.
     jwt_secret: Optional[str] = Field(default=None, validation_alias="OSOP_JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", validation_alias="OSOP_JWT_ALGORITHM")
-    jwt_audience: Optional[str] = Field(default=None, validation_alias="OSOP_JWT_AUDIENCE")
+    jwt_audience: Optional[str] = Field(
+        default=None, validation_alias="OSOP_JWT_AUDIENCE"
+    )
     jwt_issuer: Optional[str] = Field(default=None, validation_alias="OSOP_JWT_ISSUER")
 
-    recon_mcp_host: str = Field(default="localhost", validation_alias="OSOP_RECON_MCP_HOST")
+    recon_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_RECON_MCP_HOST"
+    )
     recon_mcp_port: int = Field(default=8082, validation_alias="OSOP_RECON_MCP_PORT")
-    payload_mcp_host: str = Field(default="localhost", validation_alias="OSOP_PAYLOAD_MCP_HOST")
-    payload_mcp_port: int = Field(default=8083, validation_alias="OSOP_PAYLOAD_MCP_PORT")
-    nuclei_mcp_host: str = Field(default="localhost", validation_alias="OSOP_NUCLEI_MCP_HOST")
+    payload_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_PAYLOAD_MCP_HOST"
+    )
+    payload_mcp_port: int = Field(
+        default=8083, validation_alias="OSOP_PAYLOAD_MCP_PORT"
+    )
+    nuclei_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_NUCLEI_MCP_HOST"
+    )
     nuclei_mcp_port: int = Field(default=8084, validation_alias="OSOP_NUCLEI_MCP_PORT")
-    shodan_mcp_host: str = Field(default="localhost", validation_alias="OSOP_SHODAN_MCP_HOST")
+    shodan_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_SHODAN_MCP_HOST"
+    )
     shodan_mcp_port: int = Field(default=8085, validation_alias="OSOP_SHODAN_MCP_PORT")
-    shodan_api_key: Optional[str] = Field(default=None, validation_alias="OSOP_SHODAN_API_KEY")
+    shodan_api_key: Optional[str] = Field(
+        default=None, validation_alias="OSOP_SHODAN_API_KEY"
+    )
     h1_api_identifier: Optional[str] = Field(
         default=None, validation_alias="OSOP_H1_API_IDENTIFIER"
     )
@@ -250,23 +293,37 @@ class Settings(BaseSettings):
     # HackerOne/Bugcrowd — and, critically, never submit AI-generated vulnerability
     # reports to a live program. Set OSOP_BUG_BOUNTY_SIMULATION=false to enable real
     # platform calls (requires valid h1/bc credentials).
-    bug_bounty_simulation: bool = Field(default=True, validation_alias="OSOP_BUG_BOUNTY_SIMULATION")
+    bug_bounty_simulation: bool = Field(
+        default=True, validation_alias="OSOP_BUG_BOUNTY_SIMULATION"
+    )
 
-    browser_mcp_host: str = Field(default="127.0.0.1", validation_alias="OSOP_BROWSER_MCP_HOST")
-    browser_mcp_port: int = Field(default=8091, validation_alias="OSOP_BROWSER_MCP_PORT")
+    browser_mcp_host: str = Field(
+        default="127.0.0.1", validation_alias="OSOP_BROWSER_MCP_HOST"
+    )
+    browser_mcp_port: int = Field(
+        default=8091, validation_alias="OSOP_BROWSER_MCP_PORT"
+    )
     security_bridge_host: str = Field(
         default="localhost", validation_alias="OSOP_SECURITY_BRIDGE_HOST"
     )
-    security_bridge_port: int = Field(default=8087, validation_alias="OSOP_SECURITY_BRIDGE_PORT")
+    security_bridge_port: int = Field(
+        default=8087, validation_alias="OSOP_SECURITY_BRIDGE_PORT"
+    )
     threat_intel_mcp_host: str = Field(
         default="localhost", validation_alias="OSOP_THREAT_INTEL_MCP_HOST"
     )
-    threat_intel_mcp_port: int = Field(default=8086, validation_alias="OSOP_THREAT_INTEL_MCP_PORT")
+    threat_intel_mcp_port: int = Field(
+        default=8086, validation_alias="OSOP_THREAT_INTEL_MCP_PORT"
+    )
     source_map_mcp_host: str = Field(
         default="localhost", validation_alias="OSOP_SOURCE_MAP_MCP_HOST"
     )
-    source_map_mcp_port: int = Field(default=8096, validation_alias="OSOP_SOURCE_MAP_MCP_PORT")
-    cloud_mcp_host: str = Field(default="localhost", validation_alias="OSOP_CLOUD_MCP_HOST")
+    source_map_mcp_port: int = Field(
+        default=8096, validation_alias="OSOP_SOURCE_MAP_MCP_PORT"
+    )
+    cloud_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_CLOUD_MCP_HOST"
+    )
     cloud_mcp_port: int = Field(default=8097, validation_alias="OSOP_CLOUD_MCP_PORT")
     turbo_intruder_mcp_host: str = Field(
         default="localhost", validation_alias="OSOP_TURBO_INTRUDER_MCP_HOST"
@@ -312,19 +369,35 @@ class Settings(BaseSettings):
 
     # Observability (Sprint 6)
     otel_enabled: bool = Field(default=False, validation_alias="OSOP_OTEL_ENABLED")
-    otel_endpoint: str = Field(default="localhost:4317", validation_alias="OSOP_OTEL_ENDPOINT")
-    otel_service_name: str = Field(default="ai-osop", validation_alias="OSOP_OTEL_SERVICE_NAME")
-    otel_environment: str = Field(default="dev", validation_alias="OSOP_OTEL_ENVIRONMENT")
+    otel_endpoint: str = Field(
+        default="localhost:4317", validation_alias="OSOP_OTEL_ENDPOINT"
+    )
+    otel_service_name: str = Field(
+        default="ai-osop", validation_alias="OSOP_OTEL_SERVICE_NAME"
+    )
+    otel_environment: str = Field(
+        default="dev", validation_alias="OSOP_OTEL_ENVIRONMENT"
+    )
 
-    correlation_id_enabled: bool = Field(default=True, validation_alias="OSOP_CORRELATION_ID_ENABLED")
+    correlation_id_enabled: bool = Field(
+        default=True, validation_alias="OSOP_CORRELATION_ID_ENABLED"
+    )
     metrics_enabled: bool = Field(default=True, validation_alias="OSOP_METRICS_ENABLED")
-    trace_propagation_enabled: bool = Field(default=True, validation_alias="OSOP_TRACE_PROPAGATION_ENABLED")
-    otel_sampling_rate: float = Field(default=1.0, validation_alias="OSOP_OTEL_SAMPLING_RATE")
+    trace_propagation_enabled: bool = Field(
+        default=True, validation_alias="OSOP_TRACE_PROPAGATION_ENABLED"
+    )
+    otel_sampling_rate: float = Field(
+        default=1.0, validation_alias="OSOP_OTEL_SAMPLING_RATE"
+    )
 
     # Sentry
     sentry_dsn: Optional[str] = Field(default=None, validation_alias="SENTRY_DSN")
-    sentry_traces_sample_rate: float = Field(default=1.0, validation_alias="SENTRY_TRACES_SAMPLE_RATE")
-    sentry_profiles_sample_rate: float = Field(default=0.0, validation_alias="SENTRY_PROFILES_SAMPLE_RATE")
+    sentry_traces_sample_rate: float = Field(
+        default=1.0, validation_alias="SENTRY_TRACES_SAMPLE_RATE"
+    )
+    sentry_profiles_sample_rate: float = Field(
+        default=0.0, validation_alias="SENTRY_PROFILES_SAMPLE_RATE"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -334,6 +407,17 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def scope_signing_key() -> bytes:
+    """Return the HMAC key used to sign/verify scope manifests (GAP-2-4).
+
+    Sourced from settings.audit_secret_key when configured. Falls back to a clearly
+    insecure dev default; production deployments MUST set audit_secret_key."""
+    key = getattr(settings, "audit_secret_key", None) or "default-insecure-audit-key"
+    return key.encode() if isinstance(key, str) else key
+
+
 class EngagementPhase(str, Enum):
     INITIALIZED = "initialized"
     RECONNAISSANCE = "reconnaissance"
@@ -343,6 +427,70 @@ class EngagementPhase(str, Enum):
     REPORTING = "reporting"
     COMPLETED = "completed"
     HALTED = "halted"
+
+
+VALID_TRANSITIONS = {
+    EngagementPhase.INITIALIZED: [
+        EngagementPhase.RECONNAISSANCE,
+        EngagementPhase.HALTED,
+    ],
+    EngagementPhase.RECONNAISSANCE: [
+        EngagementPhase.VULNERABILITY_DISCOVERY,
+        EngagementPhase.HALTED,
+    ],
+    EngagementPhase.VULNERABILITY_DISCOVERY: [
+        EngagementPhase.EXPLOITATION,
+        EngagementPhase.REPORTING,
+        EngagementPhase.HALTED,
+    ],
+    EngagementPhase.EXPLOITATION: [
+        EngagementPhase.POST_EXPLOITATION,
+        EngagementPhase.REPORTING,
+        EngagementPhase.HALTED,
+    ],
+    EngagementPhase.POST_EXPLOITATION: [
+        EngagementPhase.REPORTING,
+        EngagementPhase.HALTED,
+    ],
+    EngagementPhase.REPORTING: [EngagementPhase.COMPLETED, EngagementPhase.HALTED],
+    EngagementPhase.COMPLETED: [],
+    EngagementPhase.HALTED: [],
+}
+
+PHASE_POLICY = {
+    EngagementPhase.INITIALIZED: {
+        "requires_manual_approval": True,
+        "automatic_next_phase": None,
+    },
+    EngagementPhase.RECONNAISSANCE: {
+        "requires_manual_approval": False,
+        "automatic_next_phase": EngagementPhase.VULNERABILITY_DISCOVERY,
+    },
+    EngagementPhase.VULNERABILITY_DISCOVERY: {
+        "requires_manual_approval": True,
+        "automatic_next_phase": None,
+    },
+    EngagementPhase.EXPLOITATION: {
+        "requires_manual_approval": True,
+        "automatic_next_phase": None,
+    },
+    EngagementPhase.POST_EXPLOITATION: {
+        "requires_manual_approval": True,
+        "automatic_next_phase": None,
+    },
+    EngagementPhase.REPORTING: {
+        "requires_manual_approval": True,
+        "automatic_next_phase": None,
+    },
+    EngagementPhase.COMPLETED: {
+        "requires_manual_approval": False,
+        "automatic_next_phase": None,
+    },
+    EngagementPhase.HALTED: {
+        "requires_manual_approval": False,
+        "automatic_next_phase": None,
+    },
+}
 
 
 class AgentState(str, Enum):

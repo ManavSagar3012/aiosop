@@ -133,9 +133,7 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
     import logging
 
     mcp_log = logging.getLogger("ai_osop.mcp")
-    for server_id, host, port, token in servers:
-        is_critical = server_id in critical_mcps
-        try:
+
     async def init_server(server_id, host, port, token, is_critical):
         try:
             await mcp_registry.register_server(server_id, host, port, token)
@@ -302,15 +300,15 @@ async def lifespan(app: FastAPI):
             from ai_osop.agents.stack_profiler_agent import StackProfilerAgent
             from ai_osop.agents.vuln_agent import VulnAnalysisAgent
             from ai_osop.agents.workflow_agent import PlaywrightAgent
-            from ai_osop.agents.experimental.cloud_agent import CloudSpecialistAgent
-            from ai_osop.agents.experimental.codeql_agent import CodeQLAgent
-            from ai_osop.agents.experimental.graphql_agent import GraphQLAgent
-            from ai_osop.agents.experimental.js_analyzer_agent import JSAnalyzerAgent
-            from ai_osop.agents.experimental.mobile_agent import MobileAnalysisAgent
-            from ai_osop.agents.experimental.nextjs_agent import NextJSSpecialistAgent
-            from ai_osop.agents.experimental.react_agent import ReactSpecialistAgent
-            from ai_osop.agents.experimental.stateful_logic_agent import StatefulLogicAgent
-            from ai_osop.agents.experimental.visual_agent import VisualContextAgent
+            from ai_osop.agents.cloud_agent import CloudSpecialistAgent
+            from ai_osop.agents.codeql_agent import CodeQLAgent
+            from ai_osop.agents.graphql_agent import GraphQLAgent
+            from ai_osop.agents.js_analyzer_agent import JSAnalyzerAgent
+            from ai_osop.agents.mobile_agent import MobileAnalysisAgent
+            from ai_osop.agents.nextjs_agent import NextJSSpecialistAgent
+            from ai_osop.agents.react_agent import ReactSpecialistAgent
+            from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
+            from ai_osop.agents.visual_agent import VisualContextAgent
             from ai_osop.core.config import AgentType
 
             bootstrap_session_id = "api-bootstrap"

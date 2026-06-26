@@ -5,6 +5,7 @@ Handles engagement lifecycle: creation, halting, phase transitions, authenticate
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -21,6 +22,9 @@ logger = structlog.get_logger("ai_osop.orchestrator.engagement_manager")
 
 class EngagementManager:
     """Manage engagement lifecycle and transitions."""
+
+    # GAP-2-6: hard ceiling on how long a single agent shutdown may block during halt.
+    HALT_DEADLINE_SECONDS = 10
 
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
@@ -45,6 +49,13 @@ class EngagementManager:
                 "created_by": created_by or "system",
             },
         ):
+            # GAP-2-4: sign the scope manifest at creation so it is tamper-evident.
+            # Unsigned scopes are signed here; an externally-supplied signature is
+            # left intact (and later verified on exploit assignment).
+            if not scope.signature:
+                from ai_osop.core.config import scope_signing_key
+
+                scope.sign(scope_signing_key())
             session = SessionState(
                 session_id=f"eng-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{scope.engagement_id}",
                 scope=scope,
@@ -85,12 +96,43 @@ class EngagementManager:
             session.phase = EngagementPhase.HALTED.value
             await self._orch.session_memory.store_session_state(session)
             record_engagement_halted(session_id)
+
+            # GAP-2-6: a kill switch must actually STOP work, not just flip statuses.
+            handles = getattr(self._orch, "_task_handles", {})
             for task in self._orch._tasks.values():
                 if task.engagement_id == session_id and task.status in ["pending", "running"]:
                     task.status = "cancelled"
+                    # Cancel the in-flight execution coroutine (may be mid-agent-call).
+                    handle = handles.pop(task.id, None)
+                    if handle is not None and not handle.done():
+                        handle.cancel()
+
+            # Drain any queued tasks for this engagement so the scheduler can't pull
+            # and dispatch them after the halt (bounded so a flood can't spin forever).
+            try:
+                for _ in range(1000):
+                    item = await self._orch.session_memory.pop_task_queue(
+                        f"tasks:{session_id}"
+                    )
+                    if not item:
+                        break
+            except Exception as e:
+                logger.warning("halt_queue_drain_failed", session_id=session_id, error=str(e))
+
+            # Shut agents down under a hard deadline so a wedged agent (blocking
+            # I/O / mid-LLM-call) cannot make halt hang forever.
             for agent in self._orch._agents.values():
                 if agent.ctx.session_id == session_id:
-                    await agent.shutdown()
+                    try:
+                        await asyncio.wait_for(agent.shutdown(), timeout=self.HALT_DEADLINE_SECONDS)
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            "agent_shutdown_timeout",
+                            agent_id=agent.ctx.agent_id,
+                            session_id=session_id,
+                        )
+                    except Exception as e:
+                        logger.warning("agent_shutdown_failed", error=str(e))
             await self._orch._audit_log(
                 AuditEvent(
                     event_type="engagement_halted",
@@ -118,6 +160,15 @@ class EngagementManager:
             stats = await self._orch.graph_memory.get_graph_stats(session_id)
             if stats.get("vulnerabilities", 0) == 0:
                 raise WorkflowException("Cannot transition to exploitation without vulnerabilities")
+        # GAP-3-4: compare-and-set. The validation above can await (graph stats), so a
+        # concurrent writer (e.g. halt_engagement) may have changed the phase in the
+        # meantime. Re-check before committing so we never clobber a halt/transition
+        # that landed during the await window.
+        if EngagementPhase(session.phase) != current:
+            raise WorkflowTransitionError(
+                f"Concurrent phase change detected: expected {current.value}, "
+                f"now {session.phase}; aborting transition to {new_phase.value}"
+            )
         session.phase = new_phase.value
         session.updated_at = datetime.utcnow()
         await self._orch.session_memory.store_session_state(session)
@@ -166,47 +217,70 @@ class EngagementManager:
             return None
 
     async def claim_auto_discovery(
-        self, engagement_id: str, auth_user_label: str, source_task_id: str
-    ) -> None:
-        """Claim autonomous discovery for an authenticated engagement."""
-        # Idempotent check in Neo4j
-        async with self._orch.graph_memory._driver.session() as g_session:
-            cypher = (
-                "MATCH (d:AutoDiscoveryClaim {engagement_id: $eid}) "
-                "RETURN d.id as id"
-            )
-            result = await g_session.run(cypher, {"eid": engagement_id})
-            if await result.single():
-                logger.info("auto_discovery_already_claimed", engagement_id=engagement_id)
-                return
-        # Claim it
-        cypher = (
-            "CREATE (d:AutoDiscoveryClaim { "
-            "  id: $id, engagement_id: $eid, "
-            "  auth_user_label: $label, source_task_id: $source, "
-            "  claimed_at: datetime() "
-            "})"
+        self,
+        engagement_id: str,
+        auth_user_label: str,
+        source_task_id: str,
+        url_hint: Optional[str] = None,
+    ) -> Optional[Task]:
+        """Atomically claim autonomous discovery and dispatch a single map_workflow.
+
+        GAP-4-2: the claim is an atomic Neo4j MERGE (graph_memory.claim_auto_discovery),
+        so concurrent hooks and restarted processes cannot both win — replacing the
+        former non-atomic MATCH-then-CREATE that could create duplicate claims/chains.
+
+        GAP-1-5: on winning the claim we schedule the map_workflow directly here,
+        replacing the call to the never-defined _schedule_authenticated_discovery that
+        raised AttributeError (silently swallowed) on the live path."""
+        won = await self._orch.graph_memory.claim_auto_discovery(engagement_id)
+        if not won:
+            logger.info("auto_discovery_already_claimed", engagement_id=engagement_id)
+            return None
+
+        url = url_hint or ""
+        if not url:
+            session = self._orch._sessions.get(engagement_id)
+            if session and getattr(session, "scope", None) and session.scope.domains:
+                url = f"https://{session.scope.domains[0]}/"
+
+        task = Task(
+            type="map_workflow",
+            priority=7,
+            agent_type=AgentType.WORKFLOW,
+            payload={
+                "url": url,
+                "user_label": auth_user_label,
+                "name": "Auto Authenticated Journey",
+                "source_task_id": source_task_id,
+            },
+            engagement_id=engagement_id,
         )
-        async with self._orch.graph_memory._driver.session() as g_session:
-            await g_session.run(
-                cypher,
-                {
-                    "id": f"auto-{engagement_id}",
-                    "eid": engagement_id,
-                    "label": auth_user_label,
-                    "source": source_task_id,
-                },
+        await self._orch._audit_log(
+            AuditEvent(
+                event_type="auto_map_dispatch",
+                severity="info",
+                actor_type="system",
+                actor_id="orchestrator",
+                action={"created_task_id": task.id, "user_label": auth_user_label, "url": url},
+                result={"success": True},
+                context={"engagement_id": engagement_id},
+                engagement_id=engagement_id,
             )
-        # Schedule authenticated discovery tasks
-        await self._orch._schedule_authenticated_discovery(engagement_id, auth_user_label)
+        )
+        await self._orch.schedule_task(task)
+        logger.info("auto_map_dispatched", task_id=task.id, engagement_id=engagement_id, url=url)
+        return task
 
     async def ensure_authenticated_discovery(
         self, session_id: str, url_hint: Optional[str] = None
-    ) -> None:
-        """Ensure authenticated discovery is scheduled if the engagement has an authenticated session."""
+    ) -> Optional[Task]:
+        """Schedule authenticated discovery (one map_workflow) if the engagement has an
+        authenticated session. Idempotent via the atomic claim. Returns the task or None."""
         if not await self._engagement_is_authenticated(session_id):
-            return
+            return None
         auth_user_label = await self._pick_auth_user_label(session_id)
         if not auth_user_label:
-            return
-        await self.claim_auto_discovery(session_id, auth_user_label, "session-import")
+            return None
+        return await self.claim_auto_discovery(
+            session_id, auth_user_label, "session-import", url_hint=url_hint
+        )
