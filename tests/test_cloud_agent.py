@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from ai_osop.agents.base import AgentContext
-from ai_osop.agents.experimental.cloud_agent import CloudSpecialistAgent
+from ai_osop.agents.cloud_agent import CloudSpecialistAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 

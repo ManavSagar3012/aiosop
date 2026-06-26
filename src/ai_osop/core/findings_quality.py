@@ -18,31 +18,42 @@ class FindingQualityEngine:
 
     STATIC_PATH_PATTERNS = re.compile(
         r"\.(css|js|png|jpg|jpeg|gif|svg|woff2?|ico|html|txt|json)$|/(static|assets|chunks|webpack|vendor)/",
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     ERROR_KEY_PATTERNS = {
-        "error", "err", "message", "msg", "status", "success", "code", "exception"
+        "error",
+        "err",
+        "message",
+        "msg",
+        "status",
+        "success",
+        "code",
+        "exception",
     }
 
     ERROR_VAL_PATTERNS = re.compile(
         r"denied|forbidden|unauthorized|unauthenticated|error|fail|invalid|expired|login|signin|bad request|not allowed",
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     SENSITIVE_FIELD_PATTERNS = {
-        "critical": re.compile(r"password|token|secret|key|private|apikey|hash|salt|card|cvv|cc_", re.IGNORECASE),
-        "high": re.compile(r"ssn|tax|national_id|phone|email|address|billing|passport", re.IGNORECASE),
-        "medium": re.compile(r"username|nickname|avatar|profile|settings|created_at|updated_at", re.IGNORECASE),
+        "critical": re.compile(
+            r"password|token|secret|key|private|apikey|hash|salt|card|cvv|cc_",
+            re.IGNORECASE,
+        ),
+        "high": re.compile(
+            r"ssn|tax|national_id|phone|email|address|billing|passport", re.IGNORECASE
+        ),
+        "medium": re.compile(
+            r"username|nickname|avatar|profile|settings|created_at|updated_at",
+            re.IGNORECASE,
+        ),
     }
 
     @classmethod
     def evaluate_finding(
-        cls,
-        finding: DiffAuthFinding,
-        body_a: Any,
-        body_b: Any,
-        url_path: str
+        cls, finding: DiffAuthFinding, body_a: Any, body_b: Any, url_path: str
     ) -> Dict[str, Any]:
         """
         Assess finding quality, suppress false positives, and calculate confidence & impact.
@@ -69,9 +80,13 @@ class FindingQualityEngine:
                         suppressed = True
                         reasons.append("error_body_swallowed_in_200_ok")
                         break
-            
+
             # Suppress empty or trivial dicts
-            if not body_b or list(body_b.keys()) == ["success"] and body_b.get("success") is False:
+            if (
+                not body_b
+                or list(body_b.keys()) == ["success"]
+                and body_b.get("success") is False
+            ):
                 suppressed = True
                 reasons.append("empty_or_failed_status_body")
 
@@ -84,20 +99,36 @@ class FindingQualityEngine:
         # Check if values from body_a are leaked inside body_b
         a_elements_in_b = []
         ownership_verified = False
-        
+
         def check_leakage(val_a, body_b_serialized):
             nonlocal ownership_verified
             if isinstance(val_a, (str, int)) and len(str(val_a)) > 3:
                 val_str = str(val_a)
                 # Ignore common keys/generic boolean values/very short strings
-                if val_str.lower() not in ("true", "false", "null", "none", "unknown", "pending", "completed"):
+                if val_str.lower() not in (
+                    "true",
+                    "false",
+                    "null",
+                    "none",
+                    "unknown",
+                    "pending",
+                    "completed",
+                ):
                     if val_str in body_b_serialized:
                         ownership_verified = True
                         a_elements_in_b.append(val_str)
             elif isinstance(val_a, dict):
                 for k, v in val_a.items():
                     # Focus on identifiers, emails, names
-                    if k in ("id", "email", "username", "name", "phone", "tenant_id", "user_id"):
+                    if k in (
+                        "id",
+                        "email",
+                        "username",
+                        "name",
+                        "phone",
+                        "tenant_id",
+                        "user_id",
+                    ):
                         check_leakage(v, body_b_serialized)
             elif isinstance(val_a, list):
                 for item in val_a:
@@ -112,7 +143,7 @@ class FindingQualityEngine:
             confidence = max(confidence, 0.95)
         elif "unconfirmed" in finding.category:
             confidence = min(confidence, 0.4)
-        
+
         if suppressed:
             confidence = 0.0
 
@@ -121,7 +152,9 @@ class FindingQualityEngine:
         body_keys = []
         if isinstance(body_b, dict):
             body_keys = list(body_b.keys())
-        elif isinstance(body_b, list) and len(body_b) > 0 and isinstance(body_b[0], dict):
+        elif (
+            isinstance(body_b, list) and len(body_b) > 0 and isinstance(body_b[0], dict)
+        ):
             body_keys = list(body_b[0].keys())
 
         # Evaluate exposed keys sensitivity
@@ -156,9 +189,7 @@ class FindingCertificationEngine:
 
     @classmethod
     def certify_vulnerability(
-        cls,
-        vuln: Any,
-        evidence: Optional[str] = None
+        cls, vuln: Any, evidence: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Score a single vulnerability finding on multiple quality dimensions:
@@ -168,45 +199,67 @@ class FindingCertificationEngine:
         - Evidence Completeness
         """
         reasons = []
-        
+
         # 1. Evidence Completeness
         evidence_score = 0.0
         if evidence:
             ev_lower = evidence.lower()
             # Check for request/payload details
-            has_request = "request" in ev_lower or "payload" in ev_lower or "http" in ev_lower
+            has_request = (
+                "request" in ev_lower or "payload" in ev_lower or "http" in ev_lower
+            )
             # Check for response/behavior details
-            has_response = "response" in ev_lower or "status" in ev_lower or "200" in ev_lower or "500" in ev_lower
+            has_response = (
+                "response" in ev_lower
+                or "status" in ev_lower
+                or "200" in ev_lower
+                or "500" in ev_lower
+            )
             # Check for proof of concept/matching regex
-            has_poc = "match" in ev_lower or "extract" in ev_lower or "<script>" in ev_lower or "select" in ev_lower
-            
+            has_poc = (
+                "match" in ev_lower
+                or "extract" in ev_lower
+                or "<script>" in ev_lower
+                or "select" in ev_lower
+            )
+
             checks = [has_request, has_response, has_poc]
             evidence_score = sum(1 for c in checks if c) / len(checks)
-            
-            if has_request: reasons.append("request_evidence_present")
-            if has_response: reasons.append("response_evidence_present")
-            if has_poc: reasons.append("proof_of_concept_present")
+
+            if has_request:
+                reasons.append("request_evidence_present")
+            if has_response:
+                reasons.append("response_evidence_present")
+            if has_poc:
+                reasons.append("proof_of_concept_present")
         else:
             reasons.append("no_evidence_text_provided")
-            
+
         # 2. Exploitability & Base Impact
         vuln_type = (getattr(vuln, "vuln_type", None) or "unknown").lower()
         title = (getattr(vuln, "title", None) or "unknown").lower()
         severity = (getattr(vuln, "severity", None) or "INFO").upper()
-        
+
         exploitability = 0.5
         impact = "medium"
-        
+
         # Determine score based on vuln type / title
-        if any(x in vuln_type or x in title for x in ["rce", "command_injection", "exec"]):
+        if any(
+            x in vuln_type or x in title for x in ["rce", "command_injection", "exec"]
+        ):
             exploitability = 0.95
             impact = "critical"
             reasons.append("rce_high_exploitability")
-        elif any(x in vuln_type or x in title for x in ["sqli", "sql_injection", "database"]):
+        elif any(
+            x in vuln_type or x in title for x in ["sqli", "sql_injection", "database"]
+        ):
             exploitability = 0.85
             impact = "high"
             reasons.append("sqli_high_exploitability")
-        elif any(x in vuln_type or x in title for x in ["idor", "broken_object", "privilege_escalation"]):
+        elif any(
+            x in vuln_type or x in title
+            for x in ["idor", "broken_object", "privilege_escalation"]
+        ):
             exploitability = 0.80
             impact = "high"
             reasons.append("idor_auth_bypass")
@@ -214,17 +267,20 @@ class FindingCertificationEngine:
             exploitability = 0.65
             impact = "medium"
             reasons.append("xss_medium_exploitability")
-        elif any(x in vuln_type or x in title for x in ["header", "missing_security_headers", "ssl"]):
+        elif any(
+            x in vuln_type or x in title
+            for x in ["header", "missing_security_headers", "ssl"]
+        ):
             exploitability = 0.15
             impact = "low"
             reasons.append("passive_misconfiguration")
-            
+
         # Adjust impact to match severity if severity is higher
         if severity == "CRITICAL":
             impact = "critical"
         elif severity == "HIGH" and impact in ("medium", "low"):
             impact = "high"
-            
+
         # 3. Confidence Score
         confidence = 0.5
         if evidence_score >= 1.0:
@@ -236,7 +292,7 @@ class FindingCertificationEngine:
         elif evidence_score <= 0.33:
             confidence = 0.30
             reasons.append("insufficient_evidence_degrades_confidence")
-            
+
         if severity in ("CRITICAL", "HIGH") and confidence < 0.5:
             reasons.append("critical_finding_needs_verification")
 
@@ -246,15 +302,12 @@ class FindingCertificationEngine:
             "business_impact": impact,
             "evidence_completeness": evidence_score,
             "reasons": reasons,
-            "actionable": confidence >= 0.75 and exploitability >= 0.5
+            "actionable": confidence >= 0.75 and exploitability >= 0.5,
         }
 
     @classmethod
     async def generate_mission_certificate(
-        cls,
-        engagement_id: str,
-        session_memory: Any,
-        graph_memory: Any
+        cls, engagement_id: str, session_memory: Any, graph_memory: Any
     ) -> Dict[str, Any]:
         """
         Queries PostgreSQL and Neo4j for all target engagement data,
@@ -264,7 +317,7 @@ class FindingCertificationEngine:
         graph_stats = await graph_memory.get_graph_stats(engagement_id)
         assets_count = graph_stats.get("assets", 0)
         endpoints_count = graph_stats.get("endpoints", 0)
-        
+
         # Fetch all vulnerabilities from Neo4j
         vulnerabilities = []
         try:
@@ -275,66 +328,77 @@ class FindingCertificationEngine:
                     vulnerabilities.append(record["v"])
         except Exception as e:
             logger.error("failed_fetch_vulns_for_certificate", error=str(e))
-            
+
         # Certify each vulnerability
         certified_findings = []
         total_evidence_completeness = 0.0
         actionable_count = 0
-        
+
         for vuln_dict in vulnerabilities:
             # Create a dummy object to mimic Vulnerability model
             from ai_osop.core.models import Vulnerability
+
             try:
                 vuln = Vulnerability(**vuln_dict)
             except Exception:
+
                 class DummyVuln:
                     def __init__(self, d):
                         self.vuln_type = d.get("vuln_type", "unknown")
                         self.title = d.get("title", "unknown")
                         self.severity = d.get("severity", "INFO")
+
                 vuln = DummyVuln(vuln_dict)
-                
+
             evidence = vuln_dict.get("evidence", "")
             cert = cls.certify_vulnerability(vuln, evidence)
-            certified_findings.append({
-                "id": vuln_dict.get("id", "unknown"),
-                "title": vuln_dict.get("title", "Unknown"),
-                "severity": vuln_dict.get("severity", "INFO"),
-                "certification": cert
-            })
+            certified_findings.append(
+                {
+                    "id": vuln_dict.get("id", "unknown"),
+                    "title": vuln_dict.get("title", "Unknown"),
+                    "severity": vuln_dict.get("severity", "INFO"),
+                    "certification": cert,
+                }
+            )
             total_evidence_completeness += cert["evidence_completeness"]
             if cert["actionable"]:
                 actionable_count += 1
-                
+
         avg_evidence_completeness = (
             total_evidence_completeness / len(vulnerabilities)
-            if vulnerabilities else 1.0
+            if vulnerabilities
+            else 1.0
         )
-        
+
         # Determine overall Mission Quality Verdict
         verdict = "PASS"
         issues = []
-        
+
         if assets_count == 0:
             verdict = "DEGRADED"
             issues.append("Zero assets discovered during engagement.")
         if endpoints_count == 0 and assets_count > 0:
             verdict = "DEGRADED"
             issues.append("Zero endpoints mapped for discovered assets.")
-            
+
         unconfirmed_serious = 0
         for f in certified_findings:
             cert = f["certification"]
-            if f["severity"] in ("CRITICAL", "HIGH") and cert["confidence_score"] < 0.75:
+            if (
+                f["severity"] in ("CRITICAL", "HIGH")
+                and cert["confidence_score"] < 0.75
+            ):
                 unconfirmed_serious += 1
-                
+
         if unconfirmed_serious > 0:
             verdict = "DEGRADED"
-            issues.append(f"Found {unconfirmed_serious} unconfirmed Critical/High findings (low confidence).")
-            
+            issues.append(
+                f"Found {unconfirmed_serious} unconfirmed Critical/High findings (low confidence)."
+            )
+
         # Write the MISSION_QUALITY_CERTIFICATE.md
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        
+
         md_content = f"""# MISSION QUALITY CERTIFICATE
 **Engagement ID:** `{engagement_id}`  
 **Generated At:** `{timestamp}`  
@@ -365,7 +429,9 @@ This certificate verifies the overall quality, operational validity, and finding
 
 """
         if not certified_findings:
-            md_content += "_No vulnerabilities were identified during this engagement._\n"
+            md_content += (
+                "_No vulnerabilities were identified during this engagement._\n"
+            )
         else:
             md_content += "| Finding ID | Title | Severity | Confidence | Exploitability | Impact | Actionable? |\n"
             md_content += "|---|---|---|---|---|---|---|\n"
@@ -373,7 +439,7 @@ This certificate verifies the overall quality, operational validity, and finding
                 cert = f["certification"]
                 act_str = "✅ YES" if cert["actionable"] else "❌ NO"
                 md_content += f"| `{f['id']}` | {f['title']} | **{f['severity']}** | {cert['confidence_score']:.1%} | {cert['exploitability_score']:.1%} | {cert['business_impact'].upper()} | {act_str} |\n"
-                
+
         if issues:
             md_content += "\n## 4. Quality Issues Identified\n"
             for issue in issues:
@@ -381,25 +447,27 @@ This certificate verifies the overall quality, operational validity, and finding
         else:
             md_content += "\n## 4. Quality Statement\n"
             md_content += "✅ **All quality checks passed.** The reconnaissance mapped a valid attack surface, and all reported findings contain complete evidence and meet the platform's high-confidence threshold. This mission is certified as fully trustworthy and actionable.\n"
-            
+
         # Save to disk
         reports_dir = os.path.join("reports", engagement_id)
         os.makedirs(reports_dir, exist_ok=True)
         cert_path = os.path.join(reports_dir, "MISSION_QUALITY_CERTIFICATE.md")
         with open(cert_path, "w", encoding="utf-8") as fh:
             fh.write(md_content)
-            
+
         # Save absolute path in root for easy access if it's the live EID
         if os.path.exists("scratch_live_eid.txt"):
             try:
                 with open("scratch_live_eid.txt", "r") as f:
                     live_eid = f.read().strip()
                 if live_eid == engagement_id:
-                    with open("MISSION_QUALITY_CERTIFICATE.md", "w", encoding="utf-8") as fh:
+                    with open(
+                        "MISSION_QUALITY_CERTIFICATE.md", "w", encoding="utf-8"
+                    ) as fh:
                         fh.write(md_content)
             except Exception:
                 pass
-                
+
         return {
             "verdict": verdict,
             "assets_count": assets_count,
@@ -408,9 +476,8 @@ This certificate verifies the overall quality, operational validity, and finding
             "actionable_findings": actionable_count,
             "avg_evidence_completeness": avg_evidence_completeness,
             "certificate_path": os.path.abspath(cert_path),
-            "issues": issues
+            "issues": issues,
         }
-
 
 
 class AttackSurfaceCertifier:
@@ -421,10 +488,7 @@ class AttackSurfaceCertifier:
 
     @classmethod
     async def generate_attack_surface_certificate(
-        cls,
-        engagement_id: str,
-        session_memory: Any,
-        graph_memory: Any
+        cls, engagement_id: str, session_memory: Any, graph_memory: Any
     ) -> Dict[str, Any]:
         """
         Queries PostgreSQL and Neo4j for all target engagement data,
@@ -434,7 +498,7 @@ class AttackSurfaceCertifier:
         graph_stats = await graph_memory.get_graph_stats(engagement_id)
         assets_count = graph_stats.get("assets", 0)
         endpoints_count = graph_stats.get("endpoints", 0)
-        
+
         # Fetch raw crawled count from the full_recon task result (Sprint 12)
         raw_crawled_count = 0
         try:
@@ -452,18 +516,20 @@ class AttackSurfaceCertifier:
                         raw_crawled_count = res_dict.get("endpoints_found", 0)
         except Exception:
             pass
-            
+
         # Fallback: raw crawled count is at least the persisted count
         if raw_crawled_count == 0:
-            raw_crawled_count = endpoints_count * 5 if endpoints_count > 1 else endpoints_count
-        
+            raw_crawled_count = (
+                endpoints_count * 5 if endpoints_count > 1 else endpoints_count
+            )
+
         # Query Neo4j for detailed assets and endpoints breakdown (Sprint 12/13)
         subdomains = []
         hosts = []
         api_endpoints = []
         js_endpoints = []
         parameter_endpoints = []
-        
+
         try:
             # Query all assets
             asset_query = "MATCH (a:Asset) WHERE a.engagement_id = $eid RETURN a"
@@ -477,7 +543,7 @@ class AttackSurfaceCertifier:
                         subdomains.append(value)
                     elif atype == "host":
                         hosts.append(value)
-                        
+
             # Query all endpoints
             ep_query = "MATCH (e:Endpoint) WHERE e.engagement_id = $eid RETURN e"
             async with graph_memory._driver.session() as session:
@@ -488,15 +554,28 @@ class AttackSurfaceCertifier:
                     path = e.get("path", "")
                     query_keys = e.get("query_keys", []) or []
                     body_keys = e.get("body_schema_keys", []) or []
-                    
+
                     # Check for API endpoint
-                    if any(x in url.lower() or x in path.lower() for x in ["/api", "/v1", "/v2", "/graphql", "/swagger", "/openapi"]):
+                    if any(
+                        x in url.lower() or x in path.lower()
+                        for x in [
+                            "/api",
+                            "/v1",
+                            "/v2",
+                            "/graphql",
+                            "/swagger",
+                            "/openapi",
+                        ]
+                    ):
                         api_endpoints.append(url)
-                        
+
                     # Check for JS file
-                    if url.lower().endswith(".js") or any(x in url.lower() for x in ["/chunks/", "/webpack/", "/static/js/"]):
+                    if url.lower().endswith(".js") or any(
+                        x in url.lower()
+                        for x in ["/chunks/", "/webpack/", "/static/js/"]
+                    ):
                         js_endpoints.append(url)
-                        
+
                     # Check for parameters
                     if query_keys or body_keys:
                         parameter_endpoints.append(url)
@@ -511,11 +590,11 @@ class AttackSurfaceCertifier:
                 all_endpoints_list = await res_eps.data()
         except Exception:
             pass
-            
+
         anonymous_count = 0
         auth_only_count = 0
         admin_only_count = 0
-        
+
         for ep in all_endpoints_list:
             auth_req = ep.get("auth_required", False)
             ulabel = ep.get("user_label", "")
@@ -525,7 +604,7 @@ class AttackSurfaceCertifier:
                 auth_only_count += 1
                 if ulabel == "admin":
                     admin_only_count += 1
-                    
+
         # Calculate Privilege Expansion Ratio (PER) (Sprint 13)
         privilege_ratio = 1.0
         if anonymous_count > 0:
@@ -533,27 +612,34 @@ class AttackSurfaceCertifier:
         else:
             privilege_ratio = float(endpoints_count) if endpoints_count > 0 else 1.0
         privilege_expansion_ratio = f"{privilege_ratio:.1f}x"
-            
+
         # Compute Coverage, Depth, and Expansion Scores
         discovery_level = "SHALLOW"
         if endpoints_count > 10 and len(subdomains) > 5:
             discovery_level = "DEEP"
         elif endpoints_count > 1 or len(subdomains) > 1:
             discovery_level = "MODERATE"
-            
+
         # Calculate Attack Surface Expansion Score
-        expansion_score = endpoints_count + len(parameter_endpoints) + len(api_endpoints) + len(js_endpoints)
+        expansion_score = (
+            endpoints_count
+            + len(parameter_endpoints)
+            + len(api_endpoints)
+            + len(js_endpoints)
+        )
         expansion_ratio = f"{expansion_score}x"
-            
+
         # Actionability Coverage Score
         coverage_percent = 0.0
         if endpoints_count > 0:
-            coverage_percent = (len(api_endpoints) + len(parameter_endpoints) + len(js_endpoints)) / endpoints_count
+            coverage_percent = (
+                len(api_endpoints) + len(parameter_endpoints) + len(js_endpoints)
+            ) / endpoints_count
             coverage_percent = min(1.0, coverage_percent)
-            
+
         # Write the ATTACK_SURFACE_EXPANSION_CERTIFICATE.md
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        
+
         md_content = f"""# ATTACK SURFACE EXPANSION CERTIFICATE
 **Engagement ID:** `{engagement_id}`  
 **Generated At:** `{timestamp}`  
@@ -613,13 +699,17 @@ The platform achieved an estimated **{coverage_percent:.1%}** coverage density o
 ### Discovery Verdict
 """
         if not subdomains:
-            md_content += "_No subdomains discovered (recon was limited to the seed target)._\n"
+            md_content += (
+                "_No subdomains discovered (recon was limited to the seed target)._\n"
+            )
         else:
             for sub in subdomains[:15]:
                 md_content += f"{{chr(45)}} `{sub}`\n"
             if len(subdomains) > 15:
-                md_content += f"{{chr(45)}} ... and {len(subdomains) - 15} more subdomains.\n"
-                
+                md_content += (
+                    f"{{chr(45)}} ... and {len(subdomains) - 15} more subdomains.\n"
+                )
+
         md_content += f"""
 ---
 
@@ -638,18 +728,20 @@ The platform achieved an estimated **{coverage_percent:.1%}** coverage density o
         cert_path = os.path.join(reports_dir, "ATTACK_SURFACE_EXPANSION_CERTIFICATE.md")
         with open(cert_path, "w", encoding="utf-8") as fh:
             fh.write(md_content)
-            
+
         # Save absolute path in root for easy access if it's the live EID
         if os.path.exists("scratch_live_eid.txt"):
             try:
                 with open("scratch_live_eid.txt", "r") as f:
                     live_eid = f.read().strip()
                 if live_eid == engagement_id:
-                    with open("ATTACK_SURFACE_EXPANSION_CERTIFICATE.md", "w", encoding="utf-8") as fh:
+                    with open(
+                        "ATTACK_SURFACE_EXPANSION_CERTIFICATE.md", "w", encoding="utf-8"
+                    ) as fh:
                         fh.write(md_content)
             except Exception:
                 pass
-                
+
         return {
             "discovery_level": discovery_level,
             "subdomains_count": len(subdomains),
@@ -665,12 +757,8 @@ The platform achieved an estimated **{coverage_percent:.1%}** coverage density o
             "auth_only_count": auth_only_count,
             "admin_only_count": admin_only_count,
             "privilege_expansion_ratio": privilege_expansion_ratio,
-            "certificate_path": os.path.abspath(cert_path)
+            "certificate_path": os.path.abspath(cert_path),
         }
-
-
-
-
 
 
 class FindingConversionEngine:
@@ -680,36 +768,44 @@ class FindingConversionEngine:
     """
 
     @classmethod
-    def calculate_ays(cls, findings: List[Dict[str, Any]], outcomes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def calculate_ays(
+        cls, findings: List[Dict[str, Any]], outcomes: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """
         Calculates AYS per scanner tool and per identity (Sprint 15).
         """
         from ai_osop.core.models import OutcomeStatus
-        
+
         tool_stats = {}
         identity_stats = {}
-        
+
         outcome_map = {o["finding_id"]: o for o in outcomes}
-        
+
         for f in findings:
             tool = f.get("tool", "unknown")
             identity = f.get("identity", "anonymous")
             outcome = outcome_map.get(f["id"])
-            
+
             tool_stats.setdefault(tool, {"total": 0, "accepted": 0})
             identity_stats.setdefault(identity, {"total": 0, "accepted": 0})
-            
+
             tool_stats[tool]["total"] += 1
             identity_stats[identity]["total"] += 1
-            
+
             if outcome and outcome.get("status") == OutcomeStatus.ACCEPTED.value:
                 tool_stats[tool]["accepted"] += 1
                 identity_stats[identity]["accepted"] += 1
-                
+
         return {
-            "tool_ays": {k: (v["accepted"] / v["total"]) for k, v in tool_stats.items()},
-            "identity_ays": {k: (v["accepted"] / v["total"]) for k, v in identity_stats.items()}
+            "tool_ays": {
+                k: (v["accepted"] / v["total"]) for k, v in tool_stats.items()
+            },
+            "identity_ays": {
+                k: (v["accepted"] / v["total"]) for k, v in identity_stats.items()
+            },
         }
+
+    @classmethod
     def generate_yield_heatmap(cls, findings: List[Dict[str, Any]]) -> Dict[str, int]:
         """
         Aggregates findings by privilege level (Anonymous, Authenticated, Admin)
@@ -719,7 +815,7 @@ class FindingConversionEngine:
         for f in findings:
             auth_required = f.get("certification", {}).get("auth_required", False)
             user_label = f.get("certification", {}).get("user_label", "anonymous")
-            
+
             if not auth_required or user_label == "anonymous":
                 heatmap["anonymous"] += 1
             elif user_label == "admin":
@@ -729,53 +825,53 @@ class FindingConversionEngine:
         return heatmap
 
     @classmethod
-
-    @classmethod
     async def resolve_finding(
-        cls,
-        finding_id: str,
-        status: str,
-        session_memory: Any,
-        graph_memory: Any
+        cls, finding_id: str, status: str, session_memory: Any, graph_memory: Any
     ) -> Dict[str, Any]:
         """
         Resolves a finding by status (Accepted, Duplicate, Informative, NA).
         Persists to Postgres as an OutcomeRecord and links to finding in Neo4j.
         """
         from ai_osop.core.models import OutcomeRecord, OutcomeStatus
-        
+
         # 1. Update/Persist Outcome
         status_enum = OutcomeStatus(status.lower())
         outcome = OutcomeRecord(
             finding_id=finding_id,
-            finding_type="unknown", # Simplified
+            finding_type="unknown",  # Simplified
             status=status_enum,
             severity="unknown",
             agent_id_responsible="operator-1",
-            engagement_id="unknown" # Should be retrieved from finding
+            engagement_id="unknown",  # Should be retrieved from finding
         )
-        
+
         # 2. Persist to Postgres and Link in Neo4j
         # (Impl omitted for brevity, focusing on the API/logic)
-        return {"status": "success", "finding_id": finding_id, "outcome": status_enum.value}
+        return {
+            "status": "success",
+            "finding_id": finding_id,
+            "outcome": status_enum.value,
+        }
+
     @classmethod
     async def verify_finding(
-        cls,
-        finding_id: str,
-        session_memory: Any,
-        graph_memory: Any
+        cls, finding_id: str, session_memory: Any, graph_memory: Any
     ) -> Dict[str, Any]:
         """
         Verify a finding by re-triggering its source task or a specialized verification tool.
         """
-        # Logic to be implemented: 
+        # Logic to be implemented:
         # 1. Fetch finding from Neo4j
         # 2. Identify source task
         # 3. Queue a verification task (e.g., re-scan endpoint)
         finding = await graph_memory.get_finding(finding_id)
         if not finding:
             return {"status": "error", "error": "finding not found"}
-            
+
         # Trigger verification task
         # Placeholder for task dispatch
-        return {"status": "success", "finding_id": finding_id, "verification_status": "dispatched"}
+        return {
+            "status": "success",
+            "finding_id": finding_id,
+            "verification_status": "dispatched",
+        }

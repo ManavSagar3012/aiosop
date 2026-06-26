@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from ai_osop.agents.base import AgentContext
-from ai_osop.agents.experimental.stateful_logic_agent import StatefulLogicAgent
+from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import BusinessInvariant, Task
 

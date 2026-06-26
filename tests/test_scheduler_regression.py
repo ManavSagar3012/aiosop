@@ -4,9 +4,9 @@ from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 from ai_osop.orchestrator.task_scheduler import TaskScheduler
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
-from ai_osop.agents.experimental.graphql_agent import GraphQLAgent
-from ai_osop.agents.experimental.js_analyzer_agent import JSAnalyzerAgent
-from ai_osop.agents.experimental.mobile_agent import MobileAnalysisAgent
+from ai_osop.agents.graphql_agent import GraphQLAgent
+from ai_osop.agents.js_analyzer_agent import JSAnalyzerAgent
+from ai_osop.agents.mobile_agent import MobileAnalysisAgent
 
 class MockAgentContext:
     def __init__(self, agent_id, agent_type, status="idle"):
@@ -46,9 +46,11 @@ async def test_specialized_agents_reject_general_scans():
         "js-analyzer-agent-001": js_agent,
         "mobile-agent-001": mob_agent
     }
-    mock_orch._busy_agents = set()
     mock_orch.session_memory.acquire_lock = AsyncMock(return_value=True)
     mock_orch.session_memory.release_lock = AsyncMock(return_value=True)
+    mock_orch.session_memory.add_busy_agent = AsyncMock()
+    mock_orch.session_memory.remove_busy_agent = AsyncMock()
+    mock_orch.session_memory.is_busy_agent = AsyncMock()
     
     scheduler = TaskScheduler(mock_orch)
     
@@ -86,9 +88,11 @@ async def test_scheduler_routing_correctness():
         "graphql-agent-001": gql_agent,
         "js-analyzer-agent-001": js_agent
     }
-    mock_orch._busy_agents = set()
     mock_orch.session_memory.acquire_lock = AsyncMock(return_value=True)
     mock_orch.session_memory.release_lock = AsyncMock(return_value=True)
+    mock_orch.session_memory.add_busy_agent = AsyncMock()
+    mock_orch.session_memory.remove_busy_agent = AsyncMock()
+    mock_orch.session_memory.is_busy_agent = AsyncMock()
     
     scheduler = TaskScheduler(mock_orch)
     
@@ -98,7 +102,6 @@ async def test_scheduler_routing_correctness():
     assert agent_nuclei.ctx.agent_id == "vuln-agent-001"
     
     # Reset busy agents
-    mock_orch._busy_agents.clear()
     vuln_ctx.status = "idle"
     gql_ctx.status = "idle"
     js_ctx.status = "idle"
@@ -111,7 +114,6 @@ async def test_scheduler_routing_correctness():
     assert agent_gql.supports_task_type("gql_discover_schema") is True
     
     # Reset busy agents and make vuln-agent busy to force specialized routing
-    mock_orch._busy_agents.clear()
     vuln_ctx.status = "running"
     gql_ctx.status = "idle"
     

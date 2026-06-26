@@ -198,7 +198,13 @@ class Settings(BaseSettings):
     )
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.1  # Low temperature for deterministic security reasoning
-    mock_llm: bool = Field(default=True, validation_alias="OSOP_MOCK_LLM")
+    mock_llm: bool = Field(default=False, validation_alias="OSOP_MOCK_LLM")
+    # OSOP-P0-02: simulated/mock findings must NEVER reach the real corpus, reports, or
+    # dashboard metrics unless explicitly opted in (e.g. pipeline self-tests). Persistence
+    # of a simulated Vulnerability is refused when this is False (the default).
+    allow_simulated_findings: bool = Field(
+        default=False, validation_alias="OSOP_ALLOW_SIMULATED_FINDINGS"
+    )
 
     # MCP
     mcp_server_host: str = "0.0.0.0"
@@ -294,7 +300,7 @@ class Settings(BaseSettings):
     # reports to a live program. Set OSOP_BUG_BOUNTY_SIMULATION=false to enable real
     # platform calls (requires valid h1/bc credentials).
     bug_bounty_simulation: bool = Field(
-        default=True, validation_alias="OSOP_BUG_BOUNTY_SIMULATION"
+        default=False, validation_alias="OSOP_BUG_BOUNTY_SIMULATION"
     )
 
     browser_mcp_host: str = Field(
@@ -346,6 +352,7 @@ class Settings(BaseSettings):
     # Audit
     audit_log_retention_days: int = 2555  # 7 years
     audit_signing_key_path: str = "secret/data/audit/signing"
+    audit_secret_key: Optional[str] = Field(default=None, validation_alias="OSOP_AUDIT_SECRET_KEY")
 
     # Data Retention
     retention_enabled: bool = True
@@ -409,13 +416,63 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-def scope_signing_key() -> bytes:
-    """Return the HMAC key used to sign/verify scope manifests (GAP-2-4).
+_INSECURE_DEV_SIGNING_KEY = b"dev-insecure-scope-signing-key"
+_PROD_ENVIRONMENTS = {"production", "prod", "staging", "stage"}
 
-    Sourced from settings.audit_secret_key when configured. Falls back to a clearly
-    insecure dev default; production deployments MUST set audit_secret_key."""
-    key = getattr(settings, "audit_secret_key", None) or "default-insecure-audit-key"
-    return key.encode() if isinstance(key, str) else key
+
+def scope_signing_key() -> bytes:
+    """SINGLE source of truth for the HMAC key that signs scope manifests AND the
+    audit-event chain (GAP-2-4 / OSOP-P0-03).
+
+    Every signer and verifier (engagement_manager.sign, task_scheduler.verify,
+    approval_coordinator, session_memory audit chain) MUST use this so signing and
+    verification can never diverge.
+
+    Fail-closed in production: if ``OSOP_AUDIT_SECRET_KEY`` is unset we refuse to fall
+    back to a public constant in a production/staging environment (that would make every
+    scope signature and audit record forgeable). In development/test we return a clearly
+    labelled insecure key and log loudly so local runs still work.
+    """
+    key = getattr(settings, "audit_secret_key", None)
+    if key:
+        return key.encode() if isinstance(key, str) else key
+    env = (getattr(settings, "environment", "") or "").lower()
+    if env in _PROD_ENVIRONMENTS:
+        raise RuntimeError(
+            "OSOP_AUDIT_SECRET_KEY is not set. Refusing to sign/verify with an insecure "
+            "default in a production environment (scope + audit integrity would be forgeable)."
+        )
+    import structlog
+
+    structlog.get_logger().warning(
+        "scope_signing_key_insecure_default",
+        environment=env or "unknown",
+        detail="Set OSOP_AUDIT_SECRET_KEY; using insecure dev key.",
+    )
+    return _INSECURE_DEV_SIGNING_KEY
+
+
+_WEAK_SECRET_VALUES = {"change-me-local", "changeme", "change-me", "default-insecure-audit-key"}
+
+
+def assert_production_secrets() -> None:
+    """Fail closed at startup if insecure default secrets are present in a production
+    environment (OSOP-P2-11 / OSOP-P0-03). Called from the API lifespan so a misconfigured
+    production deployment refuses to boot rather than silently running with a public Neo4j
+    password or a forgeable audit/scope key. No-op in development/test."""
+    env = (getattr(settings, "environment", "") or "").lower()
+    if env not in _PROD_ENVIRONMENTS:
+        return
+    problems = []
+    if (getattr(settings, "neo4j_password", "") or "") in _WEAK_SECRET_VALUES:
+        problems.append("OSOP_NEO4J_PASSWORD is a weak/default value")
+    if not getattr(settings, "audit_secret_key", None):
+        problems.append("OSOP_AUDIT_SECRET_KEY is not set")
+    if problems:
+        raise RuntimeError(
+            "Refusing to start in a production environment with insecure secrets: "
+            + "; ".join(problems)
+        )
 
 
 class EngagementPhase(str, Enum):

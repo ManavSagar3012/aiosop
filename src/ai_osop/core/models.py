@@ -90,6 +90,21 @@ class Vulnerability(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     yield_metadata: Dict[str, Any] = Field(default_factory=dict)
 
+    def is_simulated(self) -> bool:
+        """True if this finding is fabricated/mock rather than a real observation
+        (OSOP-P0-02). Used to keep simulated findings out of the real corpus, reports,
+        and headline metrics. Signals: a mock tool_source, a "(Simulated)" title, or any
+        evidence entry whose provenance is 'simulated'."""
+        src = (self.tool_source or "").lower()
+        if "mock" in src or src.endswith("-sim") or "simulated" in src:
+            return True
+        if "(simulated)" in (self.title or "").lower():
+            return True
+        for ev in self.evidence or []:
+            if isinstance(ev, dict) and str(ev.get("provenance", "")).lower() == "simulated":
+                return True
+        return False
+
 
 class Payload(BaseModel):
     id: str = Field(default_factory=lambda: f"payload-{uuid.uuid4().hex[:12]}")

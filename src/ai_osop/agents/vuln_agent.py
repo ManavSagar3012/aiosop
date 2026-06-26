@@ -4,8 +4,11 @@ Specialized agent for vulnerability scanning, correlation, and validation.
 """
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from ai_osop.adapters.burp_mcp import BurpMCPAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
@@ -56,7 +59,9 @@ class VulnAnalysisAgent(BaseAgent):
     async def _has_session(self, engagement_id: str, user_label: str) -> bool:
         """True if an imported (and non-expired) user session exists for replay."""
         try:
-            sess = await self.session_store.get_session_or_none(engagement_id, user_label)
+            sess = await self.session_store.get_session_or_none(
+                engagement_id, user_label
+            )
         except Exception:
             return False
         return sess is not None and not sess.is_expired()
@@ -162,46 +167,13 @@ class VulnAnalysisAgent(BaseAgent):
 
         if scan_result.status != "success":
             burp_error = scan_result.error
-            print(f"WARN: Burp scan failed to start: {burp_error}")
+            logger.warning("Burp scan failed to start: %s", burp_error)
 
         # Retrieve and normalize findings
-        print(f"DEBUG: Requesting issues, sitemap, and proxy history for {url}")
+        logger.debug("Requesting issues, sitemap, and proxy history for %s", url)
         vulns = await self.burp_adapter.get_scan_issues(url)
 
-        # --- MOCK DISCOVERY TRIGGER ---
-        if settings.mock_llm and len(vulns) == 0:
-            print("MOCK_MODE: Simulating advanced attack chain for exploitation phase trigger.")
-            from ai_osop.core.config import Severity, VulnClass
 
-            # 1. WAF Bypass finding
-            vuln1 = Vulnerability(
-                id=f"vuln-waf-{int(datetime.utcnow().timestamp())}",
-                vuln_type=VulnClass.AUTHENTICATION_WEAKNESS,
-                severity=Severity.MEDIUM,
-                title="WAF Configuration Weakness (Simulated)",
-                description="Detected pattern-based WAF bypass using HTTP Parameter Pollution.",
-                evidence=[{"type": "mock_probe", "payload": "param=1&param=2"}],
-                tool_source="vuln-agent-mock",
-                endpoint_id=f"endpoint-{domain}",
-                confidence=0.8,
-                engagement_id=engagement_id,
-            )
-
-            # 2. Blind SQL Injection
-            vuln2 = Vulnerability(
-                id=f"vuln-blind-sqli-{int(datetime.utcnow().timestamp()) + 1}",
-                vuln_type=VulnClass.SQLI,
-                severity=Severity.HIGH,
-                title="Blind SQL Injection (Simulated)",
-                description="Blind SQL injection detected behind bypassed WAF.",
-                evidence=[{"type": "mock_probe", "payload": "AND 1=SLEEP(5)"}],
-                tool_source="vuln-agent-mock",
-                endpoint_id=f"endpoint-{domain}",
-                confidence=0.9,
-                engagement_id=engagement_id,
-            )
-            vulns = [vuln1, vuln2]
-        # -----------------------------
 
         endpoints = await self.burp_adapter.get_sitemap(url_prefix=domain)
         history = await self.burp_adapter.get_proxy_history()
@@ -254,7 +226,9 @@ class VulnAnalysisAgent(BaseAgent):
         # Perform reasoning using security skills (best-effort, never blocks
         # finding persistence; bounded by a short timeout so vuln_agent fits
         # inside its 300s task budget even when Ollama is slow).
-        analysis_context = f"Target {domain} identified. Initializing vulnerability analysis phase."
+        analysis_context = (
+            f"Target {domain} identified. Initializing vulnerability analysis phase."
+        )
         if all_endpoints:
             analysis_context = (
                 f"Analyzing {len(all_endpoints)} new endpoints for {domain} to identify potential vulnerabilities:\n"
@@ -272,7 +246,9 @@ class VulnAnalysisAgent(BaseAgent):
             reasoning = f"[VERIFIED_V0.1.2] {reasoning}"
         except asyncio.TimeoutError:
             reasoning = f"(reasoning skipped: exceeded {reasoning_timeout}s budget)"
-            print(f"WARN: vuln_agent reasoning timed out for {domain}; findings persisted anyway")
+            print(
+                f"WARN: vuln_agent reasoning timed out for {domain}; findings persisted anyway"
+            )
         except Exception as e:
             reasoning = f"(reasoning skipped: {type(e).__name__}: {str(e)[:120]})"
             print(f"WARN: vuln_agent reasoning errored for {domain}: {e}")
@@ -297,7 +273,9 @@ class VulnAnalysisAgent(BaseAgent):
         payload_set = payload.get(
             "payload_set", ["' OR 1=1 --", "admin'--", "<script>alert(1)</script>"]
         )
-        tab_name = payload.get("tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}")
+        tab_name = payload.get(
+            "tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}"
+        )
 
         print(f"DEBUG: Deploying Intruder attack against {url}")
 
@@ -329,7 +307,9 @@ class VulnAnalysisAgent(BaseAgent):
                 "target": url,
                 "tab_name": tab_name,
                 "reasoning": reasoning,
-                "mcp_response": response.model_dump() if hasattr(response, "model_dump") else str(response),
+                "mcp_response": response.model_dump()
+                if hasattr(response, "model_dump")
+                else str(response),
             }
 
         except Exception as e:
@@ -343,7 +323,9 @@ class VulnAnalysisAgent(BaseAgent):
         # when callers passed a single URL string rather than a list.
         targets = payload.get("targets")
         if targets is None:
-            single = payload.get("target") or payload.get("url") or payload.get("target_url")
+            single = (
+                payload.get("target") or payload.get("url") or payload.get("target_url")
+            )
             if single:
                 targets = [single]
         if not targets:
@@ -409,7 +391,9 @@ class VulnAnalysisAgent(BaseAgent):
         engagement_id = payload["engagement_id"]
 
         # Get correlations from graph memory
-        correlations = await self.ctx.graph_memory.correlate_vulnerabilities(engagement_id)
+        correlations = await self.ctx.graph_memory.correlate_vulnerabilities(
+            engagement_id
+        )
 
         # Cross-tool confirmation
         confirmed_findings = []
@@ -483,7 +467,9 @@ class VulnAnalysisAgent(BaseAgent):
             tool_source="nuclei",
             endpoint_id=finding.get("endpoint_id"),
             confidence=0.90 if finding.get("verified") else 0.70,
-            exploitability="high" if finding.get("severity") == "critical" else "medium",
+            exploitability="high"
+            if finding.get("severity") == "critical"
+            else "medium",
             engagement_id="",
         )
 
@@ -509,7 +495,10 @@ class VulnAnalysisAgent(BaseAgent):
         for other in self.findings.values():
             if other.id == vuln.id:
                 continue
-            if other.vuln_type == vuln.vuln_type and other.endpoint_id == vuln.endpoint_id:
+            if (
+                other.vuln_type == vuln.vuln_type
+                and other.endpoint_id == vuln.endpoint_id
+            ):
                 similar.append(other)
         return similar
 

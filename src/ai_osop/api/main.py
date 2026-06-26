@@ -163,6 +163,11 @@ async def lifespan(app: FastAPI):
 
     logger = logging.getLogger("ai_osop.api")
 
+    # 0. Fail closed on insecure secrets before doing anything else (OSOP-P2-11/P0-03).
+    from ai_osop.core.config import assert_production_secrets
+
+    assert_production_secrets()
+
     # Startup
     health_status = {
         "redis": "unknown",

@@ -3,10 +3,6 @@ React Specialist Agent
 Specializes in identifying DOM-based vulnerabilities and component-level flaws in React applications.
 """
 
-# PATCH (REL-028, 2026-06-15): This agent is not instantiated by the
-# current orchestrator (api/main.py register_agents). Marked experimental
-# until either (a) registered for production use or (b) archived.
-__experimental__ = True
 
 import logging
 from typing import Any, Dict, List, Optional

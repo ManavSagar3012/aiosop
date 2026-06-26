@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ai_osop.agents.base import AgentContext
-from ai_osop.agents.experimental.graphql_agent import GraphQLAgent
+from ai_osop.agents.graphql_agent import GraphQLAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 

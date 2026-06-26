@@ -3,10 +3,6 @@ GraphQL Specialist Agent
 Performs deep schema discovery, authorization mapping, and hidden mutation detection.
 """
 
-# PATCH (REL-028, 2026-06-15): This agent is not instantiated by the
-# current orchestrator (api/main.py register_agents). Marked experimental
-# until either (a) registered for production use or (b) archived.
-__experimental__ = True
 
 import hashlib
 import json

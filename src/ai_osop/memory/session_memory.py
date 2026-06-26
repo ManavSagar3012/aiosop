@@ -466,11 +466,12 @@ class SessionMemory:
         ):
             import hmac
 
-            # Load the key - in production this would fetch from Vault using the path
-            # Fallback for dev/testing if not configured
-            secret_key = getattr(settings, "audit_secret_key", b"default-insecure-audit-key")
-            if isinstance(secret_key, str):
-                secret_key = secret_key.encode()
+            # SINGLE shared signing key (OSOP-P0-03): the audit chain is HMAC'd with the
+            # exact same key used for scope signatures, and it fail-closes in production
+            # when OSOP_AUDIT_SECRET_KEY is unset.
+            from ai_osop.core.config import scope_signing_key
+
+            secret_key = scope_signing_key()
 
             # Get the hash of the last event for the chain
             last_hash = None
