@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
+import asyncio
 
 from ai_osop.core.config import AgentType, EngagementPhase
 from ai_osop.core.models import ApprovalRequest, SessionState, Task
@@ -23,10 +24,16 @@ class MockOrchestrator:
         self._tasks = {}
         self._sessions = {}
         self._approval_requests = {}
-        self._busy_agents = set()
-        self._running = True
         self.session_memory = AsyncMock()
+        self.session_memory.acquire_lock = AsyncMock(return_value=True)
+        self.session_memory.release_lock = AsyncMock(return_value=True)
+        self.session_memory.add_busy_agent = AsyncMock()
+        self.session_memory.remove_busy_agent = AsyncMock()
+        self.session_memory.is_busy_agent = AsyncMock()
+        self.session_memory.store_task = AsyncMock()
+        self._running = True
         self.graph_memory = AsyncMock()
+        self.graph_memory.upsert_task = AsyncMock()
         self.coordination_bus = AsyncMock()
         self.dlq = AsyncMock()
         self.rate_limiter = None
@@ -67,16 +74,13 @@ class TestTaskScheduler:
         mock_agent.ctx.agent_type = AgentType.RECON
         mock_agent.ctx.status = "idle"
         scheduler._orch._agents["agent-1"] = mock_agent
-
         result = await scheduler._find_available_agent(AgentType.RECON)
         assert result is mock_agent
-        assert "agent-1" in scheduler._orch._busy_agents
-
+        scheduler._orch.session_memory.add_busy_agent.assert_awaited_with("agent-1")
     async def test_release_agent_removes_claim(self, scheduler):
         """_release_agent should remove the agent from busy set."""
-        scheduler._orch._busy_agents.add("agent-1")
-        scheduler._release_agent("agent-1")
-        assert "agent-1" not in scheduler._orch._busy_agents
+        await scheduler._release_agent("agent-1")
+        scheduler._orch.session_memory.remove_busy_agent.assert_awaited_with("agent-1")
 
     async def test_maybe_retry_increments_retry_count(self, scheduler):
         """_maybe_retry should increment retry_count and requeue."""

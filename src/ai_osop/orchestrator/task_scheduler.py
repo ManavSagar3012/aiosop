@@ -13,7 +13,9 @@ from typing import Any, Dict, Optional
 
 import structlog
 
-from ai_osop.core.config import AgentType
+from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.exceptions import WorkflowException
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
 from ai_osop.core.models import ApprovalRequest, AuditEvent, Task
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
@@ -27,9 +29,9 @@ class TaskScheduler:
 
     # Terminal failure statuses that should not trigger retry success path
     _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
-
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
+        self.state_machine = EngagementStateMachine(self._orch.session_memory)
 
     async def schedule_task(self, task: Task) -> Task:
         """Schedule a task for execution."""
@@ -55,10 +57,16 @@ class TaskScheduler:
                 "approval_required": task.approval_required,
             },
         ):
-            # Force approval for exploit-class tasks
-            if task.type in ("validate_exploit", "exploit_validation") and not task.approval_required:
+            # REL-006: exploit-class tasks ALWAYS require approval and may never
+            # carry a caller-supplied approval token. Only resolve_approval (after a
+            # real operator decision) re-adds the token. Sanitizing here closes the
+            # GAP-2-1 self-authorization vector for anything entering via schedule_task.
+            if task.agent_type == AgentType.EXPLOIT_VALIDATION or task.type in (
+                "validate_exploit",
+                "exploit_validation",
+            ):
                 task.approval_required = True
-
+            self._sanitize_external_payload(task)
             self._orch._tasks[task.id] = task
             await self._orch.graph_memory.upsert_task(task)
             await self._orch.session_memory.store_task(task)
@@ -112,7 +120,7 @@ class TaskScheduler:
                     await self._orch.session_memory.store_task(task)
                     return task.result
                 finally:
-                    self._release_agent(agent.ctx.agent_id)
+                    await self._release_agent(agent.ctx.agent_id)
 
             if asyncio.get_event_loop().time() - start_time > timeout:
                 task.status = "failed"
@@ -137,9 +145,54 @@ class TaskScheduler:
             if hasattr(self._orch, "rate_limiter") and self._orch.rate_limiter:
                 await self._orch.rate_limiter.acquire(tool="orchestrator")
 
-            # Approval gate FIRST
+            # GAP-3-1: phase/task contract. If we know the engagement's current phase,
+            # refuse to dispatch a task that is not permitted in it (e.g. an exploit
+            # validation while still in reconnaissance). Defense-in-depth on top of the
+            # approval gate. Skipped only when the phase is unknown (no in-memory
+            # session), where the approval gate still protects exploit-class tasks.
+            session = self._orch._sessions.get(task.engagement_id)
+            if session is not None:
+                try:
+                    self.state_machine.assert_task_allowed(
+                        task, EngagementPhase(session.phase)
+                    )
+                except WorkflowException as e:
+                    logger.warning(
+                        "task_phase_violation", task_id=task.id, error=str(e)
+                    )
+                    await self._on_task_failure(
+                        task, {"error": str(e), "error_type": "PhaseViolation"}
+                    )
+                    return
+
+            # GAP-2-4: tamper detection for exploit-class tasks. If the engagement's
+            # scope carries a signature that no longer verifies, the manifest was
+            # altered after creation — refuse to run the exploit and audit it. (Legacy
+            # unsigned scopes are allowed through; signing happens at creation now.)
+            if task.agent_type == AgentType.EXPLOIT_VALIDATION or task.type in (
+                "validate_exploit",
+                "exploit_validation",
+            ):
+                _sess = self._orch._sessions.get(task.engagement_id)
+                _scope = getattr(_sess, "scope", None) if _sess is not None else None
+                if _scope is not None and getattr(_scope, "signature", None):
+                    from ai_osop.core.config import scope_signing_key
+
+                    if not _scope.verify_signature(scope_signing_key()):
+                        logger.error("scope_signature_invalid", task_id=task.id)
+                        await self._on_task_failure(
+                            task,
+                            {"error": "scope signature invalid", "error_type": "ScopeTamper"},
+                        )
+                        return
+
+            # Approval gate FIRST. Authority is the operator-resolved ApprovalRequest
+            # record (is_task_approved), NEVER task.payload.operator_approved — that
+            # field is agent-writable/persisted and trusting it is the GAP-2-2 bypass.
             logger.info("assign_task_attempt", task_id=task.id)
-            if task.approval_required and not task.payload.get("operator_approved"):
+            if task.approval_required and not self._orch.approval_coordinator.is_task_approved(
+                task.id
+            ):
                 if task.status != "awaiting_approval":
                     task.status = "awaiting_approval"
                     await self._orch.graph_memory.upsert_task(task)
@@ -175,7 +228,11 @@ class TaskScheduler:
                     {"task_id": task.id, "agent_id": agent.ctx.agent_id},
                     "orchestrator",
                 )
-                asyncio.create_task(self._execute_via_agent(agent, task))
+                # GAP-2-6: retain the handle so halt_engagement can cancel it.
+                handle = asyncio.create_task(self._execute_via_agent(agent, task))
+                handles = getattr(self._orch, "_task_handles", None)
+                if handles is not None:
+                    handles[task.id] = handle
             else:
                 task.status = "pending"
                 await self._orch.graph_memory.upsert_task(task)
@@ -198,17 +255,44 @@ class TaskScheduler:
                 if not success:
                     continue
                 
-                self._orch._busy_agents.add(agent.ctx.agent_id)
+                await self._orch.session_memory.add_busy_agent(agent.ctx.agent_id)
                 return agent
         return None
 
-    def _release_agent(self, agent_id: Optional[str]) -> None:
+    async def _release_agent(self, agent_id: Optional[str]) -> None:
         """Release an agent claim."""
         if agent_id:
-            self._orch._busy_agents.discard(agent_id)
+            await self._orch.session_memory.remove_busy_agent(agent_id)
             lock_key = f"lock:agent:{agent_id}"
-            import asyncio
-            asyncio.create_task(self._orch.session_memory.release_lock(lock_key, "locked"))
+            await self._orch.session_memory.release_lock(lock_key, "locked")
+    @staticmethod
+    def _sanitize_external_payload(task: Task) -> None:
+        """Strip operator-approval tokens injected by any non-orchestrator producer
+        (agents, queue producers, recovered/persisted records).
+
+        Approval authority is the operator-resolved ApprovalRequest record. The only
+        place the payload token is (re)added is resolve_approval, after a real human
+        decision. Every other ingress must be stripped so a caller cannot self-grant
+        approval (GAP-2-1) or replay a persisted grant (GAP-2-3)."""
+        if isinstance(task.payload, dict):
+            task.payload.pop("operator_approved", None)
+            task.payload.pop("approval_id", None)
+
+    async def ingest_queued_task(self, task: Task) -> None:
+        """Assign a task that arrived from the Redis work queue.
+
+        Queue producers include agents (e.g. AttackChainAgent), so this is an
+        UNTRUSTED boundary: re-apply REL-006 and strip any self-granted approval
+        token before assignment. Without this, an agent could push a pre-approved
+        exploit_validation task straight to the queue and bypass the gate."""
+        if task.agent_type == AgentType.EXPLOIT_VALIDATION or task.type in (
+            "validate_exploit",
+            "exploit_validation",
+        ):
+            task.approval_required = True
+        self._sanitize_external_payload(task)
+        await self._assign_task(task)
+
     @staticmethod
     def _strip_stale_approval(task: Task) -> None:
         """Drop persisted approval grant so gate re-fires."""
@@ -328,7 +412,10 @@ class TaskScheduler:
                 if not await self._maybe_retry(task, err):
                     await self._on_task_failure(task, err)
             finally:
-                self._release_agent(agent.ctx.agent_id)
+                await self._release_agent(agent.ctx.agent_id)
+                handles = getattr(self._orch, "_task_handles", None)
+                if handles is not None:
+                    handles.pop(task.id, None)
 
     async def _on_task_success(self, task: Task, result: Dict[str, Any]) -> None:
         """Handle task completion."""

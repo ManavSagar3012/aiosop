@@ -322,6 +322,28 @@ class SessionMemory:
             result = await r.eval(lua_script, 1, lock_key, lock_value)
             return bool(result)
 
+    # Redis-backed busy-agent set so the agent-claim survives process restarts and is
+    # shared across orchestrator workers (replaces the former in-memory _busy_agents).
+    _BUSY_AGENTS_KEY = "busy_agents"
+
+    async def add_busy_agent(self, agent_id: str) -> None:
+        """Mark an agent as busy (claimed)."""
+        r = await self._ensure_redis()
+        with trace_span("redis.add_busy_agent", attributes={"ai_osop.agent_id": agent_id}):
+            await r.sadd(self._BUSY_AGENTS_KEY, agent_id)
+
+    async def remove_busy_agent(self, agent_id: str) -> None:
+        """Release a busy agent claim."""
+        r = await self._ensure_redis()
+        with trace_span("redis.remove_busy_agent", attributes={"ai_osop.agent_id": agent_id}):
+            await r.srem(self._BUSY_AGENTS_KEY, agent_id)
+
+    async def is_busy_agent(self, agent_id: str) -> bool:
+        """Return whether an agent is currently claimed."""
+        r = await self._ensure_redis()
+        with trace_span("redis.is_busy_agent", attributes={"ai_osop.agent_id": agent_id}):
+            return bool(await r.sismember(self._BUSY_AGENTS_KEY, agent_id))
+
     async def store_session_state(self, state: SessionState) -> None:
         """Store active session state in Redis."""
         key = f"session:{state.session_id}"

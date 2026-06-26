@@ -90,12 +90,22 @@ class RecoveryService:
             engagement_id=task.engagement_id,
         )
 
+    # GAP-4-5: cap how many times a task may be resurrected across restarts so a
+    # poison task that crashes the orchestrator cannot be recovered forever.
+    MAX_RECOVERY_ATTEMPTS = 3
+    _EXPLOIT_TASK_TYPES = ("validate_exploit", "exploit_validation")
+
     async def recover_state(self) -> Dict[str, Any]:
-        """Restart recovery: restore in-memory state from durable stores."""
-        recovered = {"engagements": 0, "tasks": 0, "agents": 0}
+        """Restart recovery: restore ALL in-memory state from durable stores.
+
+        This is the SINGLE recovery authority (GAP-6-2). It restores sessions,
+        pending approvals (with their timeout watchers), and active tasks. Recovered
+        tasks are re-gated for approval (GAP-2-3) and bounded by a recovery-attempt
+        cap (GAP-4-5)."""
+        recovered = {"engagements": 0, "tasks": 0, "approvals": 0, "exhausted": 0}
         try:
-            # list_all_sessions() returns raw Redis keys ("session:<id>"); hydrate
-            # each into a real SessionState before storing it in memory.
+            # 1) Sessions. list_all_sessions() returns raw Redis keys ("session:<id>");
+            #    hydrate each into a real SessionState before storing it in memory.
             session_keys = await self._orch.session_memory.list_all_sessions()
             for key in session_keys:
                 session_id = key.split("session:", 1)[-1] if "session:" in key else key
@@ -104,13 +114,63 @@ class RecoveryService:
                     continue
                 self._orch._sessions[session.session_id] = session
                 recovered["engagements"] += 1
-            # load_all_active_tasks() returns Task objects already filtered to
-            # non-terminal status (list_all_tasks() only returns raw key strings).
+
+            # 2) Pending approvals — restore them AND re-spawn their timeout watchers
+            #    so a denial/timeout still fails the parked task after a restart.
+            try:
+                pending_approvals = await self._orch.session_memory.list_pending_approvals()
+                for apr in pending_approvals:
+                    await self._orch.approval_coordinator._register_approval(apr)
+                    asyncio.create_task(
+                        self._orch.approval_coordinator._await_approval_outcome(apr.id)
+                    )
+                    recovered["approvals"] += 1
+            except Exception as e:
+                logger.warning("recover_pending_approvals_failed", error=str(e))
+
+            # 3) Active tasks. load_all_active_tasks() returns Task objects already
+            #    filtered to non-terminal status.
             tasks = await self._orch.session_memory.load_all_active_tasks()
             for task in tasks:
+                # GAP-2-3: NEVER replay a persisted/forced approval grant. Exploit-class
+                # tasks must re-enter the operator approval gate after any restart, and
+                # the agent-trusted token is stripped so the gate re-fires.
+                if task.type in self._EXPLOIT_TASK_TYPES:
+                    task.approval_required = True
+                if task.approval_required:
+                    self._orch.task_scheduler._sanitize_external_payload(task)
+
                 if task.status in ("pending", "running"):
+                    # GAP-4-5: bound resurrection. Count this recovery; over the cap the
+                    # task is failed + dead-lettered instead of re-queued.
+                    if not isinstance(task.payload, dict):
+                        task.payload = {}
+                    attempts = int(task.payload.get("_recovery_attempts", 0)) + 1
+                    task.payload["_recovery_attempts"] = attempts
+                    if attempts > self.MAX_RECOVERY_ATTEMPTS:
+                        task.status = "failed"
+                        task.completed_at = datetime.utcnow()
+                        task.result = {
+                            "status": "failed",
+                            "error": f"recovery attempts exhausted ({attempts})",
+                        }
+                        await self._orch.graph_memory.upsert_task(
+                            task, result_summary={"recovery_exhausted": True}
+                        )
+                        try:
+                            await self._orch.dlq.enqueue(
+                                task,
+                                reason="recovery_exhausted",
+                                final_error="max recovery attempts exceeded",
+                            )
+                        except Exception as e:
+                            logger.error("recovery_dlq_failed", task_id=task.id, error=str(e))
+                        self._orch._tasks[task.id] = task
+                        recovered["exhausted"] += 1
+                        continue
                     task.assigned_agent_id = None
                     task.status = "pending"
+
                 self._orch._tasks[task.id] = task
                 recovered["tasks"] += 1
                 await self._orch.session_memory.push_task_queue(

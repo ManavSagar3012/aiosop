@@ -2,8 +2,9 @@
 AI-OSOP Shared Data Models
 Pydantic models for all cross-component communication.
 """
-
 import uuid
+import hmac
+import hashlib
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -189,6 +190,27 @@ class ScopeDefinition(BaseModel):
     testing_window_start: Optional[datetime] = None
     testing_window_end: Optional[datetime] = None
     authorization_ref: Optional[str] = None  # Path to signed ROE document
+    signature: Optional[str] = None  # Cryptographic signature for ScopeDefinition
+
+    def _signing_payload(self) -> str:
+        """Canonical representation of the scope-defining fields that are signed."""
+        return f"{self.engagement_id}:{','.join(self.domains)}:{','.join(self.ips)}"
+
+    def sign(self, secret_key: bytes) -> str:
+        """Compute and store the HMAC signature over the scope-defining fields.
+        Used at engagement creation so the manifest is tamper-evident (GAP-2-4)."""
+        self.signature = hmac.new(
+            secret_key, self._signing_payload().encode(), hashlib.sha256
+        ).hexdigest()
+        return self.signature
+
+    def verify_signature(self, secret_key: bytes) -> bool:
+        if not self.signature:
+            return False
+        expected_signature = hmac.new(
+            secret_key, self._signing_payload().encode(), hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(self.signature, expected_signature)
 
 
 class SessionState(BaseModel):
