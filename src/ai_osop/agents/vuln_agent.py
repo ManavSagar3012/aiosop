@@ -127,6 +127,8 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_csrf_scan(payload)
         elif task_type == "ssrf_scan":
             return await self._execute_ssrf_scan(payload)
+        elif task_type == "stored_xss_scan":
+            return await self._execute_stored_xss_scan(payload)
         elif task_type == "correlate_findings":
             return await self._execute_correlation(payload)
         elif task_type == "triage_finding":
@@ -1026,6 +1028,171 @@ class VulnAnalysisAgent(BaseAgent):
             "target": url,
             "confirmed": True,
             "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
+
+    async def _store_payload(
+        self, store_url: str, method: str, field: str, value: str,
+        base: Dict[str, Any], fmt: str, headers: Dict[str, str],
+    ) -> None:
+        """Persist a payload into a stored sink as the attacker (best-effort)."""
+        body = {**base, field: value}
+        try:
+            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
+                if fmt == "form":
+                    await c.request(method, store_url, data=body, headers=headers)
+                else:
+                    await c.request(method, store_url, json=body, headers=headers)
+        except Exception as e:
+            logger.warning("stored_xss_store_failed", url=store_url, error=str(e))
+
+    async def _execute_stored_xss_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm STORED XSS: persist a payload as the attacker, then confirm it
+        executes when a DIFFERENT context renders the consuming page. Never a
+        template/reflection guess.
+
+        Tiers:
+          1. browser-render execution (primary): store an <img onerror> marker
+             payload, render `render_url` in a real browser as the victim identity,
+             eval the marker global. Set => CONFIRMED stored-XSS execution.
+          2. OAST beacon (fallback / blind): store an <img src={oast_callback}>
+             payload; when the consuming page is rendered (by us triggering it, or a
+             real victim later), the beacon fires => OAST callback => CONFIRMED blind
+             stored XSS.
+
+        Payload:
+            store_url, store_method(POST), store_field, store_format(json|form),
+            store_base(dict), token/cookie (attacker auth)
+            render_url    page that displays the stored content
+            mode          auto|browser|oast (default auto)
+            engagement_id injected by _execute; poll_seconds/poll_interval (oast)
+        """
+        store_url = payload.get("store_url")
+        store_field = payload.get("store_field")
+        render_url = payload.get("render_url")
+        if not (store_url and store_field):
+            raise AgentException("stored_xss_scan requires 'store_url' and 'store_field'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("stored_xss_scan: cannot determine engagement_id")
+
+        store_method = payload.get("store_method", "POST").upper()
+        store_format = payload.get("store_format", "json")
+        store_base = dict(payload.get("store_base") or {})
+        mode = payload.get("mode", "auto")
+        auth_token = payload.get("token")
+        cookie = payload.get("cookie")
+        poll_seconds = float(payload.get("poll_seconds", 15))
+        poll_interval = float(payload.get("poll_interval", 1.5))
+
+        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        if session and hasattr(self, "browser_adapter"):
+            try:
+                await self.browser_adapter.initialize(session.scope, session.session_id)
+            except Exception:
+                pass
+
+        headers: Dict[str, str] = {}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+            headers["Cookie"] = f"token={auth_token}"
+        if cookie:
+            headers["Cookie"] = cookie
+
+        method = "execution"
+        proof: Dict[str, Any] = {}
+
+        # Tier 1: browser-render execution.
+        executed = False
+        if mode in ("auto", "browser") and render_url:
+            token = f"OSOPSXSS{uuid.uuid4().hex[:10]}"
+            exec_payload = f"<img src=x onerror=\"window.__osopxss='{token}'\">"
+            await self._store_payload(store_url, store_method, store_field,
+                                      exec_payload, store_base, store_format, headers)
+            executed = await self._confirm_xss_execution(render_url, token, engagement_id)
+            if executed:
+                proof = {"method": "execution", "render_url": render_url, "token": token}
+
+        # Tier 2: OAST beacon (blind / when we can't see the render).
+        beaconed = False
+        if not executed and mode in ("auto", "oast"):
+            method = "oast_beacon"
+            otoken, callback_url = await self.oast.register(label=f"stored_xss:{store_url}")
+            beacon_payload = f"<img src=\"{callback_url}\">"
+            await self._store_payload(store_url, store_method, store_field,
+                                      beacon_payload, store_base, store_format, headers)
+            # Trigger a render ourselves if we have a page that displays it.
+            if render_url and hasattr(self, "browser_adapter"):
+                try:
+                    await self.browser_adapter.navigate(
+                        render_url, user_label=payload.get("render_user_label", "victim"),
+                        engagement_id=engagement_id)
+                except Exception as e:
+                    logger.warning("stored_xss_render_failed", url=render_url, error=str(e))
+            hits: List[Dict[str, Any]] = []
+            waited = 0.0
+            while waited < poll_seconds:
+                try:
+                    hits = await self.oast.poll(otoken)
+                except Exception:
+                    break
+                if hits:
+                    break
+                await asyncio.sleep(poll_interval)
+                waited += poll_interval
+            if hits:
+                beaconed = True
+                proof = {"method": "oast_beacon", "callback_url": callback_url,
+                         "interaction": hits[0]}
+
+        if not (executed or beaconed):
+            logger.info("stored_xss_clean", store_url=store_url)
+            return {
+                "status": "success", "tool": "stored_xss_scan", "target": store_url,
+                "confirmed": False, "findings_count": 0,
+            }
+
+        vuln = Vulnerability(
+            cwe="CWE-79",
+            vuln_type=VulnClass.XSS,
+            severity=Severity.HIGH,
+            title=f"Stored XSS (confirmed via {method})",
+            description=(
+                f"A payload stored via {store_url} (field '{store_field}') was confirmed to "
+                + ("execute in a real browser when the consuming page was rendered."
+                   if method == "execution"
+                   else "beacon out-of-band when the consuming page was rendered (blind stored XSS).")
+                + f" Render surface: {render_url or 'n/a'}."
+            ),
+            evidence=[{
+                "type": "stored_xss_confirmation",
+                "provenance": "browser" if method == "execution" else "oast",
+                "stored": True,
+                "method": method,
+                "store_url": store_url,
+                "store_field": store_field,
+                "render_url": render_url,
+                **proof,
+            }],
+            tool_source="stored_xss_scan",
+            confidence=0.97 if method == "execution" else 0.95,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("stored_xss_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info("stored_xss_confirmed", store_url=store_url, method=method)
+        return {
+            "status": "success", "tool": "stored_xss_scan", "target": store_url,
+            "confirmed": True, "method": method, "findings_count": 1,
             "findings": [vuln.model_dump()],
         }
 
