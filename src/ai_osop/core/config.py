@@ -68,6 +68,7 @@ class VulnClass(str, Enum):
     LATERAL_MOVEMENT = "lateral_movement"
     PRIVILEGE_ESCALATION = "privilege_escalation"
     SUBDOMAIN_ENUM = "subdomain_enum"
+    SUBDOMAIN_TAKEOVER = "subdomain_takeover"
     VULN_SCAN = "vuln_scan"
     GRAPHQL_SECURITY = "graphql_security"
     SERVERLESS_SECURITY = "serverless_security"

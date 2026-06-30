@@ -129,6 +129,8 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_ssrf_scan(payload)
         elif task_type == "stored_xss_scan":
             return await self._execute_stored_xss_scan(payload)
+        elif task_type == "subdomain_takeover_scan":
+            return await self._execute_subdomain_takeover_scan(payload)
         elif task_type == "correlate_findings":
             return await self._execute_correlation(payload)
         elif task_type == "triage_finding":
@@ -1029,6 +1031,107 @@ class VulnAnalysisAgent(BaseAgent):
             "confirmed": True,
             "findings_count": 1,
             "findings": [vuln.model_dump()],
+        }
+
+    async def _probe_host_for_takeover(self, host: str):
+        """Fetch a host over http/https and best-effort resolve its CNAME aliases.
+        Returns (response_body, cnames). Network errors yield ("", [])."""
+        import socket
+
+        cnames: List[str] = []
+        try:
+            _name, aliases, _ips = socket.gethostbyname_ex(host)
+            cnames = list(aliases or [])
+        except Exception:
+            cnames = []
+        body = ""
+        for scheme in ("https", "http"):
+            try:
+                async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=12) as c:
+                    resp = await c.get(f"{scheme}://{host}/")
+                    body = resp.text
+                    if body:
+                        break
+            except Exception:
+                continue
+        return body, cnames
+
+    async def _execute_subdomain_takeover_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Detect dangling subdomains pointing at unclaimed third-party services.
+
+        For each host, fetch it and match the response against provider-specific
+        "unclaimed resource" signatures (NoSuchBucket, "There isn't a GitHub Pages
+        site here", "No such app", ...). A signature match => takeover-able =>
+        validated finding. Bare 404s never match (false positives get reports
+        rejected). High-accept, low-duplicate recon-tier bounty.
+
+        Payload:
+            hosts          list of hostnames (or 'host' for one)
+            engagement_id  injected by _execute
+        """
+        from ai_osop.core.takeover_fingerprints import match_takeover
+
+        hosts = payload.get("hosts")
+        if not hosts:
+            single = payload.get("host") or payload.get("target")
+            hosts = [single] if single else []
+        if not hosts:
+            raise AgentException("subdomain_takeover_scan requires 'hosts' (list) or 'host'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("subdomain_takeover_scan: cannot determine engagement_id")
+
+        minted = []
+        for host in hosts:
+            try:
+                body, cnames = await self._probe_host_for_takeover(host)
+            except Exception as e:
+                logger.warning("takeover_probe_failed", host=host, error=str(e))
+                continue
+            m = match_takeover(host, cnames, body)
+            if not m:
+                continue
+            vuln = Vulnerability(
+                cwe="CWE-350",  # Reliance on Reverse DNS Resolution... (takeover class)
+                vuln_type=VulnClass.SUBDOMAIN_TAKEOVER,
+                severity=Severity.HIGH,
+                title=f"Subdomain takeover ({m['service']}) on {host}",
+                description=(
+                    f"{host} points at an unclaimed {m['service']} resource "
+                    f"(signature: '{m['signature']}'"
+                    + (f"; CNAME confirms the provider" if m["cname_match"] else "")
+                    + "). The dangling reference can be claimed by an attacker to serve "
+                    "content under this domain."
+                ),
+                evidence=[{
+                    "type": "subdomain_takeover",
+                    "provenance": "http_fingerprint",
+                    **m,
+                }],
+                tool_source="subdomain_takeover_scan",
+                confidence=m["confidence"],
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                self.findings[vuln.id] = vuln
+                minted.append(vuln)
+            except Exception as e:
+                logger.error("takeover_persist_failed", vuln_id=vuln.id, error=str(e))
+            logger.info("subdomain_takeover_confirmed", host=host, service=m["service"])
+
+        return {
+            "status": "success",
+            "tool": "subdomain_takeover_scan",
+            "hosts_scanned": len(hosts),
+            "confirmed": len(minted) > 0,
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
         }
 
     async def _store_payload(
