@@ -39,3 +39,37 @@ def test_poll_unknown_token_is_empty():
         "tool_name": "oast_poll", "parameters": {"token": "doesnotexist"}, "request_id": "r2"})
     res = r.json()["result"]
     assert res["hit_count"] == 0 and res["interactions"] == []
+
+
+def test_capture_records_interaction_keyed_by_token():
+    token = _register()["result"]["token"]
+    # Simulate a target fetching the callback URL.
+    assert client.get(f"/{token}").status_code == 200
+    res = client.post("/mcp/execute", json={
+        "tool_name": "oast_poll", "parameters": {"token": token}, "request_id": "r3"}).json()["result"]
+    assert res["hit_count"] == 1
+    hit = res["interactions"][0]
+    assert hit["method"] == "GET" and hit["path"] == f"/{token}"
+
+
+def test_capture_parses_token_from_subpath():
+    token = _register()["result"]["token"]
+    client.post(f"/{token}/exfil/data", content=b"secret")
+    res = client.post("/mcp/execute", json={
+        "tool_name": "oast_poll", "parameters": {"token": token}, "request_id": "r4"}).json()["result"]
+    assert res["hit_count"] == 1
+    assert res["interactions"][0]["path"] == f"/{token}/exfil/data"
+
+
+def test_capture_unknown_token_not_stored():
+    client.get("/unregistered-token-xyz")
+    res = client.post("/mcp/execute", json={
+        "tool_name": "oast_poll", "parameters": {"token": "unregistered-token-xyz"},
+        "request_id": "r5"}).json()["result"]
+    assert res["hit_count"] == 0
+
+
+def test_capture_returns_gif():
+    token = _register()["result"]["token"]
+    r = client.get(f"/{token}")
+    assert r.headers["content-type"] == "image/gif"
