@@ -11,13 +11,15 @@ from ai_osop.adapters.recon_mcp import ReconMCPAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
-from ai_osop.core.models import Asset, Endpoint, Task
+from ai_osop.core.models import Asset, Endpoint, Task, make_asset_id
 import re
 from ai_osop.agents.retrieval_agent import RetrievalAgent
 import hashlib
 import aiohttp
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse, parse_qs
+import structlog
+logger = structlog.get_logger(__name__)
 
 class SimpleHTMLParser(HTMLParser):
     def __init__(self):
@@ -114,8 +116,71 @@ class ReconAgent(BaseAgent):
             return await self._execute_tech_fingerprint(payload)
         elif task_type == "full_recon":
             return await self._execute_full_recon(payload)
+        elif task_type == "expand_subdomains":
+            return await self._execute_expand_subdomains(payload)
         else:
             raise AgentException(f"Unknown recon task type: {task_type}")
+
+    async def _execute_expand_subdomains(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Expand discovered subdomains into likely candidates (altdns-style) and,
+        when resolve=True, keep the ones that resolve — broadening attack surface to
+        feed subdomain_takeover_scan / recon. Permutation is deterministic; resolution
+        is best-effort and bounded.
+
+        Payload: domain, known_subs (list), resolve (bool, default True),
+                 max_resolve (default 500), engagement_id.
+        """
+        import asyncio
+        import socket
+
+        from ai_osop.core.subdomain_permutations import generate_permutations
+
+        domain = payload.get("domain")
+        if not domain and payload.get("url"):
+            domain = payload["url"].replace("https://", "").replace("http://", "").split("/")[0]
+        if not domain:
+            return {"status": "failed", "error": "domain parameter is required"}
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+
+        known = payload.get("known_subs") or list(self.asset_inventory and
+                                                  [a.value for a in self.asset_inventory.values()
+                                                   if getattr(a, "type", "") in ("subdomain", "domain")])
+        candidates = generate_permutations(domain, known, payload.get("words"))
+
+        resolve = bool(payload.get("resolve", True))
+        max_resolve = int(payload.get("max_resolve", 500))
+        live: List[str] = []
+        if resolve:
+            async def _res(host: str) -> bool:
+                try:
+                    await asyncio.to_thread(socket.gethostbyname, host)
+                    return True
+                except Exception:
+                    return False
+            checked = candidates[:max_resolve]
+            results = await asyncio.gather(*[_res(h) for h in checked])
+            live = [h for h, ok in zip(checked, results) if ok]
+            for host in live:
+                try:
+                    asset = Asset(
+                        id=f"asset-{engagement_id}-{host}", type="subdomain", value=host,
+                        source="permutation", confidence=0.9, engagement_id=engagement_id,
+                    )
+                    await self.ctx.graph_memory.add_asset(asset)
+                    self.asset_inventory[asset.id] = asset
+                except Exception as e:
+                    logger.error(f"Failed to persist permutation asset {host}: {e}")
+
+        return {
+            "status": "success",
+            "domain": domain,
+            "candidates_generated": len(candidates),
+            "resolved_live": len(live),
+            "live_subdomains": live,
+            "candidates": candidates if not resolve else candidates[:50],
+        }
 
     async def _execute_dns_enum(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute DNS enumeration for domain."""
@@ -136,11 +201,11 @@ class ReconAgent(BaseAgent):
                 domain=domain, depth=depth, active=active
             )
         except Exception as e:
-            print(f"WARN: DNS enum failed for {domain}: {e}")
+            logger.warning(r"DNS enum failed for {domain}: {e}")
             # Fallback: create base domain asset
             assets = [
                 Asset(
-                    id=f"asset-{domain}",
+                    id=f"asset-{self.ctx.current_task.engagement_id}-{domain}",
                     type="domain",
                     value=domain,
                     source="recon_fallback",
@@ -156,7 +221,7 @@ class ReconAgent(BaseAgent):
                 await self.ctx.graph_memory.add_asset(asset)
                 self.asset_inventory[asset.id] = asset
             except Exception as e:
-                print(f"ERROR: Failed to add asset {asset.value} to graph: {e}")
+                logger.error(r"Failed to add asset {asset.value} to graph: {e}")
 
         return {
             "status": "success",
@@ -173,7 +238,7 @@ class ReconAgent(BaseAgent):
         try:
             assets = await self.recon_adapter.port_scan(targets=targets, ports=ports)
         except Exception as e:
-            print(f"WARN: Port scan failed: {e}")
+            logger.warning(r"Port scan failed: {e}")
             assets = []
 
         # Set engagement ID and store in graph memory
@@ -183,7 +248,7 @@ class ReconAgent(BaseAgent):
                 await self.ctx.graph_memory.add_asset(asset)
                 self.asset_inventory[asset.id] = asset
             except Exception as e:
-                print(f"ERROR: Failed to add asset {asset.value} to graph: {e}")
+                logger.error(r"Failed to add asset {asset.value} to graph: {e}")
 
         return {"status": "success", "targets": targets, "assets_discovered": len(assets)}
 
@@ -201,7 +266,7 @@ class ReconAgent(BaseAgent):
             logging.getLogger("ai_osop.recon").error(
                 "service_probe_failed", error=str(e), target_count=len(targets), exc_info=True
             )
-            print(f"WARN: Service probe failed ({len(targets)} targets): {e}")
+            logger.warning(r"Service probe failed ({len(targets)} targets): {e}")
             endpoints = []
 
         for endpoint in endpoints:
@@ -210,7 +275,7 @@ class ReconAgent(BaseAgent):
                 await self.ctx.graph_memory.add_endpoint(endpoint)
                 self.endpoint_inventory[endpoint.id] = endpoint
             except Exception as e:
-                print(f"ERROR: Failed to add endpoint {endpoint.url} to graph: {e}")
+                logger.error(r"Failed to add endpoint {endpoint.url} to graph: {e}")
 
         return {"status": "success", "endpoints_discovered": len(endpoints)}
 
@@ -245,7 +310,7 @@ class ReconAgent(BaseAgent):
         # (AIOSOP-AUTO-2026-06-16)
         try:
             root_asset = Asset(
-                id=f"asset-{domain}",
+                id=f"asset-{self.ctx.current_task.engagement_id}-{domain}",
                 type="domain",
                 value=domain,
                 source="recon_seed",
@@ -255,7 +320,7 @@ class ReconAgent(BaseAgent):
             await self.ctx.graph_memory.add_asset(root_asset)
             self.asset_inventory[root_asset.id] = root_asset
         except Exception as e:
-            print(f"DEBUG: full_recon_failure: {str(e)}")
+            logger.debug(r"full_recon_failure: {str(e)}")
             import logging
             logging.getLogger("ai_osop.recon").error("full_recon_failure", error=str(e), exc_info=True)
             return {"status": "failed", "error": str(e)}
@@ -270,7 +335,7 @@ class ReconAgent(BaseAgent):
         )
         skills = await self._get_relevant_skills(self.ctx.current_task)
         reasoning = await self.think(analysis_context, skills)
-        print(f"AGENT REASONING: {reasoning}")
+        logger.info(f"AGENT REASONING: {reasoning}")
 
         if subdomains:
             await self._execute_port_scan({"targets": subdomains})
@@ -284,30 +349,30 @@ class ReconAgent(BaseAgent):
         endpoints_count = 0
         if urls_to_probe:
             try:
-                print(f"DEBUG: Probing {len(urls_to_probe)} URLs for web services...")
+                logger.debug(r"Probing {len(urls_to_probe)} URLs for web services...")
                 probe_res = await self._execute_service_probe({"targets": urls_to_probe})
                 endpoints_count = probe_res.get("endpoints_discovered", 0)
             except Exception as e:
-                print(f"WARN: Full recon service probe failed: {e}")
+                logger.warning(r"Full recon service probe failed: {e}")
 
         # 3.5. Active Web Crawling & Endpoint Explosion (Sprint 12)
         active_endpoints = []
         try:
-            print(f"DEBUG: Initiating active web crawl / endpoint explosion on {domain}...")
+            logger.debug(r"Initiating active web crawl / endpoint explosion on {domain}...")
             active_endpoints = await self._active_crawl_target(domain)
             for ep in active_endpoints:
                 try:
                     await self.ctx.graph_memory.add_endpoint(ep)
                     self.endpoint_inventory[ep.id] = ep
                 except Exception as ex:
-                    print(f"ERROR: Failed to add active crawled endpoint {ep.url} to graph: {ex}")
+                    logger.error(r"Failed to add active crawled endpoint {ep.url} to graph: {ex}")
         except Exception as e:
-            print(f"WARN: Active crawl failed: {e}")
+            logger.warning(r"Active crawl failed: {e}")
 
         # 4. Historical URLs (Wayback) (Sprint 12)
         historical_count = 0
         try:
-            print(f"DEBUG: Fetching historical URLs from Wayback for {domain}...")
+            logger.debug(r"Fetching historical URLs from Wayback for {domain}...")
             hist_endpoints = await self.recon_adapter.historical_urls(domain)
             for ep in hist_endpoints:
                 try:
@@ -316,14 +381,14 @@ class ReconAgent(BaseAgent):
                     self.endpoint_inventory[ep.id] = ep
                     historical_count += 1
                 except Exception as ex:
-                    print(f"ERROR: Failed to add historical endpoint {ep.url} to graph: {ex}")
+                    logger.error(r"Failed to add historical endpoint {ep.url} to graph: {ex}")
         except Exception as e:
-            print(f"WARN: Historical URLs lookup failed: {e}")
+            logger.warning(r"Historical URLs lookup failed: {e}")
             
         # 5. OSINT Shodan Lookup (Sprint 12)
         shodan_assets_count = 0
         try:
-            print(f"DEBUG: Running Shodan OSINT lookup for {domain}...")
+            logger.debug(r"Running Shodan OSINT lookup for {domain}...")
             shodan_assets = await self.recon_adapter.osint_lookup(domain)
             for asset in shodan_assets:
                 try:
@@ -332,9 +397,9 @@ class ReconAgent(BaseAgent):
                     self.asset_inventory[asset.id] = asset
                     shodan_assets_count += 1
                 except Exception as ex:
-                    print(f"ERROR: Failed to add Shodan asset {asset.value} to graph: {ex}")
+                    logger.error(r"Failed to add Shodan asset {asset.value} to graph: {ex}")
         except Exception as e:
-            print(f"WARN: Shodan OSINT lookup failed: {e}")
+            logger.warning(r"Shodan OSINT lookup failed: {e}")
 
         return {
             "status": "success",
@@ -371,7 +436,7 @@ class ReconAgent(BaseAgent):
         for s in sessions:
             identities.append({"label": s.user_label, "session": s})
             
-        print(f"DEBUG: Active crawler initialized with {len(identities)} identities: {[i['label'] for i in identities]}. Known paths: {len(known_paths)}")
+        logger.debug(r"Active crawler initialized with {len(identities)} identities: {[i['label'] for i in identities]}. Known paths: {len(known_paths)}")
         
         # Regex patterns for API routes and parameters in JS
         param_pattern = re.compile(r"[?&]([a-zA-Z0-9_\-]+)=")
@@ -380,7 +445,7 @@ class ReconAgent(BaseAgent):
             user_label = identity["label"]
             user_session = identity["session"]
             
-            print(f"DEBUG: Starting active crawl phase for identity: {user_label}")
+            logger.debug(r"Starting active crawl phase for identity: {user_label}")
             
             visited_urls = set()
             urls_to_crawl = list(set(initial_urls))
@@ -528,10 +593,10 @@ class ReconAgent(BaseAgent):
                                             self.endpoint_inventory[script_url] = js_ep
                                             
                     except Exception as e:
-                        print(f"DEBUG: Active crawl failed for {url} under {user_label}: {e}")
+                        logger.debug(r"Active crawl failed for {url} under {user_label}: {e}")
                         
                 # 4. Parse JavaScript Bundles for hidden API routes and parameters
-                print(f"DEBUG: Discovered {len(js_files)} JS bundles for {user_label}. Starting deep route extraction...")
+                logger.debug(r"Discovered {len(js_files)} JS bundles for {user_label}. Starting deep route extraction...")
                 for js_url in list(js_files)[:10]:
                     try:
                         async with session.get(js_url, timeout=5) as js_response:
@@ -568,9 +633,9 @@ class ReconAgent(BaseAgent):
                                     parameters_found.add(param)
                                     
                     except Exception as e:
-                        print(f"DEBUG: JS route extraction failed for {js_url} under {user_label}: {e}")
+                        logger.debug(r"JS route extraction failed for {js_url} under {user_label}: {e}")
                         
-            print(f"DEBUG: Active crawl complete for {user_label}. Found {len(discovered_endpoints)} total endpoints, {len(api_routes)} API routes, and {len(parameters_found)} parameters.")
+            logger.debug(r"Active crawl complete for {user_label}. Found {len(discovered_endpoints)} total endpoints, {len(api_routes)} API routes, and {len(parameters_found)} parameters.")
             
         return discovered_endpoints
     async def _cleanup_resources(self) -> None:
