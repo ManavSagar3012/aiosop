@@ -141,6 +141,8 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_race_limit_scan(payload)
         elif task_type == "ssrf_metadata_chain":
             return await self._execute_ssrf_metadata_chain(payload)
+        elif task_type == "request_smuggling_scan":
+            return await self._execute_request_smuggling_scan(payload)
         elif task_type == "correlate_findings":
             return await self._execute_correlation(payload)
         elif task_type == "triage_finding":
@@ -1042,6 +1044,91 @@ class VulnAnalysisAgent(BaseAgent):
             "findings_count": 1,
             "findings": [vuln.model_dump()],
         }
+
+    async def _execute_request_smuggling_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Detect HTTP request smuggling (CL.TE / TE.CL desync) with SAFE timing
+        probes — no request is smuggled into another user's connection. A desync is
+        flagged when a crafted probe makes the back-end hang awaiting chunk data,
+        delaying the response far beyond a fast baseline.
+
+        Payload:
+            url            target URL
+            techniques     list subset of ["cl.te","te.cl"] (default both)
+            threshold_ms   delay over baseline that indicates desync (default 4000)
+            recv_timeout   seconds to wait for the probe response (default 8)
+            engagement_id  injected by _execute
+        """
+        from ai_osop.core.smuggle_probe import probe_desync
+
+        url = payload.get("url") or payload.get("target")
+        if not url:
+            raise AgentException("request_smuggling_scan requires 'url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("request_smuggling_scan: cannot determine engagement_id")
+
+        parsed = urlparse(url)
+        use_tls = parsed.scheme == "https"
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if use_tls else 80)
+        path = parsed.path or "/"
+        techniques = payload.get("techniques") or ["cl.te", "te.cl"]
+        threshold_ms = float(payload.get("threshold_ms", 4000))
+        recv_timeout = float(payload.get("recv_timeout", 8))
+
+        confirmed = None
+        probes = []
+        for tech in techniques:
+            res = await asyncio.to_thread(
+                probe_desync, host, port, path=path, technique=tech,
+                use_tls=use_tls, recv_timeout=recv_timeout, threshold_ms=threshold_ms,
+            )
+            probes.append(res)
+            if res.get("vulnerable"):
+                confirmed = res
+                break
+
+        if not confirmed:
+            logger.info("request_smuggling_clean", url=url, probes=probes)
+            return {"status": "success", "tool": "request_smuggling_scan", "target": url,
+                    "confirmed": False, "probes": probes, "findings_count": 0}
+
+        vuln = Vulnerability(
+            cwe="CWE-444",  # HTTP Request/Response Smuggling
+            vuln_type=VulnClass.REQUEST_SMUGGLING,
+            severity=Severity.HIGH,
+            title=f"HTTP request smuggling ({confirmed['technique'].upper()}) at {host}",
+            description=(
+                f"A {confirmed['technique'].upper()} desync timing probe against {url} delayed "
+                f"the response to {confirmed['probe_ms']}ms vs a {confirmed['baseline_ms']}ms "
+                f"baseline, indicating the front-end and back-end disagree on message length. "
+                f"This enables request smuggling (cache poisoning, auth bypass, request hijack)."
+            ),
+            evidence=[{
+                "type": "request_smuggling",
+                "provenance": "timing_probe",
+                "url": url,
+                **confirmed,
+            }],
+            tool_source="request_smuggling_scan",
+            confidence=0.85,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("request_smuggling_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info("request_smuggling_confirmed", url=url, technique=confirmed["technique"])
+        return {"status": "success", "tool": "request_smuggling_scan", "target": url,
+                "confirmed": True, "technique": confirmed["technique"],
+                "probes": probes, "findings_count": 1, "findings": [vuln.model_dump()]}
 
     async def _ssrf_fetch_via_sink(self, metadata_url: str) -> str:
         """Drive an in-band SSRF: place metadata_url into the configured sink and
