@@ -90,6 +90,35 @@ async def execute(req: ExecuteRequest):
             "error": f"unknown tool: {req.tool_name}"}
 
 
+@app.api_route(
+    "/{full_path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def capture(full_path: str, request: Request):
+    """Catch-all: record any inbound request as an interaction keyed by the token
+    in the first path segment. A captured callback is the ground-truth signal that
+    a blind vulnerability fired."""
+    token = full_path.split("/", 1)[0] if full_path else ""
+    if token:
+        try:
+            raw = await request.body()
+            body_snippet = raw[:512].decode("utf-8", "replace")
+        except Exception:
+            body_snippet = ""
+        with _LOCK:
+            if token in _TOKENS:
+                _INTERACTIONS.setdefault(token, []).append({
+                    "ts": time.time(),
+                    "method": request.method,
+                    "path": "/" + full_path,
+                    "source_ip": request.client.host if request.client else "",
+                    "headers": {k: v for k, v in request.headers.items()
+                                if k.lower() in ("user-agent", "host", "referer", "x-forwarded-for")},
+                    "body_snippet": body_snippet,
+                })
+    return Response(content=_GIF, media_type="image/gif")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=PORT)
