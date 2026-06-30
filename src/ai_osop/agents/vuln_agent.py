@@ -4,13 +4,20 @@ Specialized agent for vulnerability scanning, correlation, and validation.
 """
 
 import asyncio
-import logging
+import json
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
-logger = logging.getLogger(__name__)
+import httpx
+import structlog
+logger = structlog.get_logger(__name__)
 
+from ai_osop.adapters.browser_mcp import BrowserMCPAdapter
 from ai_osop.adapters.burp_mcp import BurpMCPAdapter
+from ai_osop.adapters.oast_mcp import OASTAdapter
+from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType, Severity, VulnClass, settings
@@ -37,6 +44,15 @@ class VulnAnalysisAgent(BaseAgent):
     async def _setup_resources(self) -> None:
         """Initialize vulnerability scanning tools."""
         self.burp_adapter = BurpMCPAdapter(self.ctx.mcp_registry)
+        # security-bridge drives the real offensive CLI tools (sqlmap/nmap/ffuf).
+        # Owning it here is what wires sqlmap into an executable agent task (sqli_scan).
+        self.security_bridge = SecurityBridgeAdapter(self.ctx.mcp_registry)
+        # browser-mcp (Playwright) lets xss_scan CONFIRM execution (a payload that
+        # actually runs in the DOM) rather than settle for a template/reflection match.
+        self.browser_adapter = BrowserMCPAdapter(self.ctx.mcp_registry)
+        # oast-mcp lets ssrf_scan CONFIRM blind SSRF via a real out-of-band callback,
+        # not a guess. No callback => no finding.
+        self.oast = OASTAdapter(self.ctx.mcp_registry)
         # Phase 1 Bug Bounty Upgrade: authenticated session store so probes can run
         # as an imported user (User A vs User B authz testing) instead of anonymously.
         self.session_store = SessionStore(self.ctx.session_memory)
@@ -99,6 +115,18 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_intruder_fuzz(payload)
         elif task_type == "nuclei_scan":
             return await self._execute_nuclei_scan(payload)
+        elif task_type == "sqli_scan":
+            return await self._execute_sqli_scan(payload)
+        elif task_type == "xss_scan":
+            return await self._execute_xss_scan(payload)
+        elif task_type == "jwt_scan":
+            return await self._execute_jwt_scan(payload)
+        elif task_type == "mass_assignment_scan":
+            return await self._execute_mass_assignment_scan(payload)
+        elif task_type == "csrf_scan":
+            return await self._execute_csrf_scan(payload)
+        elif task_type == "ssrf_scan":
+            return await self._execute_ssrf_scan(payload)
         elif task_type == "correlate_findings":
             return await self._execute_correlation(payload)
         elif task_type == "triage_finding":
@@ -129,7 +157,7 @@ class VulnAnalysisAgent(BaseAgent):
 
         # Ensure base Asset exists for graph linking
         asset = Asset(
-            id=f"asset-{domain}",
+            id=f"asset-{engagement_id}-{domain}",
             type="domain",
             value=domain,
             source="manual_input",
@@ -147,7 +175,7 @@ class VulnAnalysisAgent(BaseAgent):
         from ai_osop.core.models import Endpoint
 
         default_ep = Endpoint(
-            id=f"endpoint-{domain}",
+            id=f"endpoint-{engagement_id}-{domain}",
             url=f"https://{domain}/",
             asset_id=asset.id,
             source="scan_base",
@@ -178,8 +206,11 @@ class VulnAnalysisAgent(BaseAgent):
         endpoints = await self.burp_adapter.get_sitemap(url_prefix=domain)
         history = await self.burp_adapter.get_proxy_history()
 
-        print(
-            f"DEBUG: Burp returned {len(vulns)} issues, {len(endpoints)} sitemap entries, and {len(history)} history entries"
+        logger.info(
+            "burp_scan_results",
+            issues=len(vulns),
+            sitemap_entries=len(endpoints),
+            history_entries=len(history),
         )
 
         # Combine endpoints from sitemap and history
@@ -198,7 +229,7 @@ class VulnAnalysisAgent(BaseAgent):
                     engagement_id=engagement_id,
                 )
 
-        print(f"DEBUG: Total unique endpoints for {domain}: {len(all_endpoints)}")
+        logger.debug(r"Total unique endpoints for {domain}: {len(all_endpoints)}")
 
         # PATCH (REL-035, 2026-06-15): Persist findings + endpoints FIRST.
         # Pre-patch order was: reasoning (Ollama, often 60–1800s) → persist.
@@ -213,7 +244,7 @@ class VulnAnalysisAgent(BaseAgent):
                 await self.ctx.graph_memory.add_vulnerability(vuln)
                 self.findings[vuln.id] = vuln
             except Exception as e:
-                print(f"ERROR: Failed to add vulnerability {vuln.id} to graph: {e}")
+                logger.error(r"Failed to add vulnerability {vuln.id} to graph: {e}")
 
         for ep in all_endpoints.values():
             try:
@@ -221,7 +252,7 @@ class VulnAnalysisAgent(BaseAgent):
                 ep.asset_id = asset.id
                 await self.ctx.graph_memory.add_endpoint(ep)
             except Exception as e:
-                print(f"ERROR: Failed to add endpoint {ep.url} to graph: {e}")
+                logger.error(r"Failed to add endpoint {ep.url} to graph: {e}")
 
         # Perform reasoning using security skills (best-effort, never blocks
         # finding persistence; bounded by a short timeout so vuln_agent fits
@@ -246,13 +277,15 @@ class VulnAnalysisAgent(BaseAgent):
             reasoning = f"[VERIFIED_V0.1.2] {reasoning}"
         except asyncio.TimeoutError:
             reasoning = f"(reasoning skipped: exceeded {reasoning_timeout}s budget)"
-            print(
-                f"WARN: vuln_agent reasoning timed out for {domain}; findings persisted anyway"
+            logger.warning(
+                "vuln_agent_reasoning_timeout",
+                domain=domain,
+                message="findings persisted anyway",
             )
         except Exception as e:
             reasoning = f"(reasoning skipped: {type(e).__name__}: {str(e)[:120]})"
-            print(f"WARN: vuln_agent reasoning errored for {domain}: {e}")
-        print(f"AGENT REASONING: {reasoning}")
+            logger.warning("vuln_agent_reasoning_error", domain=domain, error=str(e))
+        logger.info(f"AGENT REASONING: {reasoning}")
 
         return {
             "status": "success",
@@ -277,7 +310,7 @@ class VulnAnalysisAgent(BaseAgent):
             "tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}"
         )
 
-        print(f"DEBUG: Deploying Intruder attack against {url}")
+        logger.debug(r"Deploying Intruder attack against {url}")
 
         # Prepare the base request definition expected by our Java MCP adapter
         mock_request = {
@@ -364,12 +397,18 @@ class VulnAnalysisAgent(BaseAgent):
         vulns = []
 
         for finding in raw_findings:
-            # PATCH (REL-015): _normalize_nuclei_finding does `finding.get(...)`,
-            # which raised "'str' object has no attribute 'get'" when the MCP
-            # returned a list of strings. Skip non-dict findings instead of
-            # crashing the whole task.
+            # nuclei-mcp emits each finding as a JSONL string (one JSON object per
+            # line from `nuclei -jsonl`). Parse strings into dicts before
+            # normalizing. Previously these were silently skipped (REL-015), which
+            # dropped every real finding and reported findings_count=0.
+            if isinstance(finding, str):
+                try:
+                    finding = json.loads(finding)
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.warning(f"skipping unparseable nuclei finding: {e}")
+                    continue
             if not isinstance(finding, dict):
-                print(f"WARN: skipping non-dict nuclei finding: {finding!r}")
+                logger.warning(f"skipping non-dict nuclei finding: {finding!r}")
                 continue
             vuln = self._normalize_nuclei_finding(finding)
             if engagement_id:
@@ -385,6 +424,741 @@ class VulnAnalysisAgent(BaseAgent):
             "findings_count": len(vulns),
             "findings": [v.model_dump() for v in vulns],
         }
+
+    async def _execute_sqli_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Run sqlmap against a target and mint a CONFIRMED finding on real injection.
+
+        Unlike nuclei (template match -> POTENTIAL), sqlmap *demonstrates* the
+        injection (boolean/error/UNION/time payloads that actually succeed), so a
+        positive verdict is a validated proof of concept -> Vulnerability(validated=True).
+
+        Payload:
+            url           target URL (GET params injectable as-is, e.g. ...?q=test)
+            data          optional whitespace-free POST body (e.g. "email=a&pass=b")
+            level / risk   sqlmap detection depth (1-5) / risk (1-3); default 1/1
+            engagement_id  injected by _execute
+        """
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException(
+                "sqli_scan task requires one of 'url', 'target_url', or 'target' in payload"
+            )
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("sqli_scan: cannot determine engagement_id")
+
+        data = payload.get("data")
+        level = int(payload.get("level", 1))
+        risk = int(payload.get("risk", 1))
+
+        # Initialize the bridge for this engagement so scope enforcement applies.
+        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        if session:
+            await self.security_bridge.initialize(session.scope, session.session_id)
+
+        try:
+            verdict = await self.security_bridge.run_sqlmap(
+                url, data=data, level=level, risk=risk
+            )
+        except Exception as e:  # MCPException etc. — report, do not crash the agent
+            logger.warning("sqli_scan_failed", url=url, error=str(e))
+            return {"status": "error", "tool": "sqlmap", "target": url, "error": str(e)}
+
+        injectable = bool(verdict.get("injectable"))
+        if not injectable:
+            logger.info("sqli_scan_clean", url=url, level=level, risk=risk)
+            return {
+                "status": "success",
+                "tool": "sqlmap",
+                "target": url,
+                "injectable": False,
+                "findings_count": 0,
+            }
+
+        # Confirmed injection -> validated CONFIRMED finding.
+        parameter = verdict.get("parameter", "")
+        dbms = verdict.get("dbms", "")
+        techniques = verdict.get("techniques", []) or []
+        payloads = verdict.get("payloads", []) or []
+
+        vuln = Vulnerability(
+            cwe="CWE-89",
+            vuln_type=VulnClass.SQLI,
+            severity=Severity.CRITICAL,
+            title=f"SQL Injection in parameter '{parameter or 'unknown'}'",
+            description=(
+                f"sqlmap confirmed a SQL injection at {url} "
+                f"(parameter: {parameter or 'n/a'}; back-end DBMS: {dbms or 'unknown'}). "
+                f"Techniques: {', '.join(techniques) if techniques else 'n/a'}."
+            ),
+            evidence=[
+                {
+                    "type": "sqlmap_injection",
+                    "provenance": "sqlmap",
+                    "url": url,
+                    "parameter": parameter,
+                    "dbms": dbms,
+                    "techniques": techniques,
+                    "payloads": payloads,
+                }
+            ],
+            tool_source="sqlmap",
+            confidence=0.98,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("sqli_scan_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info(
+            "sqli_scan_confirmed",
+            url=url,
+            parameter=parameter,
+            dbms=dbms,
+            techniques=len(techniques),
+        )
+        return {
+            "status": "success",
+            "tool": "sqlmap",
+            "target": url,
+            "injectable": True,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
+
+    @staticmethod
+    def _inject_payload(url: str, payload: str, param: Optional[str] = None) -> str:
+        """Return ``url`` with ``payload`` placed into a query parameter.
+
+        Handles three shapes: an explicit ``OSOPINJECT`` placeholder, a normal
+        ``?a=b`` query string, and SPA hash-routes whose query lives in the
+        fragment (e.g. ``/#/search?q=test`` — how Juice Shop's DOM-XSS sink is
+        reached). When no param is named the last existing one is fuzzed, else 'q'.
+        """
+        if "OSOPINJECT" in url:
+            return url.replace("OSOPINJECT", quote(payload, safe=""))
+
+        parsed = urlparse(url)
+        # SPA hash route carrying its own query string.
+        if parsed.fragment and "?" in parsed.fragment:
+            frag_path, frag_q = parsed.fragment.split("?", 1)
+            q = dict(parse_qsl(frag_q, keep_blank_values=True))
+            target = param or (list(q)[-1] if q else "q")
+            q[target] = payload
+            new_frag = frag_path + "?" + urlencode(q, quote_via=quote)
+            return urlunparse(parsed._replace(fragment=new_frag))
+
+        q = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        target = param or (list(q)[-1] if q else "q")
+        q[target] = payload
+        return urlunparse(parsed._replace(query=urlencode(q, quote_via=quote)))
+
+    async def _confirm_xss_execution(
+        self, url: str, token: str, engagement_id: str
+    ) -> bool:
+        """Navigate a real browser to ``url`` and confirm the payload EXECUTED.
+
+        The payload sets ``window.__osopxss`` to a per-scan token via an <img onerror>
+        handler (fires even through innerHTML sinks). We then eval that global: a
+        match proves the injected JavaScript actually ran — true execution, not a
+        reflection or template guess. Fresh token per scan avoids stale positives.
+        """
+        try:
+            await self.browser_adapter.navigate(
+                url, user_label="guest", engagement_id=engagement_id
+            )
+            res = await self.browser_adapter.execute_action(
+                "eval",
+                {"expression": "window.__osopxss || null"},
+                user_label="guest",
+                engagement_id=engagement_id,
+            )
+        except Exception as e:
+            logger.warning("xss_execution_probe_failed", url=url, error=str(e))
+            return False
+        return (res or {}).get("result") == token
+
+    async def _confirm_xss_reflection(self, url: str, marker: str) -> bool:
+        """Confirm a server-reflected XSS: the raw, un-encoded marker tag appears
+        verbatim in the HTTP response body (i.e. the app did not entity-encode it).
+        Catches classic reflected XSS that never reaches a browser sink."""
+        try:
+            async with httpx.AsyncClient(
+                verify=False, follow_redirects=True, timeout=20
+            ) as client:
+                resp = await client.get(url)
+                body = resp.text
+        except Exception as e:
+            logger.warning("xss_reflection_probe_failed", url=url, error=str(e))
+            return False
+        # Raw marker present but its HTML-encoded form absent => un-sanitized echo.
+        return marker in body and marker.replace("<", "&lt;") not in body
+
+    async def _execute_xss_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm XSS by ACTUAL EXECUTION (headless browser) and/or raw reflection,
+        never by template match. A validated finding is minted only when a payload
+        runs in the DOM or is echoed un-encoded into an executable context.
+
+        Payload:
+            url            target (supports ?a=b and SPA '#/path?q=' routes, or an
+                           explicit 'OSOPINJECT' placeholder)
+            param          optional parameter name to inject into
+            engagement_id  injected by _execute
+        """
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException(
+                "xss_scan task requires one of 'url', 'target_url', or 'target' in payload"
+            )
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("xss_scan: cannot determine engagement_id")
+        param = payload.get("param")
+
+        # Initialize the browser connection for this engagement (scope enforcement).
+        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        if session:
+            await self.browser_adapter.initialize(session.scope, session.session_id)
+
+        token = f"OSOPXSS{uuid.uuid4().hex[:10]}"
+
+        # 1) Execution probe (DOM + reflected sinks): <img onerror> sets a global.
+        exec_payload = f"<img src=x onerror=\"window.__osopxss='{token}'\">"
+        exec_url = self._inject_payload(url, exec_payload, param)
+        executed = await self._confirm_xss_execution(exec_url, token, engagement_id)
+
+        # 2) Reflection probe (server-reflected): raw marker tag echoed un-encoded.
+        reflected = False
+        refl_url = exec_url
+        if not executed:
+            marker = f"<{token}>"
+            refl_url = self._inject_payload(url, marker, param)
+            reflected = await self._confirm_xss_reflection(refl_url, marker)
+
+        if not (executed or reflected):
+            logger.info("xss_scan_clean", url=url, param=param)
+            return {
+                "status": "success",
+                "tool": "xss_scan",
+                "target": url,
+                "confirmed": False,
+                "findings_count": 0,
+            }
+
+        method = "execution" if executed else "reflection"
+        proof_url = exec_url if executed else refl_url
+        vuln = Vulnerability(
+            cwe="CWE-79",
+            vuln_type=VulnClass.XSS,
+            severity=Severity.HIGH,
+            title=f"Cross-Site Scripting (confirmed via {method})",
+            description=(
+                f"A Cross-Site Scripting payload was confirmed at {url} "
+                f"(parameter: {param or 'auto'}). Confirmation method: {method} — "
+                + (
+                    "the injected JavaScript actually executed in a real browser DOM."
+                    if executed
+                    else "the payload was reflected un-encoded into the HTTP response."
+                )
+            ),
+            evidence=[
+                {
+                    "type": "xss_confirmation",
+                    "provenance": "browser" if executed else "http_reflection",
+                    "method": method,
+                    "url": url,
+                    "proof_url": proof_url,
+                    "parameter": param or "auto",
+                    "token": token,
+                }
+            ],
+            tool_source="xss_scan",
+            confidence=0.97 if executed else 0.9,
+            validated=True,
+            exploitability="high",
+            impact="medium",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("xss_scan_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info("xss_scan_confirmed", url=url, method=method, param=param)
+        return {
+            "status": "success",
+            "tool": "xss_scan",
+            "target": url,
+            "confirmed": True,
+            "method": method,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
+
+    async def _execute_jwt_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Forge JWTs and confirm acceptance against a real identity endpoint.
+
+        Each confirmed technique (alg:none / weak secret / kid injection) is an
+        authentication bypass -> a validated Vulnerability(JWT_ABUSE). A token is
+        required: pass one explicitly, or store a 'user_a' session whose metadata
+        carries a bearer token.
+
+        Payload:
+            verify_url     identity-reflecting endpoint (e.g. /rest/user/whoami)
+            token          a valid JWT to mutate (optional if a session has one)
+            sentinel       forged identity to detect (default attacker sentinel)
+            method         HTTP method for verify_url (default GET)
+            public_key_pem optional RSA public key for RS256->HS256 confusion test
+            engagement_id  injected by _execute
+        """
+        verify_url = payload.get("verify_url") or payload.get("url")
+        if not verify_url:
+            raise AgentException("jwt_scan requires 'verify_url' (an identity-reflecting endpoint)")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("jwt_scan: cannot determine engagement_id")
+
+        token = payload.get("token")
+        if not token:
+            token = await self._token_from_session(engagement_id, payload.get("user_label", "user_a"))
+        if not token:
+            return {
+                "status": "error",
+                "tool": "jwt_scan",
+                "error": "no JWT available (pass 'token' or store a session with a bearer token)",
+            }
+
+        from ai_osop.core.jwt_tester import JWTTester
+
+        tester = JWTTester(
+            verify_url,
+            token,
+            sentinel=payload.get("sentinel", "osop-forged@attacker.test"),
+            method=payload.get("method", "GET"),
+            extra_secrets=payload.get("extra_secrets"),
+            public_key_pem=payload.get("public_key_pem"),
+        )
+        try:
+            jwt_findings = await tester.run()
+        except Exception as e:
+            logger.warning("jwt_scan_failed", verify_url=verify_url, error=str(e))
+            return {"status": "error", "tool": "jwt_scan", "error": str(e)}
+
+        confirmed = [f for f in jwt_findings if f.confirmed]
+        minted = []
+        for f in confirmed:
+            vuln = Vulnerability(
+                cwe="CWE-347",  # Improper Verification of Cryptographic Signature
+                vuln_type=VulnClass.JWT_ABUSE,
+                severity=Severity.CRITICAL,
+                title=f"JWT authentication bypass ({f.technique})",
+                description=(
+                    f"{f.detail} Endpoint: {verify_url}. The forged token was accepted "
+                    f"and the chosen identity ('{f.sentinel}') was reflected back."
+                ),
+                evidence=[
+                    {
+                        "type": "jwt_forgery",
+                        "provenance": "jwt_tester",
+                        "technique": f.technique,
+                        "verify_url": verify_url,
+                        "secret": f.secret,
+                        "kid": f.kid,
+                        "sentinel": f.sentinel,
+                        **f.evidence,
+                    }
+                ],
+                tool_source="jwt_tester",
+                confidence=0.98,
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                self.findings[vuln.id] = vuln
+                minted.append(vuln)
+            except Exception as e:
+                logger.error("jwt_scan_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info(
+            "jwt_scan_done",
+            verify_url=verify_url,
+            confirmed=len(confirmed),
+            techniques=[f.technique for f in confirmed],
+        )
+        return {
+            "status": "success",
+            "tool": "jwt_tester",
+            "target": verify_url,
+            "confirmed": len(confirmed) > 0,
+            "findings_count": len(minted),
+            "techniques": [f.technique for f in confirmed],
+            "findings": [v.model_dump() for v in minted],
+        }
+
+    async def _execute_mass_assignment_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm mass assignment: inject privileged fields the user shouldn't be
+        able to set (role, isAdmin, id, ...) into a create/update request, then check
+        whether the server PERSISTED them (echoed back in the created object or a
+        read-back). A persisted privileged value is a confirmed mass-assignment.
+
+        Payload:
+            url            create/update endpoint (e.g. /api/Users)
+            method         POST (default) | PUT | PATCH
+            base_body      dict of legitimate fields for a valid request
+            inject         dict of privileged fields to attempt (default role=admin,
+                           isAdmin=true, isDeluxe=true)
+            readback_url   optional GET to confirm persistence (else use the response)
+            engagement_id  injected by _execute
+        """
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException("mass_assignment_scan requires 'url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("mass_assignment_scan: cannot determine engagement_id")
+
+        method = payload.get("method", "POST").upper()
+        base_body = dict(payload.get("base_body") or {})
+        inject = dict(payload.get("inject") or {"role": "admin", "isAdmin": True, "isDeluxe": True})
+        token = payload.get("token")
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            headers["Cookie"] = f"token={token}"
+
+        body = {**base_body, **inject}
+        accepted_fields: Dict[str, Any] = {}
+        try:
+            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
+                resp = await c.request(method, url, json=body, headers=headers)
+                created = resp.text
+                # Read back from a follow-up GET if provided (stronger proof).
+                if payload.get("readback_url"):
+                    rb = await c.get(payload["readback_url"], headers=headers)
+                    created = rb.text
+        except Exception as e:
+            logger.warning("mass_assignment_failed", url=url, error=str(e))
+            return {"status": "error", "tool": "mass_assignment_scan", "error": str(e)}
+
+        # A privileged field is "accepted" when our injected value is reflected back.
+        try:
+            parsed = json.loads(created)
+            flat = json.dumps(parsed)
+        except Exception:
+            flat = created
+        for k, v in inject.items():
+            needle = json.dumps({k: v})[1:-1]  # e.g. "role": "admin"
+            if needle in flat or f'"{k}":{json.dumps(v)}' in flat or f'"{k}": {json.dumps(v)}' in flat:
+                accepted_fields[k] = v
+
+        if not accepted_fields:
+            logger.info("mass_assignment_clean", url=url)
+            return {
+                "status": "success",
+                "tool": "mass_assignment_scan",
+                "target": url,
+                "confirmed": False,
+                "findings_count": 0,
+            }
+
+        vuln = Vulnerability(
+            cwe="CWE-915",  # Improperly Controlled Modification of Object Attributes
+            vuln_type=VulnClass.MASS_ASSIGNMENT,
+            severity=Severity.HIGH,
+            title=f"Mass assignment via {', '.join(accepted_fields)}",
+            description=(
+                f"The endpoint {url} accepted attacker-supplied privileged field(s) "
+                f"{accepted_fields} that a normal user should not control. The value(s) "
+                f"were persisted/reflected, enabling privilege escalation."
+            ),
+            evidence=[{
+                "type": "mass_assignment",
+                "provenance": "http",
+                "url": url,
+                "method": method,
+                "accepted_fields": accepted_fields,
+                "injected": inject,
+            }],
+            tool_source="mass_assignment_scan",
+            confidence=0.95,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("mass_assignment_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info("mass_assignment_confirmed", url=url, fields=list(accepted_fields))
+        return {
+            "status": "success",
+            "tool": "mass_assignment_scan",
+            "target": url,
+            "confirmed": True,
+            "accepted_fields": accepted_fields,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
+
+    async def _execute_csrf_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Detect CSRF on a state-changing endpoint. CSRF requires AMBIENT auth
+        (cookies the browser attaches cross-site) AND no anti-CSRF token. We:
+          1. confirm the action works with the credential,
+          2. replay it with a foreign Origin/Referer and NO CSRF token,
+          3. flag CSRF only if it still succeeds AND auth is cookie-based.
+        Bearer-token APIs (token in Authorization header) are NOT CSRF-able — the
+        token isn't sent cross-site — and we honestly report that.
+
+        Payload:
+            url, method(POST default), body, cookie (ambient cred) | token (bearer),
+            success_status (default 200/201), engagement_id
+        """
+        url = payload.get("url") or payload.get("target")
+        if not url:
+            raise AgentException("csrf_scan requires 'url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("csrf_scan: cannot determine engagement_id")
+
+        method = payload.get("method", "POST").upper()
+        body = payload.get("body")
+        cookie = payload.get("cookie")  # ambient credential => CSRF-relevant
+        token = payload.get("token")    # bearer => NOT CSRF-able
+        ok_statuses = set(payload.get("success_status", [200, 201, 204]))
+
+        if not cookie:
+            # No ambient credential: bearer/header auth can't be driven cross-site.
+            logger.info("csrf_not_applicable_bearer", url=url)
+            return {
+                "status": "success",
+                "tool": "csrf_scan",
+                "target": url,
+                "confirmed": False,
+                "reason": "auth is not cookie/ambient (bearer tokens are not sent cross-site); CSRF not exploitable",
+                "findings_count": 0,
+            }
+
+        # Cross-site forgery simulation: foreign Origin, ambient cookie, no CSRF token.
+        headers = {
+            "Origin": "https://evil.attacker.test",
+            "Referer": "https://evil.attacker.test/csrf.html",
+            "Cookie": cookie,
+            "Content-Type": payload.get("content_type", "application/json"),
+        }
+        try:
+            async with httpx.AsyncClient(verify=False, follow_redirects=False, timeout=20) as c:
+                if isinstance(body, (dict, list)):
+                    resp = await c.request(method, url, json=body, headers=headers)
+                else:
+                    resp = await c.request(method, url, content=body or b"", headers=headers)
+        except Exception as e:
+            logger.warning("csrf_probe_failed", url=url, error=str(e))
+            return {"status": "error", "tool": "csrf_scan", "error": str(e)}
+
+        accepted = resp.status_code in ok_statuses
+        if not accepted:
+            return {
+                "status": "success",
+                "tool": "csrf_scan",
+                "target": url,
+                "confirmed": False,
+                "reason": f"cross-site request rejected (status {resp.status_code})",
+                "findings_count": 0,
+            }
+
+        vuln = Vulnerability(
+            cwe="CWE-352",
+            vuln_type=VulnClass.CSRF,
+            severity=Severity.MEDIUM,
+            title="Cross-Site Request Forgery on state-changing endpoint",
+            description=(
+                f"{method} {url} accepted a cross-site request (foreign Origin, ambient "
+                f"cookie, no anti-CSRF token) with status {resp.status_code}, indicating "
+                f"the state-changing action can be forged from an attacker page."
+            ),
+            evidence=[{
+                "type": "csrf",
+                "provenance": "http",
+                "url": url,
+                "method": method,
+                "status": resp.status_code,
+                "origin": headers["Origin"],
+            }],
+            tool_source="csrf_scan",
+            confidence=0.85,
+            validated=True,
+            exploitability="medium",
+            impact="medium",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("csrf_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info("csrf_confirmed", url=url, status=resp.status_code)
+        return {
+            "status": "success",
+            "tool": "csrf_scan",
+            "target": url,
+            "confirmed": True,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
+
+    async def _execute_ssrf_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm blind SSRF via a real out-of-band callback. Inject our OAST
+        callback URL into a server-side URL-fetch sink (query param OR POST body
+        field), trigger it, then poll the OAST server. A captured callback is proof
+        the server made the request -> validated SSRF. No callback => no finding.
+
+        Payload:
+            url           the request URL sent to the target
+            param         query parameter to inject into (GET URL-fetch sinks), OR
+            body_field    JSON body field to set to the callback (POST/PUT sinks)
+            base_body     other body fields for the request (with body_field)
+            method        HTTP method (default GET, or POST when body_field set)
+            token/cookie  auth credential
+            poll_seconds  total poll window (default 15), poll_interval (default 1.5)
+            engagement_id injected by _execute
+        """
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException("ssrf_scan requires 'url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("ssrf_scan: cannot determine engagement_id")
+
+        param = payload.get("param")
+        body_field = payload.get("body_field")
+        method = payload.get("method", "POST" if body_field else "GET").upper()
+        base_body = dict(payload.get("base_body") or {})
+        auth_token = payload.get("token")
+        cookie = payload.get("cookie")
+        poll_seconds = float(payload.get("poll_seconds", 15))
+        poll_interval = float(payload.get("poll_interval", 1.5))
+
+        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        if session:
+            await self.oast.initialize(session.scope, session.session_id)
+
+        token, callback_url = await self.oast.register(label=f"ssrf:{url}")
+
+        headers: Dict[str, str] = {}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+            headers["Cookie"] = f"token={auth_token}"
+        if cookie:
+            headers["Cookie"] = cookie
+
+        # Trigger the sink. A connection error here does NOT abort the scan — the
+        # OAST callback is the signal, not this response.
+        try:
+            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
+                if body_field:
+                    body = {**base_body, body_field: callback_url}
+                    await c.request(method, url, json=body, headers=headers)
+                else:
+                    inj = self._inject_payload(url, callback_url, param)
+                    await c.request(method, inj, headers=headers)
+        except Exception as e:
+            logger.warning("ssrf_trigger_request_failed", url=url, error=str(e))
+
+        # Poll for the out-of-band callback.
+        hits: List[Dict[str, Any]] = []
+        waited = 0.0
+        while waited < poll_seconds:
+            try:
+                hits = await self.oast.poll(token)
+            except Exception as e:
+                logger.warning("ssrf_poll_failed", token=token, error=str(e))
+                break
+            if hits:
+                break
+            await asyncio.sleep(poll_interval)
+            waited += poll_interval
+
+        if not hits:
+            logger.info("ssrf_scan_clean", url=url)
+            return {
+                "status": "success", "tool": "ssrf_scan", "target": url,
+                "confirmed": False, "findings_count": 0,
+            }
+
+        hit = hits[0]
+        vuln = Vulnerability(
+            cwe="CWE-918",
+            vuln_type=VulnClass.SSRF,
+            severity=Severity.HIGH,
+            title=f"Blind SSRF via {body_field or param or 'parameter'}",
+            description=(
+                f"The server at {url} fetched an attacker-controlled URL; an out-of-band "
+                f"callback was captured at the OAST server (source {hit.get('source_ip')}, "
+                f"method {hit.get('method')}, path {hit.get('path')}), proving server-side "
+                f"request forgery."
+            ),
+            evidence=[{
+                "type": "ssrf_callback",
+                "provenance": "oast",
+                "url": url,
+                "callback_url": callback_url,
+                "injection": body_field or param,
+                "interaction": hit,
+            }],
+            tool_source="oast_ssrf",
+            confidence=0.97,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("ssrf_scan_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info("ssrf_scan_confirmed", url=url, source_ip=hit.get("source_ip"))
+        return {
+            "status": "success", "tool": "ssrf_scan", "target": url,
+            "confirmed": True, "findings_count": 1, "findings": [vuln.model_dump()],
+        }
+
+    async def _token_from_session(self, engagement_id: str, user_label: str) -> Optional[str]:
+        """Best-effort: pull a bearer token from a stored session's metadata."""
+        try:
+            sess = await self.session_store.get_session_or_none(engagement_id, user_label)
+        except Exception:
+            return None
+        if not sess:
+            return None
+        meta = getattr(sess, "metadata", {}) or {}
+        return meta.get("token") or meta.get("bearer") or meta.get("jwt")
 
     async def _execute_correlation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Correlate findings across tools."""
@@ -446,30 +1220,42 @@ class VulnAnalysisAgent(BaseAgent):
             "info": Severity.INFO,
         }
 
-        # Map template type to VulnClass
-        template_id = finding.get("template_id", "")
+        # nuclei -jsonl uses hyphenated keys and nests metadata under "info".
+        # Read the real field names (with underscore fallbacks for safety).
+        info = finding.get("info", {}) or {}
+        template_id = finding.get("template-id") or finding.get("template_id", "")
+        severity_str = (info.get("severity") or finding.get("severity") or "info").lower()
         vuln_type = self._map_nuclei_to_vuln_class(template_id)
 
+        classification = info.get("classification", {}) or {}
+        cwe = classification.get("cwe-id") or finding.get("cwe")
+        if isinstance(cwe, list):
+            cwe = cwe[0] if cwe else None
+
+        matched_at = finding.get("matched-at") or finding.get("matched_at")
+        extracted = finding.get("extracted-results") or finding.get("extracted_results")
+
         return Vulnerability(
-            cwe=finding.get("cwe"),
+            cwe=cwe,
             vuln_type=vuln_type,
-            severity=severity_map.get(finding.get("severity", "info"), Severity.INFO),
-            title=finding.get("info", {}).get("name", "Unknown"),
-            description=finding.get("info", {}).get("description", ""),
+            severity=severity_map.get(severity_str, Severity.INFO),
+            title=info.get("name", "Unknown"),
+            description=info.get("description", ""),
             evidence=[
                 {
                     "type": "nuclei_finding",
                     "template": template_id,
-                    "matched_at": finding.get("matched_at"),
-                    "extracted_results": finding.get("extracted_results"),
+                    "matched_at": matched_at,
+                    "url": finding.get("url") or finding.get("host"),
+                    "request": finding.get("request"),
+                    "response": finding.get("response"),
+                    "extracted_results": extracted,
                 }
             ],
             tool_source="nuclei",
             endpoint_id=finding.get("endpoint_id"),
-            confidence=0.90 if finding.get("verified") else 0.70,
-            exploitability="high"
-            if finding.get("severity") == "critical"
-            else "medium",
+            confidence=0.90 if finding.get("matcher-name") else 0.75,
+            exploitability="high" if severity_str in ("critical", "high") else "medium",
             engagement_id="",
         )
 
@@ -487,7 +1273,11 @@ class VulnAnalysisAgent(BaseAgent):
             return VulnClass.JWT_ABUSE
         elif "idor" in template_id.lower():
             return VulnClass.IDOR
-        return VulnClass.RCE
+        # Do NOT default unmapped templates to RCE — most nuclei templates are
+        # technology/exposure detections, and defaulting to RCE both inflates
+        # perceived severity and poisons downstream finding-classification
+        # (everything would look like an exploit class). Unknown is honest.
+        return VulnClass.UNKNOWN
 
     async def _find_similar_findings(self, vuln: Vulnerability) -> List[Vulnerability]:
         """Find similar findings for cross-tool confirmation."""
