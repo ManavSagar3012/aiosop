@@ -1,3 +1,5 @@
+import logging
+
 """
 AI-OSOP Core Configuration
 Production-grade settings with Vault integration, scope enforcement, and LLM routing.
@@ -45,6 +47,8 @@ class VulnClass(str, Enum):
     SSRF = "ssrf"
     SSTI = "ssti"
     IDOR = "idor"
+    CSRF = "csrf"
+    MASS_ASSIGNMENT = "mass_assignment"
     GRAPHQL = "graphql"
     JWT_ABUSE = "jwt_abuse"
     RCE = "rce"
@@ -216,6 +220,12 @@ class Settings(BaseSettings):
     # Nuclei template scans run for minutes; the 30s default silently times them
     # out to zero findings, so give them a dedicated generous bound.
     nuclei_mcp_timeout: int = 900
+    # OAST interaction server (R1). public_host is the configurable-hybrid knob:
+    # 127.0.0.1 for local validation, a real domain when running against external targets.
+    oast_public_host: str = "127.0.0.1"
+    oast_port: int = 8099
+    oast_scheme: str = "http"
+    oast_mcp_timeout: int = 30
 
     # Safety
     sandbox_runtime: str = "docker"  # docker | containerd | kata
@@ -416,6 +426,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+
 _INSECURE_DEV_SIGNING_KEY = b"dev-insecure-scope-signing-key"
 _PROD_ENVIRONMENTS = {"production", "prod", "staging", "stage"}
 
@@ -442,13 +453,8 @@ def scope_signing_key() -> bytes:
             "OSOP_AUDIT_SECRET_KEY is not set. Refusing to sign/verify with an insecure "
             "default in a production environment (scope + audit integrity would be forgeable)."
         )
-    import structlog
-
-    structlog.get_logger().warning(
-        "scope_signing_key_insecure_default",
-        environment=env or "unknown",
-        detail="Set OSOP_AUDIT_SECRET_KEY; using insecure dev key.",
-    )
+    logger = logging.getLogger(__name__)
+    logger.warning("scope_signing_key_insecure_default: using insecure dev key.")
     return _INSECURE_DEV_SIGNING_KEY
 
 
