@@ -1056,6 +1056,7 @@ class VulnAnalysisAgent(BaseAgent):
 
         param = payload.get("param")
         body_field = payload.get("body_field")
+        body_format = payload.get("body_format", "json")  # "json" | "form"
         method = payload.get("method", "POST" if body_field else "GET").upper()
         base_body = dict(payload.get("base_body") or {})
         auth_token = payload.get("token")
@@ -1082,7 +1083,10 @@ class VulnAnalysisAgent(BaseAgent):
             async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
                 if body_field:
                     body = {**base_body, body_field: callback_url}
-                    await c.request(method, url, json=body, headers=headers)
+                    if body_format == "form":
+                        await c.request(method, url, data=body, headers=headers)
+                    else:
+                        await c.request(method, url, json=body, headers=headers)
                 else:
                     inj = self._inject_payload(url, callback_url, param)
                     await c.request(method, inj, headers=headers)

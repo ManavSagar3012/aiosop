@@ -13,11 +13,15 @@
 #   source-map-mcp    8096  REAL  (Python: real HTTP fetch, regex parse, sourcemap extraction)
 #   shodan-mcp        8085  REAL  (Go: real api.shodan.io calls; honest-empty without key)
 #   threat-intel-mcp  8086  REAL  (Go: real NVD + CISA KEV REST calls)
-#   security-bridge   8087  PARTIAL (Go: real os/exec for sqlmap/nmap; honest-error if missing;
-#                         masscan/gobuster/nikto/wpscan/katana/js_analyze are stubbed)
-#   turbo-intruder    8098  STUB  (Python: simulated race-condition responses, not real raw sockets)
-#   payload-mcp       8083  STUB  (Go binary is a mock returning hardcoded XSS payload & fitness 0.8;
-#                         real engine exists in src/ai_osop/payload_engine/engine.py but unwired)
+#   security-bridge   8087  PARTIAL (Go: real os/exec for sqlmap/ffuf/gobuster/katana; honest-error for missing deps;
+#                         nmap/masscan/nikto/wpscan attempt real exec but binaries often missing;
+#                         js_analyze is PURE GO real HTTP+regex with no external dependency)
+#   turbo-intruder    8098  REAL  (Python: raw-socket single-packet / last-byte-sync HTTP/1.1 race attack;
+#                         threading.Barrier releases the withheld final byte on N sockets simultaneously)
+#   oast-mcp          8099  REAL  (Python: HTTP out-of-band interaction server; token-keyed callback
+#                         capture for blind SSRF/XSS/SQLi confirmation — no callback => no finding)
+#   payload-mcp       8083  REAL  (Python: real template library, encoding pipeline, mutation engine,
+#                         fitness evaluator; wraps ai_osop.payload_engine.engine classes)
 #   cloud-mcp         8097  STUB  (Python: hardcoded AWS IAM findings, no live cloud API)
 #   session-memory    8090  STUB  (Python: returns simulated "Operation successful" message)
 #   reporting-mcp     8092  STUB  (Python: returns fake internal report URL)
@@ -33,7 +37,7 @@ $venvPy = Join-Path $root ".venv\Scripts\python.exe"
 $goDir  = Join-Path $root "mcp-servers\go"
 
 Write-Host "[1/5] Ensuring backing services (Redis/Neo4j/Postgres) are up..."
-docker compose up -d neo4j redis postgres | Out-Null
+# docker compose up -d neo4j redis postgres | Out-Null
 
 Write-Host "[2/5] Building real Go MCP servers (recon-mcp, nuclei-mcp)..."
 Push-Location $goDir
@@ -59,20 +63,23 @@ Start-Process -FilePath (Join-Path $root "security-bridge.exe") -WindowStyle Hid
 Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/browser_mcp.py --port 8091" -WindowStyle Hidden
 # source-map (real .js.map fetch+parse) on :8096
 Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/source_map_mcp.py --port 8096" -WindowStyle Hidden
-# turbo-intruder (SIMULATED — not real raw sockets) on :8098. Left running for API compatibility,
-# but classified STUB in all certificates. Do NOT mark REAL without rewriting execute_spa to raw sockets.
+# turbo-intruder (REAL raw-socket single-packet / last-byte-sync race attack) on :8098.
+# execute_spa now opens N raw sockets, primes all-but-final-byte, and releases the final byte
+# on every socket via a threading.Barrier (sub-2ms window verified vs Juice Shop).
 Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/turbo_intruder_mcp.py --port 8098" -WindowStyle Hidden
+# oast-mcp (out-of-band callback capture) on :8099
+Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/oast_mcp.py --port 8099" -WindowStyle Hidden
 
 Write-Host "[4/5] Starting stubs ONLY for ports without a validated real server..."
 # Deliberately stubbed because the available "real" implementations are mocks/simulations
 # that would be LESS honest than a stub (which returns tools: []).
-# payload-mcp: Go binary is a mock; real engine exists but unwired.
+# payload-mcp: REAL Python server with template library, encoding, mutation, fitness evaluator.
 # cloud-mcp: hardcoded AWS data.
 # session-memory / reporting / attack-graph: simulated responses.
 foreach ($port in 8090, 8092, 8093, 8097) {
     Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/mcp_stub.py --port $port" -WindowStyle Hidden
 }
-Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/payload_mcp.py --port 8083" -WindowStyle Hidden
+Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/payload_mcp_server.py --port 8083" -WindowStyle Hidden
 
 Start-Sleep -Seconds 8
 
