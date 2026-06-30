@@ -131,6 +131,8 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_stored_xss_scan(payload)
         elif task_type == "subdomain_takeover_scan":
             return await self._execute_subdomain_takeover_scan(payload)
+        elif task_type == "secret_liveness_scan":
+            return await self._execute_secret_liveness_scan(payload)
         elif task_type == "correlate_findings":
             return await self._execute_correlation(payload)
         elif task_type == "triage_finding":
@@ -1031,6 +1033,102 @@ class VulnAnalysisAgent(BaseAgent):
             "confirmed": True,
             "findings_count": 1,
             "findings": [vuln.model_dump()],
+        }
+
+    @staticmethod
+    def _redact_secret(value: str) -> str:
+        """Mask a credential so it is never persisted in the graph in full."""
+        if not value:
+            return ""
+        if len(value) <= 8:
+            return value[:2] + "***"
+        return f"{value[:4]}...{value[-2:]} (len {len(value)})"
+
+    async def _verify_one_secret(self, secret: str, base_override=None) -> Dict[str, Any]:
+        """Verify a single secret's liveness via the read-only provider verifier."""
+        from ai_osop.core.secret_verifier import verify_secret
+
+        return await verify_secret(secret, base_override=base_override)
+
+    async def _execute_secret_liveness_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Turn found secrets into CONFIRMED live credentials via a benign, read-only
+        provider identity check. Mints a finding only when a secret actually
+        authenticates — an unverified "exposed key" is informational and gets
+        rejected by triagers. The raw secret is REDACTED before persistence.
+
+        Payload:
+            secrets        list of secret strings (or dicts with a 'value' key)
+            base_override  optional provider base URL (point checks at a mock)
+            engagement_id  injected by _execute
+        """
+        raw = payload.get("secrets") or []
+        secrets: List[str] = []
+        for s in raw:
+            if isinstance(s, dict):
+                v = s.get("value") or s.get("secret") or ""
+            else:
+                v = str(s)
+            if v:
+                secrets.append(v)
+        if not secrets:
+            raise AgentException("secret_liveness_scan requires 'secrets' (non-empty list)")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("secret_liveness_scan: cannot determine engagement_id")
+        base_override = payload.get("base_override")
+
+        minted = []
+        for secret in secrets:
+            try:
+                verdict = await self._verify_one_secret(secret, base_override=base_override)
+            except Exception as e:
+                logger.warning("secret_verify_failed", error=str(e))
+                continue
+            if not verdict.get("live"):
+                continue
+            provider = verdict.get("provider") or "unknown"
+            vuln = Vulnerability(
+                cwe="CWE-798",  # Use of Hard-coded / exposed Credentials
+                vuln_type=VulnClass.EXPOSED_SECRET,
+                severity=Severity.CRITICAL,
+                title=f"Live {provider} credential exposed",
+                description=(
+                    f"An exposed {provider} secret was confirmed LIVE via a read-only "
+                    f"identity check (HTTP {verdict.get('status')}). The credential "
+                    f"authenticates and grants access — not a theoretical leak."
+                ),
+                evidence=[{
+                    "type": "live_credential",
+                    "provenance": "secret_verifier",
+                    "provider": provider,
+                    "secret_redacted": self._redact_secret(secret),
+                    "verify_status": verdict.get("status"),
+                    "check": "read-only identity endpoint",
+                }],
+                tool_source="secret_liveness_scan",
+                confidence=0.98,
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                self.findings[vuln.id] = vuln
+                minted.append(vuln)
+            except Exception as e:
+                logger.error("secret_liveness_persist_failed", vuln_id=vuln.id, error=str(e))
+            logger.info("secret_liveness_confirmed", provider=provider)
+
+        return {
+            "status": "success",
+            "tool": "secret_liveness_scan",
+            "secrets_checked": len(secrets),
+            "confirmed": len(minted) > 0,
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
         }
 
     async def _probe_host_for_takeover(self, host: str):

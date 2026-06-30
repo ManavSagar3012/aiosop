@@ -69,6 +69,7 @@ class VulnClass(str, Enum):
     PRIVILEGE_ESCALATION = "privilege_escalation"
     SUBDOMAIN_ENUM = "subdomain_enum"
     SUBDOMAIN_TAKEOVER = "subdomain_takeover"
+    EXPOSED_SECRET = "exposed_secret"
     VULN_SCAN = "vuln_scan"
     GRAPHQL_SECURITY = "graphql_security"
     SERVERLESS_SECURITY = "serverless_security"
