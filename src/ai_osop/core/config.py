@@ -70,6 +70,7 @@ class VulnClass(str, Enum):
     SUBDOMAIN_ENUM = "subdomain_enum"
     SUBDOMAIN_TAKEOVER = "subdomain_takeover"
     EXPOSED_SECRET = "exposed_secret"
+    RACE_CONDITION = "race_condition"
     VULN_SCAN = "vuln_scan"
     GRAPHQL_SECURITY = "graphql_security"
     SERVERLESS_SECURITY = "serverless_security"

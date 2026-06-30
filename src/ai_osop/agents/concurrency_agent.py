@@ -14,6 +14,17 @@ from ai_osop.core.models import Task
 logger = logging.getLogger(__name__)
 
 
+def _race_detected(result: Dict[str, Any], payload: Dict[str, Any]) -> bool:
+    """Detect a race from the real single-packet engine output. A once-only action
+    that SUCCEEDS more times than permitted (default: >1 at the success status) under
+    synchronized concurrency is the signal. Replaces the old boolean field that the
+    raw-socket turbo rewrite removed."""
+    dist = (result or {}).get("status_distribution", {}) or {}
+    success_status = str(payload.get("success_status", 200))
+    expected_max = int(payload.get("expected_max_successes", 1))
+    return int(dist.get(success_status, 0)) > expected_max
+
+
 class ConcurrencyAgent(BaseAgent):
     """
     Concurrency Agent (V6.0)
@@ -51,7 +62,7 @@ class ConcurrencyAgent(BaseAgent):
             return {"status": "failed", "error": "url is required"}
 
         await self.think(
-            f"Testing {target_url} for race conditions using a simulated Single Packet Attack with {concurrent_requests} concurrent requests.",
+            f"Testing {target_url} for race conditions using a Single Packet Attack with {concurrent_requests} concurrent requests.",
             ["race_condition", "toctou", "single_packet_attack"],
         )
 
@@ -72,7 +83,10 @@ class ConcurrencyAgent(BaseAgent):
                 concurrent_requests=concurrent_requests,
             )
 
-            if result.get("race_condition_detected"):
+            # The real single-packet engine returns a status_distribution (not the
+            # old boolean). A race is indicated when a once-only action SUCCEEDS more
+            # than expected under synchronized concurrency.
+            if _race_detected(result, payload):
                 await self.observe(
                     target_id=target_url, obs_type="race_condition", data=result, confidence=0.9
                 )
@@ -100,21 +114,20 @@ class ConcurrencyAgent(BaseAgent):
         )
 
         # 1. Fetch the steps and their states from the graph
-        if not self.ctx.graph_memory or not self.ctx.graph_memory._driver:
-            return {"status": "failed", "error": "Graph memory driver not initialized"}
+        if not self.ctx.graph_memory:
+            return {"status": "failed", "error": "Graph memory not initialized"}
 
         steps = []
-        async with self.ctx.graph_memory._driver.session() as session:
-            result = await session.run(
-                """
-                MATCH (w:Workflow {id: $wid})-[:HAS_STEP]->(s:Step)-[:TARGETS]->(e:Endpoint)
-                RETURN s.id AS step_id, s.order AS order, s.business_state AS state, e.url AS url, e.method AS method
-                ORDER BY s.order
-                """,
-                {"wid": workflow_id},
-            )
-            async for record in result:
-                steps.append(dict(record))
+        records = await self.ctx.graph_memory.run_read_query(
+            """
+            MATCH (w:Workflow {id: $wid})-[:HAS_STEP]->(s:Step)-[:TARGETS]->(e:Endpoint)
+            RETURN s.id AS step_id, s.order AS order, s.business_state AS state, e.url AS url, e.method AS method
+            ORDER BY s.order
+            """,
+            {"wid": workflow_id},
+        )
+        for record in records:
+            steps.append(record)
 
         if not steps or len(steps) < 2:
             return {
@@ -151,8 +164,9 @@ class ConcurrencyAgent(BaseAgent):
                 concurrent_requests=10,
             )
 
-            # If the SPA resulted in a success on an endpoint that should have been protected by prior states
-            if attack_result.get("race_condition_detected"):
+            # If the synchronized requests reached the goal state out of order (the
+            # protected endpoint accepted more successes than the workflow permits).
+            if _race_detected(attack_result, payload):
                 await self.observe(
                     target_id=workflow_id,
                     obs_type="state_machine_bypass",

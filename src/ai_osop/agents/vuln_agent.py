@@ -18,6 +18,7 @@ from ai_osop.adapters.browser_mcp import BrowserMCPAdapter
 from ai_osop.adapters.burp_mcp import BurpMCPAdapter
 from ai_osop.adapters.oast_mcp import OASTAdapter
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
+from ai_osop.adapters.turbo_intruder_mcp import TurboIntruderMCPAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType, Severity, VulnClass, settings
@@ -53,6 +54,9 @@ class VulnAnalysisAgent(BaseAgent):
         # oast-mcp lets ssrf_scan CONFIRM blind SSRF via a real out-of-band callback,
         # not a guess. No callback => no finding.
         self.oast = OASTAdapter(self.ctx.mcp_registry)
+        # turbo-intruder (real raw-socket single-packet) drives race_limit_scan —
+        # confirm TOCTOU/double-spend when a once-only action succeeds more than once.
+        self.turbo = TurboIntruderMCPAdapter(self.ctx.mcp_registry)
         # Phase 1 Bug Bounty Upgrade: authenticated session store so probes can run
         # as an imported user (User A vs User B authz testing) instead of anonymously.
         self.session_store = SessionStore(self.ctx.session_memory)
@@ -133,6 +137,8 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_subdomain_takeover_scan(payload)
         elif task_type == "secret_liveness_scan":
             return await self._execute_secret_liveness_scan(payload)
+        elif task_type == "race_limit_scan":
+            return await self._execute_race_limit_scan(payload)
         elif task_type == "correlate_findings":
             return await self._execute_correlation(payload)
         elif task_type == "triage_finding":
@@ -1032,6 +1038,115 @@ class VulnAnalysisAgent(BaseAgent):
             "target": url,
             "confirmed": True,
             "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
+
+    async def _execute_race_limit_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm a race-condition / limit bypass (TOCTOU, double-spend, coupon
+        reuse) by firing N last-byte-synchronized single-packet requests at a
+        once-only action and counting how many SUCCEEDED. More successes than the
+        action permits => the check-then-act window was exploited => validated
+        finding. Builds on the real raw-socket turbo-intruder engine.
+
+        Payload:
+            url            the state-changing action (e.g. /redeem, /apply-coupon)
+            method         POST (default), headers, body
+            token/cookie   auth credential
+            concurrent_requests  N synchronized requests (default 20)
+            success_status       HTTP status meaning the action succeeded (default 200)
+            expected_max_successes  how many should legitimately succeed (default 1)
+            engagement_id  injected by _execute
+        """
+        url = payload.get("url") or payload.get("target")
+        if not url:
+            raise AgentException("race_limit_scan requires 'url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("race_limit_scan: cannot determine engagement_id")
+
+        n = int(payload.get("concurrent_requests", 20))
+        success_status = int(payload.get("success_status", 200))
+        expected_max = int(payload.get("expected_max_successes", 1))
+        headers = dict(payload.get("headers") or {})
+        auth_token = payload.get("token")
+        cookie = payload.get("cookie")
+        if auth_token:
+            headers.setdefault("Authorization", f"Bearer {auth_token}")
+            headers.setdefault("Cookie", f"token={auth_token}")
+        if cookie:
+            headers["Cookie"] = cookie
+
+        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        if session:
+            try:
+                await self.turbo.initialize(session.scope, session.session_id)
+            except Exception:
+                pass
+
+        try:
+            result = await self.turbo.execute_single_packet_attack(
+                target_url=url,
+                method=payload.get("method", "POST"),
+                headers=headers,
+                body=payload.get("body", ""),
+                concurrent_requests=n,
+            )
+        except Exception as e:
+            logger.warning("race_limit_failed", url=url, error=str(e))
+            return {"status": "error", "tool": "race_limit_scan", "error": str(e)}
+
+        dist = result.get("status_distribution", {}) or {}
+        success_count = int(dist.get(str(success_status), 0))
+
+        if success_count <= expected_max:
+            logger.info("race_limit_clean", url=url, success_count=success_count)
+            return {
+                "status": "success", "tool": "race_limit_scan", "target": url,
+                "confirmed": False, "success_count": success_count,
+                "status_distribution": dist, "findings_count": 0,
+            }
+
+        vuln = Vulnerability(
+            cwe="CWE-362",  # Concurrent Execution using Shared Resource (Race Condition)
+            vuln_type=VulnClass.RACE_CONDITION,
+            severity=Severity.HIGH,
+            title=f"Race condition / limit bypass at {url}",
+            description=(
+                f"A once-only action at {url} succeeded {success_count} times when only "
+                f"{expected_max} should be permitted, under {n} last-byte-synchronized "
+                f"single-packet requests (release window {result.get('release_window_ms')}ms). "
+                f"The time-of-check/time-of-use window enables double-spend / limit bypass."
+            ),
+            evidence=[{
+                "type": "race_condition",
+                "provenance": "turbo_single_packet",
+                "url": url,
+                "success_count": success_count,
+                "expected_max": expected_max,
+                "concurrency": n,
+                "status_distribution": dist,
+                "release_window_ms": result.get("release_window_ms"),
+            }],
+            tool_source="race_limit_scan",
+            confidence=0.96,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("race_limit_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info("race_limit_confirmed", url=url, success_count=success_count, expected_max=expected_max)
+        return {
+            "status": "success", "tool": "race_limit_scan", "target": url,
+            "confirmed": True, "success_count": success_count,
+            "status_distribution": dist, "findings_count": 1,
             "findings": [vuln.model_dump()],
         }
 
