@@ -52,12 +52,16 @@ async def initialize():
         "tools": [
             {"name": "oast_register",
              "description": "Mint an OAST correlation token and callback URL.",
-             "parameters": {"type": "object", "properties": {
-                 "label": {"type": "string"}}, "required": []}},
+             "parameters": [
+                 {"name": "label", "type": "string", "description": "Optional probe label", "required": False},
+             ],
+             "returns": {"token": "string", "callback_url": "string"}},
             {"name": "oast_poll",
              "description": "Return captured out-of-band interactions for a token.",
-             "parameters": {"type": "object", "properties": {
-                 "token": {"type": "string"}}, "required": ["token"]}},
+             "parameters": [
+                 {"name": "token", "type": "string", "description": "Correlation token", "required": True},
+             ],
+             "returns": {"token": "string", "hit_count": "integer", "interactions": "array"}},
         ],
     }
 
@@ -122,10 +126,16 @@ async def capture(full_path: str, request: Request):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=PORT)
+    # public-host is what targets call back to (the URL we hand out); bind is the
+    # local interface uvicorn listens on. An OAST server must receive inbound from
+    # the *target's* network view: a containerized/remote target cannot reach
+    # 127.0.0.1, so default the bind to 0.0.0.0 and let public-host name the route
+    # the target should use (e.g. host.docker.internal, or a public domain).
     parser.add_argument("--public-host", default=PUBLIC_HOST)
     parser.add_argument("--scheme", default=SCHEME)
+    parser.add_argument("--bind", default=os.environ.get("OAST_BIND", "0.0.0.0"))
     args = parser.parse_args()
     PORT = args.port
     PUBLIC_HOST = args.public_host
     SCHEME = args.scheme
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.bind, port=args.port, log_level="warning")
