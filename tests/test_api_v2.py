@@ -36,6 +36,17 @@ def client():
         patch("ai_osop.api.main.register_optional_mcp_servers", new_callable=AsyncMock),
         patch("ai_osop.api.main.Orchestrator") as mock_orch,
         patch("ai_osop.api.deps.settings.api_token", "dev-test-token"),
+        # Hermetic startup: the lifespan's run_startup_self_test does real
+        # dependency probes. With backends mocked those probes are meaningless,
+        # and when live services happen to be up they add ~15-20s of latency and
+        # make the suite hang. Stub it to a healthy result so this unit-level API
+        # test never depends on live-service state (integration probes live in
+        # the /health/* endpoint tests, not here).
+        patch(
+            "ai_osop.api.main.run_startup_self_test",
+            new_callable=AsyncMock,
+            return_value={"status": "healthy", "checks": {}, "summary": {"passed": 0, "failed": 0}},
+        ),
     ):
 
         # --- SessionMemory: Redis ping + Postgres session-recovery query ---
