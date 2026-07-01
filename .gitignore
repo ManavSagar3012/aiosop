@@ -207,3 +207,6 @@ full_file.txt
 original_file.txt
 update_*.py
 fix_*.py
+
+# operational run logs (Sprint 0 supervisor / live-test session)
+.runlogs/
