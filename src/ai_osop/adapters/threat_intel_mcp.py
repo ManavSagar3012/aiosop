@@ -17,6 +17,7 @@ from ai_osop.core.config import settings
 
 logger = logging.getLogger(__name__)
 _CVE_PATTERN = re.compile(r"^CVE-\d{4}-\d{4,}$", re.IGNORECASE)
+_NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 _EXPLOITDB_CSV_URL = "https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv"
 
 
@@ -129,51 +130,44 @@ class ThreatIntelAdapter:
         return cve_id in (kev_data or {})
 
     async def search_exploitdb(self, cve_id: str) -> List[Dict]:
-        """Search ExploitDB's public CSV mirror for PoC availability."""
-        cve_id = self._normalize_cve_id(cve_id)
-        if not cve_id:
-            return []
+        """Find public ExploitDB exploits mapped to a CVE.
 
+        Fetches the ExploitDB ``files_exploits.csv`` index and returns every entry
+        whose ``codes`` column references *cve_id*. Previously this method wrongly
+        duplicated the NVD lookup (created its own httpx client, ignored the
+        injected ``self.client``, and parsed NVD JSON), so it never returned
+        exploits — a real CVE->exploit correlation gap.
+        """
+        cve_id = self._normalize_cve_id(cve_id)
         cache_key = f"exploitdb_{cve_id}"
         cached = self._get_cache(cache_key)
         if cached is not None:
             return cached
-
         try:
-            resp = await self.client.get(_EXPLOITDB_CSV_URL)
+            resp = await self.client.get(_EXPLOITDB_CSV_URL, timeout=15.0)
             if resp.status_code != 200:
-                logger.warning("ExploitDB CSV lookup returned HTTP %s", resp.status_code)
                 return []
-
-            exploits = self._parse_exploitdb_csv(cve_id, resp.text)
+            exploits: List[Dict] = []
+            reader = csv.DictReader(io.StringIO(resp.text))
+            for row in reader:
+                codes = {c.strip().upper() for c in re.split(r"[;,\s]+", row.get("codes", "") or "")}
+                if cve_id.upper() not in codes:
+                    continue
+                eid = (row.get("id") or "").strip()
+                exploits.append({
+                    "id": eid,
+                    "title": (row.get("description") or "").strip(),
+                    "type": (row.get("type") or "").strip(),
+                    "platform": (row.get("platform") or "").strip(),
+                    "url": f"https://www.exploit-db.com/exploits/{eid}",
+                    "verified": bool((row.get("date_verified") or "").strip()),
+                    "source": "exploitdb",
+                })
             self._set_cache(cache_key, exploits)
             return exploits
         except Exception as e:
-            logger.warning("ExploitDB lookup failed for %s: %s", cve_id, e)
-            return []
-
-    def _parse_exploitdb_csv(self, cve_id: str, csv_text: str) -> List[Dict[str, Any]]:
-        exploits: List[Dict[str, Any]] = []
-        reader = csv.DictReader(io.StringIO(csv_text))
-        for row in reader:
-            haystack = " ".join(str(value or "") for value in row.values()).upper()
-            if cve_id not in haystack:
-                continue
-
-            exploit_id = row.get("id") or row.get("file", "").split("/")[0]
-            exploits.append(
-                {
-                    "id": exploit_id,
-                    "title": row.get("description") or row.get("title") or "",
-                    "type": row.get("type") or "",
-                    "platform": row.get("platform") or "",
-                    "url": f"https://www.exploit-db.com/exploits/{exploit_id}",
-                    "verified": False,
-                    "source": "exploitdb",
-                }
-            )
-
-        return exploits
+            logger.error("ExploitDB search failed for %s: %s", cve_id, e)
+        return []
 
     async def map_mitre_attack(self, cve_id: str, description: str) -> List[str]:
         """Map vulnerability to MITRE ATT&CK techniques based on description heuristics."""

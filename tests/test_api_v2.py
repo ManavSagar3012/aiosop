@@ -107,8 +107,10 @@ def test_api_startup_registers_agents(client):
     # main.py lifespan registers 11 agents: attack_chain, recon, vuln,
     # human_oversight, exploit, payload, reporting, context_manager,
     # concurrency, stack_profiler, playwright (AIOSOP-AUDIT-2026-06-16).
-    # Update: Now registers 9 experimental agents (total 20).
-    assert client.orch.register_agent.call_count == 20
+    # main.py lifespan registers 11 core agents + 10 specialist agents (total 21;
+    # visual_context was added post-migration).
+    # Note: the "experimental" designation was removed post-migration.
+    assert client.orch.register_agent.call_count == 21
 
 
 def test_root_not_found(client):
