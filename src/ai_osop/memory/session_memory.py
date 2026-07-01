@@ -66,7 +66,7 @@ class TaskORM(Base):
     scope_check = Column(Boolean, default=True)
     approval_required = Column(Boolean, default=False)
     status = Column(
-        String(16), index=True
+        String(32), index=True
     )  # pending, running, completed, failed, cancelled, awaiting_approval
     result = Column(JSON, nullable=True)
     retry_count = Column(Integer)
@@ -485,10 +485,20 @@ class SessionMemory:
                 )
                 last_hash = last_event.scalar_one_or_none()
 
-            # Calculate integrity hash using HMAC with a secret key
-            # We match the chain format expected by scope.py
-            event_data = (
-                f"{event.event_id}:{event.timestamp.isoformat()}:{event.actor_id}:{event.event_type}"
+            # Calculate integrity hash using HMAC with a secret key.
+            # P1-018: Include the full canonical action and result JSON so that
+            # tampering with the event payload is detectable, not just metadata.
+            event_data = json.dumps(
+                {
+                    "event_id": event.event_id,
+                    "timestamp": event.timestamp.isoformat(),
+                    "actor_id": event.actor_id,
+                    "event_type": event.event_type,
+                    "action": event.action,
+                    "result": event.result,
+                },
+                sort_keys=True,
+                default=str,
             )
             if last_hash:
                 event_data = f"{last_hash}:{event_data}"
@@ -496,22 +506,24 @@ class SessionMemory:
             integrity_hash = hmac.new(secret_key, event_data.encode(), hashlib.sha256).hexdigest()
             event.integrity_hash = integrity_hash
 
+            # P1-018: wrap read + write in a single transaction so the chain is
+            # atomic and concurrent events for the same engagement don't race.
             async with self._async_session() as session:
-                stmt = insert(AuditLogORM).values(
-                    event_id=event.event_id,
-                    timestamp=event.timestamp,
-                    event_type=event.event_type,
-                    severity=event.severity,
-                    actor_type=event.actor_type,
-                    actor_id=event.actor_id,
-                    action=event.action,
-                    result=event.result,
-                    context=event.context,
-                    integrity_hash=integrity_hash,
-                    engagement_id=event.engagement_id,
-                )
-                await session.execute(stmt)
-                await session.commit()
+                async with session.begin():
+                    stmt = insert(AuditLogORM).values(
+                        event_id=event.event_id,
+                        timestamp=event.timestamp,
+                        event_type=event.event_type,
+                        severity=event.severity,
+                        actor_type=event.actor_type,
+                        actor_id=event.actor_id,
+                        action=event.action,
+                        result=event.result,
+                        context=event.context,
+                        integrity_hash=integrity_hash,
+                        engagement_id=event.engagement_id,
+                    )
+                    await session.execute(stmt)
 
     async def query_audit_log(
         self,
@@ -788,8 +800,17 @@ class SessionMemory:
                         stats["discarded"] = count
                 return stats
 
-    async def upsert_corpus_finding(self, finding_data: Dict[str, Any]) -> None:
-        """Upsert aggregated finding into Postgres corpus."""
+    async def upsert_corpus_finding(
+        self, finding_data: Dict[str, Any], outcome: str = "accepted"
+    ) -> None:
+        """Upsert an aggregated finding into the Postgres corpus.
+
+        ``outcome`` is the ground-truth submission result (accepted/rejected/
+        duplicate/...) that the calibration feedback loop learns from. It defaults
+        to ``"accepted"`` for the legacy accepted-only aggregator, and is updated
+        on conflict so a later outcome sync (e.g. an initial ``triaged`` that later
+        becomes ``rejected``) corrects the ground truth rather than being ignored.
+        """
         async with self._async_session() as session:
             stmt = (
                 insert(FindingCorpusORM)
@@ -798,7 +819,7 @@ class SessionMemory:
                     original_finding_id=finding_data.get("id"),
                     category=finding_data.get("category"),
                     severity=finding_data.get("severity", "medium"),
-                    outcome="accepted",
+                    outcome=outcome,
                     payload=finding_data,
                     engagement_id=finding_data.get("engagement_id"),
                     created_at=datetime.utcnow(),
@@ -806,11 +827,81 @@ class SessionMemory:
                 )
                 .on_conflict_do_update(
                     index_elements=["original_finding_id"],
-                    set_={"payload": finding_data, "finalized_at": datetime.utcnow()},
+                    set_={
+                        "outcome": outcome,
+                        "category": finding_data.get("category"),
+                        "severity": finding_data.get("severity", "medium"),
+                        "payload": finding_data,
+                        "finalized_at": datetime.utcnow(),
+                    },
                 )
             )
             await session.execute(stmt)
             await session.commit()
+
+    async def get_historical_success_rate(
+        self, finding_type: str, workflow_intent: Optional[str] = None
+    ) -> float:
+        """Empirical success rate for a finding type, from real submission outcomes.
+
+        This is the learning signal the confidence calibration engine consumes
+        (P2b feedback loop): it turns finalized ``finding_corpus`` outcomes into a
+        probability that a finding of ``finding_type`` is genuinely valid, so
+        confidence self-corrects as real engagements accumulate ground truth.
+
+        Outcome classification (HackerOne/Bugcrowd vocabulary):
+          - valid (numerator):   accepted, paid, triaged, duplicate
+          - invalid:             rejected, na, informative
+        A ``duplicate`` still counts as a true positive — the detection was
+        correct, someone else merely reported it first.
+
+        Returns ``0.5`` (neutral — the value the calibration engine treats as
+        "no signal") when there is no data or the warm tier is unavailable, so a
+        cold start never skews scoring and a DB hiccup never breaks calibration.
+        ``workflow_intent`` is accepted for forward-compatibility; the corpus does
+        not yet carry an intent column, so it is not used as a filter today.
+        """
+        if self._async_session is None:
+            return 0.5
+
+        _VALID = {"accepted", "paid", "triaged", "duplicate"}
+        _INVALID = {"rejected", "na", "informative"}
+
+        try:
+            with trace_span(
+                "postgres.get_historical_success_rate",
+                attributes={"ai_osop.finding_type": finding_type},
+            ):
+                async with self._async_session() as session:
+                    from sqlalchemy import func
+
+                    query = (
+                        select(
+                            FindingCorpusORM.outcome, func.count(FindingCorpusORM.id)
+                        )
+                        .where(FindingCorpusORM.category == finding_type)
+                        .group_by(FindingCorpusORM.outcome)
+                    )
+                    result = await session.execute(query)
+
+                    valid = 0
+                    decided = 0
+                    for outcome, count in result.all():
+                        bucket = (outcome or "").lower()
+                        if bucket in _VALID:
+                            valid += count
+                            decided += count
+                        elif bucket in _INVALID:
+                            decided += count
+
+                    if decided == 0:
+                        return 0.5
+                    return valid / decided
+        except Exception as e:  # noqa: BLE001 - calibration signal is advisory
+            logger.warning(
+                "get_historical_success_rate failed for %s: %s", finding_type, e
+            )
+            return 0.5
 
     # ============== TASKS ==============
 
@@ -828,14 +919,14 @@ class SessionMemory:
                         type=task.type,
                         priority=task.priority,
                         agent_type=task.agent_type.value,
-                        payload=task.payload,
+                        payload=json.loads(json.dumps(task.payload, default=str)) if task.payload else {},
                         dependencies=task.dependencies,
                         max_retries=task.max_retries,
                         timeout_seconds=task.timeout_seconds,
                         scope_check=task.scope_check,
                         approval_required=task.approval_required,
                         status=task.status,
-                        result=task.result,
+                        result=json.loads(json.dumps(task.result, default=str)) if task.result else None,
                         retry_count=task.retry_count,
                         created_at=task.created_at,
                         started_at=task.started_at,
@@ -847,7 +938,7 @@ class SessionMemory:
                         index_elements=["id"],
                         set_={
                             "status": task.status,
-                            "result": task.result,
+                            "result": json.loads(json.dumps(task.result, default=str)) if task.result else None,
                             "retry_count": task.retry_count,
                             "started_at": task.started_at,
                             "completed_at": task.completed_at,
