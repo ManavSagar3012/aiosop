@@ -24,12 +24,12 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ai_osop.adapters.threat_intel_mcp import ThreatIntelAdapter
 from ai_osop.api.deps import require_role, state, verify_token
-from ai_osop.api.middleware import CorrelationIdMiddleware
+import traceback
 from ai_osop.api.health import router as health_router, run_startup_self_test
 
 # Router imports
@@ -44,6 +44,7 @@ from ai_osop.api.routers import (
     system,
     tasks,
 )
+
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import settings
 from ai_osop.core.llm_client import LiteLLMClient
@@ -136,7 +137,10 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
 
     async def init_server(server_id, host, port, token, is_critical):
         try:
-            await mcp_registry.register_server(server_id, host, port, token)
+            # connect_retries=0: single fast attempt at startup so unreachable
+            # optional servers don't block boot ~31s each. Adapters lazily
+            # reconnect (with full retries) on first real use.
+            await mcp_registry.register_server(server_id, host, port, token, connect_retries=0)
             await mcp_registry.initialize_server(
                 server_id,
                 scope={},
@@ -240,13 +244,30 @@ async def lifespan(app: FastAPI):
 
         # 5. Build Orchestrator
         llm_client = LiteLLMClient()
+
+        # P2 learning brain: wire semantic findings memory so every real
+        # persisted vulnerability auto-populates the knowledge base and can be
+        # recalled on future engagements. Best-effort — never blocks startup.
+        try:
+            from ai_osop.core.findings_knowledge import (
+                FindingsKnowledge,
+                VectorMemoryFindingsStore,
+            )
+
+            graph_memory.findings_knowledge = FindingsKnowledge(
+                embed_fn=llm_client.get_embedding,
+                store=VectorMemoryFindingsStore(vector_memory),
+            )
+            logger.info("Findings knowledge base wired to graph memory.")
+        except Exception as e:  # noqa: BLE001 - learning brain is optional
+            logger.warning(f"Findings knowledge wiring failed: {e}")
+
         orch = Orchestrator(
             session_memory=session_memory,
             graph_memory=graph_memory,
             mcp_registry=mcp_registry,
             llm_client=llm_client,
         )
-
 
         # Reliability sprint: Run self-test after orchestrator initialization
         startup_results = await run_startup_self_test()
@@ -266,11 +287,6 @@ async def lifespan(app: FastAPI):
             import ai_osop.agents as _agents_pkg
             from ai_osop.core.skill_engine import SkillEngine
 
-            # SkillEngine's first positional arg is the skills directory (str path),
-            # NOT memory objects. The prior call passed GraphMemory/SessionMemory,
-            # raising "expected str, bytes or os.PathLike, not GraphMemory" and
-            # silently disabling the skill library. Resolve the bundled skills dir
-            # from the agents package so it is CWD-independent.
             skills_dir = os.path.join(os.path.dirname(_agents_pkg.__file__), "skills")
             _skill_engine_ref = SkillEngine(skills_dir, llm_client=llm_client)
             state["skill_engine"] = _skill_engine_ref
@@ -321,6 +337,7 @@ async def lifespan(app: FastAPI):
                 (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
                 (ReconAgent, AgentType.RECON, "recon-agent-001"),
                 (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, "vuln-agent-001"),
+                (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, "vuln-agent-002"),  # Second worker to prevent nuclei scan queueing
                 (HumanOversightAgent, AgentType.HUMAN_OVERSIGHT, "human-oversight-agent-001"),
                 (ExploitValidationAgent, AgentType.EXPLOIT_VALIDATION, "exploit-agent-001"),
                 (PayloadMutationAgent, AgentType.PAYLOAD_MUTATION, "payload-agent-001"),
@@ -355,13 +372,16 @@ async def lifespan(app: FastAPI):
                     audit_callback=orch._audit_log,
                     coordination_bus=orch.coordination_bus,
                 )
+                ctx.skill_engine = state.get("skill_engine")
                 agent_inst = agent_cls(ctx)
                 await orch.register_agent(agent_inst)
         except Exception as e:
             logger.error(f"Orchestrator initialization/agent registration failed: {e}")
 
         # 10. Bind to shared state dict so routers see the live values
+        logger.info("ORCHESTRATOR BIND: orch=%s id=%s state_before=%s", type(orch).__name__, id(orch), state.get("orchestrator") is not None)
         state["orchestrator"] = orch
+        logger.info("ORCHESTRATOR BOUND: state_orch=%s", state["orchestrator"] is not None)
 
         # 11. Set build info for metrics
         BUILD_INFO.info({"version": "3.0", "git_sha": "2bb4379"})
@@ -387,81 +407,207 @@ app = FastAPI(
 )
 
 
-# Security Headers Middleware (P2 fix)
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add security headers to all responses."""
+# ============== Middleware Stack ==============
+#
+# FIX (2026-06-28): All custom middlewares use pure ASGI middleware classes
+# instead of BaseHTTPMiddleware or @app.middleware("http"). 
+# BaseHTTPMiddleware has a known Starlette 0.37.x bug where nested instances
+# cause EndOfStream errors (anyio stream consumed by inner middleware before
+# outer can read it). @app.middleware("http") also uses BaseHTTPMiddleware
+# internally in Starlette < 0.40.
+#
+# Pure ASGI middlewares call self.app(scope, receive, send) directly, which
+# does NOT use anyio memory streams, so EndOfStream cannot occur.
+#
+# Middleware order: LAST added/appended = OUTERMOST = first to execute.
+#   CatchAllErrorMiddleware       → outermost: catches ALL exceptions ASGI-level
+#   correlation_id_middleware     → injects X-Request-ID, RequestContext
+#   prometheus_metrics_middleware → request metrics (counts, durations, errors)
+#   audit_log_middleware          → audit log for state-changing requests
+#   add_security_headers          → adds security headers
+#   CORSMiddleware                → CORS headers
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        return response
 
+class CatchAllErrorMiddleware:
+    """Pure ASGI middleware that catches ALL exceptions and returns JSON 500.
 
-# Audit Logging Middleware (P2 fix)
-class AuditLogMiddleware(BaseHTTPMiddleware):
-    """Log all state-changing API requests with operator and engagement context.
+    This runs at the ASGI protocol level, BEFORE any Starlette BaseHTTPMiddleware
+    stream mechanism. It directly catches exceptions from self.app() and sends
+    an error response via the ASGI send interface, bypassing the anyio memory
+    stream that causes EndOfStream errors in Starlette 0.37.x.
 
-    Includes request_id from CorrelationIdMiddleware for full trace/log correlation.
+    Must be the OUTERMOST middleware in the stack.
     """
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        response = await call_next(request)
-        method = request.method
-        request_id = getattr(request.state, "request_id", "unknown")
-        if method in ("POST", "PUT", "PATCH", "DELETE"):
-            op = request.scope.get("operator", {})
-            operator_id = op.get("sub", "anonymous") if isinstance(op, dict) else "anonymous"
-            logger.info(
-                "api_audit",
-                method=method,
-                path=request.url.path,
-                operator_id=operator_id,
-                status_code=response.status_code,
-                user_agent=request.headers.get("user-agent", ""),
-                client_ip=request.client.host if request.client else "",
-                request_id=request_id,
-            )
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        try:
+            await self.app(scope, receive, send)
+        except Exception as exc:
+            import traceback as _tb
+            try:
+                _tb_text = _tb.format_exc()
+                logger.error("catch_all_error_handler: %s\n%s", exc, _tb_text)
+            except Exception:
+                pass
+            try:
+                body = json.dumps({
+                    "detail": f"Internal server error: {type(exc).__name__}: {exc}",
+                    "error_type": type(exc).__name__,
+                }).encode("utf-8")
+                await send({
+                    "type": "http.response.start",
+                    "status": 500,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                    ],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": body,
+                })
+            except Exception:
+                pass  # Can't do anything if the connection is already dead
+
+
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    """
+    Inject correlation ID into every request, bind to contextvars, and return in response.
+
+    Converted from BaseHTTPMiddleware to @app.middleware("http") to avoid Starlette's
+    EndOfStream bug with nested BaseHTTPMiddleware instances.
+    """
+    from ai_osop.core.telemetry import RequestContext, extract_trace_id_from_traceparent
+
+    # 1. Extract or generate request ID
+    header_id = request.headers.get("X-Request-ID")
+    traceparent = request.headers.get("traceparent")
+    trace_id = extract_trace_id_from_traceparent(traceparent) if traceparent else None
+    if header_id:
+        request_id = header_id
+    elif trace_id:
+        request_id = f"req-{trace_id[:16]}"
+    else:
+        import uuid
+        request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    # 2. Extract user identity from auth if available
+    user_id = None
+    try:
+        operator = request.scope.get("operator", {})
+        if isinstance(operator, dict):
+            user_id = operator.get("sub")
+    except Exception:
+        pass
+
+    # 3. Bind to contextvars and create span
+    RequestContext.bind(request_id=request_id, user_id=user_id or "anonymous")
+    RequestContext.sync_from_otel()
+
+    span_name = f"api.{request.method.lower()}.{request.url.path}"
+    try:
+        with trace_span(
+            span_name,
+            attributes={
+                "ai_osop.request_id": request_id,
+                "http.method": request.method,
+                "http.target": request.url.path,
+                "http.scheme": request.url.scheme,
+                "http.host": request.url.hostname or "",
+            },
+        ):
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
         return response
+    finally:
+        RequestContext.clear()
 
 
-class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
+@app.middleware("http")
+async def prometheus_metrics_middleware(request: Request, call_next):
     """Track request counts, durations, and errors for Prometheus.
 
-    Prometheus metrics intentionally do NOT include request_id labels to avoid
-    high cardinality. Use traces (Jaeger/OTel) and logs (structlog) for
-    per-request correlation; metrics are for aggregate SLO monitoring.
+    FIX (2026-06-28): Catch all exceptions, log full traceback, return JSON 500.
+    Before this fix, exceptions were re-raised and produced generic "Internal Server Error"
+    with no error detail visible to the caller.
     """
+    path = request.url.path
+    method = request.method
+    start = time.time()
+    response = None
+    try:
+        response = await call_next(request)
+    except Exception:
+        ERRORS_TOTAL.labels(status_code="500", path=path).inc()
+        import traceback as _tb
+        import sys as _sys
+        _tb_content = _tb.format_exc()
+        _exc_type = _sys.exc_info()[0].__name__ if _sys.exc_info()[0] else "Exception"
+        logger.error("unhandled_500: %s %s\n%s", method, path, _tb_content)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": f"Internal server error processing {method} {path}",
+                "error_type": _exc_type,
+            },
+        )
+    finally:
+        duration = time.time() - start
+        REQUEST_DURATION.labels(method=method, path=path).observe(duration)
+        status_code = str(response.status_code) if response is not None else "500"
+        REQUESTS_TOTAL.labels(method=method, path=path, status_code=status_code).inc()
+        if response is not None and response.status_code >= 400:
+            ERRORS_TOTAL.labels(status_code=str(response.status_code), path=path).inc()
+    return response
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        path = request.url.path
-        method = request.method
-        start = time.time()
-        response = None
-        try:
-            response = await call_next(request)
-        except Exception:
-            ERRORS_TOTAL.labels(status_code="500", path=path).inc()
-            raise
-        finally:
-            duration = time.time() - start
-            REQUEST_DURATION.labels(method=method, path=path).observe(duration)
-            status_code = str(response.status_code) if response is not None else "500"
-            REQUESTS_TOTAL.labels(method=method, path=path, status_code=status_code).inc()
-            if response is not None and response.status_code >= 400:
-                ERRORS_TOTAL.labels(status_code=str(response.status_code), path=path).inc()
-        return response
+
+@app.middleware("http")
+async def audit_log_middleware(request: Request, call_next):
+    """Log all state-changing API requests with operator and engagement context."""
+    response = await call_next(request)
+    method = request.method
+    if method in ("POST", "PUT", "PATCH", "DELETE"):
+        request_id = getattr(request.state, "request_id", "unknown")
+        op = request.scope.get("operator", {})
+        operator_id = op.get("sub", "anonymous") if isinstance(op, dict) else "anonymous"
+        logger.info(
+            "api_audit",
+            method=method,
+            path=request.url.path,
+            operator_id=operator_id,
+            status_code=response.status_code,
+            user_agent=request.headers.get("user-agent", ""),
+            client_ip=request.client.host if request.client else "",
+            request_id=request_id,
+        )
+    return response
 
 
-# Middleware stack (applied in order: LAST added = OUTERMOST = first to execute):
-#   CorrelationIdMiddleware    → outermost: injects X-Request-ID, binds RequestContext, OTel span
-#   PrometheusMetricsMiddleware → counts/durations/errors (within trace context)
-#   AuditLogMiddleware          → audit log for state-changing requests (has request_id)
-#   SecurityHeadersMiddleware   → innermost: adds security headers
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+# Pure ASGI middleware: outermost catch-all error handler (bypasses BaseHTTPMiddleware stream bug)
+app.add_middleware(CatchAllErrorMiddleware)
+
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,
@@ -469,14 +615,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
-app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(AuditLogMiddleware)
-app.add_middleware(PrometheusMetricsMiddleware)
-app.add_middleware(CorrelationIdMiddleware)
+
 
 # Register routers
 app.include_router(health_router)
 app.include_router(engagements.router)
+
 app.include_router(tasks.router)
 app.include_router(agents.router)
 app.include_router(approvals.router)
@@ -552,8 +696,7 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
                     }
                 )
             elif action == "halt":
-                # P1: re-verify senior_operator role before allowing halt via WebSocket
-                if operator.get("role") != "senior_operator":
+                if not (await require_role("senior_operator")(operator)):
                     await websocket.send_json(
                         {"type": "error", "message": "halt requires senior_operator role"}
                     )
@@ -562,5 +705,14 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
                 await websocket.send_json({"type": "halted", "session_id": engagement_id})
             else:
                 await websocket.send_json({"type": "error", "message": "Unknown action"})
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger("ai_osop.api.websocket").warning(
+            "websocket_handler_exception: %s - %s (engagement_id=%s)",
+            type(exc).__name__, str(exc), engagement_id
+        )
+        try:
+            await websocket.close(code=1011, reason="Internal server error")
+        except Exception as e:
+            logger.warning("broad_exception_caught", error=str(e))
+            pass  # connection may already be closed

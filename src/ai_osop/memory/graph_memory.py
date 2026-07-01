@@ -23,6 +23,7 @@ from ai_osop.core.models import (
     AttackPath,
     BusinessInvariant,
     DiffAuthFinding,
+    Hypothesis,
     Endpoint,
     Exploit,
     Payload,
@@ -53,6 +54,11 @@ class GraphMemory:
     def __init__(self):
         self._driver: Optional[AsyncDriver] = None
         self._initialized = False
+        # Optional P2 learning-brain hook. When wired (app lifespan), every real
+        # persisted vulnerability is also recorded into semantic findings memory,
+        # so past engagements inform future ones. Left None in minimal setups/tests
+        # so GraphMemory stays decoupled from embeddings/LLM.
+        self.findings_knowledge: Optional[Any] = None
 
     async def connect(self) -> None:
         """Initialize Neo4j connection with exponential backoff retry.
@@ -89,6 +95,7 @@ class GraphMemory:
             "CREATE CONSTRAINT payload_id IF NOT EXISTS FOR (p:Payload) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT diff_auth_id IF NOT EXISTS FOR (d:DiffAuthFinding) REQUIRE d.id IS UNIQUE",
             "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (ev:Evidence) REQUIRE ev.id IS UNIQUE",
+            "CREATE CONSTRAINT hypothesis_id IF NOT EXISTS FOR (h:Hypothesis) REQUIRE h.id IS UNIQUE",
             "CREATE CONSTRAINT workflow_id IF NOT EXISTS FOR (w:Workflow) REQUIRE w.id IS UNIQUE",
             "CREATE CONSTRAINT step_id IF NOT EXISTS FOR (s:Step) REQUIRE s.id IS UNIQUE",
             "CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
@@ -113,6 +120,8 @@ class GraphMemory:
             "CREATE INDEX vuln_type_confidence IF NOT EXISTS FOR (v:Vulnerability) ON (v.vuln_type, v.confidence)",
             "CREATE INDEX exploit_timestamp IF NOT EXISTS FOR (x:Exploit) ON (x.timestamp)",
             "CREATE INDEX diff_auth_category IF NOT EXISTS FOR (d:DiffAuthFinding) ON (d.category, d.engagement_id)",
+            "CREATE INDEX hypothesis_category IF NOT EXISTS FOR (h:Hypothesis) ON (h.category, h.engagement_id)",
+            "CREATE INDEX hypothesis_confidence IF NOT EXISTS FOR (h:Hypothesis) ON (h.confidence, h.engagement_id)",
         ]
 
         async with self._driver.session() as session:
@@ -340,7 +349,17 @@ class GraphMemory:
                     },
                 )
                 record = await result.single()
-                return record["v.id"]
+
+        # P2 learning brain: auto-record this real finding into semantic memory.
+        # Best-effort — a KB failure must never break graph persistence, and the
+        # finding is already confirmed non-simulated by the guard above.
+        if self.findings_knowledge is not None:
+            try:
+                await self.findings_knowledge.record_finding(vuln)
+            except Exception as e:  # noqa: BLE001 - knowledge recording is best-effort
+                logger.warning("findings_knowledge_record_failed id=%s error=%s", vuln.id, e)
+
+        return record["v.id"]
 
     async def validate_vulnerability(self, vuln_id: str) -> None:
         """Mark a vulnerability as validated in the graph."""
@@ -576,16 +595,42 @@ class GraphMemory:
             return None
 
     async def get_endpoint_url_for_vulnerability(self, vuln_id: str) -> Optional[str]:
-        """Retrieve the URL of the endpoint associated with a vulnerability."""
+        """Resolve the URL to target when validating a vulnerability.
+
+        Primary: the linked Endpoint node's URL.
+        Fallback: the location the scanner actually recorded in the finding's
+        evidence. nuclei findings store ``matched_at`` / ``url`` in evidence but
+        are not linked to an Endpoint node, so without this fallback the
+        exploit-validation task (and its dashboard approval) gets ``target=None``
+        and fires at a null URL. (AIOSOP-EXPLOIT-TARGET-2026-06-30)
+        """
         cypher = """
-        MATCH (v:Vulnerability {id: $vuln_id})-[:HAS_VULNERABILITY]-(e:Endpoint)
-        RETURN e.url as url
+        MATCH (v:Vulnerability {id: $vuln_id})
+        OPTIONAL MATCH (v)-[:HAS_VULNERABILITY]-(e:Endpoint)
+        RETURN e.url AS url, v.evidence AS evidence
         """
         async with self._driver.session() as session:
             result = await session.run(cypher, {"vuln_id": vuln_id})
             record = await result.single()
-            if record:
+            if not record:
+                return None
+            if record["url"]:
                 return record["url"]
+            # Fallback: pull matched_at / url out of the finding's evidence blob.
+            import json as _json
+
+            ev_raw = record["evidence"]
+            try:
+                ev = _json.loads(ev_raw) if isinstance(ev_raw, str) else (ev_raw or [])
+            except (ValueError, TypeError):
+                ev = []
+            if isinstance(ev, dict):
+                ev = [ev]
+            for item in ev if isinstance(ev, list) else []:
+                if isinstance(item, dict):
+                    loc = item.get("matched_at") or item.get("url")
+                    if loc:
+                        return loc
             return None
 
     async def get_graph_stats(self, engagement_id: str) -> Dict[str, Any]:
@@ -609,6 +654,83 @@ class GraphMemory:
                 result = await session.run(cypher, {"engagement_id": engagement_id})
                 record = await result.single()
                 return dict(record) if record else {}
+
+    async def get_vulnerabilities_by_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Fetch all Vulnerability nodes for a given engagement."""
+        cypher = """
+        MATCH (v:Vulnerability)
+        WHERE v.engagement_id = $engagement_id
+        RETURN v
+        """
+        with trace_span(
+            "graph_memory.get_vulnerabilities_by_engagement",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                records = await result.data()
+                return [record["v"] for record in records]
+
+    async def get_all_nodes_for_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Fetch all nodes for a given engagement (for attack graph viz)."""
+        cypher = """
+        MATCH (n)
+        WHERE n.engagement_id = $engagement_id
+        RETURN n.id AS id, labels(n) AS labels
+        """
+        with trace_span(
+            "graph_memory.get_all_nodes_for_engagement",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                return await result.data()
+
+    async def get_all_edges_for_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Fetch all relationships for a given engagement (for attack graph viz)."""
+        cypher = """
+        MATCH (n)-[r]->(m)
+        WHERE n.engagement_id = $engagement_id AND m.engagement_id = $engagement_id
+        RETURN n.id AS source, m.id AS target, type(r) AS type
+        """
+        with trace_span(
+            "graph_memory.get_all_edges_for_engagement",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                return await result.data()
+
+    async def run_read_query(self, cypher: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Execute a parameterized read-only Cypher query and return records.
+
+        This is the escape hatch for complex queries that don't have a dedicated
+        method yet. All callers should prefer typed methods over raw Cypher.
+        """
+        params = params or {}
+        with trace_span(
+            "graph_memory.run_read_query",
+            attributes={"cypher_preview": cypher[:100]},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, params)
+                return await result.data()
+
+    async def run_write_query(self, cypher: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Execute a parameterized write Cypher query and return records if any.
+
+        This is the escape hatch for writes that don't have a dedicated method yet.
+        All callers should prefer typed methods over raw Cypher. If the query has
+        a RETURN clause the records are returned; otherwise an empty list.
+        """
+        params = params or {}
+        with trace_span(
+            "graph_memory.run_write_query",
+            attributes={"cypher_preview": cypher[:100]},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, params)
+                return await result.data()
 
     async def add_workflow(self, workflow: Workflow) -> str:
         """Persist a Workflow node."""
@@ -864,6 +986,78 @@ class GraphMemory:
             rec = await res.single()
             return rec["id"]
 
+    async def add_hypothesis(self, hypothesis: Hypothesis) -> str:
+        """Persist a hypothesis and link it to the target node when possible."""
+        cypher = """
+        MERGE (h:Hypothesis {id: $id})
+        SET h.title = $title,
+            h.description = $description,
+            h.category = $category,
+            h.target_id = $target_id,
+            h.confidence = $confidence,
+            h.supporting_entities = $supporting_entities,
+            h.evidence = $evidence,
+            h.recommended_tests = $recommended_tests,
+            h.recommended_skills = $recommended_skills,
+            h.status = $status,
+            h.engagement_id = $engagement_id,
+            h.created_at = $created_at
+        WITH h
+        OPTIONAL MATCH (e:Endpoint {id: $target_id})
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (e)-[:SUGGESTS]->(h)
+        )
+        WITH h
+        OPTIONAL MATCH (a:Asset {id: $target_id})
+        FOREACH (x IN CASE WHEN a IS NOT NULL THEN [a] ELSE [] END |
+            MERGE (a)-[:SUGGESTS]->(h)
+        )
+        WITH h
+        OPTIONAL MATCH (w:Workflow {id: $target_id})
+        FOREACH (x IN CASE WHEN w IS NOT NULL THEN [w] ELSE [] END |
+            MERGE (w)-[:SUGGESTS]->(h)
+        )
+        RETURN h.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": hypothesis.id,
+                    "title": hypothesis.title,
+                    "description": hypothesis.description,
+                    "category": hypothesis.category,
+                    "target_id": hypothesis.target_id,
+                    "confidence": hypothesis.confidence,
+                    "supporting_entities": hypothesis.supporting_entities,
+                    "evidence": hypothesis.evidence,
+                    "recommended_tests": hypothesis.recommended_tests,
+                    "recommended_skills": hypothesis.recommended_skills,
+                    "status": hypothesis.status,
+                    "engagement_id": hypothesis.engagement_id,
+                    "created_at": hypothesis.created_at.isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"] if record else hypothesis.id
+
+    async def get_hypotheses_by_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Fetch hypotheses for an engagement sorted by confidence."""
+        cypher = """
+        MATCH (h:Hypothesis)
+        WHERE h.engagement_id = $engagement_id
+        RETURN h
+        ORDER BY h.confidence DESC, h.created_at DESC
+        """
+        with trace_span(
+            "graph_memory.get_hypotheses_by_engagement",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                records = await result.data()
+                return [dict(record["h"]) if hasattr(record["h"], "items") else record["h"] for record in records]
+
     # ---- Reliability sprint: durable task lifecycle + dedupe + recovery ----
 
     async def upsert_task(
@@ -881,6 +1075,7 @@ class GraphMemory:
             t.agent_type=$agent_type, t.retry_count=$retry_count, t.max_retries=$max_retries,
             t.timeout_seconds=$timeout_seconds, t.created_at=$created_at, t.started_at=$started_at,
             t.completed_at=$completed_at, t.updated_at=$updated_at, t.result_summary=$result_summary,
+            t.result=$result, t.error=$error,
             t.payload=$payload, t.priority=$priority,
             t.recovery_attempts=coalesce(t.recovery_attempts, 0)
         RETURN t.id AS id
@@ -913,6 +1108,8 @@ class GraphMemory:
             "result_summary": json.dumps(result_summary or {}, default=str),
             "payload": json.dumps(getattr(task, "payload", {}) or {}, default=str),
             "priority": getattr(task, "priority", 5),
+            "result": getattr(task, "result", None),
+            "error": getattr(task, "error", None)
         }
         # Bounded retry so a brief Neo4j blip doesn't silently drop a lifecycle
         # transition (would make Neo4j diverge from in-memory -> zombie tasks).
@@ -1134,6 +1331,61 @@ class GraphMemory:
         )
         async with self._driver.session() as session:
             await session.run(cypher, {"id": invariant_id})
+
+    async def add_graphql_schema(self, schema: "GraphQLSchema") -> str:
+        """Persist a discovered GraphQL schema. Idempotent on endpoint+engagement."""
+        cypher = """
+        MERGE (s:GraphQLSchema {id: $id})
+        SET s.endpoint_url = $endpoint_url,
+            s.introspection_enabled = $introspection_enabled,
+            s.engagement_id = $engagement_id,
+            s.created_at = coalesce(s.created_at, $created_at)
+        RETURN s.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": schema.id,
+                    "endpoint_url": schema.endpoint_url,
+                    "introspection_enabled": schema.introspection_enabled,
+                    "engagement_id": schema.engagement_id,
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"] if record else schema.id
+
+    async def add_graphql_operation(self, op: "GraphQLOperation") -> str:
+        """Persist a GraphQL operation and link it to its schema."""
+        cypher = """
+        MERGE (o:GraphQLOperation {id: $id})
+        SET o.name = $name,
+            o.type = $type,
+            o.schema_id = $schema_id,
+            o.is_hidden = $is_hidden,
+            o.description = $description
+        WITH o
+        OPTIONAL MATCH (s:GraphQLSchema {id: $schema_id})
+        FOREACH (x IN CASE WHEN s IS NOT NULL THEN [s] ELSE [] END |
+            MERGE (s)-[:EXPOSES_OPERATION]->(o)
+        )
+        RETURN o.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": op.id,
+                    "name": op.name,
+                    "type": op.type,
+                    "schema_id": op.schema_id,
+                    "is_hidden": op.is_hidden,
+                    "description": op.description,
+                },
+            )
+            record = await result.single()
+            return record["id"] if record else op.id
 
     async def get_invariants(self, engagement_id: str) -> List[Dict[str, Any]]:
         """Return persisted invariants for an engagement, shaped for the UI."""
