@@ -107,3 +107,33 @@ async def test_recall_prior_findings_is_safe_without_kb():
     ctx.graph_memory.findings_knowledge = None
     agent = _BareAgent(ctx)
     assert await agent.recall_prior_findings("anything") == []
+
+
+@pytest.mark.asyncio
+async def test_vuln_agent_enriches_context_with_prior_findings():
+    """vuln_agent surfaces recalled prior findings into its reasoning context."""
+    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
+    from ai_osop.core.findings_knowledge import KnowledgeHit
+
+    ctx = MagicMock()
+    agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)  # skip heavy __init__
+    agent.ctx = ctx
+    agent.recall_prior_findings = AsyncMock(return_value=[
+        KnowledgeHit(score=0.62, document="d", metadata={"severity": "high", "vuln_type": "ssrf", "title": "Blind SSRF via url"}),
+    ])
+
+    out = await agent._enrich_with_prior_findings("Analyzing endpoints for shop.com", "shop.com")
+    assert "Prior similar findings" in out
+    assert "ssrf" in out and "Blind SSRF via url" in out
+    assert "0.62" in out
+
+
+@pytest.mark.asyncio
+async def test_vuln_agent_enrichment_noop_without_recall():
+    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
+
+    agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)
+    agent.ctx = MagicMock()
+    agent.recall_prior_findings = AsyncMock(return_value=[])
+    base = "Analyzing endpoints for shop.com"
+    assert await agent._enrich_with_prior_findings(base, "shop.com") == base

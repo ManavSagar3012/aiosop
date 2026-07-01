@@ -154,6 +154,34 @@ class VulnAnalysisAgent(BaseAgent):
         else:
             raise AgentException(f"Unknown vuln analysis task: {task_type}")
 
+    async def _enrich_with_prior_findings(self, context: str, domain: str) -> str:
+        """Append semantically-similar past findings to a reasoning context.
+
+        P2 learning brain: gives the LLM reasoning step attack patterns confirmed
+        in earlier engagements. Best-effort — returns the context unchanged if the
+        knowledge base is absent or recall fails (recall_prior_findings never
+        raises, but we guard defensively).
+        """
+        try:
+            prior = await self.recall_prior_findings(context, limit=3, min_score=0.35)
+        except Exception as e:  # noqa: BLE001 - recall is advisory, never fatal
+            logger.warning("vuln_agent_recall_failed", domain=domain, error=str(e))
+            return context
+        if not prior:
+            return context
+        prior_lines = "\n".join(
+            f"- [{h.metadata.get('severity', '?')}] {h.metadata.get('vuln_type', '?')}: "
+            f"{h.metadata.get('title', '')} (similarity {round(h.score, 2)})"
+            for h in prior
+        )
+        logger.info("vuln_agent_recalled_prior_findings", domain=domain, count=len(prior))
+        return (
+            context
+            + "\n\nPrior similar findings from past engagements "
+            "(consider these attack patterns first):\n"
+            + prior_lines
+        )
+
     async def _execute_burp_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute Burp Suite scan on target."""
         # PATCH (REL-010, 2026-06-15): Task scheduler sometimes emits
@@ -285,6 +313,11 @@ class VulnAnalysisAgent(BaseAgent):
                 f"Analyzing {len(all_endpoints)} new endpoints for {domain} to identify potential vulnerabilities:\n"
                 + "\n".join([e.url for e in list(all_endpoints.values())[:10]])
             )
+
+        # P2 learning brain: consult semantically-similar findings from past
+        # engagements and surface them to the reasoning step, so the agent
+        # benefits from attack patterns that were confirmed before.
+        analysis_context = await self._enrich_with_prior_findings(analysis_context, domain)
 
         reasoning = "(reasoning skipped: not attempted)"
         try:
