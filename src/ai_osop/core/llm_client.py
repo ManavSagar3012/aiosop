@@ -13,10 +13,10 @@ from ai_osop.safety.prompt_defense import sanitize_messages
 
 llm_logger = structlog.get_logger("ai_osop.llm")
 
-_EMBED_DIMS = 1536  # matches the pgvector column + existing callers
+_EMBED_DIMS = 1536  # default; overridden by settings.llm_embedding_dim
 
 
-def _mock_embedding(text: str, dims: int = _EMBED_DIMS) -> List[float]:
+def _mock_embedding(text: str, dims: Optional[int] = None) -> List[float]:
     """Deterministic, text-dependent pseudo-embedding for mock mode.
 
     Hashes each token into a bucket and L2-normalizes, so identical text yields
@@ -27,6 +27,8 @@ def _mock_embedding(text: str, dims: int = _EMBED_DIMS) -> List[float]:
     import hashlib
     import math
 
+    if dims is None:
+        dims = getattr(settings, "llm_embedding_dim", _EMBED_DIMS)
     vec = [0.0] * dims
     for token in (text or "").lower().split():
         bucket = int(hashlib.sha1(token.encode("utf-8")).hexdigest(), 16) % dims
