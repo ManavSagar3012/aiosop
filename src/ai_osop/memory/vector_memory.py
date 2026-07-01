@@ -39,16 +39,21 @@ class VectorMemory:
             uri = uri.replace("postgresql+asyncpg://", "postgresql://")
         self.pool = await asyncpg.create_pool(uri)
         async with self.pool.acquire() as conn:
-            # Ensure the extension and table exist
+            # Ensure the extension and tables exist. The vector width is driven by
+            # settings.llm_embedding_dim so it always matches the configured
+            # embedding model (default 1536; e.g. 768 for nomic-embed-text).
+            from ai_osop.core.config import settings as _settings
+
+            dim = int(getattr(_settings, "llm_embedding_dim", 1536))
             try:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
                 await conn.execute(
-                    """
+                    f"""
                     CREATE TABLE IF NOT EXISTS semantic_payloads (
                         id SERIAL PRIMARY KEY,
                         payload_type VARCHAR(50),
                         content TEXT,
-                        embedding vector(1536),
+                        embedding vector({dim}),
                         metadata JSONB
                     )
                 """
@@ -56,11 +61,11 @@ class VectorMemory:
                 # Findings knowledge (P2 learning brain): confirmed findings become
                 # semantic memory so past engagements inform new ones.
                 await conn.execute(
-                    """
+                    f"""
                     CREATE TABLE IF NOT EXISTS semantic_findings (
                         id SERIAL PRIMARY KEY,
                         document TEXT,
-                        embedding vector(1536),
+                        embedding vector({dim}),
                         metadata JSONB
                     )
                 """

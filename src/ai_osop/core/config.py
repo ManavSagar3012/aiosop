@@ -208,6 +208,11 @@ class Settings(BaseSettings):
     llm_embedding_model: str = Field(
         default="text-embedding-3-small", validation_alias="OSOP_LLM_EMBEDDING_MODEL"
     )
+    # Embedding vector dimension — MUST match the embedding model output and the
+    # pgvector column width. Defaults to 1536 (text-embedding-3-small). If you
+    # switch models set this to match (e.g. nomic-embed-text -> 768) and use a
+    # fresh DB or migrate the vector columns, or inserts will fail on a size mismatch.
+    llm_embedding_dim: int = Field(default=1536, validation_alias="OSOP_LLM_EMBEDDING_DIM")
     llm_api_key_path: str = Field(
         default="secret/data/llm/openai", validation_alias="OSOP_LLM_KEY_PATH"
     )
