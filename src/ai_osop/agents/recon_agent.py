@@ -8,10 +8,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.adapters.recon_mcp import ReconMCPAdapter
+from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, make_asset_id
+from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
+from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params, mine_urls
+from ai_osop.safety.scope import ScopeEnforcer
 import re
 from ai_osop.agents.retrieval_agent import RetrievalAgent
 import hashlib
@@ -59,11 +63,12 @@ class ReconAgent(BaseAgent):
     def agent_type(self) -> AgentType:
         return AgentType.RECON
     def supports_task_type(self, task_type: str) -> bool:
-        return task_type in ["full_recon", "dns_enumeration", "port_scan", "service_probe", "osint_lookup", "technology_fingerprint"]
+        return task_type in ["full_recon", "dns_enumeration", "port_scan", "service_probe", "osint_lookup", "technology_fingerprint", "content_discovery", "openapi_ingest", "expand_subdomains"]
 
     async def _setup_resources(self) -> None:
         """Initialize recon tools and inventory."""
         self.recon_adapter = ReconMCPAdapter(self.ctx.mcp_registry)
+        self.security_bridge = SecurityBridgeAdapter(self.ctx.mcp_registry)
         self.asset_inventory: Dict[str, Asset] = {}
         self.endpoint_inventory: Dict[str, Endpoint] = {}
 
@@ -118,8 +123,124 @@ class ReconAgent(BaseAgent):
             return await self._execute_full_recon(payload)
         elif task_type == "expand_subdomains":
             return await self._execute_expand_subdomains(payload)
+        elif task_type == "content_discovery":
+            return await self._execute_content_discovery(payload)
+        elif task_type == "openapi_ingest":
+            return await self._execute_openapi_ingest(payload)
         else:
             raise AgentException(f"Unknown recon task type: {task_type}")
+
+    def _mk_endpoint(self, url: str, engagement_id: str, source: str, **extra: Any) -> Endpoint:
+        """Build an enriched Endpoint from a raw URL (params, tags, template).
+
+        ``parameters`` defaults to the URL's query keys but callers (e.g. OpenAPI
+        ingest) may override it with spec-derived parameter names.
+        """
+        from urllib.parse import urlsplit as _us
+        _p = _us(url)
+        params = extra.pop("parameters", None)
+        if params is None:
+            params = extract_params(url)
+        return Endpoint(
+            url=url, source=source, confidence=extra.pop("confidence", 0.85),
+            engagement_id=engagement_id,
+            parameters=params, query_keys=params,
+            host=_p.netloc, path=extra.pop("path", _p.path),
+            metadata={"tags": classify_url(url), "template": endpoint_template(url),
+                      **extra.pop("metadata", {})},
+            **extra,
+        )
+
+    async def _execute_content_discovery(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Deep content/parameter discovery via katana (P1.2).
+
+        JS-aware crawl of the target, then every discovered URL is mined for hidden
+        parameters and high-risk surface and written to the graph as enriched
+        endpoints. Reuses the P1.1 url_intelligence module for the mining.
+        """
+        target = payload.get("url") or payload.get("target")
+        if not target:
+            raise AgentException("content_discovery requires 'url' or 'target' in payload")
+        depth = int(payload.get("depth", 3))
+        engagement_id = self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        try:
+            result = await self.security_bridge.run_katana(target, depth=depth)
+        except Exception as e:
+            logger.warning("content_discovery_katana_failed", error=str(e))
+            return {"status": "error", "error": f"katana crawl failed: {e}"}
+        urls = [u for u in (list(result.get("endpoints", [])) + list(result.get("js_files", [])))
+                if isinstance(u, str) and u]
+        added = 0
+        for url in urls:
+            try:
+                ep = self._mk_endpoint(url, engagement_id, source="katana")
+                await self.ctx.graph_memory.add_endpoint(ep)
+                self.endpoint_inventory[ep.id] = ep
+                added += 1
+            except Exception as ex:
+                logger.error("content_discovery_add_endpoint_failed", url=url, error=str(ex))
+        intel = mine_urls(urls).as_dict()
+        if intel["interesting_params"]:
+            logger.info("content_discovery_param_intel",
+                        high_risk_params=intel["interesting_params"],
+                        unique_endpoints=intel["unique_endpoint_count"])
+        return {"status": "success", "target": target, "endpoints_found": added,
+                "js_files": len(result.get("js_files", [])), "parameter_intelligence": intel}
+
+    async def _execute_openapi_ingest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Discover + ingest an exposed OpenAPI/Swagger spec (P1.3).
+
+        Probes conventional spec locations (scope-gated), parses the first valid
+        spec into endpoints (with query/path params and request-body fields), and
+        writes them to the graph as API attack surface.
+        """
+        target = payload.get("url") or payload.get("target")
+        if not target:
+            raise AgentException("openapi_ingest requires 'url' or 'target' in payload")
+        engagement_id = self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        candidates = payload.get("spec_urls") or spec_candidate_urls(target)
+        scope = ScopeEnforcer(self.ctx.scope) if getattr(self.ctx, "scope", None) else None
+        spec = None
+        found_url = ""
+        async with aiohttp.ClientSession() as session:
+            for cand in candidates:
+                if scope is not None:
+                    try:
+                        if not scope.validate_target(cand):
+                            continue
+                    except Exception:
+                        continue  # out of scope / invalid -> skip
+                try:
+                    async with session.get(cand, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status != 200:
+                            continue
+                        doc = await resp.json(content_type=None)
+                except Exception:
+                    continue
+                if is_spec(doc):
+                    spec, found_url = doc, cand
+                    break
+        if spec is None:
+            return {"status": "success", "target": target, "spec_found": False, "endpoints_found": 0}
+        descriptors = parse_spec(spec, base_url=payload.get("base_url") or target)
+        added = 0
+        for d in descriptors:
+            try:
+                ep = self._mk_endpoint(
+                    d["url"], engagement_id, source="openapi", confidence=0.9,
+                    method=d["method"], type="api", path=d["path"],
+                    parameters=d.get("parameters", []),
+                    body_schema_keys=d.get("body_keys", []),
+                    metadata={"operation_id": d.get("operation_id", ""), "spec_url": found_url},
+                )
+                await self.ctx.graph_memory.add_endpoint(ep)
+                self.endpoint_inventory[ep.id] = ep
+                added += 1
+            except Exception as ex:
+                logger.error("openapi_add_endpoint_failed", url=d["url"], error=str(ex))
+        logger.info("openapi_ingested", spec_url=found_url, endpoints=added)
+        return {"status": "success", "target": target, "spec_found": True,
+                "spec_url": found_url, "endpoints_found": added}
 
     async def _execute_expand_subdomains(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Expand discovered subdomains into likely candidates (altdns-style) and,
@@ -401,11 +522,29 @@ class ReconAgent(BaseAgent):
         except Exception as e:
             logger.warning(r"Shodan OSINT lookup failed: {e}")
 
+        # P1 recon multiplier: consolidate every discovered URL (crawl + historical +
+        # probes) into parameter/endpoint intelligence. This turns a raw URL dump into
+        # a prioritised list of hidden parameters and high-risk surface (open-redirect,
+        # SSRF, LFI, IDOR candidates) that the vuln/exploit agents can target directly.
+        all_urls = [
+            ep.url for ep in self.endpoint_inventory.values() if getattr(ep, "url", None)
+        ]
+        param_intel = mine_urls(all_urls).as_dict()
+        if param_intel["interesting_params"]:
+            logger.info(
+                "recon_param_intel",
+                engagement_id=self.ctx.current_task.engagement_id,
+                unique_endpoints=param_intel["unique_endpoint_count"],
+                high_risk_params=param_intel["interesting_params"],
+                interesting_files=len(param_intel["interesting_files"]),
+            )
+
         return {
             "status": "success",
             "target": domain,
             "subdomains_found": len(subdomains),
             "endpoints_found": endpoints_count + historical_count + len(active_endpoints),
+            "parameter_intelligence": param_intel,
             "reasoning": reasoning,
         }
 

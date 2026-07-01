@@ -13,6 +13,31 @@ from pydantic import BaseModel, Field, validator
 
 from ai_osop.core.config import AgentType, Severity, VulnClass
 
+# ================= ID HELPERS =================
+
+
+def make_asset_id(engagement_id: str, value: str) -> str:
+    """
+    Return a stable, engagement-scoped asset ID that is safe against
+    cross-engagement Neo4j node collisions.
+
+    Two engagements targeting the same domain used to produce identical IDs
+    (``asset-{engagement_id}-{domain}``) because Neo4j MERGE matched on the
+    *full* id string, and engagement_id was sometimes reused in tests. This
+    function hashes both components together so the ID:
+      - Is deterministic for the same (engagement, value) pair (idempotent MERGE)
+      - Is unique across different engagements for the same value
+      - Stays human-readable with a short prefix
+
+    Format: ``asset-{eng8}-{val8}``
+      eng8 = first 8 hex chars of SHA-256(engagement_id)
+      val8 = first 8 hex chars of SHA-256(value.lower())
+    """
+    eng_hash = hashlib.sha256(engagement_id.encode()).hexdigest()[:8]
+    val_hash = hashlib.sha256(value.lower().encode()).hexdigest()[:8]
+    return f"asset-{eng_hash}-{val_hash}"
+
+
 # ================= BASE ENTITIES =================
 
 
@@ -65,6 +90,10 @@ class Endpoint(BaseModel):
 
     # Common
     confidence: float = Field(0.5, ge=0.0, le=1.0)
+    # Free-form enrichment (recon tags, template, first/last-seen, source hints).
+    # Previously several call sites passed metadata that pydantic silently dropped
+    # because this field did not exist; it is now retained.
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Vulnerability(BaseModel):
@@ -395,6 +424,24 @@ class UncertaintyRecord(BaseModel):
     knowns: List[str] = Field(default_factory=list)
     unknowns: List[str] = Field(default_factory=list)
     blocked_paths: List[str] = Field(default_factory=list)
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Hypothesis(BaseModel):
+    """A testable security hypothesis inferred from observed engagement data."""
+
+    id: str = Field(default_factory=lambda: f"hyp-{uuid.uuid4().hex[:12]}")
+    title: str
+    description: str
+    category: str
+    target_id: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    supporting_entities: List[str] = Field(default_factory=list)
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    recommended_tests: List[str] = Field(default_factory=list)
+    recommended_skills: List[str] = Field(default_factory=list)
+    status: str = "open"
     engagement_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

@@ -17,11 +17,12 @@ logger = structlog.get_logger(__name__)
 from ai_osop.adapters.browser_mcp import BrowserMCPAdapter
 from ai_osop.adapters.burp_mcp import BurpMCPAdapter
 from ai_osop.adapters.oast_mcp import OASTAdapter
+from ai_osop.core.oast_correlation import OASTCorrelationRegistry, OASTProbe
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.adapters.turbo_intruder_mcp import TurboIntruderMCPAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.auth.session_store import SessionStore
-from ai_osop.core.config import AgentType, Severity, VulnClass, settings
+from ai_osop.core.config import NUCLEI_SCAN_PROFILES, AgentType, Severity, VulnClass, settings
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, Vulnerability
 
@@ -54,6 +55,9 @@ class VulnAnalysisAgent(BaseAgent):
         # oast-mcp lets ssrf_scan CONFIRM blind SSRF via a real out-of-band callback,
         # not a guess. No callback => no finding.
         self.oast = OASTAdapter(self.ctx.mcp_registry)
+        # Slow-path reconciler entry point: promotes blind callbacks that land
+        # after a scan's inline poll window closed (see core.oast_correlation).
+        self.oast_correlation = OASTCorrelationRegistry(self.oast)
         # turbo-intruder (real raw-socket single-packet) drives race_limit_scan —
         # confirm TOCTOU/double-spend when a once-only action succeeds more than once.
         self.turbo = TurboIntruderMCPAdapter(self.ctx.mcp_registry)
@@ -386,6 +390,20 @@ class VulnAnalysisAgent(BaseAgent):
         templates = payload.get("templates", [])
         severity = payload.get("severity", "")  # e.g. "critical,high,medium"
         tags = payload.get("tags", "")
+        # Scan profile (Sprint 0): when the caller supplies NO template/severity/tag
+        # scoping, nuclei would run the full ~13k-template set and overrun the task
+        # timeout (the NUCLEI-FANOUT failure — observed live: 300s timeout, 3 retries,
+        # 0 findings, orphaned subprocesses). Apply a bounded profile so interactive
+        # scans finish within budget. profile="deep" (or explicit filters) opts back
+        # into exhaustive coverage.
+        if not templates and not severity and not tags:
+            profile = str(payload.get("profile") or "fast").lower()
+            prof = NUCLEI_SCAN_PROFILES.get(profile, NUCLEI_SCAN_PROFILES["fast"])
+            severity = prof.get("severity", "")
+            tags = prof.get("tags", "")
+            logger.info(
+                "nuclei_scan_profile_applied", profile=profile, severity=severity, tags=tags
+            )
         engagement_id = payload.get("engagement_id") or (
             self.ctx.current_task.engagement_id if self.ctx.current_task else None
         )
@@ -1649,7 +1667,15 @@ class VulnAnalysisAgent(BaseAgent):
         beaconed = False
         if not executed and mode in ("auto", "oast"):
             method = "oast_beacon"
-            otoken, callback_url = await self.oast.register(label=f"stored_xss:{store_url}")
+            xss_ctx = OASTProbe(
+                engagement_id=engagement_id,
+                vuln_class=VulnClass.XSS,
+                injection_point=store_field or "field",
+                request_summary=f"{store_method} {store_url}",
+                source_agent_id=getattr(self, "agent_id", "") or "",
+            ).to_context()
+            otoken, callback_url = await self.oast.register(
+                label=f"stored_xss:{store_url}", context=xss_ctx)
             beacon_payload = f"<img src=\"{callback_url}\">"
             await self._store_payload(store_url, store_method, store_field,
                                       beacon_payload, store_base, store_format, headers)
@@ -1765,7 +1791,19 @@ class VulnAnalysisAgent(BaseAgent):
         if session:
             await self.oast.initialize(session.scope, session.session_id)
 
-        token, callback_url = await self.oast.register(label=f"ssrf:{url}")
+        # Attach probe provenance so a captured callback -- even a late one drained
+        # by the reconciler after this scan returns -- can be attributed to this
+        # exact injection point and engagement.
+        ssrf_ctx = OASTProbe(
+            engagement_id=engagement_id,
+            vuln_class=VulnClass.SSRF,
+            injection_point=body_field or param or "url",
+            request_summary=f"{method} {url}",
+            source_agent_id=getattr(self, "agent_id", "") or "",
+        ).to_context()
+        token, callback_url = await self.oast.register(
+            label=f"ssrf:{url}", context=ssrf_ctx
+        )
 
         headers: Dict[str, str] = {}
         if auth_token:

@@ -58,9 +58,10 @@ class ScopeEnforcer:
         if target in self._blocked_targets:
             raise OutOfScopeError(f"Target {target} is explicitly excluded from scope")
 
-        # Check if any exclusion is a substring
+        # Check exclusions first — exact match OR suffix match (e.g. *.evil.com blocks
+        # sub.evil.com but not notevil.com). Never use plain substring.
         for exclusion in self._blocked_targets:
-            if exclusion in target:
+            if target == exclusion or target.endswith(f".{exclusion}"):
                 raise OutOfScopeError(f"Target {target} matches excluded pattern: {exclusion}")
 
         # URL validation
@@ -81,8 +82,22 @@ class ScopeEnforcer:
         raise ScopeValidationError(f"Cannot determine target type for: {target}")
 
     def _is_domain(self, target: str) -> bool:
-        """Check if target is a domain name."""
-        return "." in target and not target.replace(".", "").isdigit()
+        """Check if target is a domain/hostname.
+
+        Accepts dotted FQDNs (example.com) *and* single-label hosts such as
+        "localhost" or internal service names. Bare IPv4/IPv6 literals are NOT
+        domains — the IP-validation path handles those. Previously single-label
+        hosts fell through to a ScopeValidationError even when explicitly in
+        scope, which broke localhost/internal-hostname engagements.
+        """
+        if not target:
+            return False
+        try:
+            ipaddress.ip_address(target)
+            return False  # bare IP literal -> handled by _validate_ip
+        except ValueError:
+            pass
+        return not target.replace(".", "").replace(":", "").isdigit()
 
     def _validate_domain(self, domain: str) -> bool:
         """Validate domain against scope."""
@@ -316,7 +331,8 @@ class SandboxManager:
         except Exception as e:
             try:
                 network.remove()
-            except Exception:
+            except Exception as e:
+                logger.warning("broad_exception_caught", error=str(e))
                 pass
             raise SandboxException(f"Failed to create sandbox container: {e}")
 
@@ -341,16 +357,19 @@ class SandboxManager:
                 # Cleanup on network setup failure
                 try:
                     del self._active_sandboxes[sandbox_id]
-                except Exception:
+                except Exception as e:
+                    logger.warning("broad_exception_caught", error=str(e))
                     pass
                 try:
                     container.stop(timeout=5)
                     container.remove(force=True)
-                except Exception:
+                except Exception as e:
+                    logger.warning("broad_exception_caught", error=str(e))
                     pass
                 try:
                     network.remove()
-                except Exception:
+                except Exception as e:
+                    logger.warning("broad_exception_caught", error=str(e))
                     pass
                 raise SandboxException(f"Failed to setup sandbox network filtering: {e}")
 
@@ -542,7 +561,8 @@ class SandboxManager:
             container = client.containers.get(sandbox["container_id"])
             container.stop(timeout=10)
             container.remove(force=True)
-        except Exception:
+        except Exception as e:
+            logger.warning("broad_exception_caught", error=str(e))
             pass
 
         # 3. Remove Docker network
@@ -551,7 +571,8 @@ class SandboxManager:
             try:
                 network = client.networks.get(network_id)
                 network.remove()
-            except Exception:
+            except Exception as e:
+                logger.warning("broad_exception_caught", error=str(e))
                 pass
 
 
