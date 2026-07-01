@@ -430,6 +430,23 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+# --- Nuclei scan profiles (Sprint 0) -------------------------------------------------
+# Bound scan breadth so a nuclei task finishes within the agent/task timeout instead of
+# running the full ~13k-template set (the "NUCLEI-FANOUT" timeout -> retry -> orphaned
+# subprocess failure). vuln_agent applies "fast" by default when a caller supplies no
+# template/severity/tag scoping; callers wanting exhaustive coverage pass profile="deep"
+# or explicit templates/severity/tags.
+NUCLEI_SCAN_PROFILES = {
+    # "fast": tags bound the template load (=> completes in-budget); severity is left
+    # open so real findings across severities still surface (a strict high+ floor would
+    # drop most of a target's info/low hits and yield a misleading "0 findings").
+    "fast": {"severity": "", "tags": "misconfig,exposure,default-login,cve,takeover"},
+    # "standard": broader templates but capped to actionable severities.
+    "standard": {"severity": "critical,high,medium", "tags": ""},
+    # "deep": full template set — exhaustive, long-running (raise the task timeout).
+    "deep": {"severity": "", "tags": ""},
+}
+
 
 _INSECURE_DEV_SIGNING_KEY = b"dev-insecure-scope-signing-key"
 _PROD_ENVIRONMENTS = {"production", "prod", "staging", "stage"}

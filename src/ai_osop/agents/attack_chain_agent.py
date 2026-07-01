@@ -7,10 +7,15 @@ and attack graph path discovery.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import structlog
+
 from ai_osop.agents.base import AgentContext, BaseAgent
-from ai_osop.core.config import AgentType
-from ai_osop.core.exceptions import AgentException
+from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.exceptions import AgentException, OutOfScopeError, ScopeValidationError
 from ai_osop.core.models import AttackPath, Exploit, Task, Vulnerability
+from ai_osop.safety.scope import ScopeEnforcer
+
+logger = structlog.get_logger(__name__)
 
 
 class AttackChainAgent(BaseAgent):
@@ -70,6 +75,26 @@ class AttackChainAgent(BaseAgent):
         """Initialize attack chain resources."""
         self.discovered_paths: List[AttackPath] = []
         self.validated_chains: List[Dict[str, Any]] = []
+        # Defense-in-depth: scope-gate any payload-controlled URL this agent
+        # dereferences (verify_url / idor_url in account_takeover). The signed
+        # scope check at the scheduler is the primary gate; this stops an
+        # otherwise in-scope task from being abused to reach an attacker host.
+        self._scope_manager: Optional[ScopeEnforcer] = None
+        if getattr(self.ctx, "scope", None) is not None:
+            try:
+                self._scope_manager = ScopeEnforcer(self.ctx.scope)
+            except Exception as e:  # noqa: BLE001 - scope optional
+                logger.warning("attack_chain_scope_init_failed", error=str(e))
+
+    def _in_scope(self, url: str) -> bool:
+        """Return True if the URL is in scope (or no scope is configured)."""
+        if not url or self._scope_manager is None:
+            return True
+        try:
+            return self._scope_manager.validate_target(url)
+        except (OutOfScopeError, ScopeValidationError) as e:
+            logger.warning("attack_chain_url_out_of_scope", url=url, error=str(e))
+            return False
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute attack chain task."""
@@ -78,6 +103,8 @@ class AttackChainAgent(BaseAgent):
 
         if task_type == "discover_paths":
             return await self._discover_paths(payload)
+        elif task_type == "account_takeover":
+            return await self._account_takeover(payload)
         elif task_type == "validate_chain":
             return await self._validate_chain(payload)
         elif task_type == "propagate_risk":
@@ -86,6 +113,194 @@ class AttackChainAgent(BaseAgent):
             return await self._find_lateral_movement(payload)
         else:
             raise AgentException(f"Unknown attack chain task: {task_type}")
+
+    async def _account_takeover(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Actively DEMONSTRATE account takeover by chaining real primitives.
+
+        This does not merely score a graph path — it forges access as a chosen
+        victim and confirms the server honours it. Today's confirmed primitive is
+        JWT forgery (impersonate the victim's identity); an optional IDOR primitive
+        (read the victim's object with the attacker's own token) is attempted when
+        an idor_url is supplied. Any confirmed primitive yields a CRITICAL,
+        validated Account-Takeover finding linked to its enabling weakness.
+
+        Payload:
+            verify_url     identity-reflecting endpoint (e.g. /rest/user/whoami)
+            token          attacker's own valid JWT (to mutate)
+            victim_email   identity to take over (forged into the token)
+            idor_url       optional: a victim-resource URL to read with attacker token
+            idor_marker    optional: string proving victim data was returned
+            engagement_id  injected by _execute
+        """
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("account_takeover: cannot determine engagement_id")
+        verify_url = payload.get("verify_url")
+        token = payload.get("token")
+        victim_email = payload.get("victim_email")
+        if not (verify_url and token and victim_email):
+            return {
+                "status": "error",
+                "error": "account_takeover requires verify_url, token, and victim_email",
+            }
+        if not self._in_scope(verify_url):
+            return {
+                "status": "out_of_scope",
+                "error": f"verify_url {verify_url} is out of scope; account_takeover not attempted",
+            }
+
+        chain: List[Dict[str, Any]] = []
+        primitive_vulns: List[Vulnerability] = []
+
+        # --- Primitive 1: JWT forgery -> impersonate the victim identity ----------
+        from ai_osop.core.jwt_tester import JWTTester
+
+        tester = JWTTester(
+            verify_url, token, sentinel=victim_email, method=payload.get("method", "GET")
+        )
+        try:
+            jwt_findings = [f for f in await tester.run() if f.confirmed]
+        except Exception as e:
+            logger.warning("ato_jwt_primitive_failed", error=str(e))
+            jwt_findings = []
+
+        for f in jwt_findings:
+            primitive_vulns.append(
+                Vulnerability(
+                    cwe="CWE-347",
+                    vuln_type=VulnClass.JWT_ABUSE,
+                    severity=Severity.CRITICAL,
+                    title=f"JWT forgery enabling impersonation ({f.technique})",
+                    description=f"{f.detail} Used as the takeover primitive for {victim_email}.",
+                    evidence=[{"type": "jwt_forgery", "provenance": "jwt_tester",
+                               "technique": f.technique, "verify_url": verify_url,
+                               "victim": victim_email, **f.evidence}],
+                    tool_source="jwt_tester",
+                    confidence=0.98,
+                    validated=True,
+                    exploitability="high",
+                    impact="high",
+                    engagement_id=engagement_id,
+                )
+            )
+            chain.append({"primitive": "jwt_forgery", "technique": f.technique})
+
+        # --- Primitive 2 (optional): IDOR read of the victim's object -------------
+        idor_url = payload.get("idor_url")
+        idor_marker = payload.get("idor_marker") or victim_email
+        if idor_url and not self._in_scope(idor_url):
+            logger.warning("ato_idor_out_of_scope", url=idor_url)
+            idor_url = None
+        if idor_url:
+            import httpx
+
+            try:
+                async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+                    r = await c.get(idor_url, headers={"Authorization": f"Bearer {token}",
+                                                       "Cookie": f"token={token}"})
+                    if r.status_code == 200 and idor_marker in r.text:
+                        primitive_vulns.append(
+                            Vulnerability(
+                                cwe="CWE-639",
+                                vuln_type=VulnClass.IDOR,
+                                severity=Severity.HIGH,
+                                title="IDOR exposing victim account object",
+                                description=f"Attacker token read {victim_email}'s object at {idor_url}.",
+                                evidence=[{"type": "idor_read", "provenance": "http",
+                                           "url": idor_url, "victim": victim_email,
+                                           "status": r.status_code}],
+                                tool_source="ato_orchestrator",
+                                confidence=0.93,
+                                validated=True,
+                                exploitability="high",
+                                impact="high",
+                                engagement_id=engagement_id,
+                            )
+                        )
+                        chain.append({"primitive": "idor", "url": idor_url})
+            except Exception as e:
+                logger.warning("ato_idor_primitive_failed", error=str(e))
+
+        if not primitive_vulns:
+            logger.info("ato_not_confirmed", verify_url=verify_url, victim=victim_email)
+            return {
+                "status": "success",
+                "tool": "ato_orchestrator",
+                "account_takeover": False,
+                "victim": victim_email,
+                "findings_count": 0,
+            }
+
+        # Persist the enabling primitives, then the chained ATO outcome.
+        for pv in primitive_vulns:
+            try:
+                await self.ctx.graph_memory.add_vulnerability(pv)
+            except Exception as e:
+                logger.error("ato_primitive_persist_failed", error=str(e))
+
+        ato = Vulnerability(
+            cwe="CWE-287",  # Improper Authentication
+            vuln_type=VulnClass.BROKEN_ACCESS_CONTROL,
+            severity=Severity.CRITICAL,
+            title=f"Account Takeover of {victim_email}",
+            description=(
+                f"Account takeover of {victim_email} was demonstrated by chaining "
+                f"{len(primitive_vulns)} confirmed primitive(s): "
+                f"{', '.join(c['primitive'] for c in chain)}. The server granted access "
+                f"under the victim's identity."
+            ),
+            evidence=[{
+                "type": "account_takeover_chain",
+                "provenance": "ato_orchestrator",
+                "victim": victim_email,
+                "verify_url": verify_url,
+                "chain": chain,
+                "primitive_vuln_ids": [pv.id for pv in primitive_vulns],
+            }],
+            tool_source="ato_orchestrator",
+            confidence=0.97,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(ato)
+        except Exception as e:
+            logger.error("ato_persist_failed", error=str(e))
+
+        # Best-effort: record the chain as an AttackPath (primitive -> ATO goal).
+        try:
+            path = AttackPath(
+                node_ids=[pv.id for pv in primitive_vulns] + [ato.id],
+                edge_ids=[],
+                confidence=0.97,
+                risk_score=9.5,
+                detection_risk=0.3,
+                validated=True,
+                entry_node_id=primitive_vulns[0].id,
+                goal_node_id=ato.id,
+                engagement_id=engagement_id,
+            )
+            await self.ctx.graph_memory.add_attack_path(path)
+        except Exception as e:
+            logger.warning("ato_attack_path_persist_failed", error=str(e))
+
+        logger.info(
+            "ato_confirmed", victim=victim_email,
+            primitives=[c["primitive"] for c in chain],
+        )
+        return {
+            "status": "success",
+            "tool": "ato_orchestrator",
+            "account_takeover": True,
+            "victim": victim_email,
+            "chain": chain,
+            "findings_count": len(primitive_vulns) + 1,
+            "ato_finding": ato.model_dump(),
+        }
 
     async def _discover_paths(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Discover attack paths from entry points to goals."""
@@ -167,8 +382,6 @@ class AttackChainAgent(BaseAgent):
                             "target": endpoint_url,
                             "vulnerability_id": node_id,
                             "payload": "TBD",  # Placeholder for now
-                            "operator_approved": True,
-                            "approval_id": f"sim-{node_id}",
                         },
                         engagement_id=self.ctx.current_task.engagement_id,
                     )
@@ -213,13 +426,15 @@ class AttackChainAgent(BaseAgent):
         MATCH (a:Asset {engagement_id: $sid})
         RETURN a.id as id
         """
-        if not self.ctx.graph_memory or not self.ctx.graph_memory._driver:
+        if not self.ctx.graph_memory:
             return []
         ids = []
-        async with self.ctx.graph_memory._driver.session() as session:
-            result = await session.run(cypher, {"sid": engagement_id})
-            async for record in result:
-                ids.append(record["id"])
+        records = await self.ctx.graph_memory.run_read_query(
+            "MATCH (a:Asset {engagement_id: $sid}) RETURN a.id as id",
+            {"sid": engagement_id},
+        )
+        for record in records:
+            ids.append(record.get("id"))
         return ids
 
     def _score_path(self, path: AttackPath) -> float:

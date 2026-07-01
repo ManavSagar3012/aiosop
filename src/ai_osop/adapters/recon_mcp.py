@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from ai_osop.core.config import settings
 from ai_osop.core.models import Asset, Endpoint
+from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params
 from ai_osop.mcp.protocol import MCPExecuteResponse, MCPRegistry
 
 
@@ -265,10 +266,18 @@ class ReconMCPAdapter:
         """Convert httpx JSON output to Endpoint models."""
         endpoints = []
         for entry in result.get("results", []):
+            # Skip probes that did not yield a real HTTP response. httpx returns an
+            # entry per requested URL even on failure (status_code 0 + an `error`,
+            # e.g. probing https:// against a plaintext-HTTP port). Persisting those
+            # created phantom endpoints that nuclei then scanned — every template
+            # TLS-timing-out against a dead scheme, roughly doubling scan wall-time.
+            status_code = entry.get("status_code")
+            if entry.get("error") or not status_code:
+                continue
             ep = Endpoint(
                 url=entry.get("url"),
                 method=entry.get("method", "GET"),
-                status_code=entry.get("status_code"),
+                status_code=status_code,
                 title=entry.get("title"),
                 technologies=entry.get("technologies", []),
                 parameters=entry.get("parameters", []),
@@ -307,17 +316,32 @@ class ReconMCPAdapter:
         """Convert Wayback output to Endpoint models."""
         endpoints = []
         for entry in result.get("urls", []):
+            url = entry.get("url")
+            # P1 enrichment: mine each historical URL for its parameters and
+            # risk tags so the endpoint arrives in the graph already carrying
+            # targetable attack surface (hidden params, interesting files/paths)
+            # instead of being a raw string the vuln agents have to re-parse.
+            params = extract_params(url) if url else []
+            tags = classify_url(url) if url else []
+            from urllib.parse import urlsplit as _urlsplit
+            _p = _urlsplit(url) if url else None
             ep = Endpoint(
-                url=entry.get("url"),
+                url=url,
                 method=entry.get("method", "GET"),
                 status_code=entry.get("status_code"),
                 source="wayback",
                 confidence=0.80,
                 engagement_id="",
+                parameters=params,
+                query_keys=params,
+                host=(_p.netloc if _p else ""),
+                path=(_p.path if _p else ""),
                 metadata={
                     "first_seen": entry.get("first_seen"),
                     "last_seen": entry.get("last_seen"),
                     "domain": domain,
+                    "tags": tags,
+                    "template": endpoint_template(url) if url else "",
                 },
             )
             endpoints.append(ep)
