@@ -201,6 +201,13 @@ class Settings(BaseSettings):
     llm_fallback_model: str = Field(
         default="gpt-4o-mini", validation_alias="OSOP_LLM_FALLBACK_MODEL"
     )
+    # Embedding model for semantic memory (skills, payload recall, findings knowledge).
+    # Configurable per provider instead of hardcoded; defaults to an OpenAI model.
+    # For a local/Ollama deployment set OSOP_LLM_EMBEDDING_MODEL to a pulled embed
+    # model (e.g. "ollama/nomic-embed-text").
+    llm_embedding_model: str = Field(
+        default="text-embedding-3-small", validation_alias="OSOP_LLM_EMBEDDING_MODEL"
+    )
     llm_api_key_path: str = Field(
         default="secret/data/llm/openai", validation_alias="OSOP_LLM_KEY_PATH"
     )

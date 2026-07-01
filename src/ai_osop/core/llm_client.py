@@ -13,6 +13,29 @@ from ai_osop.safety.prompt_defense import sanitize_messages
 
 llm_logger = structlog.get_logger("ai_osop.llm")
 
+_EMBED_DIMS = 1536  # matches the pgvector column + existing callers
+
+
+def _mock_embedding(text: str, dims: int = _EMBED_DIMS) -> List[float]:
+    """Deterministic, text-dependent pseudo-embedding for mock mode.
+
+    Hashes each token into a bucket and L2-normalizes, so identical text yields
+    identical vectors and texts sharing tokens land near each other under cosine
+    similarity. This keeps offline/CI runs meaningful for anything that relies on
+    semantic search, without contacting an embedding provider.
+    """
+    import hashlib
+    import math
+
+    vec = [0.0] * dims
+    for token in (text or "").lower().split():
+        bucket = int(hashlib.sha1(token.encode("utf-8")).hexdigest(), 16) % dims
+        vec[bucket] += 1.0
+    norm = math.sqrt(sum(v * v for v in vec))
+    if norm == 0.0:
+        return vec
+    return [v / norm for v in vec]
+
 
 class LiteLLMClient:
     """
@@ -43,37 +66,52 @@ class LiteLLMClient:
 
         safe_messages = sanitize_messages(messages)
 
-
-
         selected_model = model or self.primary_model
+        # Extract kwargs before the try block so fallback receives the same values
+        temperature = kwargs.pop("temperature", self.temperature)
+        max_tokens = kwargs.pop("max_tokens", self.max_tokens)
         try:
             response = await litellm.acompletion(
                 model=selected_model,
                 messages=safe_messages,
-                temperature=kwargs.pop("temperature", self.temperature),
-                max_tokens=kwargs.pop("max_tokens", self.max_tokens),
+                temperature=temperature,
+                max_tokens=max_tokens,
                 **kwargs,
             )
-        except Exception:
+        except Exception as primary_err:
+            llm_logger.warning(
+                "primary_llm_failed_falling_back",
+                primary_model=selected_model,
+                fallback_model=self.fallback_model,
+                error=str(primary_err),
+            )
             response = await litellm.acompletion(
                 model=self.fallback_model,
                 messages=safe_messages,
-                temperature=kwargs.pop("temperature", self.temperature),
-                max_tokens=kwargs.pop("max_tokens", self.max_tokens),
+                temperature=temperature,
+                max_tokens=max_tokens,
                 **kwargs,
             )
 
         return response.choices[0].message.content or ""
 
-    async def get_embedding(self, text: str, model: str = "text-embedding-3-small") -> List[float]:
-        """Generate a semantic embedding for a piece of text."""
+    async def get_embedding(self, text: str, model: Optional[str] = None) -> List[float]:
+        """Generate a semantic embedding for a piece of text.
+
+        The model defaults to ``settings.llm_embedding_model`` so it is
+        configurable per provider (OSOP_LLM_EMBEDDING_MODEL) instead of being
+        hardcoded to an OpenAI model. In mock mode a deterministic *text-dependent*
+        pseudo-embedding is returned — the previous constant ``[0.1]*1536`` made
+        every item identical, which silently broke similarity search (skill
+        selection, payload recall, findings knowledge) whenever mocks were on.
+        """
+        selected = model or getattr(settings, "llm_embedding_model", None) or "text-embedding-3-small"
         if settings.mock_llm:
-            # Return a deterministic mock embedding
-            return [0.1] * 1536
+            return _mock_embedding(text)
 
         try:
-            response = await litellm.aembedding(model=model, input=[text])
+            response = await litellm.aembedding(model=selected, input=[text])
             return response["data"][0]["embedding"]
         except Exception as e:
             llm_logger.error("embedding_generation_failed", error=str(e))
-            return [0.0] * 1536
+            raise RuntimeError(f"Embedding generation failed for model {selected}: {e}") from e
