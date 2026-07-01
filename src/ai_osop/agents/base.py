@@ -113,6 +113,25 @@ class BaseAgent(ABC):
         """Check if this agent supports the specified task type."""
         return True
 
+    async def recall_prior_findings(
+        self, query: Any, *, limit: int = 5, min_score: float = 0.0
+    ) -> List[Any]:
+        """Recall semantically-similar findings from past engagements (P2 learning
+        brain). Any agent can call this to inform its reasoning with prior results.
+
+        Reads the findings knowledge base wired onto graph memory. Returns an empty
+        list (never raises) when the KB is unavailable, so callers can use it
+        unconditionally. ``query`` may be a string or a finding/dict.
+        """
+        kb = getattr(getattr(self.ctx, "graph_memory", None), "findings_knowledge", None)
+        if kb is None:
+            return []
+        try:
+            return await kb.recall_similar(query, limit=limit, min_score=min_score)
+        except Exception as e:  # noqa: BLE001 - recall is advisory, never fatal
+            agent_logger.warning("recall_prior_findings_failed", error=str(e))
+            return []
+
     async def initialize(self) -> None:
         """Initialize agent state from persistent memory."""
         self.ctx.status = "initializing"
@@ -154,9 +173,14 @@ class BaseAgent(ABC):
                 self._task_queue.task_done()
             except asyncio.CancelledError:
                 break
+            except GeneratorExit:
+                break
             except Exception as e:
                 agent_logger.error("worker_error", agent_id=self.ctx.agent_id, error=str(e))
-                await asyncio.sleep(5)
+                try:
+                    await asyncio.sleep(5)
+                except (RuntimeError, asyncio.CancelledError):
+                    break
 
     @abstractmethod
     async def _setup_resources(self) -> None:
@@ -234,7 +258,7 @@ class BaseAgent(ABC):
             )
             tool = self.ctx.agent_type.value
             timeout_s = (
-                task.payload.get("task_timeout_seconds") or self.DEFAULT_TASK_TIMEOUT_SECONDS
+                task.timeout_seconds or task.payload.get("task_timeout_seconds") or self.DEFAULT_TASK_TIMEOUT_SECONDS
             )
 
             # Rate Limiting
