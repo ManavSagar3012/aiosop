@@ -28,11 +28,12 @@ class BugBountyAdapter:
         self.h1_api_key = getattr(settings, "h1_api_key", None)
         self.bc_api_key = getattr(settings, "bc_api_key", None)
         self.h1_base_url = "https://api.hackerone.com/v1"
-        # AIOSOP-AUDIT-2026-06-16: simulation is the safe default. When on, the
-        # adapter NEVER performs live network calls — protecting against accidental
-        # submission of AI-generated reports to a live program and making CI/tests
-        # deterministic. Disable explicitly via OSOP_BUG_BOUNTY_SIMULATION=false.
-        self.simulation_mode = getattr(settings, "bug_bounty_simulation", True)
+        # Simulation mode is driven by the OSOP_BUG_BOUNTY_SIMULATION setting.
+        # Secure default: True — simulation ON, so the adapter never performs a
+        # live network submission unless explicitly opted out. This protects
+        # against accidental submission of AI-generated reports to a live
+        # program. Read at construction so callers/tests opt in via settings.
+        self.simulation_mode = bool(getattr(settings, "bug_bounty_simulation", True))
 
     def _get_h1_auth(self) -> Optional[httpx.BasicAuth]:
         if self.h1_api_identifier and self.h1_api_key:

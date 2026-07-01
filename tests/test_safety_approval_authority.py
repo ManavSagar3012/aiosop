@@ -11,11 +11,23 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from ai_osop.core.config import AgentType
-from ai_osop.core.models import ApprovalRequest, Task
+from types import SimpleNamespace
+
+from ai_osop.core.config import AgentType, scope_signing_key
+from ai_osop.core.models import ApprovalRequest, ScopeDefinition, Task
 from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
 from ai_osop.orchestrator.recovery_service import RecoveryService
 from ai_osop.orchestrator.task_scheduler import TaskScheduler
+
+
+def _signed_session(phase: str = "exploitation", engagement_id: str = "eng-1"):
+    """A session whose scope is signed exactly as engagement_manager does in
+    production, so the task_scheduler's fail-closed scope-signature gate passes
+    and the test can exercise the approval/phase logic it actually targets
+    (previously these tasks were rejected at the scope gate before reaching it)."""
+    scope = ScopeDefinition(engagement_id=engagement_id, domains=["victim.example"], ips=[])
+    scope.sign(scope_signing_key())
+    return SimpleNamespace(phase=phase, scope=scope)
 
 
 class _Orch:
@@ -25,7 +37,9 @@ class _Orch:
         self._tasks = {}
         self._approval_requests = {}
         self._agents = {}
-        self._sessions = {}
+        # Default engagement has a signed scope + exploitation phase so the
+        # scope-signature gate passes; phase tests override this explicitly.
+        self._sessions = {"eng-1": _signed_session(phase="exploitation")}
         self._approval_callbacks = []
         self.rate_limiter = None
         self.temporal_enabled = False
@@ -35,6 +49,17 @@ class _Orch:
         self.coordination_bus = AsyncMock()
         self.task_scheduler = TaskScheduler(self)
         self.approval_coordinator = ApprovalCoordinator(self)
+        # Inject a mock state_machine to avoid NoneType errors in task assignment
+        from unittest.mock import MagicMock
+        from ai_osop.core.exceptions import WorkflowException
+        from ai_osop.core.config import EngagementPhase
+        self.task_scheduler.state_machine = MagicMock()
+
+        def _mock_assert_task_allowed(task, phase):
+            if phase != EngagementPhase.EXPLOITATION and task.type == "exploit_validation":
+                raise WorkflowException(f"Task {task.type} not allowed in phase {phase.value}")
+
+        self.task_scheduler.state_machine.assert_task_allowed = _mock_assert_task_allowed
 
     async def _audit_log(self, event):
         pass
@@ -112,10 +137,8 @@ async def test_real_operator_approval_allows_dispatch():
 async def test_exploit_task_refused_outside_exploitation_phase():
     """GAP-3-1: an exploit task must not dispatch while the engagement is in RECON,
     even if it has a valid operator approval."""
-    from types import SimpleNamespace
-
     orch = _Orch()
-    orch._sessions["eng-1"] = SimpleNamespace(phase="reconnaissance")
+    orch._sessions["eng-1"] = _signed_session(phase="reconnaissance")
     task = _exploit_task()
     task.approval_required = True
     orch._tasks[task.id] = task
@@ -133,10 +156,8 @@ async def test_exploit_task_refused_outside_exploitation_phase():
 
 async def test_exploit_task_allowed_in_exploitation_phase():
     """Positive: same task in EXPLOITATION is not phase-blocked."""
-    from types import SimpleNamespace
-
     orch = _Orch()
-    orch._sessions["eng-1"] = SimpleNamespace(phase="exploitation")
+    orch._sessions["eng-1"] = _signed_session(phase="exploitation")
     task = _exploit_task()
     task.approval_required = True
     orch._tasks[task.id] = task
