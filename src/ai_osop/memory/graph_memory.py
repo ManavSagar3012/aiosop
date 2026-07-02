@@ -59,6 +59,11 @@ class GraphMemory:
         # so past engagements inform future ones. Left None in minimal setups/tests
         # so GraphMemory stays decoupled from embeddings/LLM.
         self.findings_knowledge: Optional[Any] = None
+        # Optional chain-first hook. When wired (app lifespan), every confirmed
+        # finding is also recorded as a typed primitive so the escalation/chain
+        # engine can chain co-located signals. Left None so GraphMemory stays
+        # decoupled from the ledger in minimal setups/tests.
+        self.primitive_ledger: Optional[Any] = None
 
     async def connect(self) -> None:
         """Initialize Neo4j connection with exponential backoff retry.
@@ -358,6 +363,17 @@ class GraphMemory:
                 await self.findings_knowledge.record_finding(vuln)
             except Exception as e:  # noqa: BLE001 - knowledge recording is best-effort
                 logger.warning("findings_knowledge_record_failed id=%s error=%s", vuln.id, e)
+
+        # Chain-first loop: record this confirmed finding as a typed primitive so the
+        # escalation/chain engine can chain it with co-located signals. Best-effort;
+        # a ledger failure must never break graph persistence.
+        if self.primitive_ledger is not None:
+            try:
+                from ai_osop.core.chain_analysis import vuln_to_primitive
+
+                await self.primitive_ledger.upsert_primitive(vuln_to_primitive(vuln))
+            except Exception as e:  # noqa: BLE001 - primitive recording is best-effort
+                logger.warning("primitive_ledger_record_failed id=%s error=%s", vuln.id, e)
 
         return record["v.id"]
 
