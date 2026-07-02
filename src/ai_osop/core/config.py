@@ -220,6 +220,13 @@ class Settings(BaseSettings):
     bug_bounty_outcome_sync_interval_seconds: int = Field(
         default=3600, validation_alias="OSOP_BUG_BOUNTY_OUTCOME_SYNC_INTERVAL"
     )
+    # Chain-first consume loop: how often (seconds) the orchestrator reads unpromoted
+    # primitives from the ledger, escalates + composes them into chains, and runs each
+    # chain through the Triager Gate so only reproducible, gate-passed chains become
+    # report-ready. 0 disables the pass. A no-op without a wired primitive ledger.
+    chain_analysis_interval_seconds: int = Field(
+        default=900, validation_alias="OSOP_CHAIN_ANALYSIS_INTERVAL"
+    )
     llm_api_key_path: str = Field(
         default="secret/data/llm/openai", validation_alias="OSOP_LLM_KEY_PATH"
     )
