@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 from urllib.parse import urlparse
 
 from ai_osop.core.models import Vulnerability
+from ai_osop.core.poc_generator import render_poc_markdown
 
 # Per-class impact + remediation guidance (CWE-anchored). Generic fallback below.
 _IMPACT = {
@@ -138,6 +139,7 @@ def render_bounty_report(vuln: Vulnerability, program: str = "") -> str:
     impact = _IMPACT.get(vt, "Demonstrated security impact on the target application.")
     remediation = _REMEDIATION.get(vt, "Apply input validation and least-privilege controls.")
     steps = "\n".join(f"{i+1}. {s}" for i, s in enumerate(_repro_steps(vuln)))
+    poc = render_poc_markdown(vuln)
     evidence_json = json.dumps(ev, indent=2, default=str)
 
     header = f"# {vuln.title}\n\n"
@@ -151,6 +153,7 @@ def render_bounty_report(vuln: Vulnerability, program: str = "") -> str:
     body = (
         f"## Summary\n{vuln.description}\n\n"
         f"## Steps to Reproduce\n{steps}\n\n"
+        f"## Proof of Concept\n{poc}\n"
         f"## Impact\n{impact}\n\n"
         f"## Evidence\n```json\n{evidence_json}\n```\n\n"
         f"## Remediation\n{remediation}\n"
