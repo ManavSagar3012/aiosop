@@ -73,6 +73,140 @@ class BugBountyAdapter:
             ),
         ]
 
+    def _parse_finding_type_from_h1_report(self, report: Dict[str, Any]) -> str:
+        """Parse finding type from HackerOne report structure (weakness fields or title/content)."""
+        weakness_data = report.get("relationships", {}).get("weakness", {}).get("data", {})
+        if weakness_data:
+            weakness_attrs = weakness_data.get("attributes", {})
+            weakness_name = (weakness_attrs.get("name") or weakness_data.get("name") or "").lower()
+            cwe = (weakness_attrs.get("cwe") or weakness_data.get("cwe") or "").upper()
+
+            if cwe:
+                if "CWE-79" in cwe:
+                    return "xss"
+                if "CWE-89" in cwe:
+                    return "sqli"
+                if "CWE-918" in cwe:
+                    return "ssrf"
+                if "CWE-639" in cwe or "CWE-285" in cwe or "CWE-22" in cwe:
+                    return "idor"
+                if "CWE-352" in cwe:
+                    return "csrf"
+                if "CWE-94" in cwe or "CWE-78" in cwe:
+                    return "rce"
+                if "CWE-601" in cwe:
+                    return "open_redirect"
+
+            if weakness_name:
+                if "xss" in weakness_name or "cross-site scripting" in weakness_name:
+                    return "xss"
+                if "sql" in weakness_name or "sqli" in weakness_name:
+                    return "sqli"
+                if "ssrf" in weakness_name or "server-side request" in weakness_name:
+                    return "ssrf"
+                if (
+                    "idor" in weakness_name
+                    or "bola" in weakness_name
+                    or "access control" in weakness_name
+                ):
+                    return "idor"
+                if "csrf" in weakness_name or "request forgery" in weakness_name:
+                    return "csrf"
+                if (
+                    "remote code" in weakness_name
+                    or "rce" in weakness_name
+                    or "command execution" in weakness_name
+                ):
+                    return "rce"
+                if "redirect" in weakness_name:
+                    return "open_redirect"
+                if "graphql" in weakness_name:
+                    return "graphql"
+
+        attrs = report.get("attributes", {})
+        title = attrs.get("title", "").lower()
+        vuln_info = attrs.get("vulnerability_information", "").lower()
+        combined = f"{title} {vuln_info}"
+
+        if (
+            "xss" in combined
+            or "cross-site scripting" in combined
+            or "cross site scripting" in combined
+        ):
+            return "xss"
+        if (
+            "idor" in combined
+            or "bola" in combined
+            or "bfla" in combined
+            or "broken access" in combined
+            or "insecure direct object" in combined
+        ):
+            return "idor"
+        if (
+            "ssrf" in combined
+            or "server-side request" in combined
+            or "server side request" in combined
+        ):
+            return "ssrf"
+        if (
+            "csrf" in combined
+            or "cross-site request forgery" in combined
+            or "cross site request forgery" in combined
+        ):
+            return "csrf"
+        if "nosql" in combined or "no-sql" in combined or "mongodb" in combined or "couchdb" in combined or "$where" in combined:
+            return "nosql_injection"
+        if "sqli" in combined or "sql injection" in combined:
+            return "sqli"
+        if (
+            "rce" in combined
+            or "remote code execution" in combined
+            or "command injection" in combined
+        ):
+            return "rce"
+        if "redirect" in combined:
+            return "open_redirect"
+        if "graphql" in combined:
+            return "graphql"
+        if "race condition" in combined or "toctou" in combined or "time-of-check" in combined:
+            return "race_condition"
+        if "jwt" in combined or "json web token" in combined:
+            return "jwt_abuse"
+        if "oauth" in combined or "openid" in combined or "sso" in combined:
+            return "oauth2"
+        if "s3" in combined or "aws" in combined or "bucket" in combined or "cloud storage" in combined:
+            return "cloud_vuln"
+        if "prototype pollution" in combined or "__proto__" in combined or "constructor.prototype" in combined:
+            return "prototype_pollution"
+        if "cache poison" in combined or "cache deception" in combined or "web cache" in combined:
+            return "cache_poisoning"
+        if "http/2" in combined or "h2c" in combined or "http2 desync" in combined or "request tunneling" in combined:
+            return "http2_desync"
+        if "xxe" in combined or "xml external" in combined or "xml injection" in combined:
+            return "xxe"
+        if "deserialization" in combined or "insecure deserialization" in combined:
+            return "deserialization"
+        if "path traversal" in combined or "directory traversal" in combined or "lfi" in combined or "local file inclusion" in combined:
+            return "path_traversal"
+        if "ssti" in combined or "server-side template" in combined or "template injection" in combined:
+            return "ssti"
+        if "subdomain takeover" in combined or "dangling cname" in combined:
+            return "subdomain_takeover"
+        if "business logic" in combined or "workflow abuse" in combined or "payment bypass" in combined:
+            return "business_logic"
+        if "information disclosure" in combined or "sensitive data" in combined or "data exposure" in combined:
+            return "info_disclosure"
+        if "privilege escalation" in combined or "privesc" in combined:
+            return "privesc"
+        if "account takeover" in combined or "ato" in combined:
+            return "ato"
+        if "stored xss" in combined:
+            return "stored_xss"
+        if "dom xss" in combined or "dom-based xss" in combined:
+            return "dom_xss"
+
+        return "unknown"
+
     async def sync_outcomes(self, engagement_id: str) -> List[OutcomeRecord]:
         """
         Fetch latest outcomes from external platforms for a specific engagement.
@@ -132,7 +266,7 @@ class BugBountyAdapter:
                         outcomes.append(
                             OutcomeRecord(
                                 finding_id=f"synced-{report['id']}",
-                                finding_type="unknown",  # Would need parsing from report
+                                finding_type=self._parse_finding_type_from_h1_report(report),
                                 status=status,
                                 severity=attrs.get("severity", {}).get("rating", "medium"),
                                 cost_total=0.0,  # Not tracked by H1

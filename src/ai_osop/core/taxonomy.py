@@ -38,6 +38,8 @@ _FINDING_TYPE_TO_CATEGORY = {
     "broken_access_control": "authz",
     "privilege_escalation": "authz",
     "mass_assignment": "authz",           # VulnClass.MASS_ASSIGNMENT (vuln_agent)
+    "privesc": "authz",                    # HackerOne classifier shorthand
+    "ato": "authz",                        # account takeover — fundamentally an auth/authz compromise
     "authz": "authz",
     "authorization": "authz",
     # diff-auth raw category labels (DiffAuthFinding.category)
