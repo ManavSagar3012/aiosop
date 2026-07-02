@@ -157,6 +157,9 @@ class Orchestrator:
         # P2b: background poller that pulls submission outcomes into the corpus.
         self._outcome_ingestion_task: Optional[asyncio.Task] = None
         self.finding_corpus_service: Optional[Any] = None
+        # Sprint 1.3: chain-first consume loop — reads primitives, escalates +
+        # composes chains, and gates them through the Triager Gate.
+        self._chain_analysis_task: Optional[asyncio.Task] = None
         self._approval_callbacks: List[Callable[[ApprovalRequest], None]] = []
         # GAP-2-6: handles for in-flight agent executions, keyed by task_id, so
         # halt_engagement can actually cancel running coroutines (not just flip a
@@ -256,6 +259,21 @@ class Orchestrator:
                 )
         except Exception as e:  # noqa: BLE001 - learning loop is optional
             logger.warning("Outcome ingestion poller not started: %s", e)
+        # Sprint 1.3 chain-first loop: periodically read persisted primitives, escalate
+        # + compose chains, and gate them through the Triager Gate so only reproducible,
+        # gate-passed chains become report-ready. No-op without a wired primitive ledger.
+        try:
+            self._chain_analysis_interval = int(
+                getattr(settings, "chain_analysis_interval_seconds", 900)
+            )
+            if self._chain_analysis_interval > 0 and getattr(
+                self.graph_memory, "primitive_ledger", None
+            ) is not None:
+                self._chain_analysis_task = asyncio.create_task(
+                    self._chain_analysis_loop()
+                )
+        except Exception as e:  # noqa: BLE001 - chain loop is optional
+            logger.warning("Chain analysis pass not started: %s", e)
         # Retention service: automated cleanup of old data
         from ai_osop.memory.retention_service import RetentionService
 
@@ -553,6 +571,104 @@ class Orchestrator:
             logger.info("outcome_ingestion_complete ingested=%s", total)
         return total
 
+    async def _chain_analysis_loop(self) -> None:
+        """Periodically run the chain-first consume pass (Sprint 1.3).
+
+        Reads persisted primitives, escalates + composes chains, and gates each chain
+        through the Triager Gate. Runs on an interval, best-effort — one failing pass
+        never stops the loop.
+        """
+        interval = max(1, int(getattr(self, "_chain_analysis_interval", 900)))
+        while self._running:
+            await asyncio.sleep(interval)
+            if not self._running:
+                break
+            try:
+                await self._analyze_chains_once()
+            except Exception as e:  # noqa: BLE001 - advisory, keep looping
+                logger.warning("chain_analysis_tick_failed error=%s", e)
+
+    async def _analyze_chains_once(self) -> Dict[str, int]:
+        """One chain-analysis pass over active engagements.
+
+        For each engagement: pull unpromoted primitives from the ledger, run the
+        escalate→compose→gate pipeline, persist every composed chain, and promote the
+        primitives behind any chain the gate would EMIT (VALIDATED) so future passes do
+        not re-chain them. External submission stays a separate, deliberately gated
+        action — this pass never auto-reports to a platform. Returns pass counters.
+        """
+        ledger = getattr(self.graph_memory, "primitive_ledger", None)
+        if ledger is None:
+            return {"chains": 0, "emit": 0}
+
+        from ai_osop.core.chain_analysis import (
+            analyze_primitives,
+            evidence_from_primitive,
+            primitive_from_node,
+        )
+        from ai_osop.core.models import TriageVerdict
+        from ai_osop.core.triager_gate import TriagerGate
+
+        total_chains = 0
+        total_emit = 0
+        for engagement_id in list(self._sessions.keys()):
+            try:
+                nodes = await ledger.query_unpromoted(engagement_id)
+            except Exception as e:  # noqa: BLE001 - per-engagement best-effort
+                logger.warning(
+                    "chain_analysis_query_failed engagement_id=%s error=%s",
+                    engagement_id,
+                    e,
+                )
+                continue
+            primitives = [primitive_from_node(n) for n in (nodes or [])]
+            if len(primitives) < 2:
+                continue
+
+            evidence_by_primitive = {}
+            for p in primitives:
+                ev = evidence_from_primitive(p)
+                if ev is not None:
+                    evidence_by_primitive[p.id] = ev
+
+            gate = TriagerGate()
+            out = analyze_primitives(
+                primitives, gate=gate, evidence_by_primitive=evidence_by_primitive
+            )
+            chains = out.get("chains", [])
+            reports = {r.chain_id: r for r in out.get("reports", []) if r.chain_id}
+
+            for chain in chains:
+                try:
+                    await ledger.upsert_chain(chain)
+                    total_chains += 1
+                except Exception as e:  # noqa: BLE001 - persistence best-effort
+                    logger.warning(
+                        "chain_upsert_failed chain_id=%s error=%s", chain.id, e
+                    )
+                    continue
+                report = reports.get(chain.id)
+                if report is not None and report.verdict == TriageVerdict.EMIT:
+                    total_emit += 1
+                    # Report-ready: promote its primitives so we don't re-chain them.
+                    for prim_id in chain.primitive_ids:
+                        try:
+                            await ledger.promote_to_finding(prim_id, chain.id)
+                        except Exception as e:  # noqa: BLE001 - best-effort
+                            logger.warning(
+                                "primitive_promote_failed primitive_id=%s error=%s",
+                                prim_id,
+                                e,
+                            )
+
+        if total_chains:
+            logger.info(
+                "chain_analysis_complete chains=%s emit_ready=%s",
+                total_chains,
+                total_emit,
+            )
+        return {"chains": total_chains, "emit": total_emit}
+
     async def recover_state(self) -> Dict[str, Any]:
         """Restart recovery. Delegated to RecoveryService."""
         return await self.recovery_service.recover_state()
@@ -762,6 +878,7 @@ class Orchestrator:
             self._reaper_task,
             self._phase_monitor_task,
             self._outcome_ingestion_task,
+            self._chain_analysis_task,
         ):
             if bg:
                 bg.cancel()

@@ -18,15 +18,37 @@ PENDING_POC for the triage gate rather than being emitted as findings.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Dict, List, Optional
 
 import structlog
 
 from ai_osop.core.chain_composer import ChainComposer
 from ai_osop.core.escalation_engine import EscalationEngine
-from ai_osop.core.models import PrimitiveLedger, PrimitiveType, Vulnerability
+from ai_osop.core.models import (
+    AttackChain,
+    ChainStatus,
+    EvidencePackage,
+    PrimitiveLedger,
+    PrimitiveType,
+    TriageReport,
+    TriageVerdict,
+    Vulnerability,
+)
+from ai_osop.core.triager_gate import TriagerGate
 
 logger = structlog.get_logger("ai_osop.chain_analysis")
+
+# TriageVerdict -> the honest ChainStatus it maps to. EMIT means the gate would
+# submit it (VALIDATED, report-ready — actual external submission stays a separate,
+# deliberately gated action). Anything short of EMIT is not report-ready.
+_VERDICT_TO_STATUS = {
+    TriageVerdict.EMIT: ChainStatus.VALIDATED,
+    TriageVerdict.NEEDS_POC: ChainStatus.PENDING_POC,
+    TriageVerdict.ESCALATE: ChainStatus.PENDING_POC,
+    TriageVerdict.DROP: ChainStatus.DROPPED,
+}
 
 
 # Confirmed-vulnerability class (VulnClass.value) -> the escalatable primitive type.
@@ -83,7 +105,15 @@ def vuln_to_primitive(vuln: Vulnerability) -> PrimitiveLedger:
         source=f"vuln:{vuln.tool_source or 'unknown'}",
         dedup_key=f"{vt}:{target}",
         target=target,
-        raw={"vuln_id": vuln.id, "vuln_type": vt, "title": vuln.title},
+        # Carry the confirmed finding's captured evidence into the ledger so the
+        # Triager Gate downstream can see it (a chain without captured evidence can
+        # never be EMIT-ready, by design).
+        raw={
+            "vuln_id": vuln.id,
+            "vuln_type": vt,
+            "title": vuln.title,
+            "evidence": list(vuln.evidence or []),
+        },
         confidence=float(vuln.confidence or 0.0),
         severity_hint=severity_hint,
         tags=[vt],
@@ -92,12 +122,27 @@ def vuln_to_primitive(vuln: Vulnerability) -> PrimitiveLedger:
     )
 
 
+def _deterministic_chain_id(engagement_id: str, group: List[PrimitiveLedger]) -> str:
+    """Stable chain id derived from the engagement + its constituent primitives.
+
+    ChainComposer mints a random uuid per call, which would create a *new* Chain node
+    every consume cycle (duplicate churn, and the triage gate could never dedup across
+    passes). Pinning the id to the sorted dedup-key set makes ``upsert_chain`` MERGE
+    idempotently and lets the gate recognise a chain it has already judged.
+    """
+    keys = "|".join(sorted((p.dedup_key or p.target or p.id) for p in group))
+    digest = hashlib.sha256(f"{engagement_id}::{keys}".encode()).hexdigest()[:16]
+    return f"chain-{digest}"
+
+
 def analyze_primitives(
     primitives: List[PrimitiveLedger],
     *,
     escalation_engine: Optional[EscalationEngine] = None,
     composer: Optional[ChainComposer] = None,
     min_chain_size: int = 2,
+    gate: Optional[TriagerGate] = None,
+    evidence_by_primitive: Optional[Dict[str, EvidencePackage]] = None,
 ) -> Dict[str, Any]:
     """Run the consume side of the loop over a set of primitives.
 
@@ -106,7 +151,15 @@ def analyze_primitives(
     proof-carrying AttackChain. Pure and deterministic — no DB, no network — so it is
     fully unit-testable and safe to call from an orchestrator pass.
 
-    Returns ``{"chains": [...], "escalations": [...]}``.
+    When a ``gate`` (TriagerGate) is supplied, every composed chain is additionally run
+    through the adversarial reproducibility gate: the chain's status is set from the
+    verdict (EMIT→VALIDATED, NEEDS_POC/ESCALATE→PENDING_POC, DROP→DROPPED) and its
+    ``triage_report_id`` is stamped, so only gate-passed chains are ever report-ready.
+    ``evidence_by_primitive`` maps a root primitive id to its captured EvidencePackage
+    (the gate needs captured evidence to allow emission).
+
+    Returns ``{"chains": [...], "escalations": [...]}`` — plus ``"reports": [...]`` when
+    a gate ran.
     """
     engine = escalation_engine or EscalationEngine()
     comp = composer or ChainComposer()
@@ -123,7 +176,8 @@ def analyze_primitives(
     for p in primitives:
         by_target.setdefault(p.target or "unknown", []).append(p)
 
-    chains: List[Any] = []
+    chains: List[AttackChain] = []
+    roots: Dict[str, PrimitiveLedger] = {}  # chain.id -> root (strongest) primitive
     for target, group in by_target.items():
         if len(group) < min_chain_size:
             continue
@@ -132,17 +186,107 @@ def analyze_primitives(
         try:
             chain = comp.compose(ordered)
             chain = comp.generate_poc(chain, ordered)
+            chain.id = _deterministic_chain_id(chain.engagement_id or ordered[0].engagement_id, ordered)
             chains.append(chain)
+            roots[chain.id] = ordered[0]
         except Exception as e:  # noqa: BLE001 - one bad group must not abort the rest
             logger.warning("chain_compose_failed", target=target, error=str(e))
+
+    result: Dict[str, Any] = {"chains": chains, "escalations": escalations}
+
+    if gate is not None:
+        reports = gate_chains(
+            chains, roots, gate=gate, evidence_by_primitive=evidence_by_primitive
+        )
+        result["reports"] = reports
 
     logger.info(
         "chain_analysis_complete",
         primitives=len(primitives),
         chains=len(chains),
         escalations=len(escalations),
+        gated=gate is not None,
     )
-    return {"chains": chains, "escalations": escalations}
+    return result
+
+
+def gate_chains(
+    chains: List[AttackChain],
+    roots: Dict[str, PrimitiveLedger],
+    *,
+    gate: TriagerGate,
+    evidence_by_primitive: Optional[Dict[str, EvidencePackage]] = None,
+) -> List[TriageReport]:
+    """Run the Triager Gate over composed chains, mutating status in place.
+
+    For each chain, evaluate its root primitive + the chain + any captured evidence.
+    The chain's ``status`` is set from the verdict and ``triage_report_id`` is stamped.
+    Returns the list of TriageReports (one per chain). Pure/deterministic — no DB.
+    """
+    evidence_by_primitive = evidence_by_primitive or {}
+    reports: List[TriageReport] = []
+    for chain in chains:
+        root = roots.get(chain.id)
+        if root is None:
+            continue
+        evidence = evidence_by_primitive.get(root.id)
+        try:
+            report = gate.evaluate(root, chain=chain, evidence=evidence)
+        except Exception as e:  # noqa: BLE001 - gate failure must not drop the chain silently
+            logger.warning("triage_gate_failed", chain_id=chain.id, error=str(e))
+            continue
+        chain.triage_report_id = report.id
+        chain.status = _VERDICT_TO_STATUS.get(report.verdict, ChainStatus.PENDING_POC)
+        reports.append(report)
+    return reports
+
+
+def evidence_from_primitive(primitive: PrimitiveLedger) -> Optional[EvidencePackage]:
+    """Build an EvidencePackage from a primitive's carried captured evidence, if any.
+
+    A confirmed Vulnerability's ``evidence`` (captured request/response dicts) rides in
+    ``primitive.raw["evidence"]`` (see ``vuln_to_primitive``). Returns None when there is
+    no captured evidence, so the gate correctly withholds EMIT for unproven chains.
+    """
+    raw = primitive.raw or {}
+    captured = raw.get("evidence") or []
+    if not captured:
+        return None
+    return EvidencePackage(
+        finding_id=primitive.finding_id or primitive.id,
+        engagement_id=primitive.engagement_id,
+        raw_responses=list(captured),
+    )
+
+
+def primitive_from_node(node: Dict[str, Any]) -> PrimitiveLedger:
+    """Reconstruct a PrimitiveLedger from a raw Neo4j :Primitive node dict.
+
+    Mirrors ``PrimitiveLedgerStore.upsert_primitive`` serialisation (``raw`` is a JSON
+    string, empty-string sentinels for optional refs). Used by the orchestrator consume
+    pass to turn persisted primitives back into models the analyzer can chain.
+    """
+    raw_field = node.get("raw")
+    try:
+        raw = json.loads(raw_field) if isinstance(raw_field, str) else (raw_field or {})
+    except (ValueError, TypeError):
+        raw = {}
+    return PrimitiveLedger(
+        id=node.get("id") or PrimitiveLedger.model_fields["id"].default_factory(),
+        primitive_type=PrimitiveType(node.get("primitive_type", PrimitiveType.GENERIC.value)),
+        engagement_id=node.get("engagement_id", ""),
+        source=node.get("source", "ledger"),
+        dedup_key=node.get("dedup_key", ""),
+        target=node.get("target", ""),
+        raw=raw,
+        confidence=float(node.get("confidence") or 0.0),
+        severity_hint=node.get("severity_hint", "medium"),
+        tags=list(node.get("tags") or []),
+        escalated_from=node.get("escalated_from") or None,
+        chain_id=node.get("chain_id") or None,
+        promoted_to_finding=bool(node.get("promoted", False)),
+        finding_id=node.get("finding_id") or None,
+    )
 
 
 _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0, "informational": 0}
