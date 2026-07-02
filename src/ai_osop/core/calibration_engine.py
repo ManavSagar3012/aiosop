@@ -32,8 +32,23 @@ class ConfidenceCalibrationEngine:
         historical_rate = await self.session_memory.get_historical_success_rate(
             finding_type, workflow_intent
         )
+        # 2. Apply the empirical + skill weighting to the fetched rate.
+        return self.calibrate_from_rate(base_confidence, historical_rate, used_skill_id)
 
-        # 2. Factor in Skill Effectiveness
+    def calibrate_from_rate(
+        self,
+        base_confidence: float,
+        historical_rate: float,
+        used_skill_id: Optional[str] = None,
+    ) -> float:
+        """Apply the empirical + skill weighting to an already-fetched success rate.
+
+        Split out from ``calibrate_confidence`` so callers that already hold the
+        historical rate (e.g. the hypothesis engine, which fetches it once and caches
+        per category) can recalibrate without a second DB round-trip — and without a
+        time-of-check/time-of-use gap between two independent reads of the same rate.
+        """
+        # Factor in skill effectiveness.
         skill_bonus = 0.0
         if used_skill_id and self.skill_engine:
             effectiveness = self.skill_engine.get_skill_effectiveness(used_skill_id)
@@ -41,7 +56,8 @@ class ConfidenceCalibrationEngine:
             if effectiveness > 0.5:
                 skill_bonus = (effectiveness - 0.5) * 0.5  # Up to +0.25 bonus
 
-        # Bayesian-style update (simplified for V5)
+        # Bayesian-style update (simplified for V5). 0.5 is the neutral "no signal"
+        # sentinel, so leave base confidence untouched (plus any skill bonus).
         if historical_rate == 0.5:
             calibrated = base_confidence + skill_bonus
         else:

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ai_osop.api.deps import assert_engagement_access, state, verify_token
+from ai_osop.core.hypothesis_engine import HypothesisEngine
 
 router = APIRouter(tags=["intelligence"])
 
@@ -16,41 +17,30 @@ router = APIRouter(tags=["intelligence"])
 async def get_full_graph(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Get full attack graph nodes and edges."""
     await assert_engagement_access(operator, session_id)
-    node_query = """
-    MATCH (n)
-    WHERE n.engagement_id = $session_id
-    RETURN n
-    """
-    rel_query = """
-    MATCH (n)-[r]->(m)
-    WHERE n.engagement_id = $session_id AND m.engagement_id = $session_id
-    RETURN n.id as from_id, m.id as to_id, r
-    """
-
     nodes = {}
     edges = []
 
-    async with state["orchestrator"].graph_memory._driver.session() as session:
-        node_result = await session.run(node_query, {"session_id": session_id})
-        async for record in node_result:
-            n = record["n"]
-            if n and n["id"] not in nodes:
-                nodes[n["id"]] = {
-                    "id": n["id"],
-                    "labels": list(n.labels),
-                    "properties": dict(n),
-                }
+    node_records = await state["orchestrator"].graph_memory.get_all_nodes_for_engagement(session_id)
+    for record in node_records:
+        n = record.get("n")
+        if n and n.get("id") not in nodes:
+            nodes[n.get("id")] = {
+                "id": n.get("id"),
+                "labels": list(n.get("labels", [])),
+                "properties": dict(n) if hasattr(n, "items") else n,
+            }
 
-        rel_result = await session.run(rel_query, {"session_id": session_id})
-        async for record in rel_result:
-            r = record["r"]
+    edge_records = await state["orchestrator"].graph_memory.get_all_edges_for_engagement(session_id)
+    for record in edge_records:
+        r = record.get("r")
+        if r:
             edges.append(
                 {
-                    "id": r.element_id,
-                    "type": r.type,
-                    "from": record["from_id"],
-                    "to": record["to_id"],
-                    "properties": dict(r),
+                    "id": getattr(r, "element_id", None),
+                    "type": getattr(r, "type", record.get("type")),
+                    "from": record.get("from_id") or record.get("source"),
+                    "to": record.get("to_id") or record.get("target"),
+                    "properties": dict(r) if hasattr(r, "items") else r,
                 }
             )
 
@@ -71,12 +61,12 @@ async def get_attack_paths(
         goal_types = ["rce", "admin_access", "data_exfiltration"]
 
     if not entry_node_id:
-        cypher = "MATCH (a:Asset {engagement_id: $sid}) RETURN a.id as id LIMIT 1"
-        async with state["orchestrator"].graph_memory._driver.session() as session:
-            res = await session.run(cypher, {"sid": session_id})
-            record = await res.single()
-            if record:
-                entry_node_id = record["id"]
+        asset_records = await state["orchestrator"].graph_memory.run_read_query(
+            "MATCH (a:Asset {engagement_id: $sid}) RETURN a.id as id LIMIT 1",
+            {"sid": session_id},
+        )
+        if asset_records:
+            entry_node_id = asset_records[0].get("id")
 
     if not entry_node_id:
         return []
@@ -85,6 +75,34 @@ async def get_attack_paths(
         entry_node_id=entry_node_id, goal_types=goal_types, max_depth=max_depth
     )
     return [p.model_dump() for p in paths]
+
+
+@router.get("/engagements/{session_id}/hypotheses")
+async def get_hypotheses(
+    session_id: str,
+    refresh: bool = Query(False),
+    limit: int = Query(8, ge=1, le=50),
+    focus: str = Query(""),
+    operator: Dict[str, Any] = Depends(verify_token),
+):
+    """Generate or return graph-native hypotheses for an engagement."""
+    await assert_engagement_access(operator, session_id)
+    orch = state["orchestrator"]
+    engine = HypothesisEngine(
+        orch.graph_memory,
+        state.get("skill_engine"),
+        session_memory=getattr(orch, "session_memory", None),
+    )
+
+    if refresh:
+        hypotheses = await engine.generate_and_persist(session_id, focus=focus, limit=limit)
+    else:
+        stored = await orch.graph_memory.get_hypotheses_by_engagement(session_id)
+        hypotheses = [dict(item) for item in stored[:limit]]
+        if not hypotheses:
+            hypotheses = [h.model_dump() for h in await engine.generate_hypotheses(session_id, focus=focus, limit=limit)]
+
+    return {"session_id": session_id, "count": len(hypotheses), "hypotheses": hypotheses}
 
 
 @router.get("/intelligence/vulnerability-edu/{vuln_class}")

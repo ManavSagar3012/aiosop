@@ -6,16 +6,41 @@ from collections import Counter
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
+import structlog
+
 from ai_osop.core.models import Hypothesis
 from ai_osop.memory.graph_memory import GraphMemory
+
+logger = structlog.get_logger("ai_osop.hypothesis_engine")
 
 
 class HypothesisEngine:
     """Infer testable security hypotheses from the engagement graph."""
 
-    def __init__(self, graph_memory: GraphMemory, skill_engine: Optional[Any] = None):
+    def __init__(
+        self,
+        graph_memory: GraphMemory,
+        skill_engine: Optional[Any] = None,
+        session_memory: Optional[Any] = None,
+    ):
         self.graph_memory = graph_memory
         self.skill_engine = skill_engine
+        # Optional: when session_memory is wired, hypothesis confidence is
+        # recalibrated against the empirical success rate of each category (P2b
+        # feedback loop), so categories that historically pan out rank higher and
+        # get tested first. Left off in minimal setups so generation stays pure.
+        self.session_memory = session_memory
+        self._calibrator = None
+        if session_memory is not None:
+            try:
+                from ai_osop.core.calibration_engine import ConfidenceCalibrationEngine
+
+                self._calibrator = ConfidenceCalibrationEngine(
+                    session_memory=session_memory, skill_engine=skill_engine
+                )
+            except Exception as e:  # noqa: BLE001 - calibration is advisory, never fatal
+                logger.warning("calibration_engine_init_failed", error=str(e))
+                self._calibrator = None
 
     async def generate_hypotheses(
         self, engagement_id: str, focus: str = "", limit: int = 8
@@ -79,8 +104,48 @@ class HypothesisEngine:
                 )
             )
 
+        await self._calibrate(hypotheses)
         hypotheses.sort(key=lambda h: (-h.confidence, h.title.lower()))
         return hypotheses[:limit]
+
+    async def _calibrate(self, hypotheses: List[Hypothesis]) -> None:
+        """Recalibrate each hypothesis's confidence against empirical category
+        success rates (P2b learning loop). In-place, best-effort — any failure
+        leaves the raw heuristic confidence untouched so generation never breaks.
+
+        The success rate is cached per category within a single generation pass to
+        avoid redundant DB round-trips when several hypotheses share a category.
+        """
+        if self._calibrator is None or not hypotheses:
+            return
+        rate_cache: Dict[str, float] = {}
+        for h in hypotheses:
+            try:
+                if h.category not in rate_cache:
+                    rate_cache[h.category] = await self.session_memory.get_historical_success_rate(
+                        h.category
+                    )
+                rate = rate_cache[h.category]
+                # Only adjust when there is a real signal (rate != neutral 0.5);
+                # otherwise keep the hand-tuned heuristic confidence. Reuse the
+                # already-fetched rate (no second DB read, no TOCTOU gap).
+                if rate != 0.5:
+                    before = h.confidence
+                    h.confidence = self._calibrator.calibrate_from_rate(
+                        base_confidence=h.confidence, historical_rate=rate
+                    )
+                    logger.debug(
+                        "hypothesis_confidence_calibrated",
+                        category=h.category,
+                        rate=round(rate, 4),
+                        before=round(before, 4),
+                        after=round(h.confidence, 4),
+                    )
+            except Exception as e:  # noqa: BLE001 - advisory; keep raw confidence
+                logger.warning(
+                    "hypothesis_calibration_failed", category=getattr(h, "category", "?"), error=str(e)
+                )
+                continue
 
     async def generate_and_persist(
         self, engagement_id: str, focus: str = "", limit: int = 8
