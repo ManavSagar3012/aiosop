@@ -514,6 +514,31 @@ class VerificationRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class EvidencePackage(BaseModel):
+    """A bundle of captured evidence backing a single finding.
+
+    Holds the raw artifacts (requests/responses/screenshots/workflow trace) plus an
+    optional ``replay_script`` — a self-contained command the ReplayabilityTruthEngine
+    can re-execute in a sandbox to prove the finding still reproduces. The integrity
+    hash pins the artifact set so tampering is detectable in a vault audit.
+    """
+
+    id: str = Field(default_factory=lambda: f"evp-{uuid.uuid4().hex[:12]}")
+    finding_id: str
+    engagement_id: str = ""
+    raw_requests: List[Any] = Field(default_factory=list)
+    raw_responses: List[Any] = Field(default_factory=list)
+    screenshots: List[str] = Field(default_factory=list)
+    workflow_trace: List[Any] = Field(default_factory=list)
+    # A replay command (argv list) executed verbatim in the sandbox. Kept as a
+    # concrete argv (not a shell string) so there is no shell-injection surface and
+    # the re-execution is deterministic.
+    replay_script: List[str] = Field(default_factory=list)
+    integrity_hash: str = ""
+    provenance: EvidenceProvenance = EvidenceProvenance.LIVE
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ProcessState(BaseModel):
     """A single state in a business-process state machine, used by the
     stateful-logic agent to model multi-step workflows (e.g. cart -> pay ->
@@ -550,3 +575,138 @@ class GraphQLSchema(BaseModel):
     introspection_enabled: bool
     engagement_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= PRIMITIVE LEDGER (Sprint 1.2) =================
+
+class PrimitiveType(str, Enum):
+    """Type taxonomy for raw signals entering the Primitive Ledger.
+
+    Every confirmed signal is stored as a typed Primitive rather than a
+    finding. The chain engine escalates from here; triager gate decides what
+    is eventually emitted as a finding.
+    """
+    NUCLEI_SIGNAL = "nuclei_signal"      # Nuclei template hit (unvalidated)
+    ENDPOINT_OBSERVED = "endpoint_observed"  # URL/endpoint seen in recon
+    AUTH_SIGNAL = "auth_signal"          # Auth anomaly (diff-auth engine output)
+    PORT_OPEN = "port_open"              # Open port from recon
+    DNS_RECORD = "dns_record"            # DNS/subdomain discovered
+    JS_SECRET = "js_secret"             # Potential secret extracted from JS
+    HEADER_ANOMALY = "header_anomaly"    # Suspicious response header
+    RATE_LIMIT_MISS = "rate_limit_miss"  # Endpoint has no rate limiting
+    REDIRECT_CHAIN = "redirect_chain"    # Interesting redirect sequence
+    SSRF_HINT = "ssrf_hint"             # Possible SSRF vector
+    IDOR_HINT = "idor_hint"             # Possible IDOR vector
+    GENERIC = "generic"                  # Catch-all for unclassified signals
+
+
+class PrimitiveLedger(BaseModel):
+    """A single raw signal persisted as a typed Primitive node in Neo4j.
+
+    Design contract:
+      - Every tool output (Nuclei, recon, diff-auth, JS analysis) is a Primitive.
+      - Primitives are NEVER emitted as findings directly.
+      - The Escalation Engine queries the ledger to discover promotion paths.
+      - The Triager Gate decides if a chain is strong enough to emit a finding.
+      - Deduplication key = (engagement_id, primitive_type, dedup_key).
+        The dedup_key is caller-supplied and should be a stable fingerprint
+        of the signal (e.g. SHA-256 of url+template_id).
+
+    Fields:
+      raw        -- original tool output (JSON-serialisable dict)
+      confidence -- 0.0-1.0 from tool/scoring logic
+      source     -- tool that generated this (nuclei, recon_mcp, diff_auth, …)
+      tags       -- free-form enrichment tags for downstream querying
+    """
+
+    id: str = Field(default_factory=lambda: f"prim-{uuid.uuid4().hex[:12]}")
+    primitive_type: PrimitiveType
+    engagement_id: str
+    source: str                           # e.g. "nuclei", "recon_mcp", "diff_auth"
+    dedup_key: str                        # Stable fingerprint; drives MERGE in Neo4j
+    target: str                           # URL, host, domain, port — the affected target
+    raw: Dict[str, Any] = Field(default_factory=dict)   # Original tool output
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    severity_hint: str = "info"           # "critical" | "high" | "medium" | "low" | "info"
+    tags: List[str] = Field(default_factory=list)
+    # Escalation linkage (populated by EscalationEngine)
+    escalated_from: Optional[str] = None  # parent prim-id if escalated
+    chain_id: Optional[str] = None        # chain-id if part of a chain
+    promoted_to_finding: bool = False     # True once TriagerGate emits a finding
+    finding_id: Optional[str] = None      # back-ref once promoted
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= TRIAGER GATE (Sprint 1.3) =================
+
+class TriageVerdict(str, Enum):
+    """Decision output from the Triager Gate."""
+    EMIT = "emit"          # Strong enough — emit as a finding
+    ESCALATE = "escalate"  # Signal found, needs more evidence first
+    DROP = "drop"          # Noise or duplicate — discard
+    NEEDS_POC = "needs_poc"  # Interesting but missing runnable PoC
+
+
+class TriageReport(BaseModel):
+    """Structured verdict from the Triager Gate for a single primitive chain."""
+
+    id: str = Field(default_factory=lambda: f"triage-{uuid.uuid4().hex[:12]}")
+    primitive_id: str
+    chain_id: Optional[str] = None
+    verdict: TriageVerdict
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    reasons: List[str] = Field(default_factory=list)        # human-readable rationale
+    blockers: List[str] = Field(default_factory=list)       # what prevented EMIT
+    reproducibility_score: float = Field(0.0, ge=0.0, le=1.0)
+    has_poc: bool = False
+    has_captured_evidence: bool = False
+    is_duplicate: bool = False
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= ESCALATION (Sprint 2.1) =================
+
+class EscalationPath(BaseModel):
+    """One possible escalation step inferred by the Escalation Engine."""
+
+    id: str = Field(default_factory=lambda: f"esc-{uuid.uuid4().hex[:12]}")
+    source_primitive_id: str
+    suggested_technique: str          # e.g. "nuclei_verify", "burp_active_scan"
+    reason: str
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    required_skills: List[str] = Field(default_factory=list)
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= ATTACK CHAIN (Sprint 2.2 / 2.3) =================
+
+class ChainStatus(str, Enum):
+    BUILDING = "building"
+    PENDING_POC = "pending_poc"
+    VALIDATED = "validated"
+    EMITTED = "emitted"
+    DROPPED = "dropped"
+
+
+class AttackChain(BaseModel):
+    """An ordered sequence of Primitives representing a validated attack chain.
+
+    The Chain Composer assembles chains; the Auto-PoC generator populates
+    poc_script; the Triager Gate emits the finding once the chain is validated.
+    """
+
+    id: str = Field(default_factory=lambda: f"chain-{uuid.uuid4().hex[:12]}")
+    engagement_id: str
+    primitive_ids: List[str] = Field(default_factory=list)  # ordered chain
+    title: str = ""
+    description: str = ""
+    status: ChainStatus = ChainStatus.BUILDING
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    severity: str = "medium"
+    poc_script: List[str] = Field(default_factory=list)     # argv for replay
+    triage_report_id: Optional[str] = None
+    emitted_finding_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
