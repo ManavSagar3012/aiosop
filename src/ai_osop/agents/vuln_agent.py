@@ -910,29 +910,48 @@ class VulnAnalysisAgent(BaseAgent):
             headers["Authorization"] = f"Bearer {token}"
             headers["Cookie"] = f"token={token}"
 
-        body = {**base_body, **inject}
-        accepted_fields: Dict[str, Any] = {}
+        def _reflects(text: str, k: str, v: Any) -> bool:
+            """True when field ``k``=``v`` appears in the response/read-back body."""
+            try:
+                flat = json.dumps(json.loads(text))
+            except Exception:
+                flat = text or ""
+            needle = json.dumps({k: v})[1:-1]  # e.g. "role": "admin"
+            return (
+                needle in flat
+                or f'"{k}":{json.dumps(v)}' in flat
+                or f'"{k}": {json.dumps(v)}' in flat
+            )
+
+        readback_url = payload.get("readback_url")
         try:
             async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
-                resp = await c.request(method, url, json=body, headers=headers)
-                created = resp.text
-                # Read back from a follow-up GET if provided (stronger proof).
-                if payload.get("readback_url"):
-                    rb = await c.get(payload["readback_url"], headers=headers)
-                    created = rb.text
+                # 1. CONTROL — a legitimate request WITHOUT the injected privileged
+                #    fields. Anything already present here is a server default / echo-all,
+                #    NOT attacker-controlled, so it must be suppressed from the result.
+                control_resp = await c.request(method, url, json=base_body, headers=headers)
+                control_text = control_resp.text
+                if readback_url:
+                    control_text = (await c.get(readback_url, headers=headers)).text
+
+                # 2. INJECTED — the same request WITH the privileged fields added.
+                inj_resp = await c.request(method, url, json={**base_body, **inject}, headers=headers)
+                inj_text = inj_resp.text
+                independent_readback = False
+                if readback_url:
+                    inj_text = (await c.get(readback_url, headers=headers)).text
+                    independent_readback = True
         except Exception as e:
             logger.warning("mass_assignment_failed", url=url, error=str(e))
             return {"status": "error", "tool": "mass_assignment_scan", "error": str(e)}
 
-        # A privileged field is "accepted" when our injected value is reflected back.
-        try:
-            parsed = json.loads(created)
-            flat = json.dumps(parsed)
-        except Exception:
-            flat = created
+        # 3. Baseline suppression: a field is attacker-controlled ONLY if the injected
+        #    value appears after injection but was ABSENT in the control. This kills the
+        #    two dominant false positives — servers that echo the whole request body, and
+        #    fields the server sets by default regardless of input.
+        accepted_fields: Dict[str, Any] = {}
         for k, v in inject.items():
-            needle = json.dumps({k: v})[1:-1]  # e.g. "role": "admin"
-            if needle in flat or f'"{k}":{json.dumps(v)}' in flat or f'"{k}": {json.dumps(v)}' in flat:
+            if _reflects(inj_text, k, v) and not _reflects(control_text, k, v):
                 accepted_fields[k] = v
 
         if not accepted_fields:
@@ -945,27 +964,51 @@ class VulnAnalysisAgent(BaseAgent):
                 "findings_count": 0,
             }
 
+        # 4. Proof strength (diff-auth contract): an INDEPENDENT read-back proves the
+        #    value was persisted (report-ready). A create-response echo only shows the
+        #    server accepted the field into its response — a strong lead, but a triager
+        #    can dispute "reflected != persisted", so it is flagged for manual confirm,
+        #    demoted to MEDIUM, and NOT marked validated.
+        if independent_readback:
+            provenance = "persisted"
+            validated = True
+            confidence = 0.9
+            severity = Severity.HIGH
+            manual_confirm_required = False
+            proof = "persisted (confirmed via independent read-back)"
+        else:
+            provenance = "reflected"
+            validated = False
+            confidence = 0.5
+            severity = Severity.MEDIUM
+            manual_confirm_required = True
+            proof = "reflected in the create response only — provide readback_url to confirm persistence"
+
         vuln = Vulnerability(
             cwe="CWE-915",  # Improperly Controlled Modification of Object Attributes
             vuln_type=VulnClass.MASS_ASSIGNMENT,
-            severity=Severity.HIGH,
+            severity=severity,
             title=f"Mass assignment via {', '.join(accepted_fields)}",
             description=(
                 f"The endpoint {url} accepted attacker-supplied privileged field(s) "
-                f"{accepted_fields} that a normal user should not control. The value(s) "
-                f"were persisted/reflected, enabling privilege escalation."
+                f"{accepted_fields} that a normal user should not control, and a control "
+                f"request without those fields did not exhibit them ({proof}). This "
+                f"enables privilege escalation."
             ),
             evidence=[{
                 "type": "mass_assignment",
-                "provenance": "http",
+                "provenance": provenance,
                 "url": url,
                 "method": method,
                 "accepted_fields": accepted_fields,
                 "injected": inject,
+                "baseline_suppressed": True,   # confirmed absent in the control request
+                "independent_readback": independent_readback,
+                "manual_confirm_required": manual_confirm_required,
             }],
             tool_source="mass_assignment_scan",
-            confidence=0.95,
-            validated=True,
+            confidence=confidence,
+            validated=validated,
             exploitability="high",
             impact="high",
             engagement_id=engagement_id,
@@ -976,12 +1019,20 @@ class VulnAnalysisAgent(BaseAgent):
         except Exception as e:
             logger.error("mass_assignment_persist_failed", vuln_id=vuln.id, error=str(e))
 
-        logger.info("mass_assignment_confirmed", url=url, fields=list(accepted_fields))
+        logger.info(
+            "mass_assignment_confirmed",
+            url=url,
+            fields=list(accepted_fields),
+            provenance=provenance,
+            manual_confirm_required=manual_confirm_required,
+        )
         return {
             "status": "success",
             "tool": "mass_assignment_scan",
             "target": url,
             "confirmed": True,
+            "provenance": provenance,
+            "manual_confirm_required": manual_confirm_required,
             "accepted_fields": accepted_fields,
             "findings_count": 1,
             "findings": [vuln.model_dump()],
