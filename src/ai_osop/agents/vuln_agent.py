@@ -723,18 +723,28 @@ class VulnAnalysisAgent(BaseAgent):
 
         method = "execution" if executed else "reflection"
         proof_url = exec_url if executed else refl_url
+        # Only real browser EXECUTION is a validated XSS. Un-encoded reflection is a
+        # strong lead but not proof — the context may not execute (attribute/text node,
+        # CSP, WAF, framework auto-escaping downstream), and a triager will reject
+        # "reflected != executed". So reflection-only is a manual-confirm MEDIUM lead.
+        if executed:
+            severity, confidence, validated, manual_confirm = Severity.HIGH, 0.97, True, False
+        else:
+            severity, confidence, validated, manual_confirm = Severity.MEDIUM, 0.5, False, True
         vuln = Vulnerability(
             cwe="CWE-79",
             vuln_type=VulnClass.XSS,
-            severity=Severity.HIGH,
-            title=f"Cross-Site Scripting (confirmed via {method})",
+            severity=severity,
+            title=f"Cross-Site Scripting ({'confirmed via execution' if executed else 'reflected — needs execution proof'})",
             description=(
                 f"A Cross-Site Scripting payload was confirmed at {url} "
                 f"(parameter: {param or 'auto'}). Confirmation method: {method} — "
                 + (
                     "the injected JavaScript actually executed in a real browser DOM."
                     if executed
-                    else "the payload was reflected un-encoded into the HTTP response."
+                    else "the payload was reflected un-encoded into the HTTP response, but "
+                    "execution was NOT observed in a browser — confirm the injection context "
+                    "executes before submitting."
                 )
             ),
             evidence=[
@@ -746,11 +756,12 @@ class VulnAnalysisAgent(BaseAgent):
                     "proof_url": proof_url,
                     "parameter": param or "auto",
                     "token": token,
+                    "manual_confirm_required": manual_confirm,
                 }
             ],
             tool_source="xss_scan",
-            confidence=0.97 if executed else 0.9,
-            validated=True,
+            confidence=confidence,
+            validated=validated,
             exploitability="high",
             impact="medium",
             engagement_id=engagement_id,
@@ -768,6 +779,7 @@ class VulnAnalysisAgent(BaseAgent):
             "target": url,
             "confirmed": True,
             "method": method,
+            "manual_confirm_required": manual_confirm,
             "findings_count": 1,
             "findings": [vuln.model_dump()],
         }
@@ -1197,26 +1209,55 @@ class VulnAnalysisAgent(BaseAgent):
             return {"status": "success", "tool": "request_smuggling_scan", "target": url,
                     "confirmed": False, "probes": probes, "findings_count": 0}
 
+        # A single elevated desync timing is notoriously noisy (network jitter, GC pause,
+        # cold cache). Require the winning technique to REPRODUCE before claiming validated
+        # proof — otherwise it is a manual-confirm lead, not a report-ready finding.
+        tech = confirmed["technique"]
+        reproductions = 1  # the initial hit
+        for _ in range(2):
+            r = await asyncio.to_thread(
+                probe_desync, host, port, path=path, technique=tech,
+                use_tls=use_tls, recv_timeout=recv_timeout, threshold_ms=threshold_ms,
+            )
+            probes.append(r)
+            if r.get("vulnerable"):
+                reproductions += 1
+        reproduced = reproductions >= 2  # >= 2 of 3 elevated timings
+
+        if reproduced:
+            severity, confidence, validated, manual_confirm = Severity.HIGH, 0.85, True, False
+        else:
+            severity, confidence, validated, manual_confirm = Severity.MEDIUM, 0.5, False, True
+
         vuln = Vulnerability(
             cwe="CWE-444",  # HTTP Request/Response Smuggling
             vuln_type=VulnClass.REQUEST_SMUGGLING,
-            severity=Severity.HIGH,
-            title=f"HTTP request smuggling ({confirmed['technique'].upper()}) at {host}",
+            severity=severity,
+            title=f"HTTP request smuggling ({confirmed['technique'].upper()}) at {host}"
+            + ("" if reproduced else " — timing lead, unconfirmed"),
             description=(
                 f"A {confirmed['technique'].upper()} desync timing probe against {url} delayed "
                 f"the response to {confirmed['probe_ms']}ms vs a {confirmed['baseline_ms']}ms "
-                f"baseline, indicating the front-end and back-end disagree on message length. "
-                f"This enables request smuggling (cache poisoning, auth bypass, request hijack)."
+                f"baseline, indicating the front-end and back-end may disagree on message length. "
+                f"Reproduced {reproductions}/3 times. "
+                + (
+                    "This enables request smuggling (cache poisoning, auth bypass, request hijack)."
+                    if reproduced
+                    else "The timing did not reproduce consistently — confirm manually with a "
+                    "differential (smuggled-prefix) response before submitting."
+                )
             ),
             evidence=[{
                 "type": "request_smuggling",
                 "provenance": "timing_probe",
                 "url": url,
+                "reproductions": reproductions,
+                "manual_confirm_required": manual_confirm,
                 **confirmed,
             }],
             tool_source="request_smuggling_scan",
-            confidence=0.85,
-            validated=True,
+            confidence=confidence,
+            validated=validated,
             exploitability="high",
             impact="high",
             engagement_id=engagement_id,
@@ -1230,6 +1271,7 @@ class VulnAnalysisAgent(BaseAgent):
         logger.info("request_smuggling_confirmed", url=url, technique=confirmed["technique"])
         return {"status": "success", "tool": "request_smuggling_scan", "target": url,
                 "confirmed": True, "technique": confirmed["technique"],
+                "manual_confirm_required": manual_confirm, "reproductions": reproductions,
                 "probes": probes, "findings_count": 1, "findings": [vuln.model_dump()]}
 
     async def _ssrf_fetch_via_sink(self, metadata_url: str) -> str:
