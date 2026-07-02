@@ -262,6 +262,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:  # noqa: BLE001 - learning brain is optional
             logger.warning(f"Findings knowledge wiring failed: {e}")
 
+        # Chain-first loop: wire the primitive ledger so every confirmed finding is
+        # also recorded as a typed primitive for the escalation/chain engine.
+        # Best-effort — never blocks startup.
+        try:
+            from ai_osop.memory.primitive_ledger import PrimitiveLedgerStore
+
+            if getattr(graph_memory, "_driver", None) is not None:
+                _ledger = PrimitiveLedgerStore(graph_memory._driver)
+                await _ledger.setup_schema()
+                graph_memory.primitive_ledger = _ledger
+                logger.info("Primitive ledger wired to graph memory.")
+        except Exception as e:  # noqa: BLE001 - chain loop is optional
+            logger.warning(f"Primitive ledger wiring failed: {e}")
+
         orch = Orchestrator(
             session_memory=session_memory,
             graph_memory=graph_memory,
