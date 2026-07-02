@@ -130,7 +130,11 @@ class FindingCorpusORM(Base):
     __tablename__ = "finding_corpus"
 
     id = Column(String(64), primary_key=True)
-    original_finding_id = Column(String(64), index=True)
+    # UNIQUE (not merely indexed): upsert_corpus_finding relies on
+    # INSERT ... ON CONFLICT (original_finding_id), which Postgres only honors when
+    # a unique/exclusion constraint backs the conflict target. Without this the
+    # outcome-correcting re-sync (P2b) would raise at runtime or insert duplicates.
+    original_finding_id = Column(String(64), unique=True, index=True)
     category = Column(String(64), index=True)
     severity = Column(String(16))
     outcome = Column(String(32), index=True) # accepted, duplicate, etc.
@@ -827,10 +831,12 @@ class SessionMemory:
                 )
                 .on_conflict_do_update(
                     index_elements=["original_finding_id"],
+                    # Update the mutable outcome signal + payload only. Deliberately
+                    # NOT category/severity: a later partial re-sync could carry a
+                    # null category and silently drop the row from every
+                    # WHERE category = ... calibration aggregate.
                     set_={
                         "outcome": outcome,
-                        "category": finding_data.get("category"),
-                        "severity": finding_data.get("severity", "medium"),
                         "payload": finding_data,
                         "finalized_at": datetime.utcnow(),
                     },

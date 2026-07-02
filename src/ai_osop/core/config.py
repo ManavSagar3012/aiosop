@@ -213,6 +213,13 @@ class Settings(BaseSettings):
     # switch models set this to match (e.g. nomic-embed-text -> 768) and use a
     # fresh DB or migrate the vector columns, or inserts will fail on a size mismatch.
     llm_embedding_dim: int = Field(default=1536, validation_alias="OSOP_LLM_EMBEDDING_DIM")
+    # P2b calibration feedback loop: how often (seconds) the orchestrator polls
+    # bug-bounty platforms for submission outcomes and folds them into the corpus,
+    # so confidence calibration learns from real accept/reject ground truth. 0
+    # disables the poller. Default hourly. A no-op without bug-bounty credentials.
+    bug_bounty_outcome_sync_interval_seconds: int = Field(
+        default=3600, validation_alias="OSOP_BUG_BOUNTY_OUTCOME_SYNC_INTERVAL"
+    )
     llm_api_key_path: str = Field(
         default="secret/data/llm/openai", validation_alias="OSOP_LLM_KEY_PATH"
     )

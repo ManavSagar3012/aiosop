@@ -31,6 +31,8 @@ from ai_osop.core.metrics import (
 from ai_osop.reliability.dlq import DeadLetterQueue
 from ai_osop.orchestrator.task_scheduler import TaskScheduler
 from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
+
 from ai_osop.orchestrator.phase_monitor import PhaseMonitor
 from ai_osop.orchestrator.engagement_manager import EngagementManager
 from ai_osop.orchestrator.recovery_service import RecoveryService
@@ -132,6 +134,7 @@ class Orchestrator:
         self.dlq = DeadLetterQueue(session_memory)
 
         # Sprint 9: Extracted sub-components for Architecture Excellence
+        self.engagement_state_machine = EngagementStateMachine(session_memory)
         self.task_scheduler = TaskScheduler(self)
         self.approval_coordinator = ApprovalCoordinator(self)
         self.phase_monitor = PhaseMonitor(self)
@@ -139,10 +142,21 @@ class Orchestrator:
         self.recovery_service = RecoveryService(self)
         self.agent_reaper = AgentReaper(self)
 
+        # Inject state machine into child components.
+        self.task_scheduler.state_machine = self.engagement_state_machine
+        self.approval_coordinator.state_machine = self.engagement_state_machine
+        self.phase_monitor.state_machine = self.engagement_state_machine
+        self.engagement_manager.state_machine = self.engagement_state_machine
+        self.recovery_service.state_machine = self.engagement_state_machine
+        self.agent_reaper.state_machine = self.engagement_state_machine
+
         self._running = False
         self._scheduler_task: Optional[asyncio.Task] = None
         self._reaper_task: Optional[asyncio.Task] = None
         self._phase_monitor_task: Optional[asyncio.Task] = None
+        # P2b: background poller that pulls submission outcomes into the corpus.
+        self._outcome_ingestion_task: Optional[asyncio.Task] = None
+        self.finding_corpus_service: Optional[Any] = None
         self._approval_callbacks: List[Callable[[ApprovalRequest], None]] = []
         # GAP-2-6: handles for in-flight agent executions, keyed by task_id, so
         # halt_engagement can actually cancel running coroutines (not just flip a
@@ -221,6 +235,27 @@ class Orchestrator:
         # Reliability sprint: background stuck-task reaper.
         self._agent_reaper_task = asyncio.create_task(self.agent_reaper.run())
         self._reaper_task = asyncio.create_task(self._reaper_loop())
+        # P2b learning loop: periodically fold real submission outcomes into the
+        # findings corpus so confidence calibration learns from ground truth.
+        # Best-effort and a no-op without bug-bounty credentials.
+        try:
+            self._outcome_sync_interval = int(
+                getattr(settings, "bug_bounty_outcome_sync_interval_seconds", 3600)
+            )
+            if self._outcome_sync_interval > 0:
+                from ai_osop.adapters.bug_bounty_adapter import BugBountyAdapter
+                from ai_osop.core.findings_corpus import FindingCorpusService
+
+                self.finding_corpus_service = FindingCorpusService(
+                    self.graph_memory,
+                    self.session_memory,
+                    bug_bounty_adapter=BugBountyAdapter(),
+                )
+                self._outcome_ingestion_task = asyncio.create_task(
+                    self._outcome_ingestion_loop()
+                )
+        except Exception as e:  # noqa: BLE001 - learning loop is optional
+            logger.warning("Outcome ingestion poller not started: %s", e)
         # Retention service: automated cleanup of old data
         from ai_osop.memory.retention_service import RetentionService
 
@@ -321,24 +356,21 @@ class Orchestrator:
         RETURN count(w) > 0 as workflow_exists, count(s) as step_count, count(ev) as evidence_count
         """
         try:
-            async with self.graph_memory._driver.session() as session:
-                res = await session.run(cypher, {"workflow_id": workflow_id})
-                record = await res.single()
-                if not record:
-                    return False
-
-                exists = record["workflow_exists"]
-                step_count = record["step_count"]
-                evidence_count = record["evidence_count"]
-
-                logger.debug(
-                    "validate_workflow_completion",
-                    workflow_id=workflow_id,
-                    exists=exists,
-                    steps=step_count,
-                    evidence=evidence_count,
-                )
-                return bool(exists and step_count > 0 and evidence_count > 0)
+            records = await self.graph_memory.run_read_query(cypher, {"workflow_id": workflow_id})
+            if not records:
+                return False
+            record = records[0]
+            exists = record.get("workflow_exists")
+            step_count = record.get("step_count")
+            evidence_count = record.get("evidence_count")
+            logger.debug(
+                "validate_workflow_completion",
+                workflow_id=workflow_id,
+                exists=exists,
+                steps=step_count,
+                evidence=evidence_count,
+            )
+            return bool(exists and step_count > 0 and evidence_count > 0)
         except Exception as e:
             logger.error("validate_workflow_completion_cypher_error", task_id=task.id, error=str(e))
             return False
@@ -376,10 +408,10 @@ class Orchestrator:
                 return True
         cypher = "MATCH (t:Task {engagement_id: $eid, type: 'map_workflow'}) RETURN count(t) AS c"
         try:
-            async with self.graph_memory._driver.session() as g:
-                res = await g.run(cypher, {"eid": engagement_id})
-                rec = await res.single()
-                return bool(rec and rec["c"] > 0)
+            records = await self.graph_memory.run_read_query(cypher, {"eid": engagement_id})
+            if records:
+                return bool(records[0].get("c", 0) > 0)
+            return False
         except Exception as e:
             logger.debug("has_existing_map_workflow_check_failed", error=str(e))
             return False
@@ -486,6 +518,41 @@ class Orchestrator:
         """Detect and recover stuck tasks. Delegated to RecoveryService."""
         return await self.recovery_service._reap_stuck_tasks()
 
+    async def _outcome_ingestion_loop(self) -> None:
+        """Periodically fold real submission outcomes into the findings corpus (P2b).
+
+        This is the write half of the calibration feedback loop: without a caller
+        that pulls accept/reject/duplicate outcomes into the corpus, historical
+        success rates stay at the neutral 0.5 and calibration never fires. Runs on
+        an interval, best-effort — a sync failure never stops the loop.
+        """
+        interval = max(1, int(getattr(self, "_outcome_sync_interval", 3600)))
+        while self._running:
+            await asyncio.sleep(interval)
+            if not self._running:
+                break
+            try:
+                await self._ingest_outcomes_once()
+            except Exception as e:  # noqa: BLE001 - advisory, keep looping
+                logger.warning("outcome_ingestion_tick_failed error=%s", e)
+
+    async def _ingest_outcomes_once(self) -> int:
+        """One outcome-ingestion pass over the active engagements. Returns the total
+        number of outcomes ingested (0 without a corpus service or credentials)."""
+        if self.finding_corpus_service is None:
+            return 0
+        total = 0
+        for engagement_id in list(self._sessions.keys()):
+            try:
+                total += await self.finding_corpus_service.ingest_outcomes(engagement_id)
+            except Exception as e:  # noqa: BLE001 - per-engagement best-effort
+                logger.warning(
+                    "outcome_ingestion_failed engagement_id=%s error=%s", engagement_id, e
+                )
+        if total:
+            logger.info("outcome_ingestion_complete ingested=%s", total)
+        return total
+
     async def recover_state(self) -> Dict[str, Any]:
         """Restart recovery. Delegated to RecoveryService."""
         return await self.recovery_service.recover_state()
@@ -493,8 +560,7 @@ class Orchestrator:
         """Background task scheduler."""
         while self._running:
             try:
-                logger.info("scheduler_debug", tasks_count=len(self.state.get_all_tasks()), sessions_count=len(self.engagement_manager.get_all_sessions()))
-                # 1. Process pending tasks already in memory (Issue 15: task leakage)
+                logger.info("scheduler_debug", tasks_count=len(self.state.get_all_tasks()), sessions_count=len(self._sessions))
                 # 1. Process pending tasks already in memory (Issue 15: task leakage)
                 for task in list(self.state.get_all_tasks().values()):
                     if task.status == "pending":
@@ -511,7 +577,7 @@ class Orchestrator:
                                 await self._assign_task(task)
 
                 # 2. Process new tasks from queues
-                for session_id, session in self.engagement_manager.get_all_sessions().items():
+                for session_id, session in self._sessions.items():
                     if session.phase == EngagementPhase.HALTED.value:
                         continue
 
@@ -684,14 +750,19 @@ class Orchestrator:
         if not phase_tasks:
             return phase in PASS_THROUGH_PHASES
 
-        # Complete only if none of the phase tasks are pending or running
-        return all(t.status not in ["pending", "running"] for t in phase_tasks)
+        # Complete only if none of the phase tasks are pending, running, or awaiting_approval
+        return all(t.status not in ["pending", "running", "awaiting_approval"] for t in phase_tasks)
 
     async def shutdown(self) -> None:
         """Graceful shutdown."""
         self._running = False
 
-        for bg in (self._scheduler_task, self._reaper_task, self._phase_monitor_task):
+        for bg in (
+            self._scheduler_task,
+            self._reaper_task,
+            self._phase_monitor_task,
+            self._outcome_ingestion_task,
+        ):
             if bg:
                 bg.cancel()
                 try:

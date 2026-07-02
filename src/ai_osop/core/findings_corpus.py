@@ -71,13 +71,20 @@ class FindingCorpusService:
             logger.error("failed_sync_outcomes", engagement_id=engagement_id, error=str(e))
             return 0
 
+        from ai_osop.core.taxonomy import category_for_finding_type
+
         ingested = 0
         for record in outcomes:
             # status may be an OutcomeStatus enum or a raw string.
             status = getattr(record.status, "value", record.status)
+            # Normalize the concrete finding type onto the hypothesis-category
+            # vocabulary so calibration lookups (keyed by hypothesis category) can
+            # actually match recorded outcomes. The raw finding_type is preserved in
+            # the payload for traceability.
             finding_data = {
                 "id": record.finding_id,
-                "category": record.finding_type,
+                "category": category_for_finding_type(record.finding_type),
+                "finding_type": record.finding_type,
                 "severity": record.severity,
                 "engagement_id": record.engagement_id,
                 "external_report_id": record.external_report_id,

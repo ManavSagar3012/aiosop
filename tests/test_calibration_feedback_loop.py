@@ -137,9 +137,11 @@ async def test_ingest_outcomes_records_true_status():
 
     n = await svc.ingest_outcomes("eng-1")
     assert n == 2
-    # Simulator yields idor/triaged and xss/paid — captured with their real status.
+    # Simulator yields idor/triaged and xss/paid. Ingest normalizes the concrete
+    # finding type onto the hypothesis-category vocabulary (idor->authz,
+    # xss->client_side) so calibration lookups match; the real status is preserved.
     outcomes = {v["category"]: v["outcome"] for v in store.values()}
-    assert outcomes == {"idor": "triaged", "xss": "paid"}
+    assert outcomes == {"authz": "triaged", "client_side": "paid"}
 
 
 @pytest.mark.asyncio
@@ -170,25 +172,65 @@ async def test_full_loop_ingest_then_calibrate():
     writer = MagicMock()
     writer.upsert_corpus_finding = fake_upsert
     svc = FindingCorpusService(MagicMock(), writer, bug_bounty_adapter=_sim_adapter())
-    await svc.ingest_outcomes("eng-1")  # idor/triaged (valid), xss/paid (valid)
+    await svc.ingest_outcomes("eng-1")  # idor->authz/triaged, xss->client_side/paid
 
-    # A real-world rejection for xss enters the corpus too.
-    store["xss-reject-1"] = {"category": "xss", "outcome": "rejected"}
+    # A real-world rejection for a client_side (xss-class) finding enters too.
+    store["xss-reject-1"] = {"category": "client_side", "outcome": "rejected"}
 
-    # Reader over the accumulated ground truth (real classification logic).
-    reader = _reader_with_rows(_grouped_rows(store, "xss"))
-    xss_rate = await reader.get_historical_success_rate("xss")
-    assert xss_rate == pytest.approx(0.5)  # 1 paid / (1 paid + 1 rejected)
+    # Reader over the accumulated ground truth (real classification logic). Note the
+    # lookup key is the hypothesis CATEGORY (client_side / authz), which is exactly
+    # what the hypothesis engine passes — proving the taxonomy now aligns end-to-end.
+    reader = _reader_with_rows(_grouped_rows(store, "client_side"))
+    cs_rate = await reader.get_historical_success_rate("client_side")
+    assert cs_rate == pytest.approx(0.5)  # 1 paid / (1 paid + 1 rejected)
 
-    reader_idor = _reader_with_rows(_grouped_rows(store, "idor"))
-    assert await reader_idor.get_historical_success_rate("idor") == 1.0
+    reader_authz = _reader_with_rows(_grouped_rows(store, "authz"))
+    assert await reader_authz.get_historical_success_rate("authz") == 1.0
 
-    # Calibration engine consumes the rate: a hot finding type pulls a weak base
+    # Calibration engine consumes the rate: a hot category pulls a weak base
     # confidence up; the engine no longer AttributeErrors on the missing method.
-    engine = ConfidenceCalibrationEngine(session_memory=reader_idor)
+    engine = ConfidenceCalibrationEngine(session_memory=reader_authz)
     calibrated = await engine.calibrate_confidence(
-        base_confidence=0.4, finding_type="idor"
+        base_confidence=0.4, finding_type="authz"
     )
     # historical(1.0)*0.6 + base(0.4)*0.4 = 0.76 — learning lifted confidence above base.
     assert calibrated == pytest.approx(0.76)
     assert calibrated > 0.4
+
+
+# --------------------------------------------------------------------------- #
+# Regression lock: real VulnClass emitters must map to hypothesis categories.  #
+# Guards against the taxonomy silently reverting to synonym-only keys that no   #
+# emitter produces (which would make calibration a no-op for those categories). #
+# --------------------------------------------------------------------------- #
+def test_real_vulnclass_emitters_map_to_hypothesis_categories():
+    from ai_osop.core.taxonomy import category_for_finding_type, HYPOTHESIS_CATEGORIES
+
+    # (emitted VulnClass.value  ->  expected hypothesis category)
+    expected = {
+        "idor": "authz",
+        "mass_assignment": "authz",
+        "broken_access_control": "authz",
+        "privilege_escalation": "authz",
+        "xss": "client_side",
+        "csrf": "client_side",
+        "request_smuggling": "client_side",
+        "ssrf": "ssrf_redirect",
+        "graphql_security": "graphql",   # the value the GraphQL agent actually emits
+        "race_condition": "workflow",
+        "cloud_vuln": "cloud",
+        "kubernetes_security": "cloud",
+        "jwt_abuse": "session",          # the value emitted, not the "jwt" synonym
+        "oauth2": "session",
+        "authentication_weakness": "session",
+    }
+    for finding_type, category in expected.items():
+        got = category_for_finding_type(finding_type)
+        assert got == category, f"{finding_type} -> {got}, expected {category}"
+        assert got in HYPOTHESIS_CATEGORIES
+
+    # Injection-family types intentionally have no hypothesis category and must
+    # pass through unchanged (documented design — they don't participate yet).
+    for injection in ("sqli", "rce", "lfi", "xxe", "deserialization", "ssti"):
+        assert category_for_finding_type(injection) == injection
+        assert injection not in HYPOTHESIS_CATEGORIES
