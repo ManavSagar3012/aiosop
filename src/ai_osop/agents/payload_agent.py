@@ -6,6 +6,7 @@ and adaptive intelligence.
 
 import asyncio
 import hashlib
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,8 @@ from ai_osop.core.config import AgentType, VulnClass, settings
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Payload, Task
 from ai_osop.payload_engine.engine import AdaptivePayloadEngine
+
+logger = logging.getLogger(__name__)
 
 
 class PayloadMutationAgent(BaseAgent):
@@ -66,7 +69,7 @@ class PayloadMutationAgent(BaseAgent):
                 embedding=embedding, payload_type=vuln_type.value, limit=3
             )
         except Exception as e:
-            print(f"WARN: Semantic retrieval failed: {e}")
+            logger.warning(f"Semantic retrieval failed: {e}")
 
         # 2. Engine Generation
         population = await self.engine.generate_initial_population(
@@ -200,7 +203,7 @@ class PayloadMutationAgent(BaseAgent):
                     },
                 )
             except Exception as e:
-                print(f"ERROR: Failed to store successful payload in vector memory: {e}")
+                logger.error(f"Failed to store successful payload in vector memory: {e}")
 
         return {
             "status": "success",
