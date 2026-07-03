@@ -706,6 +706,54 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
         await websocket.close(code=1008, reason="Engagement not found")
         return
 
+    # AIOSOP-WS-PUSH-001 (2026-07-03): the handler was request-response ONLY, so the
+    # dashboard's heartbeat/telemetry (LATENCY / THROUGHPUT) and live phase updates
+    # never fired — the client subscribes to pushed events, but the server never sent
+    # any (both metrics sat at 0, and the UI only refreshed on navigation). Run a
+    # concurrent push loop that emits a heartbeat carrying a REAL backend latency (a
+    # Redis PING round-trip) plus a phase_transition event whenever the engagement's
+    # phase changes, so the dashboard reflects live progress without a reload.
+    import asyncio as _asyncio
+    import time as _time
+
+    async def _push_loop() -> None:
+        last_phase = None
+        while True:
+            latency_ms = 0.0
+            try:
+                _r = getattr(orch.session_memory, "_redis", None)
+                if _r is not None:
+                    _t0 = _time.monotonic()
+                    await _r.ping()
+                    latency_ms = round((_time.monotonic() - _t0) * 1000, 2)
+            except Exception:  # noqa: BLE001 - telemetry is best-effort
+                latency_ms = 0.0
+            _sess = orch._sessions.get(engagement_id)
+            _phase = _sess.phase if _sess else None
+            try:
+                await websocket.send_json(
+                    {
+                        "event_type": "heartbeat",
+                        "engagement_id": engagement_id,
+                        "data": {"latency_ms": latency_ms},
+                    }
+                )
+                if _phase and _phase != last_phase:
+                    last_phase = _phase
+                    await websocket.send_json(
+                        {
+                            "event_type": "phase_transition",
+                            "engagement_id": engagement_id,
+                            "data": {"phase": _phase, "new_phase": _phase},
+                        }
+                    )
+            except Exception:  # noqa: BLE001 - client gone / socket closed
+                break
+            # 2s cadence: frequent enough that the client's 1s throughput sampler sees
+            # liveness, cheap enough that N concurrent sockets don't hammer Redis.
+            await _asyncio.sleep(2)
+
+    push_task = _asyncio.create_task(_push_loop())
     try:
         while True:
             data = await websocket.receive_text()
@@ -745,3 +793,11 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
         except Exception as e:
             logger.warning("broad_exception_caught", error=str(e))
             pass  # connection may already be closed
+    finally:
+        # AIOSOP-WS-PUSH-001: always stop the background push loop when the client
+        # disconnects so it can't leak or keep sending to a dead socket.
+        push_task.cancel()
+        try:
+            await push_task
+        except Exception:
+            pass
