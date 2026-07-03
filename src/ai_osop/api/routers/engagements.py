@@ -15,7 +15,7 @@ from ai_osop.api.deps import (
     state,
     verify_token,
 )
-from ai_osop.core.exceptions import WorkflowException
+from ai_osop.core.exceptions import WorkflowException, WorkflowTransitionError
 from ai_osop.core.models import ScopeDefinition, SessionState
 from ai_osop.orchestrator.orchestrator import EngagementPhase
 
@@ -109,9 +109,9 @@ async def transition_phase(
     try:
         session = await state["orchestrator"].transition_phase(session_id, phase)
         return session
-    except WorkflowException as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except WorkflowTransitionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except WorkflowException as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
         import logging
