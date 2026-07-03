@@ -3,32 +3,41 @@
 @config "../tailwind.config.js";
 
 :root {
-  /* Surface Colors */
+  /* Surfaces (unchanged — the dark ramp is the identity) */
   --surface-container-lowest: #050506;
   --surface-container-low: #0a0a0b;
   --surface-container: #131314;
   --surface-container-high: #1a1a1d;
   --surface-container-highest: #2a2a2d;
-  
-  /* Text Colors */
+  --surface-variant: #1a1a1a;
+  --background: #050505;
+
+  /* Text */
   --on-surface: #e5e2e3;
-  --on-surface-variant: #baccb0;
-  
-  /* Accent Colors */
-  --primary-fixed: #39ff14; /* Neon Green */
+  --on-surface-variant: #9db3a6; /* contrast-tuned neutral (was #baccb0) */
+
+  /* Accents — GREEN LEADS */
+  --primary: #39ff14;            /* brand / operational / success */
+  --primary-fixed: #39ff14;      /* alias kept for existing consumers */
   --primary-container: #107100;
   --on-primary-container: #efffe3;
-  
-  --secondary: #00f1fd; /* Cyan */
+  --on-primary: #00220a;
+
+  --secondary: #00f1fd;          /* interactive / active / live */
   --secondary-container: #004f53;
   --on-secondary-container: #dcfdff;
 
-  --tertiary: #ff3131; /* Alert Red */
-  --tertiary-container: #93000c;
-
-  --outline-variant: #2a2a2d;
+  --critical: #ff3131;           /* critical / alert */
+  --tertiary: #ff3131;           /* alias kept for existing consumers */
+  --error: #ff3131;
   --error-container: #93000a;
   --on-error-container: #ffdad6;
+
+  --warning: #ffb020;            /* NEW — warning / medium severity */
+  --warning-container: #5c3d00;
+
+  --outline: #333333;
+  --outline-variant: #2a2a2d;
 }
 
 /* Base Styles */
