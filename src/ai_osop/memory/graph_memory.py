@@ -315,11 +315,44 @@ class GraphMemory:
             v.created_at = $created_at
         WITH v
         OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
+        // AIOSOP-GRAPHLINK-001 (2026-07-03): fall back to HOST-based linking when
+        // endpoint_id is absent/unmatched. nuclei findings carry no endpoint_id, so
+        // every Vulnerability was created with endpoint_id=None -> 0 HAS_VULNERABILITY
+        // edges platform-wide (898/898 orphaned), leaving the "attack graph" a set of
+        // disconnected nodes. Link the vuln to an endpoint of the SAME engagement whose
+        // host matches the vuln's evidence host, so the graph is actually connected and
+        // attack-path/impact analysis has edges to traverse.
+        OPTIONAL MATCH (eh:Endpoint {engagement_id: $engagement_id})
+            WHERE e IS NULL AND $host <> '' AND (eh.host = $host OR eh.url CONTAINS $host)
+        WITH v, e, collect(eh)[0] AS ehost
         FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
             MERGE (e)-[:HAS_VULNERABILITY]->(v)
         )
+        FOREACH (x IN CASE WHEN e IS NULL AND ehost IS NOT NULL THEN [ehost] ELSE [] END |
+            MERGE (ehost)-[:HAS_VULNERABILITY]->(v)
+        )
         RETURN v.id
         """
+
+        # AIOSOP-GRAPHLINK-001: derive a host from the vuln's evidence (nuclei/burp put
+        # the matched URL there) so the Cypher above can link by host when endpoint_id
+        # is unset. Best-effort — a parse failure just means we fall back to no link.
+        vuln_host = ""
+        try:
+            from urllib.parse import urlsplit
+
+            for ev in (vuln.evidence or []):
+                if not isinstance(ev, dict):
+                    continue
+                candidate = ev.get("matched_at") or ev.get("url") or ev.get("host")
+                if candidate:
+                    raw = str(candidate)
+                    netloc = urlsplit(raw if "://" in raw else "http://" + raw).netloc
+                    if netloc:
+                        vuln_host = netloc.split("@")[-1].split(":")[0].lower()
+                        break
+        except Exception:  # noqa: BLE001 - host derivation is best-effort
+            vuln_host = ""
 
         async with self._driver.session() as session:
             with trace_span(
@@ -334,6 +367,7 @@ class GraphMemory:
                     cypher,
                     {
                         "id": vuln.id,
+                        "host": vuln_host,
                         "cwe": vuln.cwe,
                         "vuln_type": vuln.vuln_type.value,
                         "severity": vuln.severity.value,
