@@ -73,32 +73,45 @@ class ReconAgent(BaseAgent):
         self.endpoint_inventory: Dict[str, Endpoint] = {}
 
     async def think(self, context: str, skill_names: List[str]) -> str:
-        """Reason about the current context using specialized skills."""
-        skills_content = "\n\n".join([self._load_skill(s) for s in skill_names])
+        """Reason about the current context using specialized skills.
 
-        # Retrieve methodology
-        retrieval_agent = RetrievalAgent(self.ctx)
-        await retrieval_agent._setup_resources()
-        methodologies = retrieval_agent.search("Other")
-        
-        # Filter for recon-related methodology
-        recon_methodologies = [m for m in methodologies if any(tool in m.get("command_pattern", "") for tool in ["subfinder", "httpx", "nuclei", "katana"])]
-        
-        # Add retrieved methodology to context
-        retrieved_patterns = "\n".join([m.get("command_pattern", "") for m in recon_methodologies])
-        retrieved_prerequisites = "\n".join([str(p) for m in recon_methodologies for p in m.get("prerequisites", [])])
-        
-        enriched_context = f"{context}\n\nRetrieved Recon Methodology:\n{retrieved_patterns}\n\nRetrieved Recon Prerequisites:\n{retrieved_prerequisites}"
+        AIOSOP-LLM-TIMEOUT-001 (2026-07-03): this reasoning output is advisory only
+        (it is logged as ``AGENT REASONING`` and never drives downstream recon steps),
+        so it must degrade gracefully rather than abort full_recon. The base
+        ``think()`` already returns "" on any failure; this override previously did
+        not, letting a stalled LLM call propagate and kill the whole recon task
+        (starving port-scan/crawl/Wayback/Shodan). The LLM client now bounds the call
+        with a timeout; here we additionally swallow failures to "" so recon proceeds.
+        """
+        try:
+            skills_content = "\n\n".join([self._load_skill(s) for s in skill_names])
 
-        messages = [
-            {
-                "role": "system",
-                "content": f"You are an AI Reconnaissance Agent. Use the following specialized skills to perform your analysis:\n\n{skills_content}",
-            },
-            {"role": "user", "content": enriched_context},
-        ]
+            # Retrieve methodology
+            retrieval_agent = RetrievalAgent(self.ctx)
+            await retrieval_agent._setup_resources()
+            methodologies = retrieval_agent.search("Other")
 
-        return await self.ctx.llm_client.complete(messages)
+            # Filter for recon-related methodology
+            recon_methodologies = [m for m in methodologies if any(tool in m.get("command_pattern", "") for tool in ["subfinder", "httpx", "nuclei", "katana"])]
+
+            # Add retrieved methodology to context
+            retrieved_patterns = "\n".join([m.get("command_pattern", "") for m in recon_methodologies])
+            retrieved_prerequisites = "\n".join([str(p) for m in recon_methodologies for p in m.get("prerequisites", [])])
+
+            enriched_context = f"{context}\n\nRetrieved Recon Methodology:\n{retrieved_patterns}\n\nRetrieved Recon Prerequisites:\n{retrieved_prerequisites}"
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": f"You are an AI Reconnaissance Agent. Use the following specialized skills to perform your analysis:\n\n{skills_content}",
+                },
+                {"role": "user", "content": enriched_context},
+            ]
+
+            return await self.ctx.llm_client.complete(messages)
+        except Exception as e:
+            logger.warning("recon_think_degraded", error=str(e))
+            return ""
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute reconnaissance task."""

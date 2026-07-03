@@ -18,6 +18,7 @@ def mock_orchestrator():
 
     orch = Orchestrator(session_memory, graph_memory, mcp_registry, llm_client)
     orch.rate_limiter = AsyncMock()
+    graph_memory.run_read_query = AsyncMock(return_value=[])
     return orch
 
 
@@ -98,3 +99,114 @@ async def test_schedule_and_assign_task(mock_orchestrator):
     assert scheduled_task.assigned_agent_id == "recon-001"
     assert mock_orchestrator._tasks[task.id].status == "completed"
     mock_agent.execute_task.assert_called_once()
+
+
+def _mk_task(status: str, agent_type=AgentType.RECON, eng="test-session"):
+    t = Task(
+        type="full_recon",
+        priority=5,
+        agent_type=agent_type,
+        payload={},
+        engagement_id=eng,
+    )
+    t.status = status
+    return t
+
+
+@pytest.mark.asyncio
+async def test_phase_gate_scheduled_blocks_completion(mock_orchestrator):
+    """AIOSOP-PHASEGATE-001: a 'scheduled' (Temporal-durable) recon task is in-flight,
+    so the RECONNAISSANCE phase must NOT be considered complete. The old denylist
+    treated 'scheduled' as done and advanced prematurely."""
+    mock_orchestrator.session_memory.load_all_active_tasks = AsyncMock(return_value=[])
+    t = _mk_task("scheduled")
+    mock_orchestrator._tasks[t.id] = t
+    done = await mock_orchestrator._is_phase_complete(
+        "test-session", EngagementPhase.RECONNAISSANCE
+    )
+    assert done is False
+
+
+@pytest.mark.asyncio
+async def test_phase_gate_requeued_blocks_completion(mock_orchestrator):
+    mock_orchestrator.session_memory.load_all_active_tasks = AsyncMock(return_value=[])
+    t = _mk_task("requeued")
+    mock_orchestrator._tasks[t.id] = t
+    done = await mock_orchestrator._is_phase_complete(
+        "test-session", EngagementPhase.RECONNAISSANCE
+    )
+    assert done is False
+
+
+@pytest.mark.asyncio
+async def test_phase_gate_all_failed_advances_but_warns(mock_orchestrator):
+    """A fully-failed phase is terminal (won't progress) so it advances (no hang),
+    but must emit phase_completed_without_success so the hollow phase is visible."""
+    from unittest.mock import patch
+
+    mock_orchestrator.session_memory.load_all_active_tasks = AsyncMock(return_value=[])
+    t = _mk_task("failed")
+    mock_orchestrator._tasks[t.id] = t
+    with patch("ai_osop.orchestrator.orchestrator.logger") as mock_logger:
+        done = await mock_orchestrator._is_phase_complete(
+            "test-session", EngagementPhase.RECONNAISSANCE
+        )
+    assert done is True
+    events = [c.args[0] for c in mock_logger.warning.call_args_list if c.args]
+    assert "phase_completed_without_success" in events
+
+
+@pytest.mark.asyncio
+async def test_phase_gate_completed_advances_quietly(mock_orchestrator):
+    from unittest.mock import patch
+
+    mock_orchestrator.session_memory.load_all_active_tasks = AsyncMock(return_value=[])
+    t = _mk_task("completed")
+    mock_orchestrator._tasks[t.id] = t
+    with patch("ai_osop.orchestrator.orchestrator.logger") as mock_logger:
+        done = await mock_orchestrator._is_phase_complete(
+            "test-session", EngagementPhase.RECONNAISSANCE
+        )
+    assert done is True
+    events = [c.args[0] for c in mock_logger.warning.call_args_list if c.args]
+    assert "phase_completed_without_success" not in events
+
+
+def _mk_fake_agent(agent_id, agent_type=AgentType.RECON, status="idle"):
+    from types import SimpleNamespace
+
+    agent = SimpleNamespace()
+    agent.ctx = SimpleNamespace(agent_id=agent_id, agent_type=agent_type, status=status)
+    agent.supports_task_type = lambda t: True
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_claim_closes_idle_window_and_release_restores(mock_orchestrator):
+    """AIOSOP-LOCKWIN-001: claiming an agent must flip its status to 'running' so a
+    concurrent claim for the same type is skipped (no spurious no_agent_found), and
+    releasing must restore 'idle' so it is claimable again."""
+    mock_orchestrator.session_memory.acquire_lock = AsyncMock(return_value=True)
+    mock_orchestrator.session_memory.add_busy_agent = AsyncMock()
+    mock_orchestrator.session_memory.remove_busy_agent = AsyncMock()
+    mock_orchestrator.session_memory.release_lock = AsyncMock()
+
+    agent = _mk_fake_agent("recon-agent-001")
+    mock_orchestrator._agents["recon-agent-001"] = agent
+
+    sched = mock_orchestrator.task_scheduler
+    claimed = await sched._find_available_agent(AgentType.RECON, "full_recon")
+    assert claimed is agent
+    assert agent.ctx.status == "running"  # window closed at claim time
+
+    # A concurrent claim for the same type must now find nothing (agent not idle).
+    second = await sched._find_available_agent(AgentType.RECON, "full_recon")
+    assert second is None
+
+    # Releasing restores availability.
+    await sched._release_agent("recon-agent-001")
+    assert agent.ctx.status == "idle"
+    mock_orchestrator.session_memory.release_lock.assert_awaited()
+
+    third = await sched._find_available_agent(AgentType.RECON, "full_recon")
+    assert third is agent

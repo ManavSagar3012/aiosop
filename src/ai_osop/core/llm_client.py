@@ -72,12 +72,17 @@ class LiteLLMClient:
         # Extract kwargs before the try block so fallback receives the same values
         temperature = kwargs.pop("temperature", self.temperature)
         max_tokens = kwargs.pop("max_tokens", self.max_tokens)
+        # AIOSOP-LLM-TIMEOUT-001: bound the HTTP call so a stalled provider raises
+        # (litellm.Timeout) instead of blocking forever. Without this, a hang never
+        # triggers the fallback branch below and burns the whole task budget.
+        timeout = kwargs.pop("timeout", settings.llm_completion_timeout)
         try:
             response = await litellm.acompletion(
                 model=selected_model,
                 messages=safe_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                timeout=timeout,
                 **kwargs,
             )
         except Exception as primary_err:
@@ -92,6 +97,7 @@ class LiteLLMClient:
                 messages=safe_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                timeout=timeout,
                 **kwargs,
             )
 

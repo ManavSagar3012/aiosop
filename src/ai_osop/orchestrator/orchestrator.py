@@ -867,8 +867,39 @@ class Orchestrator:
         if not phase_tasks:
             return phase in PASS_THROUGH_PHASES
 
-        # Complete only if none of the phase tasks are pending, running, or awaiting_approval
-        return all(t.status not in ["pending", "running", "awaiting_approval"] for t in phase_tasks)
+        # AIOSOP-PHASEGATE-001 (2026-07-03): decide completion by an explicit TERMINAL
+        # allowlist, not an in-flight denylist. The prior check treated a task as
+        # "done" whenever its status was not in ["pending","running","awaiting_approval"],
+        # which silently counted genuinely in-flight statuses the denylist forgot —
+        # notably "scheduled" (Temporal-durable tasks, task_scheduler.py) and
+        # "requeued" — as complete, so the phase auto-advanced while work was still
+        # queued. Worse, it treated terminally-*failed*/reaped tasks (reaper sets
+        # status="failed") as "complete", letting a hollow phase masquerade as done —
+        # the exact over-claim this audit targets.
+        #
+        # Allowlist rationale: an unknown/new status now fails safe toward "not
+        # complete" (a visible, debuggable stall) instead of a silent premature
+        # advance. Keep this set in sync with the statuses tasks can actually reach.
+        TERMINAL_SUCCESS = {"completed", "approved"}
+        TERMINAL_FAILURE = {"failed", "error", "timeout", "cancelled", "discarded"}
+        terminal = TERMINAL_SUCCESS | TERMINAL_FAILURE
+
+        if not all(t.status in terminal for t in phase_tasks):
+            return False
+
+        # All phase tasks have reached a terminal state -> the phase will make no more
+        # progress, so it is "complete" and the pipeline may advance (the deliberate
+        # no-hang design; see _resolve_auto_next). But if NOTHING succeeded, record the
+        # truth loudly rather than advancing as if the phase accomplished its goal.
+        if not any(t.status in TERMINAL_SUCCESS for t in phase_tasks):
+            logger.warning(
+                "phase_completed_without_success",
+                session_id=session_id,
+                phase=phase.value,
+                task_count=len(phase_tasks),
+                statuses=sorted({t.status for t in phase_tasks}),
+            )
+        return True
 
     async def shutdown(self) -> None:
         """Graceful shutdown."""
