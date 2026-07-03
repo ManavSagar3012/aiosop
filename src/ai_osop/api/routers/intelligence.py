@@ -20,29 +20,40 @@ async def get_full_graph(session_id: str, operator: Dict[str, Any] = Depends(ver
     nodes = {}
     edges = []
 
+    # AIOSOP-GRAPHVIZ-001 (2026-07-03): the graph_memory methods return FLATTENED
+    # records — nodes as {id, labels, properties}, edges as {source, target, type}
+    # (this is the established contract; reporting_agent.py consumes the same shape).
+    # This router previously read record.get("n") / record.get("r") — keys that never
+    # exist in those records — so it silently produced an EMPTY graph for EVERY
+    # engagement while the DB held live nodes (runtime-proven: 124 nodes returned by
+    # the query, 0 rendered). Parse the real shape so the dashboard graph reflects
+    # live execution.
     node_records = await state["orchestrator"].graph_memory.get_all_nodes_for_engagement(session_id)
     for record in node_records:
-        n = record.get("n")
-        if n and n.get("id") not in nodes:
-            nodes[n.get("id")] = {
-                "id": n.get("id"),
-                "labels": list(n.get("labels", [])),
-                "properties": dict(n) if hasattr(n, "items") else n,
-            }
+        nid = record.get("id")
+        if nid is None or nid in nodes:
+            continue
+        nodes[nid] = {
+            "id": nid,
+            "labels": list(record.get("labels") or []),
+            "properties": record.get("properties") or {},
+        }
 
     edge_records = await state["orchestrator"].graph_memory.get_all_edges_for_engagement(session_id)
     for record in edge_records:
-        r = record.get("r")
-        if r:
-            edges.append(
-                {
-                    "id": getattr(r, "element_id", None),
-                    "type": getattr(r, "type", record.get("type")),
-                    "from": record.get("from_id") or record.get("source"),
-                    "to": record.get("to_id") or record.get("target"),
-                    "properties": dict(r) if hasattr(r, "items") else r,
-                }
-            )
+        src = record.get("source")
+        tgt = record.get("target")
+        if src is None or tgt is None:
+            continue
+        edges.append(
+            {
+                "id": f"{src}->{tgt}:{record.get('type')}",
+                "type": record.get("type"),
+                "from": src,
+                "to": tgt,
+                "properties": {},
+            }
+        )
 
     return {"nodes": list(nodes.values()), "edges": edges}
 

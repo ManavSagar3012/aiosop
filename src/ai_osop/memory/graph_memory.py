@@ -688,11 +688,16 @@ class GraphMemory:
                 return [record["v"] for record in records]
 
     async def get_all_nodes_for_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
-        """Fetch all nodes for a given engagement (for attack graph viz)."""
+        """Fetch all nodes for a given engagement (for attack graph viz).
+
+        AIOSOP-GRAPHVIZ-001: also return properties so the dashboard graph can render
+        node names/values/urls (KnowledgeGraphs.tsx reads properties.name/value/url).
+        Additive — existing callers read id/labels and ignore the extra key.
+        """
         cypher = """
         MATCH (n)
         WHERE n.engagement_id = $engagement_id
-        RETURN n.id AS id, labels(n) AS labels
+        RETURN n.id AS id, labels(n) AS labels, properties(n) AS properties
         """
         with trace_span(
             "graph_memory.get_all_nodes_for_engagement",
