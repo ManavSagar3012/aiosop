@@ -74,12 +74,15 @@ Write-Host "[4/5] Starting stubs ONLY for ports without a validated real server.
 # Deliberately stubbed because the available "real" implementations are mocks/simulations
 # that would be LESS honest than a stub (which returns tools: []).
 # payload-mcp: REAL Python server with template library, encoding, mutation, fitness evaluator.
-# cloud-mcp: hardcoded AWS data.
-# session-memory / reporting / attack-graph: simulated responses.
-foreach ($port in 8090, 8092, 8093, 8097) {
+# cloud-mcp: REAL boto3 IAM analysis over the HTTP MCP protocol (AIOSOP-CLOUD-MCP-001,
+#   2026-07-03). Honest error without AWS creds, never synthetic findings. No longer stubbed.
+# session-memory / reporting / attack-graph: simulated responses AND not registered by the
+#   API (their real logic is in-process), so they stay stubbed / are effectively unused.
+foreach ($port in 8090, 8092, 8093) {
     Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/mcp_stub.py --port $port" -WindowStyle Hidden
 }
 Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/payload_mcp_server.py --port 8083" -WindowStyle Hidden
+Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/cloud_mcp.py --port 8097" -WindowStyle Hidden
 
 Start-Sleep -Seconds 8
 

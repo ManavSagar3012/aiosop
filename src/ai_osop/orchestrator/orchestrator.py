@@ -676,7 +676,8 @@ class Orchestrator:
         """Background task scheduler."""
         while self._running:
             try:
-                logger.info("scheduler_debug", tasks_count=len(self.state.get_all_tasks()), sessions_count=len(self._sessions))
+                # AIOSOP-LOGHYGIENE-002: per-tick scheduler heartbeat removed (unwired
+                # log level meant this DEBUG line still emitted every tick).
                 # 1. Process pending tasks already in memory (Issue 15: task leakage)
                 for task in list(self.state.get_all_tasks().values()):
                     if task.status == "pending":

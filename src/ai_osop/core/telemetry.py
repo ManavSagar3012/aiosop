@@ -45,6 +45,29 @@ def _get_current_trace_id() -> str:
     return ""
 
 
+def configure_log_level(level_name=None) -> None:
+    """Apply OSOP_LOG_LEVEL to structlog so DEBUG logs are actually suppressible.
+
+    AIOSOP-LOGCFG-001 (2026-07-03): the app relied on structlog's *unconfigured*
+    defaults, which do NO level filtering — so settings.log_level (OSOP_LOG_LEVEL) was
+    dead config and every logger.debug() emitted at full volume. We install a filtering
+    bound logger at the configured level and leave structlog's default processors
+    (timestamp + level + ConsoleRenderer) untouched, so the log FORMAT is unchanged and
+    only the level threshold is applied. Safe to call late — structlog's lazy loggers
+    re-bind on next use.
+    """
+    import logging as _logging
+
+    from ai_osop.core.config import settings
+
+    raw = level_name if level_name is not None else getattr(settings, "log_level", "INFO")
+    name = str(getattr(raw, "value", raw)).upper()  # handle LogLevel enum or plain str
+    level = getattr(_logging, name, _logging.INFO)
+    if not isinstance(level, int):
+        level = _logging.INFO
+    structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(level))
+
+
 class RequestContext:
     """Context manager for binding observability IDs to contextvars and structlog.
 

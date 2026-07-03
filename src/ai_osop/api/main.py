@@ -167,6 +167,12 @@ async def lifespan(app: FastAPI):
 
     logger = logging.getLogger("ai_osop.api")
 
+    # AIOSOP-LOGCFG-001: wire OSOP_LOG_LEVEL into structlog so DEBUG is actually
+    # suppressible (structlog was unconfigured -> no level filtering). Format preserved.
+    from ai_osop.core.telemetry import configure_log_level
+
+    configure_log_level()
+
     # 0. Fail closed on insecure secrets before doing anything else (OSOP-P2-11/P0-03).
     from ai_osop.core.config import assert_production_secrets
 

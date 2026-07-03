@@ -1,67 +1,105 @@
-import sys
-import json
-import asyncio
-import boto3
-from typing import Any, Dict
+# mcp-servers/python/cloud_mcp.py
+"""Cloud security MCP server (HTTP MCP protocol).
 
-# AWS
-async def analyze_aws_iam(account_id):
-    iam = boto3.client("iam")
+AIOSOP-CLOUD-MCP-001 (2026-07-03): rewritten from a raw-socket JSON-RPC server to the
+HTTP MCP protocol (/health, /mcp/initialize, /mcp/execute) that MCPRegistry actually
+speaks. The old raw-socket server could never complete the registry's HTTP initialize
+handshake, so cloud-mcp always appeared "down" despite running and being registered.
+
+Honesty: IAM analysis makes REAL boto3 calls. With AWS credentials it inspects live
+role trust policies; WITHOUT them it returns an honest error in the result payload —
+it never synthesizes findings. boto3 is imported lazily so the server still starts
+(and reports honestly) on hosts where boto3 or credentials are absent.
+"""
+import argparse
+
+import uvicorn
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI(title="Cloud Security MCP Server")
+
+
+async def analyze_aws_iam(account_id=None):
+    """Real AWS IAM trust-policy analysis via boto3. Honest error when unavailable."""
     try:
-        roles = iam.list_roles()
-        results = []
-        for role in roles["Roles"]:
-            policy = iam.get_role(RoleName=role["RoleName"])["Role"]["AssumeRolePolicyDocument"]
-            if "*" in str(policy):
-                results.append({"role": role["Arn"], "issue": "Overly permissive trust policy", "risk": "HIGH"})
-        return {"findings": results}
+        import boto3
+    except Exception as e:  # boto3 not installed
+        return {"status": "unavailable", "provider": "aws", "error": f"boto3 unavailable: {e}"}
+    try:
+        iam = boto3.client("iam")
+        findings = []
+        paginator = iam.get_paginator("list_roles")
+        for page in paginator.paginate():
+            for role in page.get("Roles", []):
+                policy = role.get("AssumeRolePolicyDocument", {})
+                # Wildcard principal/action in a trust policy => anyone may assume the role.
+                if "*" in str(policy):
+                    findings.append({
+                        "role": role.get("Arn"),
+                        "issue": "Overly permissive trust policy (wildcard principal/action)",
+                        "risk": "HIGH",
+                    })
+        return {"status": "success", "provider": "aws",
+                "findings": findings, "findings_count": len(findings)}
     except Exception as e:
-        return {"error": str(e)}
+        # No creds / no permission / no network -> honest error, NEVER synthetic data.
+        return {"status": "unavailable", "provider": "aws", "error": str(e)}
 
-# Stubbing Azure/GCP for now as the infrastructure is not configured
-async def analyze_azure_iam():
-    return {"status": "not_implemented", "msg": "Azure IAM discovery pending"}
 
-async def analyze_gcp_iam():
-    return {"status": "not_implemented", "msg": "GCP IAM discovery pending"}
+TOOLS = [
+    {
+        "name": "analyze_iam_trust_policies",
+        "description": ("Analyze cloud IAM role trust policies for overly-permissive "
+                        "(wildcard) principals/actions. AWS uses real boto3 calls; returns "
+                        "an honest 'unavailable' status when credentials are absent."),
+        "parameters": [
+            {"name": "provider", "type": "string",
+             "description": "aws | azure | gcp (default aws)", "required": False},
+            {"name": "account_id", "type": "string",
+             "description": "Optional AWS account id for scoping/labeling", "required": False},
+        ],
+        "returns": {"status": "string", "findings": "array", "findings_count": "integer"},
+    },
+]
 
-async def handle_request(tool, params):
-    if tool == "health":
-        return {"status": "healthy"}
-    elif tool == "analyze_iam_trust_policies":
-        provider = params.get("provider", "aws")
+
+@app.get("/health")
+async def health():
+    return {"status": "ready", "server": "cloud-mcp"}
+
+
+@app.post("/mcp/initialize")
+async def initialize():
+    return {"server_id": "cloud-mcp", "capabilities": ["tool"], "status": "ready", "tools": TOOLS}
+
+
+class ExecuteRequest(BaseModel):
+    tool_name: str
+    parameters: dict
+    request_id: str
+
+
+@app.post("/mcp/execute")
+async def execute(req: ExecuteRequest):
+    if req.tool_name == "analyze_iam_trust_policies":
+        provider = (req.parameters.get("provider") or "aws").lower()
         if provider == "aws":
-            return await analyze_aws_iam(params.get("account_id"))
-        elif provider == "azure":
-            return await analyze_azure_iam()
-        elif provider == "gcp":
-            return await analyze_gcp_iam()
-    return {"error": f"unknown tool: {tool}"}
+            result = await analyze_aws_iam(req.parameters.get("account_id"))
+        elif provider in ("azure", "gcp"):
+            result = {"status": "not_implemented", "provider": provider,
+                      "error": f"{provider} IAM discovery not implemented"}
+        else:
+            result = {"status": "error", "error": f"unknown provider: {provider}"}
+        # The server executed; the honest per-scan status (success/unavailable/
+        # not_implemented) lives in the result payload. Never synthesize findings.
+        return {"request_id": req.request_id, "status": "success", "result": result}
+    return {"request_id": req.request_id, "status": "error",
+            "error": f"unknown tool: {req.tool_name}"}
+
 
 if __name__ == "__main__":
-    import socket
-    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8097)
     args = parser.parse_args()
-    
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(("127.0.0.1", args.port))
-    server.listen(1)
-    print(f"Cloud MCP running on port {args.port}")
-    sys.stdout.flush()
-    
-    loop = asyncio.get_event_loop()
-    
-    while True:
-        conn, addr = server.accept()
-        with conn:
-            data = conn.recv(65536)
-            if not data: continue
-            try:
-                req = json.loads(data.decode())
-                if "method" in req:
-                    result = loop.run_until_complete(handle_request(req["method"], req.get("params", {})))
-                    conn.send(json.dumps({"jsonrpc": "2.0", "result": result, "id": req.get("id")}).encode())
-            except Exception as e:
-                conn.send(json.dumps({"error": str(e)}).encode())
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")

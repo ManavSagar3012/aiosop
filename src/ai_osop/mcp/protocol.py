@@ -18,6 +18,7 @@ from ai_osop.core.exceptions import MCPConnectionError, MCPException, MCPTimeout
 from ai_osop.core.models import AuditEvent
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
+from ai_osop.core.config import settings
 
 
 class MCPToolParameter(BaseModel):
@@ -165,6 +166,17 @@ class MCPConnection:
             self._circuit_open = True
             self._circuit_opened_at = datetime.utcnow()
             self._consecutive_successes = 0
+            # P0-007: cap half-open attempts so a flapping server cannot loop forever
+            if self._recovery_attempts >= self.CIRCUIT_HALF_OPEN_MAX_ATTEMPTS:
+                # Permanent failure: transition to a terminal state that blocks further probes
+                self._circuit_open = True
+                self._circuit_opened_at = None  # disables recovery via _circuit_breaker_check
+                logger = structlog.get_logger("ai_osop.mcp")
+                logger.error(
+                    "mcp_circuit_permanent_failure",
+                    server_id=self.server_id,
+                    recovery_attempts=self._recovery_attempts,
+                )
         elif self._failure_count >= self.CIRCUIT_THRESHOLD:
             self._circuit_open = True
             self._circuit_opened_at = datetime.utcnow()
@@ -181,8 +193,14 @@ class MCPConnection:
             return "half_open"
         return "closed"
 
-    async def connect(self) -> None:
-        """Establish HTTP and WebSocket connections."""
+    async def connect(self, max_retries: int = 5) -> None:
+        """Establish HTTP and WebSocket connections.
+
+        max_retries controls backoff attempts. Startup warm-up passes 0 (single
+        fast attempt) so an unreachable optional server does not block API
+        startup ~31s; the connection is still stored for lazy reconnect on first
+        real use, which uses the full retry budget.
+        """
         self._circuit_breaker_check()
         if self._circuit_open and not self._half_open:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
@@ -196,11 +214,11 @@ class MCPConnection:
             ) as resp:
                 if resp.status != 200:
                     raise MCPConnectionError(f"Health check failed: {resp.status}")
-        
+
         try:
             await retry_with_backoff(
                 _do_connect,
-                max_retries=5,
+                max_retries=max_retries,
                 base_delay=1,
                 retry_name=f"mcp_connect_{self.server_id}"
             )
@@ -220,7 +238,9 @@ class MCPConnection:
 
         try:
             async with self._session.post(
-                f"http://{self.host}:{self.port}/mcp/initialize", json=request.model_dump()
+                f"http://{self.host}:{self.port}/mcp/initialize",
+                json=request.model_dump(),
+                timeout=aiohttp.ClientTimeout(total=settings.mcp_initialize_timeout),
             ) as resp:
                 data = await resp.json()
                 response = MCPInitializeResponse(**data)
@@ -244,6 +264,8 @@ class MCPConnection:
             )
         if not self._initialized:
             raise MCPException(f"MCP server {self.server_id} not initialized")
+        if self._session is None:
+            raise MCPConnectionError(f"MCP server {self.server_id} session is closed")
 
         tool = self._tools.get(request.tool_name)
         if not tool:
@@ -286,7 +308,10 @@ class MCPConnection:
 
     async def get_state(self) -> MCPStateResponse:
         """Get current server state."""
-        async with self._session.get(f"http://{self.host}:{self.port}/mcp/state") as resp:
+        async with self._session.get(
+            f"http://{self.host}:{self.port}/mcp/state",
+            timeout=aiohttp.ClientTimeout(total=settings.mcp_initialize_timeout),
+        ) as resp:
             data = await resp.json()
             return MCPStateResponse(**data)
 
@@ -300,6 +325,7 @@ class MCPConnection:
             await self._session.close()
         if self._ws:
             await self._ws.close()
+        self._initialized = False
 
 
 class MCPRegistry:
@@ -311,23 +337,45 @@ class MCPRegistry:
         self.call_counts: Dict[str, int] = {}
 
     async def register_server(
-        self, server_id: str, host: str, port: int, auth_token: Optional[str] = None
+        self, server_id: str, host: str, port: int, auth_token: Optional[str] = None,
+        connect_retries: int = 5,
     ) -> MCPConnection:
-        """Register and connect to a new MCP server."""
+        """Register and connect to a new MCP server.
+
+        connect_retries=0 (single attempt) is used for non-blocking startup
+        warm-up; the connection is stored regardless so lazy init can retry.
+        """
         conn = MCPConnection(server_id=server_id, host=host, port=port, auth_token=auth_token)
-        await conn.connect()
-        self._servers[server_id] = conn
-        import logging
-        logging.getLogger("ai_osop.mcp").info(f"Registered server: {server_id}")
+        try:
+            await conn.connect(max_retries=connect_retries)
+            self._servers[server_id] = conn
+            import logging
+            logging.getLogger("ai_osop.mcp").info(f"Registered server: {server_id}")
+        except Exception as e:
+            import logging
+            logging.getLogger("ai_osop.mcp").warning(
+                f"MCP server {server_id} at {host}:{port} unavailable: {e}. Will retry on demand."
+            )
+            # Store connection anyway so lazy init can retry later
+            self._servers[server_id] = conn
         return conn
 
     async def initialize_server(
-        self, server_id: str, scope: Dict[str, Any], credentials: Dict[str, Any], session_id: str
+        self, server_id: str, scope: Any, credentials: Dict[str, Any], session_id: str
     ) -> MCPInitializeResponse:
         """Initialize a registered server."""
         conn = self._servers.get(server_id)
         if not conn:
             raise MCPConnectionError(f"Server {server_id} not registered")
+
+        # AIOSOP-MCP-SCOPE-001 (2026-07-03): accept either a plain dict or a pydantic
+        # scope model. SessionState.scope is a ScopeDefinition, and several vuln_agent
+        # call sites passed it RAW (burp/sqli/xss/stored-xss/race/ssrf scans) — which
+        # failed MCPInitializeRequest(scope: Dict[str, Any]) validation and silently
+        # broke scope initialization for those scans (browser-confirmed XSS in
+        # particular always degraded to reflection). Coerce here so every caller works.
+        if hasattr(scope, "model_dump"):
+            scope = scope.model_dump()
 
         request = MCPInitializeRequest(
             scope=scope, auth_credentials=credentials, session_id=session_id

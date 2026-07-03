@@ -286,9 +286,19 @@ class BugBountyAdapter:
 
         return outcomes
 
-    async def submit_finding(self, finding: Dict[str, Any], platform: str = "h1") -> Dict[str, Any]:
+    async def submit_finding(
+        self,
+        finding: Dict[str, Any],
+        platform: str = "h1",
+        *,
+        live_submit_approved: bool = False,
+    ) -> Dict[str, Any]:
         """
         Submit a verified finding to an external platform.
+
+        Live submission is FAIL-CLOSED: submitting an AI-generated report to a real
+        program requires ``live_submit_approved=True`` (an explicit operator decision),
+        never merely "simulation off + credentials present" (AIOSOP-BB-SAFETY-001).
         """
         logger.info(f"Submitting finding {finding.get('id', 'unknown')} to {platform}...")
 
@@ -302,6 +312,23 @@ class BugBountyAdapter:
                     "platform": "h1",
                     "simulated": True,
                     "timestamp": datetime.utcnow().isoformat(),
+                }
+
+            # AIOSOP-BB-SAFETY-001 (2026-07-03): fail closed. Live submission of an
+            # AI-generated report to a real program requires an EXPLICIT per-call
+            # operator approval — never just "simulation off + credentials present".
+            # Without this, a wired-in or future autonomous caller could spam a live
+            # bug-bounty program with unreviewed reports. (No production caller today.)
+            if not live_submit_approved:
+                logger.error(
+                    f"live_submit_blocked_no_approval finding_id={finding.get('id', 'unknown')} "
+                    f"platform={platform}"
+                )
+                return {
+                    "status": "blocked",
+                    "error": "live submission requires explicit operator approval "
+                    "(live_submit_approved=True)",
+                    "platform": "h1",
                 }
 
             auth = self._get_h1_auth()

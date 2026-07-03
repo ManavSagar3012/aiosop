@@ -694,7 +694,13 @@ class VulnAnalysisAgent(BaseAgent):
         # Initialize the browser connection for this engagement (scope enforcement).
         session = await self.ctx.session_memory.get_session_state(engagement_id)
         if session:
-            await self.browser_adapter.initialize(session.scope, session.session_id)
+            # Best-effort: a browser-mcp init stall (e.g. Chromium launch under load) must
+            # not sink the whole scan. If it fails, the execution probe simply no-ops and we
+            # still run the browser-free reflection probe. (AIOSOP-MCP-TIMEOUT-001)
+            try:
+                await self.browser_adapter.initialize(session.scope, session.session_id)
+            except Exception as e:
+                logger.warning("xss_browser_init_failed", url=url, error=str(e))
 
         token = f"OSOPXSS{uuid.uuid4().hex[:10]}"
 

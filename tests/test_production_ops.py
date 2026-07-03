@@ -74,16 +74,18 @@ class TestReadinessProbe:
         mock_orchestrator.graph_memory = MagicMock()
         mock_orchestrator.graph_memory._driver = AsyncMock()
         mock_orchestrator.graph_memory._driver.verify_connectivity = AsyncMock()
-        # MCP has no healthy servers but this is not critical
+        # MCP server registered but never completed an initialize handshake.
+        # AIOSOP-HEALTH-002: health is derived from conn._initialized, not conn._session.
         mock_orchestrator.mcp_registry = MagicMock()
-        mock_orchestrator.mcp_registry._servers = {"test-mcp": MagicMock(_session=None)}
+        mock_orchestrator.mcp_registry._servers = {"test-mcp": MagicMock(_initialized=False)}
 
         from ai_osop.api.deps import state
         state["orchestrator"] = mock_orchestrator
 
         result = await ready()
-        # MCP is degraded but Redis/Neo4j/Postgres are OK, so status should be degraded
-        assert result["status"] in ("ready", "degraded")
+        # MCP tooling is down but Redis/Neo4j/Postgres are OK -> degraded, not not_ready.
+        assert result["status"] == "degraded"
+        assert result["checks"]["mcp_registry"]["healthy_servers"] == 0
 
 
 class TestStartupRetry:
@@ -252,9 +254,9 @@ class TestReadinessMetric:
         mock_orchestrator.graph_memory = MagicMock()
         mock_orchestrator.graph_memory._driver = AsyncMock()
         mock_orchestrator.graph_memory._driver.verify_connectivity = AsyncMock()
-        # MCP degraded: no healthy servers
+        # MCP degraded: server registered but never initialized (AIOSOP-HEALTH-002).
         mock_orchestrator.mcp_registry = MagicMock()
-        mock_orchestrator.mcp_registry._servers = {"test-mcp": MagicMock(_session=None)}
+        mock_orchestrator.mcp_registry._servers = {"test-mcp": MagicMock(_initialized=False)}
 
         from ai_osop.api.deps import state
         state["orchestrator"] = mock_orchestrator
