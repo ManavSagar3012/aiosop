@@ -75,6 +75,7 @@ export default {
         "display-lg-mobile": ["24px", { lineHeight: "32px", fontWeight: "700" }],
         "headline-md": ["20px", { lineHeight: "28px", letterSpacing: "0.01em", fontWeight: "600" }],
         "label-caps": ["11px", { lineHeight: "14px", letterSpacing: "0.15em", fontWeight: "700" }],
+        "label-xs": ["10px", { lineHeight: "13px", letterSpacing: "0.12em", fontWeight: "700" }],
         "code-sm": ["12px", { lineHeight: "16px", fontWeight: "400" }],
       },
     },
