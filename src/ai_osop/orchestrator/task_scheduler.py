@@ -289,15 +289,34 @@ class TaskScheduler:
                     continue
                 
                 await self._orch.session_memory.add_busy_agent(agent.ctx.agent_id)
+                # AIOSOP-LOCKWIN-001 (2026-07-03): flip status to "running" at claim
+                # time. The claim (lock + busy set) and the agent's own status flip
+                # (execute_task sets "running" only once it runs, on a later
+                # create_task tick) were decoupled, so during that window a concurrent
+                # scheduler tick matched this agent as "idle", then failed acquire_lock
+                # and emitted a spurious no_agent_found — delaying the losing task a
+                # full scheduler cycle under contention. Setting status here makes the
+                # claim atomic w.r.t. the availability predicate on line ~280.
+                agent.ctx.status = "running"
                 return agent
         return None
 
     async def _release_agent(self, agent_id: Optional[str]) -> None:
-        """Release an agent claim."""
+        """Release an agent claim — the exact inverse of the claim in
+        _find_available_agent (busy set, lock, status)."""
         if agent_id:
             await self._orch.session_memory.remove_busy_agent(agent_id)
             lock_key = f"lock:agent:{agent_id}"
             await self._orch.session_memory.release_lock(lock_key, "locked")
+            # AIOSOP-LOCKWIN-001: the claim set status="running"; restore "idle" so the
+            # agent is claimable again. On the normal execution path execute_task has
+            # already reset "idle" (harmless double-set); this is what covers the paths
+            # where execution never ran — assign-time persistence failure and the
+            # availability-only probe in _on_task_success — so a claimed agent can
+            # never get stuck "running" forever.
+            agent = self._orch._agents.get(agent_id)
+            if agent is not None:
+                agent.ctx.status = "idle"
     @staticmethod
     def _sanitize_external_payload(task: Task) -> None:
         """Strip operator-approval tokens injected by any non-orchestrator producer
@@ -567,6 +586,11 @@ class TaskScheduler:
             if not recon_agent:
                 logger.info("no_recon_agent_for_chained_surface", engagement_id=eid)
                 return
+            # AIOSOP-LOCKWIN-001: this is an availability probe only — claim_auto_discovery
+            # re-resolves its own agent and never uses this handle. _find_available_agent
+            # claims (lock + busy + status=running), so release immediately or the claim
+            # leaks until the 30s lock TTL and the recon agent looks permanently busy.
+            await self._release_agent(recon_agent.ctx.agent_id)
 
             auth_user_label = await self._orch._pick_auth_user_label(eid)
             if not auth_user_label:

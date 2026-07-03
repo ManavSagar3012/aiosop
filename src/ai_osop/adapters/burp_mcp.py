@@ -33,6 +33,45 @@ class BurpMCPAdapter:
         self._proxy_history_buffer: List[Dict[str, Any]] = []
         self._max_history_size = 10000
 
+    @staticmethod
+    def _extract_error(response: MCPExecuteResponse) -> str:
+        """Surface the *real* server-side error.
+
+        AIOSOP-BURP-ERR-001 (2026-07-03): the Burp Montoya MCP returns its actual
+        failure inside ``result`` (e.g. ``result.error`` — a Java exception string
+        such as ``Scanner.startAudit(...) is null``), while the protocol's top-level
+        ``error`` field stays empty. Reading only ``response.error`` therefore
+        collapsed every real Burp failure to the useless string ``"unknown error"``,
+        masking the root cause (runtime-proven on scan_target vs the Syfe target).
+        Prefer the top-level error, then common nested keys, before giving up.
+        """
+        if response.error:
+            return response.error
+        result = response.result or {}
+        if isinstance(result, dict):
+            for key in ("error", "error_message", "message", "detail", "reason"):
+                val = result.get(key)
+                if val:
+                    return str(val)
+        return "unknown error"
+
+    def _check_response(self, response: MCPExecuteResponse, operation: str) -> None:
+        """Raise typed exceptions for non-success MCP responses so callers can
+        distinguish 'no data' from 'operation failed' (FINDING-011 / FINDING-012)."""
+        if response.status == "success":
+            return
+        from ai_osop.core.exceptions import MCPException, MCPTimeoutError
+
+        if response.status == "timeout":
+            raise MCPTimeoutError(f"Burp MCP operation '{operation}' timed out")
+        if response.status == "circuit_open":
+            raise MCPException(
+                f"Burp MCP operation '{operation}' rejected: circuit breaker is open"
+            )
+        raise MCPException(
+            f"Burp MCP operation '{operation}' failed: {self._extract_error(response)}"
+        )
+
     async def initialize(self, scope: ScopeDefinition, session_id: str) -> None:
         """Initialize Burp MCP with scope and auth."""
         credentials = {}
@@ -57,9 +96,11 @@ class BurpMCPAdapter:
                 "max_depth": 10,
             },
         }
-        return await self.registry.execute_tool(
+        response = await self.registry.execute_tool(
             self.SERVER_ID, "scan_target", params, timeout_override=3600
         )
+        self._check_response(response, "scan_target")
+        return response
 
     async def get_proxy_history(
         self, filters: Optional[Dict[str, Any]] = None
@@ -85,7 +126,10 @@ class BurpMCPAdapter:
             self.SERVER_ID, "get_scan_issues", params
         )
 
-        if response.status != "success" or not response.result:
+        if response.status != "success":
+            self._check_response(response, "get_scan_issues")
+            return []
+        if not response.result:
             return []
 
         raw_issues = response.result.get("issues", [])
@@ -106,9 +150,11 @@ class BurpMCPAdapter:
             "request": request,
             "tab_name": tab_name or f"auto-{datetime.utcnow().timestamp()}",
         }
-        return await self.registry.execute_tool(
+        response = await self.registry.execute_tool(
             self.SERVER_ID, "send_to_repeater", params
         )
+        self._check_response(response, "send_to_repeater")
+        return response
 
     async def intruder_attack(
         self,
@@ -125,9 +171,11 @@ class BurpMCPAdapter:
             "config": config
             or {"attack_type": "sniper", "thread_count": 10, "delay_ms": 100},
         }
-        return await self.registry.execute_tool(
+        response = await self.registry.execute_tool(
             self.SERVER_ID, "intruder_attack", params, timeout_override=1800
         )
+        self._check_response(response, "intruder_attack")
+        return response
 
     async def extension_call(
         self, extension_name: str, method: str, params: Dict[str, Any]
@@ -138,9 +186,11 @@ class BurpMCPAdapter:
             "method": method,
             "params": params,
         }
-        return await self.registry.execute_tool(
+        response = await self.registry.execute_tool(
             self.SERVER_ID, "extension_call", request_params, timeout_override=300
         )
+        self._check_response(response, "extension_call")
+        return response
 
     async def get_sitemap(self, url_prefix: Optional[str] = None) -> List[Endpoint]:
         """Extract site map as normalized endpoints."""

@@ -232,6 +232,16 @@ class Settings(BaseSettings):
     )
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.1  # Low temperature for deterministic security reasoning
+    # AIOSOP-LLM-TIMEOUT-001 (2026-07-03): bound every LLM completion HTTP call.
+    # litellm.acompletion previously passed NO timeout, so a stalled provider blocked
+    # forever (not an exception -> the fallback branch never fired). Runtime evidence:
+    # recon's think() hung the full 300s task budget (think_START logged, think_DONE
+    # never), starving port-scan/crawl/Wayback/Shodan and getting reaped at ~953s.
+    # Bound each call so a hang degrades instead of stalling the pipeline. Primary +
+    # fallback are each bounded, so worst case is 2x this value.
+    llm_completion_timeout: int = Field(
+        default=60, validation_alias="OSOP_LLM_COMPLETION_TIMEOUT"
+    )
     mock_llm: bool = Field(default=False, validation_alias="OSOP_MOCK_LLM")
     # OSOP-P0-02: simulated/mock findings must NEVER reach the real corpus, reports, or
     # dashboard metrics unless explicitly opted in (e.g. pipeline self-tests). Persistence
