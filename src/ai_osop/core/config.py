@@ -247,6 +247,12 @@ class Settings(BaseSettings):
     # Bound browser-mcp calls so a down service fails fast (-> retry engine)
     # instead of hanging until the task reaper fires.
     browser_mcp_timeout: int = 30
+    # AIOSOP-MCP-TIMEOUT-001 (2026-07-03): bound the MCP initialize/get_state HTTP calls.
+    # These previously passed NO aiohttp timeout and inherited the 5-minute (300s) client
+    # default, so a hung browser-mcp initialize (Chromium launch) blocked the calling agent
+    # ~300s and was only caught by the 343s stuck-task reaper (the xss_scan hang). Init can
+    # be heavier than a normal request (browser launch), hence a dedicated, generous bound.
+    mcp_initialize_timeout: int = 60
     # Nuclei template scans run for minutes; the 30s default silently times them
     # out to zero findings, so give them a dedicated generous bound.
     nuclei_mcp_timeout: int = 900
@@ -476,6 +482,11 @@ NUCLEI_SCAN_PROFILES = {
 
 _INSECURE_DEV_SIGNING_KEY = b"dev-insecure-scope-signing-key"
 _PROD_ENVIRONMENTS = {"production", "prod", "staging", "stage"}
+# AIOSOP-LOGHYGIENE-001 (2026-07-03): warn ONCE per process about the insecure dev
+# key instead of on every scope_signing_key() call. This function runs on every
+# exploit-class task assignment, audit-chain append, and session store, so the prior
+# per-call WARNING produced dozens of identical lines per engagement.
+_insecure_key_warned = False
 
 
 def scope_signing_key() -> bytes:
@@ -500,8 +511,13 @@ def scope_signing_key() -> bytes:
             "OSOP_AUDIT_SECRET_KEY is not set. Refusing to sign/verify with an insecure "
             "default in a production environment (scope + audit integrity would be forgeable)."
         )
-    logger = logging.getLogger(__name__)
-    logger.warning("scope_signing_key_insecure_default: using insecure dev key.")
+    global _insecure_key_warned
+    if not _insecure_key_warned:
+        logging.getLogger(__name__).warning(
+            "scope_signing_key_insecure_default: using insecure dev key; set "
+            "OSOP_AUDIT_SECRET_KEY to override. This is refused in production/staging."
+        )
+        _insecure_key_warned = True
     return _INSECURE_DEV_SIGNING_KEY
 
 

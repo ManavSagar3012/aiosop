@@ -8,7 +8,7 @@ and passes itself as context so the scheduler can access it.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import structlog
@@ -31,7 +31,8 @@ class TaskScheduler:
     _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
-        self.state_machine = EngagementStateMachine(self._orch.session_memory)
+        self.state_machine = None # Injected by Orchestrator post-init to break circularity
+
 
     async def schedule_task(self, task: Task) -> Task:
         """Schedule a task for execution."""
@@ -107,6 +108,7 @@ class TaskScheduler:
                     if status in self._FAILURE_STATUSES:
                         task.status = "failed"
                         task.result = result
+                        task.error = result.get("error")
                     else:
                         task.status = "completed"
                         task.result = (
@@ -117,6 +119,7 @@ class TaskScheduler:
                 except Exception as e:
                     task.status = "failed"
                     task.result = {"status": "failed", "error": str(e)}
+                    task.error = str(e)
                     await self._orch.session_memory.store_task(task)
                     return task.result
                 finally:
@@ -167,24 +170,31 @@ class TaskScheduler:
 
             # GAP-2-4: tamper detection for exploit-class tasks. If the engagement's
             # scope carries a signature that no longer verifies, the manifest was
-            # altered after creation — refuse to run the exploit and audit it. (Legacy
-            # unsigned scopes are allowed through; signing happens at creation now.)
+            # altered after creation — refuse to run the exploit and audit it.
+            # P0-005: fail closed on unsigned scopes too; legacy unsigned scopes are
+            # no longer permitted for exploit-class tasks.
             if task.agent_type == AgentType.EXPLOIT_VALIDATION or task.type in (
                 "validate_exploit",
                 "exploit_validation",
             ):
                 _sess = self._orch._sessions.get(task.engagement_id)
                 _scope = getattr(_sess, "scope", None) if _sess is not None else None
-                if _scope is not None and getattr(_scope, "signature", None):
-                    from ai_osop.core.config import scope_signing_key
+                if _scope is None or not getattr(_scope, "signature", None):
+                    logger.error("scope_unsigned_or_missing", task_id=task.id)
+                    await self._on_task_failure(
+                        task,
+                        {"error": "scope is unsigned or unavailable", "error_type": "ScopeTamper"},
+                    )
+                    return
+                from ai_osop.core.config import scope_signing_key
 
-                    if not _scope.verify_signature(scope_signing_key()):
-                        logger.error("scope_signature_invalid", task_id=task.id)
-                        await self._on_task_failure(
-                            task,
-                            {"error": "scope signature invalid", "error_type": "ScopeTamper"},
-                        )
-                        return
+                if not _scope.verify_signature(scope_signing_key()):
+                    logger.error("scope_signature_invalid", task_id=task.id)
+                    await self._on_task_failure(
+                        task,
+                        {"error": "scope signature invalid", "error_type": "ScopeTamper"},
+                    )
+                    return
 
             # Approval gate FIRST. Authority is the operator-resolved ApprovalRequest
             # record (is_task_approved), NEVER task.payload.operator_approved — that
@@ -213,26 +223,44 @@ class TaskScheduler:
 
             # Find + atomically claim an available agent
             agent = await self._find_available_agent(task.agent_type, task.type)
-            logger.info("find_agent_result", agent=agent)
             if not agent:
                 logger.info("no_agent_found", task_id=task.id)
             if agent:
-                task.assigned_agent_id = agent.ctx.agent_id
-                task.status = "running"
-                task.started_at = datetime.utcnow()
-                task.lease_expires = datetime.utcnow() + timedelta(seconds=90)
-                await self._orch.graph_memory.upsert_task(task)
-                await self._orch.session_memory.store_task(task)
-                await self._orch.coordination_bus.publish(
-                    "task.assigned",
-                    {"task_id": task.id, "agent_id": agent.ctx.agent_id},
-                    "orchestrator",
-                )
-                # GAP-2-6: retain the handle so halt_engagement can cancel it.
-                handle = asyncio.create_task(self._execute_via_agent(agent, task))
-                handles = getattr(self._orch, "_task_handles", None)
-                if handles is not None:
-                    handles[task.id] = handle
+                started_execution = False
+                try:
+                    task.assigned_agent_id = agent.ctx.agent_id
+                    task.status = "running"
+                    task.started_at = datetime.utcnow()
+                    task.lease_expires = datetime.utcnow() + timedelta(seconds=90)
+                    await self._orch.graph_memory.upsert_task(task)
+                    await self._orch.session_memory.store_task(task)
+                    await self._orch.coordination_bus.publish(
+                        "task.assigned",
+                        {"task_id": task.id, "agent_id": agent.ctx.agent_id},
+                        "orchestrator",
+                    )
+                    # GAP-2-6: retain the handle so halt_engagement can cancel it.
+                    handle = asyncio.create_task(self._execute_via_agent(agent, task))
+                    started_execution = True
+                    handles = getattr(self._orch, "_task_handles", None)
+                    if handles is not None:
+                        handles[task.id] = handle
+                except Exception as e:
+                    logger.error(
+                        "assign_task_persistence_failed",
+                        task_id=task.id,
+                        agent_id=agent.ctx.agent_id,
+                        error=str(e),
+                    )
+                    task.status = "failed"
+                    task.result = {"status": "failed", "error": str(e)}
+                    await self._orch.graph_memory.upsert_task(task)
+                    await self._orch.session_memory.store_task(task)
+                finally:
+                    # P0-009: if _execute_via_agent was never started, the agent lock
+                    # would leak forever. Release it here as a safety net.
+                    if not started_execution:
+                        await self._release_agent(agent.ctx.agent_id)
             else:
                 task.status = "pending"
                 await self._orch.graph_memory.upsert_task(task)
@@ -243,7 +271,12 @@ class TaskScheduler:
     ) -> Optional[Any]:
         """Find and atomically claim an idle agent."""
         for agent in self._orch._agents.values():
-            logger.info("matching_debug", agent_id=agent.ctx.agent_id, type_match=(str(agent.ctx.agent_type) == str(agent_type)), agent_type=str(agent.ctx.agent_type), target_type=str(agent_type), status=agent.ctx.status, status_match=(agent.ctx.status == "idle"))
+            # AIOSOP-LOGHYGIENE-002 (2026-07-03): removed per-agent, per-tick matcher
+            # telemetry (matching_debug / lock_attempt / lock_result). At INFO it emitted
+            # ~N_agents lines every scheduler tick (~3.7k lines per run) and — because
+            # structlog is not level-filtered here (OSOP_LOG_LEVEL is unwired, see
+            # AIOSOP-LOGCFG-001) — could not be quieted by lowering the level. It also
+            # actively drowned real diagnostics during live triage.
             if str(agent.ctx.agent_type) == str(agent_type) and agent.ctx.status == "idle":
                 if task_type and hasattr(agent, "supports_task_type"):
                     if not agent.supports_task_type(task_type):
@@ -609,11 +642,10 @@ class TaskScheduler:
             return
 
         # Persist spawned edge in Neo4j
-        async with self._orch.graph_memory._driver.session() as g_session:
-            await g_session.run(
-                "MATCH (p:Task {id: $parent_id}), (c:Task {id: $child_id}) MERGE (p)-[:SPAWNED]->(c)",
-                {"parent_id": task.id, "child_id": child.id}
-            )
+        await self._orch.graph_memory.run_write_query(
+            "MATCH (p:Task {id: $parent_id}), (c:Task {id: $child_id}) MERGE (p)-[:SPAWNED]->(c)",
+            {"parent_id": task.id, "child_id": child.id}
+        )
 
         # Audit log event
         await self._orch._audit_log(

@@ -137,5 +137,63 @@ async def discard_dlq_entry(
 
 @router.get("/readiness/trust-score")
 async def get_trust_score(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
-    """Get the latest production trust and readiness score."""
-    return {"trust_score": 97, "readiness": "ready", "last_audited": "2026-06-23T15:00:00Z"}
+    """Compute a LIVE trust/readiness score from real subsystem health.
+
+    AIOSOP-TRUST-001 (2026-07-03): this endpoint previously returned a hardcoded
+    ``{"trust_score": 97, "readiness": "ready", "last_audited": "2026-06-23T15:00:00Z"}``
+    regardless of actual state — a fabricated confidence signal that still reported
+    "ready / 97" while the entire MCP tool tier was down and /agents was 500ing. It now
+    derives the score from live checks: critical backing services (redis/neo4j/postgres)
+    weighted heavily (the platform cannot operate without them) and MCP tool reality
+    weighted meaningfully (the platform cannot produce real findings without tools).
+    ``last_audited`` is the actual time this score was computed.
+    """
+    from ai_osop.api.health import (
+        _check_redis,
+        _check_neo4j,
+        _check_postgres,
+        _check_mcp_registry,
+    )
+
+    redis = await _check_redis()
+    neo4j = await _check_neo4j()
+    postgres = await _check_postgres()
+    mcp = await _check_mcp_registry()
+
+    critical = {"redis": redis, "neo4j": neo4j, "postgres": postgres}
+    crit_total = len(critical)
+    crit_healthy = sum(1 for c in critical.values() if c.get("status") == "healthy")
+    total_mcp = mcp.get("total_servers", 0) or 0
+    healthy_mcp = mcp.get("healthy_servers", 0) or 0
+
+    critical_score = crit_healthy / crit_total if crit_total else 0.0
+    tool_score = (healthy_mcp / total_mcp) if total_mcp else 0.0
+    trust_score = round(100 * (0.6 * critical_score + 0.4 * tool_score))
+
+    if crit_healthy < crit_total:
+        readiness = "not_ready"
+    elif healthy_mcp == 0:
+        # backing services up but no working tools -> can serve, can't do offensive work
+        readiness = "degraded"
+    else:
+        readiness = "ready"
+
+    return {
+        "trust_score": trust_score,
+        "readiness": readiness,
+        "last_audited": datetime.utcnow().isoformat() + "Z",
+        "components": {
+            "critical_services": {
+                "healthy": crit_healthy,
+                "total": crit_total,
+                "redis": redis.get("status"),
+                "neo4j": neo4j.get("status"),
+                "postgres": postgres.get("status"),
+            },
+            "mcp_tooling": {
+                "healthy_servers": healthy_mcp,
+                "total_servers": total_mcp,
+                "status": mcp.get("status"),
+            },
+        },
+    }

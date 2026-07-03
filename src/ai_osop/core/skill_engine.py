@@ -1,6 +1,9 @@
 import json
 import logging
 import os
+import tempfile
+import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +31,9 @@ class SkillEngine:
         self.llm_client = llm_client
         self.skills: Dict[str, Dict[str, Any]] = {}
         self.execution_log: List[Dict[str, Any]] = []
+        # Serialize concurrent stat saves so multiple agents cannot collide on the
+        # temp file during the write→replace swap (AIOSOP-SKILLSTATS-001).
+        self._save_lock = threading.Lock()
         # Durable stats path: deterministic from skills_dir (CWD-independent),
         # overridable via arg or OSOP_SKILL_STATS_PATH.
         self.stats_path = (
@@ -58,24 +64,63 @@ class SkillEngine:
             self.execution_log = log[-1000:]
 
     def _save_stats(self) -> None:
-        """Atomically persist per-skill counters + recent execution log."""
-        try:
-            payload = {
-                "skills": {
-                    sid: {field: skill.get(field, 0) for field in self._STAT_FIELDS}
-                    for sid, skill in self.skills.items()
-                    if skill.get("usage_count", 0)
-                    or skill.get("verified_findings", 0)
-                    or skill.get("accepted_findings", 0)
-                },
-                "execution_log": self.execution_log[-1000:],
-            }
-            tmp = f"{self.stats_path}.tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f)
-            os.replace(tmp, self.stats_path)
-        except Exception as e:
-            logger.warning(f"Could not save skill stats to {self.stats_path}: {e}")
+        """Atomically persist per-skill counters + recent execution log.
+
+        Hardened for AIOSOP-SKILLSTATS-001 (2026-07-03): the previous version wrote
+        to a single fixed ``<stats>.tmp`` path shared by every writer. Under the live
+        API, many agents trigger a save on each skill execution, so concurrent savers
+        collided on that one temp file — on Windows the loser of the race sees the
+        winner's handle and os.replace raises WinError 5 (Access Denied). The
+        OneDrive-synced destination compounds this with transient external locks.
+        Because the failure was caught and only logged at WARNING, skill stats
+        silently stopped persisting, degrading the learning brain.
+
+        Fix: (1) a UNIQUE temp file per write in the target directory, (2) a lock so
+        two savers never overlap, (3) a bounded retry on the atomic swap to ride out
+        transient OneDrive/AV/indexer locks, and (4) always clean up the temp file.
+        """
+        payload = {
+            "skills": {
+                sid: {field: skill.get(field, 0) for field in self._STAT_FIELDS}
+                for sid, skill in self.skills.items()
+                if skill.get("usage_count", 0)
+                or skill.get("verified_findings", 0)
+                or skill.get("accepted_findings", 0)
+            },
+            "execution_log": self.execution_log[-1000:],
+        }
+        target = self.stats_path
+        directory = os.path.dirname(target) or "."
+        with self._save_lock:
+            tmp: Optional[str] = None
+            try:
+                os.makedirs(directory, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(
+                    dir=directory, prefix=".skill_stats.", suffix=".tmp"
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(payload, f)
+                last_err: Optional[Exception] = None
+                for attempt in range(5):
+                    try:
+                        os.replace(tmp, target)
+                        tmp = None  # ownership transferred; nothing to clean up
+                        break
+                    except PermissionError as e:
+                        # OneDrive/AV/indexer may briefly hold the destination handle.
+                        last_err = e
+                        time.sleep(0.05 * (attempt + 1))
+                else:
+                    if last_err is not None:
+                        raise last_err
+            except Exception as e:
+                logger.warning(f"Could not save skill stats to {target}: {e}")
+            finally:
+                if tmp and os.path.exists(tmp):
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
 
     def resolve_ids(self, ids: List[str]) -> List[str]:
         """Map a list of requested skill ids to REAL loaded skill ids, substituting

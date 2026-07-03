@@ -97,10 +97,18 @@ FAILED_TASKS = Gauge(
 )
 
 # Agent metrics
+# AIOSOP-METRIC-001 (2026-07-02): This gauge was declared with an ["agent_type"]
+# label, but every call site (api.deps.update_active_agents and
+# core.observability.update_active_agents) sets a bare total via .set(count) with
+# no .labels(...). A labeled Prometheus metric raises
+# ValueError('gauge metric is missing label values') on any unlabeled .set(), so
+# this gauge never populated and every GET /agents returned 500 (the handler calls
+# update_active_agents(len(agents))). No caller differentiates by agent_type for
+# this metric, so the label was dead. Unlabeled matches the total-count semantics
+# its name implies and its callers actually use.
 ACTIVE_AGENTS = ACTIVE_AGENT_COUNT = Gauge(
     "ai_osop_active_agent_count",
     "Number of active agents",
-    ["agent_type"],
 )
 AGENT_EXECUTION_DURATION = Histogram(
     "ai_osop_agent_execution_duration_seconds",

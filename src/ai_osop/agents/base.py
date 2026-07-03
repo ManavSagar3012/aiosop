@@ -175,6 +175,19 @@ class BaseAgent(ABC):
                 break
             except GeneratorExit:
                 break
+            except RuntimeError as e:
+                # AIOSOP-LIFECYCLE-001 (2026-07-03): during interpreter / event-loop
+                # teardown (e.g. an agent started in a unit test that never called
+                # shutdown(), or a shutdown race) the queue/loop can already be gone.
+                # That is expected teardown, not a worker fault — exit quietly instead
+                # of logging a misleading ERROR and retrying.
+                if "Event loop is closed" in str(e) or "no running event loop" in str(e):
+                    break
+                agent_logger.error("worker_error", agent_id=self.ctx.agent_id, error=str(e))
+                try:
+                    await asyncio.sleep(5)
+                except (RuntimeError, asyncio.CancelledError):
+                    break
             except Exception as e:
                 agent_logger.error("worker_error", agent_id=self.ctx.agent_id, error=str(e))
                 try:
@@ -491,10 +504,21 @@ class BaseAgent(ABC):
                         "hostname": socket.gethostname(),
                     },
                 )
+            except (asyncio.CancelledError, GeneratorExit):
+                break
+            except RuntimeError as e:
+                # AIOSOP-LIFECYCLE-001: expected during interpreter/event-loop teardown
+                # (agent started without a matching shutdown()); exit quietly.
+                if "Event loop is closed" in str(e) or "no running event loop" in str(e):
+                    break
+                agent_logger.warning("heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e))
             except Exception as e:
                 # One bad iteration must never permanently stop heartbeats.
                 agent_logger.warning("heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e))
-            await asyncio.sleep(5)
+            try:
+                await asyncio.sleep(5)
+            except (asyncio.CancelledError, RuntimeError):
+                break
 
     async def shutdown(self) -> None:
         """Graceful shutdown with state preservation and leak prevention.

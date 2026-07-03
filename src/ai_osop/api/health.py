@@ -119,7 +119,16 @@ async def _check_postgres() -> Dict[str, Any]:
 
 
 async def _check_mcp_registry() -> Dict[str, Any]:
-    """Check MCP registry health (how many servers are ready)."""
+    """Check MCP registry health (how many servers completed a real initialize handshake).
+
+    AIOSOP-HEALTH-002 (2026-07-03): previously a server was counted "healthy" whenever
+    ``conn._session`` was non-None. But the client session is created at registration
+    time (register_optional_mcp_servers uses connect_retries=0) and exists whether or not
+    the remote is reachable, so /ready reported "healthy 10/10" while every MCP server was
+    actually down — a false positive that contradicted /health/mcp and /system/mcp/health.
+    Health now reflects a real MCP initialize handshake (``conn._initialized``), consistent
+    with the reality probe and the circuit-breaker view.
+    """
     try:
         orch = state.get("orchestrator")
         if not orch or not orch.mcp_registry:
@@ -130,13 +139,23 @@ async def _check_mcp_registry() -> Dict[str, Any]:
         errors = []
         for server_id in servers:
             conn = registry._servers.get(server_id)
-            if conn and conn._session:
+            if conn is not None and getattr(conn, "_initialized", False):
                 healthy += 1
             else:
-                errors.append(f"{server_id}: not connected")
+                circuit = (
+                    conn.get_circuit_state()
+                    if conn is not None and hasattr(conn, "get_circuit_state")
+                    else "unknown"
+                )
+                errors.append(f"{server_id}: not initialized (circuit={circuit})")
+        total = len(servers)
+        # Keep the established 3-value contract: healthy (all up or none registered)
+        # vs degraded (any not initialized). The healthy/total counts carry the
+        # precise severity; "unhealthy" stays reserved for the exception path below.
+        status = "healthy" if (total == 0 or healthy == total) else "degraded"
         return {
-            "status": "healthy" if healthy > 0 else "degraded",
-            "total_servers": len(servers),
+            "status": status,
+            "total_servers": total,
             "healthy_servers": healthy,
             "errors": errors,
         }
@@ -385,7 +404,17 @@ async def health() -> Dict[str, Any]:
     does not verify dependencies. Kubernetes uses this to decide whether to
     restart the container.
     """
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    # Diagnostic: check for duplicate module imports
+    import sys as _sys, ai_osop.api.main as _m
+    _mods = [k for k in _sys.modules if "ai_osop.api.main" in k]
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "diag": {
+            "loaded_from": getattr(_m, "__file__", "unknown"),
+            "modules_keys": _mods,
+        }
+    }
 
 
 @router.get("/ready", status_code=status.HTTP_200_OK)
@@ -619,12 +648,13 @@ async def run_startup_self_test() -> Dict[str, Any]:
         start = time.monotonic()
         try:
             from prometheus_client import REGISTRY
-            metrics_ok = len(REGISTRY.collectors()) > 0
+            # Use internal registry mapping to check if any collectors are registered
+            metrics_ok = len(REGISTRY._names_to_collectors) > 0 or len(REGISTRY._collector_to_names) > 0
             results["metrics_layer"] = {
                 "status": "PASS" if metrics_ok else "degraded",
                 "latency_ms": round((time.monotonic() - start) * 1000, 2),
                 "initialized": metrics_ok,
-                "collector_count": len(REGISTRY.collectors()),
+                "collector_count": len(REGISTRY._names_to_collectors),
                 "critical": False,
             }
             if metrics_ok:
