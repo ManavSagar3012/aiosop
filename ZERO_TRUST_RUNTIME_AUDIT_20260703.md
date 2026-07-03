@@ -88,6 +88,16 @@ Ranked by leverage over "valid, high-impact findings":
 - Evidence: startup logs `session_encryption_key_missing: plaintext storage in dev mode`.
 - Neo4j warnings for a missing `Session` label/`authenticated` property cause `authz_testing_skipped_no_sessions` (diff-auth path silently no-ops).
 
+### 4.7 The three "honest gaps" from the fix session — resolved/diagnosed (2026-07-03)
+**(a) Agent reasoning degraded (was described as "Ollama down") — RE-DIAGNOSED as a host memory limit; code resilience shipped.**
+- Correction: Ollama is **up** and `qwen3:8b`/`phi3`/`llama3` are pulled and functional in isolation. The real cause is (i) **cold-load latency** (loading a 2–5GB model takes ~40–60s, blowing the 60s bound) and (ii) **insufficient RAM under full-stack load** — with the API + 8 MCP servers + 4 Docker containers running, even `phi3` (2.2GB) OOMs (`ggml_backend_cpu_buffer_type_alloc_buffer: failed`). Host has 15.7GB total / ~9.5GB free but Ollama still can't allocate the model+KV-cache reliably.
+- **Code shipped (AIOSOP-LLM-WARM-001):** `keep_alive` passed to ollama (default `30m`, bounded so a pinned model can't starve the stack); startup `warm_up()` pre-loads **only the primary** (warming both collides → OOM; the smaller `phi3` fallback is an on-demand degradation path); `think()` capped at `llm_reasoning_max_tokens` (512) so a reasoning model's `<think>` trace can't blow the bound. Net: the platform now degrades gracefully and will serve real reasoning *fast* the moment memory is available — but it cannot manufacture RAM.
+- **Operational fix required (user's call):** free memory (stop juice-shop / idle MCP servers while running LLM flows), OR switch to the **cloud models already present** (`kimi-k2.5:cloud`, `minimax-m2.5:cloud` — zero local memory, need Ollama-cloud auth), OR add RAM. Until then, agent reasoning stays **UNVERIFIED/degraded** and the platform relies on deterministic tools (nuclei/recon), not LLM reasoning.
+
+**(b) Burp active-scan needs Pro — graceful degrade SHIPPED (AIOSOP-BURP-DEGRADE-001).** `_execute_burp_scan` now catches the scanner-unavailable `MCPException` and continues to collect sitemap/proxy-history/existing issues (all-edition proxy data) instead of raising → the task **completes** with whatever passive data exists rather than poisoning the DLQ. Verified end-to-end (real Burp :8081): exception caught, real reason surfaced, downstream collection ran. Provisioning Burp Pro remains the way to get active-scan findings.
+
+**(c) Health probe didn't cover scan — FIXED & VERIFIED (AIOSOP-BURP-PROBE-001).** `/health/tooling/deep` `burp_probe()` now checks **active-scan capability** (safe: `scan_target` errors at `startAudit` before any audit starts), not just `send_http_request`. Runtime: burp verdict is now `scan_unavailable` with `scan_capable:false` + real reason, and `channels_verified` honestly reads `3/4` / overall `degraded` (was a false `4/4`).
+
 ---
 
 ## 5. Prioritized remediation (each: root-cause → test → re-verify against Syfe)

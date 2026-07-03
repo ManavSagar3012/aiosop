@@ -76,6 +76,15 @@ class LiteLLMClient:
         # (litellm.Timeout) instead of blocking forever. Without this, a hang never
         # triggers the fallback branch below and burns the whole task budget.
         timeout = kwargs.pop("timeout", settings.llm_completion_timeout)
+
+        def _extra(model_name: str) -> Dict[str, Any]:
+            # AIOSOP-LLM-WARM-001: keep the Ollama model resident so it loads once
+            # instead of cold-loading (~60s) on every call. Only ollama/* accepts
+            # keep_alive; passing it to a cloud provider would error, so gate on prefix.
+            if str(model_name).startswith("ollama"):
+                return {"keep_alive": settings.llm_keep_alive}
+            return {}
+
         try:
             response = await litellm.acompletion(
                 model=selected_model,
@@ -83,6 +92,7 @@ class LiteLLMClient:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout=timeout,
+                **_extra(selected_model),
                 **kwargs,
             )
         except Exception as primary_err:
@@ -98,10 +108,47 @@ class LiteLLMClient:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout=timeout,
+                **_extra(self.fallback_model),
                 **kwargs,
             )
 
         return response.choices[0].message.content or ""
+
+    async def warm_up(self) -> Dict[str, Any]:
+        """Pre-load ONLY the primary chat model so the first real engagement call hits
+        an already-resident model instead of eating a ~60s cold load.
+
+        AIOSOP-LLM-WARM-001: deliberately warms the primary only. On a memory-constrained
+        host the primary (e.g. qwen3:8b, ~5.2GB) and fallback (phi3, ~2.2GB) cannot be
+        co-resident — warming both while keep_alive pins the primary makes the second
+        load OOM (observed at runtime). The fallback is an on-demand *degradation* path:
+        it is needed precisely when the primary has failed/unloaded, at which point its
+        memory is free. Best-effort and non-fatal — a down provider just leaves the model
+        cold and think() degrades gracefully (the platform stays up). Returns a
+        {seconds, ok} report for observability.
+        """
+        report: Dict[str, Any] = {}
+        model = self.primary_model
+        if model:
+            import time as _t
+
+            start = _t.monotonic()
+            try:
+                await self.complete(
+                    [{"role": "user", "content": "ok"}],
+                    model=model,
+                    max_tokens=1,
+                    timeout=max(settings.llm_completion_timeout, 180),
+                )
+                report[model] = {"seconds": round(_t.monotonic() - start, 1), "ok": True}
+            except Exception as e:  # noqa: BLE001
+                report[model] = {
+                    "seconds": round(_t.monotonic() - start, 1),
+                    "ok": False,
+                    "error": str(e)[:160],
+                }
+        llm_logger.info("llm_warm_up_complete", report=report)
+        return report
 
     async def get_embedding(self, text: str, model: Optional[str] = None) -> List[float]:
         """Generate a semantic embedding for a piece of text.

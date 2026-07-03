@@ -357,11 +357,31 @@ async def _deep_probe() -> Dict[str, Any]:
             return ("real_execution_verified" if ok else "failed", {"readyState": ready})
 
     async def burp_probe():
+        # AIOSOP-BURP-PROBE-001 (2026-07-03): Burp's job in this pipeline is *scanning*,
+        # so the deep verdict must reflect active-scan capability — not just HTTP. The
+        # old probe only exercised send_http_request (proxy/repeater, present in every
+        # Burp edition), so it reported real_execution_verified even when the active
+        # scanner was unavailable (Community/unlicensed), masking a real capability gap.
         async with httpx.AsyncClient() as c:
-            res = await execute(c, burp, "send_http_request",
-                                {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health", "method": "GET"}, 20.0)
-            ok = res.get("status") == "success"
-            return ("real_execution_verified" if ok else "failed", {"status_code": res.get("status_code")})
+            http_res = await execute(c, burp, "send_http_request",
+                                     {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health", "method": "GET"}, 20.0)
+            if http_res.get("status") != "success":
+                return ("failed", {"stage": "http", "detail": http_res})
+            # Active-scan capability check. scan_target on Community/unlicensed Burp
+            # errors at Scanner.startAudit() (returns null) BEFORE any audit begins, so
+            # this is a safe, side-effect-free capability probe against the local API.
+            scan_res = await execute(c, burp, "scan_target",
+                                     {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health"}, 25.0)
+            scan_err = str(scan_res.get("error", "")) if isinstance(scan_res, dict) else ""
+            if scan_res and not scan_err:
+                return ("real_execution_verified", {"scan_capable": True, "http_verified": True})
+            # HTTP works but the active scanner does not — honest, distinct verdict so
+            # channels_verified no longer over-counts Burp as scan-ready.
+            return ("scan_unavailable", {
+                "scan_capable": False,
+                "http_verified": True,
+                "reason": scan_err[:200] or "active scanner unavailable (requires Burp Suite Professional)",
+            })
 
     await asyncio.gather(
         probe("recon", recon_probe()),

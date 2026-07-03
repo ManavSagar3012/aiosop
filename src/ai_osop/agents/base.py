@@ -669,7 +669,11 @@ class BaseAgent(ABC):
                 {"role": "user", "content": context},
             ]
             if hasattr(self.ctx.llm_client, "complete"):
-                result = await self.ctx.llm_client.complete(messages)
+                # AIOSOP-LLM-WARM-001: cap advisory reasoning tokens (see recon_agent).
+                from ai_osop.core.config import settings as _settings
+                result = await self.ctx.llm_client.complete(
+                    messages, max_tokens=_settings.llm_reasoning_max_tokens
+                )
                 if isinstance(result, dict):
                     return result.get("content", "")
                 return str(result)
