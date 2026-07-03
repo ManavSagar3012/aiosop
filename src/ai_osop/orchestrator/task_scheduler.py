@@ -73,7 +73,7 @@ class TaskScheduler:
             await self._orch.session_memory.store_task(task)
             await self._orch.coordination_bus.publish(
                 "task.scheduled",
-                {"task_id": task.id, "task_type": task.type, "agent_type": task.agent_type.value},
+                {"task_id": task.id, "task_type": task.type, "agent_type": task.agent_type.value, "engagement_id": task.engagement_id},
                 "orchestrator",
             )
             await self._orch.session_memory.push_task_queue(
@@ -236,7 +236,7 @@ class TaskScheduler:
                     await self._orch.session_memory.store_task(task)
                     await self._orch.coordination_bus.publish(
                         "task.assigned",
-                        {"task_id": task.id, "agent_id": agent.ctx.agent_id},
+                        {"task_id": task.id, "agent_id": agent.ctx.agent_id, "engagement_id": task.engagement_id},
                         "orchestrator",
                     )
                     # GAP-2-6: retain the handle so halt_engagement can cancel it.
@@ -491,6 +491,7 @@ class TaskScheduler:
                     "task_id": task.id,
                     "agent_id": task.assigned_agent_id,
                     "result": result,
+                    "engagement_id": task.engagement_id,
                 },
                 "orchestrator",
             )
@@ -532,7 +533,7 @@ class TaskScheduler:
             await self._orch.session_memory.store_task(task)
             await self._orch.coordination_bus.publish(
                 "task.failed",
-                {"task_id": task.id, "agent_id": task.assigned_agent_id, "result": result},
+                {"task_id": task.id, "agent_id": task.assigned_agent_id, "result": result, "engagement_id": task.engagement_id},
                 "orchestrator",
             )
             if task.retry_count >= task.max_retries:
