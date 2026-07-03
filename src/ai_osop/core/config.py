@@ -445,8 +445,16 @@ class Settings(BaseSettings):
     )
 
     # CORS
+    # AIOSOP-CORS-001 (2026-07-03): include BOTH localhost and 127.0.0.1 on the Vite
+    # dev/preview port. The dashboard dev server binds 127.0.0.1 (see ui package.json
+    # `vite --host 127.0.0.1`), and for CORS `localhost` and `127.0.0.1` are DISTINCT
+    # origins — allowing only one silently blocked every browser->API fetch, so the
+    # dashboard rendered DISCONNECTED / all-zeros despite live data (runtime-proven).
     cors_allowed_origins: list[str] = Field(
-        default=["http://localhost:5173"],
+        default=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
         validation_alias="OSOP_CORS_ALLOWED_ORIGINS",
     )
 
