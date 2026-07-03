@@ -251,6 +251,15 @@ async def lifespan(app: FastAPI):
         # 5. Build Orchestrator
         llm_client = LiteLLMClient()
 
+        # AIOSOP-LLM-WARM-001: pre-load the chat models in the background so the first
+        # real agent think() hits an already-resident model instead of a ~60s cold
+        # load (which otherwise blew the completion timeout -> degraded reasoning).
+        # Fire-and-forget: never blocks startup, and a down provider just no-ops.
+        try:
+            asyncio.create_task(llm_client.warm_up())
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(f"llm warm-up scheduling failed (non-fatal): {_e}")
+
         # P2 learning brain: wire semantic findings memory so every real
         # persisted vulnerability auto-populates the knowledge base and can be
         # recalled on future engagements. Best-effort — never blocks startup.

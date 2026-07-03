@@ -242,6 +242,26 @@ class Settings(BaseSettings):
     llm_completion_timeout: int = Field(
         default=60, validation_alias="OSOP_LLM_COMPLETION_TIMEOUT"
     )
+    # AIOSOP-LLM-WARM-001 (2026-07-03): the timeouts we saw were NOT "Ollama down" —
+    # Ollama is up and the models are pulled. They were COLD-LOAD latency: loading a
+    # 2-5GB model into memory takes ~60s, and with a different primary/fallback model
+    # each think() could cold-load twice and blow the 60s bound. Two mitigations:
+    #   1. keep_alive: tell Ollama to keep the model resident so it loads once, not per
+    #      call. "30m" = keep for 30 min of idle; "-1" = never unload. Passed only to
+    #      ollama/* models (ignored by cloud providers). Default "30m" (NOT "-1") on
+    #      purpose: this host is memory-constrained (the 5.2GB primary OOMs under
+    #      full-stack load), so pinning a model forever could starve MCP scans/other
+    #      components. 30m keeps it warm across back-to-back engagements yet releases
+    #      it during long idle.
+    #   2. warm-up at startup (LiteLLMClient.warm_up) so the first real engagement call
+    #      hits an already-resident model.
+    llm_keep_alive: str = Field(default="30m", validation_alias="OSOP_LLM_KEEP_ALIVE")
+    # Advisory reasoning (agent think()) does not need the full 4096-token budget, and
+    # on a reasoning model like qwen3 a large budget means a long <think> trace that
+    # blows the latency bound. Cap think() generation separately.
+    llm_reasoning_max_tokens: int = Field(
+        default=512, validation_alias="OSOP_LLM_REASONING_MAX_TOKENS"
+    )
     mock_llm: bool = Field(default=False, validation_alias="OSOP_MOCK_LLM")
     # OSOP-P0-02: simulated/mock findings must NEVER reach the real corpus, reports, or
     # dashboard metrics unless explicitly opted in (e.g. pipeline self-tests). Persistence

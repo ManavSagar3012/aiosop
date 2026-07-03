@@ -108,7 +108,12 @@ class ReconAgent(BaseAgent):
                 {"role": "user", "content": enriched_context},
             ]
 
-            return await self.ctx.llm_client.complete(messages)
+            # AIOSOP-LLM-WARM-001: cap advisory reasoning tokens so a warm model
+            # answers fast (and a reasoning model's <think> trace can't blow the bound).
+            from ai_osop.core.config import settings as _settings
+            return await self.ctx.llm_client.complete(
+                messages, max_tokens=_settings.llm_reasoning_max_tokens
+            )
         except Exception as e:
             logger.warning("recon_think_degraded", error=str(e))
             return ""

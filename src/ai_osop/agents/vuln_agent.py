@@ -237,13 +237,25 @@ class VulnAnalysisAgent(BaseAgent):
         if session:
             await self.burp_adapter.initialize(session.scope, session.session_id)
 
-        # Launch Burp scan
-        scan_result = await self.burp_adapter.scan_target(url, config)
-        burp_error = None
+        # Launch Burp scan. AIOSOP-BURP-DEGRADE-001 (2026-07-03): the active scanner
+        # (Scanner.startAudit) requires Burp Suite Professional; on Community/unlicensed
+        # it raises — surfaced with the real Java cause by _check_response since
+        # AIOSOP-BURP-ERR-001. That must NOT fail the whole task and poison the DLQ:
+        # the sitemap / proxy-history / already-recorded issues gathered below come from
+        # the proxy layer (present in every Burp edition) and are still worth keeping.
+        # So we degrade — record the real reason in burp_error (returned in the result),
+        # log it, and continue. The task completes with whatever passive data exists.
+        from ai_osop.core.exceptions import MCPException
 
-        if scan_result.status != "success":
-            burp_error = scan_result.error
-            logger.warning("Burp scan failed to start: %s", burp_error)
+        burp_error = None
+        try:
+            scan_result = await self.burp_adapter.scan_target(url, config)
+            if scan_result.status != "success":
+                burp_error = scan_result.error
+                logger.warning("Burp scan failed to start: %s", burp_error)
+        except MCPException as e:
+            burp_error = str(e)
+            logger.warning("burp_scan_degraded_active_scan_unavailable", error=burp_error)
 
         # Retrieve and normalize findings
         logger.debug("Requesting issues, sitemap, and proxy history for %s", url)
