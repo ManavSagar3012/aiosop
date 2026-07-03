@@ -753,7 +753,58 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
             # liveness, cheap enough that N concurrent sockets don't hammer Redis.
             await _asyncio.sleep(2)
 
+    async def _forward_bus() -> None:
+        """AIOSOP-WS-STREAM-001 (2026-07-03, revised): forward live swarm activity
+        from the in-process coordination bus to THIS engagement's dashboard.
+
+        The original attempt subscribed to an 'observation' topic, but
+        base.record_observation has no callers so that topic never fires. The
+        genuinely live signal is the scheduler's task lifecycle — task.scheduled /
+        assigned / completed / failed — each of which now carries engagement_id so
+        it can be routed to the right socket. Forward them as `agent_observation`
+        (the dashboard appends every non-heartbeat event to its live timeline and
+        counts it toward throughput), so the swarm feed and EV/S reflect real work
+        instead of only the 2s heartbeat. A compact projection is sent — never the
+        full task `result` blob — to keep WS frames small (cf. report-bloat fix)."""
+        _TOPICS = ("task.scheduled", "task.assigned", "task.completed", "task.failed")
+
+        async def _pump(topic: str) -> None:
+            async for ev in orch.coordination_bus.subscribe(topic):
+                payload = getattr(ev, "payload", {}) or {}
+                if payload.get("engagement_id") != engagement_id:
+                    continue
+                data = {
+                    "topic": topic,
+                    "task_id": payload.get("task_id"),
+                    "agent_id": payload.get("agent_id"),
+                    "agent_type": payload.get("agent_type"),
+                    "task_type": payload.get("task_type"),
+                }
+                try:
+                    await websocket.send_json(
+                        {
+                            "event_type": "agent_observation",
+                            "engagement_id": engagement_id,
+                            "data": data,
+                        }
+                    )
+                except Exception:  # noqa: BLE001 - socket closed; disconnect handler tears down
+                    return
+
+        pumps = [_asyncio.create_task(_pump(t)) for t in _TOPICS]
+        try:
+            await _asyncio.gather(*pumps)
+        except _asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - bus iteration error must not crash the socket
+            pass
+        finally:
+            for _p in pumps:
+                if not _p.done():
+                    _p.cancel()
+
     push_task = _asyncio.create_task(_push_loop())
+    forward_task = _asyncio.create_task(_forward_bus())
     try:
         while True:
             data = await websocket.receive_text()
@@ -794,10 +845,11 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
             logger.warning("broad_exception_caught", error=str(e))
             pass  # connection may already be closed
     finally:
-        # AIOSOP-WS-PUSH-001: always stop the background push loop when the client
-        # disconnects so it can't leak or keep sending to a dead socket.
-        push_task.cancel()
-        try:
-            await push_task
-        except Exception:
-            pass
+        # AIOSOP-WS-PUSH-001 / WS-STREAM-001: always stop the background tasks when the
+        # client disconnects so they can't leak or keep sending to a dead socket.
+        for _bg in (push_task, forward_task):
+            _bg.cancel()
+            try:
+                await _bg
+            except Exception:
+                pass
