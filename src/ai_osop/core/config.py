@@ -262,6 +262,16 @@ class Settings(BaseSettings):
     llm_reasoning_max_tokens: int = Field(
         default=512, validation_alias="OSOP_LLM_REASONING_MAX_TOKENS"
     )
+    # AIOSOP-REPORT-TRUNC-001 (2026-07-03): cap per-finding evidence in the RENDERED
+    # report. Raw nuclei/burp evidence embeds full HTTP request+response bodies (often
+    # the whole captured page), so one finding's evidence can exceed 200KB and 58
+    # findings bloated a report to 7-8MB — impractical for HackerOne submission and
+    # heavy to render (injected via dangerouslySetInnerHTML). The full evidence stays
+    # in the graph/vault and the evidence hash is computed over the FULL text; only the
+    # rendered excerpt is truncated.
+    report_evidence_max_chars: int = Field(
+        default=4000, validation_alias="OSOP_REPORT_EVIDENCE_MAX_CHARS"
+    )
     mock_llm: bool = Field(default=False, validation_alias="OSOP_MOCK_LLM")
     # OSOP-P0-02: simulated/mock findings must NEVER reach the real corpus, reports, or
     # dashboard metrics unless explicitly opted in (e.g. pipeline self-tests). Persistence

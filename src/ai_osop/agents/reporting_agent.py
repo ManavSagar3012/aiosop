@@ -13,6 +13,8 @@ from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Task, Vulnerability
 from ai_osop.reporting.exporters import ReportExporter
+import structlog
+logger = structlog.get_logger(__name__)
 
 
 class ReportingAgent(BaseAgent):
@@ -60,29 +62,91 @@ class ReportingAgent(BaseAgent):
         # if the real method isn't fully implemented in graph_memory.
         findings = []
         try:
-            # Attempt to run a custom cypher query to get findings
-            query = "MATCH (v:Vulnerability) WHERE v.engagement_id = $eid RETURN v"
-            async with self.ctx.graph_memory._driver.session() as session:
-                result = await session.run(query, eid=engagement_id)
-                for record in await result.data():
-                    n = record["v"]
-                    findings.append(
-                        {
-                            "id": n.get("id"),
-                            "title": n.get("title", "Unknown"),
-                            "severity": n.get("severity", "INFO"),
-                            "vuln_type": n.get("vuln_type", "unknown"),
-                            "target": n.get("endpoint_id", "unknown"),
-                            "description": n.get("description", "No description provided."),
-                            "evidence": "Payload: <script>alert(1)</script>\nResponse: 200 OK",
-                            "evidence_hash": self.exporter.hash_evidence(
-                                "Payload: <script>alert(1)</script>"
-                            ),
-                            "event_id": "evt-" + n.get("id", "000")[-6:],
-                        }
+            vuln_nodes = await self.ctx.graph_memory.get_vulnerabilities_by_engagement(engagement_id)
+            logger.info("report_vuln_fetch", engagement_id=repr(engagement_id), vuln_count=len(vuln_nodes))
+
+            # Best-effort traceability: map vulnerability id -> audit event_id with a
+            # single query (not one per finding). This MUST be fully isolated — any
+            # failure here (missing method, DB hiccup, no events written yet) must
+            # never abort the findings loop. A prior bug called a non-existent method
+            # (find_audit_events), raising AttributeError that dropped every finding
+            # even when vulnerabilities existed (report findings_included=0).
+            audit_event_by_target: Dict[str, str] = {}
+            try:
+                audit_events = await self.ctx.session_memory.query_audit_log(
+                    engagement_id=engagement_id,
+                    event_types=["vulnerability_discovered"],
+                )
+                for ev in audit_events:
+                    ctx_data = ev.context or {}
+                    tgt = ctx_data.get("vulnerability_id") or ctx_data.get("target_id")
+                    if tgt:
+                        audit_event_by_target.setdefault(tgt, ev.event_id)
+            except Exception as audit_err:  # noqa: BLE001 - traceability is non-critical
+                logger.debug("audit_event_lookup_skipped", error=str(audit_err))
+
+            for n in vuln_nodes:
+                # Use actual evidence from the vulnerability node; never fabricate.
+                raw_evidence = n.get("evidence", [])
+                evidence_str = ""
+                if isinstance(raw_evidence, list) and raw_evidence:
+                    evidence_parts = []
+                    for ev in raw_evidence:
+                        if isinstance(ev, dict):
+                            ev_type = ev.get("type", "unknown")
+                            ev_payload = ev.get("payload", "")
+                            ev_response = ev.get("response", "")
+                            ev_provenance = ev.get("provenance", "")
+                            parts = [f"Type: {ev_type}"]
+                            if ev_payload:
+                                parts.append(f"Payload: {ev_payload}")
+                            if ev_response:
+                                parts.append(f"Response: {ev_response}")
+                            if ev_provenance:
+                                parts.append(f"Provenance: {ev_provenance}")
+                            evidence_parts.append("\n".join(parts))
+                        else:
+                            evidence_parts.append(str(ev))
+                    evidence_str = "\n\n---\n\n".join(evidence_parts)
+                elif isinstance(raw_evidence, str):
+                    evidence_str = raw_evidence
+                if not evidence_str:
+                    evidence_str = "No evidence recorded for this finding."
+
+                # Hash over the FULL evidence (integrity of the real, complete artifact).
+                evidence_hash = self.exporter.hash_evidence(evidence_str)
+
+                # AIOSOP-REPORT-TRUNC-001: truncate the RENDERED evidence so a single
+                # finding's 200KB+ raw request/response body can't bloat the report to
+                # multi-MB. Full evidence remains in the graph/vault; the hash above still
+                # covers the complete text so integrity/traceability is preserved.
+                _max = settings.report_evidence_max_chars
+                display_evidence = evidence_str
+                if _max and len(evidence_str) > _max:
+                    display_evidence = (
+                        evidence_str[:_max]
+                        + f"\n\n...[truncated {len(evidence_str) - _max} chars — "
+                        "full evidence in the evidence vault; sha256 above covers the complete artifact]"
                     )
+
+                # Resolve event_id from the pre-built audit map; default if absent.
+                event_id = audit_event_by_target.get(n.get("id"), "no-audit-event")
+
+                findings.append(
+                    {
+                        "id": n.get("id"),
+                        "title": n.get("title", "Unknown"),
+                        "severity": n.get("severity", "INFO"),
+                        "vuln_type": n.get("vuln_type", "unknown"),
+                        "target": n.get("endpoint_id", "unknown"),
+                        "description": n.get("description", "No description provided."),
+                        "evidence": display_evidence,
+                        "evidence_hash": evidence_hash,
+                        "event_id": event_id,
+                    }
+                )
         except Exception as e:
-            print(f"WARN: Could not fetch findings from graph: {e}")
+            logger.warning("could_not_fetch_findings_from_graph", error=str(e))
 
         # 2. Generate Risk Narrative via LLM
         stats = {
@@ -119,32 +183,27 @@ class ReportingAgent(BaseAgent):
             full_md = exec_md + "\n\n" + tech_md
             html_report = self.exporter.markdown_to_html(full_md)
         except Exception as e:
-            print(f"ERROR: Template rendering failed: {e}")
+            logger.error("template_rendering_failed", error=str(e))
             raise AgentException(f"Template rendering failed: {e}")
 
         # 4. Generate Attack Graph Visualization
-        # Mocking graph data for visualization
-        # 4. Generate Attack Graph Visualization
         graph_data = {"nodes": [], "edges": []}
         try:
-            query_nodes = "MATCH (n) WHERE n.engagement_id = $eid RETURN n.id AS id, labels(n) AS labels"
-            query_edges = "MATCH (n)-[r]->(m) WHERE n.engagement_id = $eid AND m.engagement_id = $eid RETURN n.id AS source, m.id AS target, type(r) AS type"
-            async with self.ctx.graph_memory._driver.session() as session:
-                res_nodes = await session.run(query_nodes, eid=engagement_id)
-                for record in await res_nodes.data():
-                    graph_data["nodes"].append({
-                        "id": record.get("id") or "unknown",
-                        "labels": list(record.get("labels") or [])
-                    })
-                res_edges = await session.run(query_edges, eid=engagement_id)
-                for record in await res_edges.data():
-                    graph_data["edges"].append({
-                        "source": record.get("source") or "unknown",
-                        "target": record.get("target") or "unknown",
-                        "type": record.get("type") or "unknown"
-                    })
+            nodes = await self.ctx.graph_memory.get_all_nodes_for_engagement(engagement_id)
+            edges = await self.ctx.graph_memory.get_all_edges_for_engagement(engagement_id)
+            for n in nodes:
+                graph_data["nodes"].append({
+                    "id": n.get("id") or "unknown",
+                    "labels": list(n.get("labels") or [])
+                })
+            for e in edges:
+                graph_data["edges"].append({
+                    "source": e.get("source") or "unknown",
+                    "target": e.get("target") or "unknown",
+                    "type": e.get("type") or "unknown"
+                })
         except Exception as e:
-            print(f"WARN: Failed to compile attack graph: {e}")
+            logger.warning("attack_graph_compilation_failed", error=str(e))
 
         graph_html = self.exporter.render_attack_graph(graph_data, engagement_id)
 
@@ -155,7 +214,7 @@ class ReportingAgent(BaseAgent):
                 engagement_id, self.ctx.session_memory, self.ctx.graph_memory
             )
         except Exception as e:
-            print(f"WARN: Failed to generate Mission Quality Certificate: {e}")
+            logger.warning("mission_certificate_generation_failed", error=str(e))
 
         # 4.6. Generate Attack Surface Coverage Certificate (Sprint 12)
         try:
@@ -164,7 +223,7 @@ class ReportingAgent(BaseAgent):
                 engagement_id, self.ctx.session_memory, self.ctx.graph_memory
             )
         except Exception as e:
-            print(f"WARN: Failed to generate Attack Surface Coverage Certificate: {e}")
+            logger.warning("attack_surface_certificate_generation_failed", error=str(e))
 
         # 5. Save generated assets — in-memory AND on disk so the report
         # survives restart and operators can inspect drafts before approval.
@@ -222,7 +281,7 @@ class ReportingAgent(BaseAgent):
                 )
                 outcomes = [dict(r._mapping) for r in res.all()]
         except Exception as e:
-            print(f"WARN: Failed to fetch outcomes: {e}")
+            logger.warning("failed_fetch_outcomes", error=str(e))
             
         # 2. Calculate Yield
         stats = FindingConversionEngine.calculate_yield(
@@ -261,31 +320,6 @@ class ReportingAgent(BaseAgent):
             fh.write(md_content)
             
         return {"status": "success", "report_path": os.path.abspath(report_path)}
-
-        reports_dir = os.path.join("reports", engagement_id)
-        os.makedirs(reports_dir, exist_ok=True)
-        artifacts: Dict[str, str] = {}
-        for ext, content in (
-            ("md", full_md),
-            ("html", html_report),
-            ("graph.html", graph_html),
-            ("json", json_blob),
-        ):
-            path = os.path.join(reports_dir, f"{report_id}.{ext}")
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            artifacts[ext] = os.path.abspath(path)
-
-        return {
-            "status": "success",
-            "report_id": report_id,
-            "version": version,
-            "findings_included": len(findings),
-            "requires_approval": True,
-            "report_paths": artifacts,
-            "report_path": artifacts["json"],
-            "message": "Report drafts persisted to disk; awaiting operator sign-off before final export.",
-        }
 
     async def _compile_evidence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Compile and hash evidence for chain of custody."""
