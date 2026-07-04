@@ -89,11 +89,11 @@ export const NetworkHealth: React.FC = () => {
       
       <div className="flex gap-4 items-center">
         <div className="flex flex-col items-end">
-          <span className="text-[8px] font-label-caps text-on-surface-variant">LATENCY</span>
+          <span className="text-label-xs font-label-caps text-on-surface-variant">LATENCY</span>
           <span className="text-[10px] font-code-sm text-primary">{metrics.latency}MS</span>
         </div>
         <div className="flex flex-col items-end border-l border-outline-variant pl-4">
-          <span className="text-[8px] font-label-caps text-on-surface-variant">THROUGHPUT</span>
+          <span className="text-label-xs font-label-caps text-on-surface-variant">THROUGHPUT</span>
           <span className="text-[10px] font-code-sm text-primary">{metrics.throughput} EV/S</span>
         </div>
       </div>
