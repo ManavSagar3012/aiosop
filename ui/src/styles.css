@@ -136,3 +136,10 @@ h1, h2, h3, h4 { font-family: 'Space Grotesk', sans-serif; margin: 0; letter-spa
 /* Live status dot. */
 @keyframes ping-soft { 0% { box-shadow: 0 0 0 0 rgba(57,255,20,0.4);} 70%,100% { box-shadow: 0 0 0 6px rgba(57,255,20,0);} }
 .live-dot { animation: ping-soft 2s infinite; }
+
+/* Respect reduced-motion preference: halt decorative/looping animations. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal-up, .sweep-line, .live-dot, .animate-pulse-neon, .animate-spin, .scanline {
+    animation: none !important;
+  }
+}
