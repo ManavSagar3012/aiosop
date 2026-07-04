@@ -92,7 +92,7 @@ export const Header: React.FC = () => {
   return (
     <header className="h-20 bg-background border-b border-outline-variant flex items-center justify-between px-8 shrink-0 relative z-20">
       <div className="flex items-center gap-8">
-        <div className="font-display-lg text-primary-fixed tracking-tighter uppercase whitespace-nowrap">
+        <div className="font-display-lg text-display-lg text-primary-fixed tracking-tighter uppercase whitespace-nowrap">
           AI-OSOP // COMMAND CORE
         </div>
         <div className="flex flex-col min-w-[240px]">
@@ -128,15 +128,15 @@ export const Header: React.FC = () => {
         <div className="h-6 w-px bg-outline-variant" />
         <button 
           onClick={() => setIsModalOpen(true)}
-          className="bg-primary-container text-on-primary-fixed px-6 py-2 font-label-caps hover:brightness-110 transition-all active:scale-95 flex items-center gap-2"
+          className="bg-primary-container text-on-primary-fixed px-6 py-2 font-label-caps text-label-caps hover:brightness-110 transition-all active:scale-95 flex items-center gap-2"
         >
           <Rocket size={14} />
           NEW MISSION
         </button>
-        <button onClick={handlePrintReport} className="border border-outline text-on-surface px-4 py-2 font-label-caps hover:bg-surface-container-high transition-all">
+        <button onClick={handlePrintReport} className="border border-outline text-on-surface px-4 py-2 font-label-caps text-label-caps hover:bg-surface-container-high transition-all">
           PRINT REPORT
         </button>
-        <button onClick={handleHalt} className="bg-error text-white px-4 py-2 font-label-caps glow-red hover:brightness-125 transition-all">
+        <button onClick={handleHalt} className="bg-error text-white px-4 py-2 font-label-caps text-label-caps glow-red hover:brightness-125 transition-all">
           EMERGENCY HALT
         </button>
       </div>
