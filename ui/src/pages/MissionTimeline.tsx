@@ -1,6 +1,7 @@
 import React from 'react';
 import { Card } from '../components/shared/Card';
-import { Clock, Shield, Zap, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { EmptyState } from '../components/shared/EmptyState';
+import { Clock, Shield, Zap, Search, CheckCircle2 } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 
 export const MissionTimeline: React.FC = () => {
@@ -17,13 +18,13 @@ export const MissionTimeline: React.FC = () => {
     <div className="flex flex-col gap-6 h-full p-2">
       <div className="flex justify-between items-center bg-surface-container p-4 border border-outline-variant shrink-0">
          <div className="flex flex-col">
-            <span className="font-label-caps text-[9px] text-on-surface-variant mb-1 uppercase">Chronological Record</span>
+            <span className="font-label-caps text-label-xs text-on-surface-variant mb-1 uppercase">Chronological Record</span>
             <span className="font-code-sm text-primary text-[14px]">MISSION AUDIT TRAIL // {sessionId?.toUpperCase()}</span>
          </div>
          <div className="flex gap-4">
             <div className="bg-black/40 px-4 py-2 border border-outline-variant text-center">
                <div className="font-code-sm text-secondary text-[14px] font-bold">{auditLog.length}</div>
-               <div className="font-label-caps text-on-surface-variant text-[9px]">TOTAL EVENTS</div>
+               <div className="font-label-caps text-on-surface-variant text-label-xs">TOTAL EVENTS</div>
             </div>
          </div>
       </div>
@@ -31,9 +32,8 @@ export const MissionTimeline: React.FC = () => {
       <Card title="Live Operation Timeline" className="flex-1 overflow-hidden">
          <div className="h-full overflow-y-auto pr-4 custom-scrollbar space-y-4 py-4">
             {auditLog.length === 0 ? (
-               <div className="h-full flex flex-col items-center justify-center opacity-20 italic font-code-sm">
-                  <Search size={48} className="mb-4" />
-                  Awaiting operational events...
+               <div className="h-full flex items-center justify-center">
+                  <EmptyState message="Awaiting operational events..." icon={<Search size={32} />} />
                </div>
             ) : (
                auditLog.map((evt, i) => (
@@ -53,7 +53,7 @@ export const MissionTimeline: React.FC = () => {
                               {getEventIcon(evt.event_type || '')}
                               <span className="font-label-caps text-[11px] text-primary tracking-widest">{(evt.event_type || 'SYSTEM').replace(/_/g, ' ').toUpperCase()}</span>
                            </div>
-                           <span className="font-code-sm text-[9px] text-on-surface-variant bg-black/40 px-2 py-0.5 border border-outline-variant">{evt.actor_id || 'SYSTEM'}</span>
+                           <span className="font-code-sm text-label-xs text-on-surface-variant bg-black/40 px-2 py-0.5 border border-outline-variant">{evt.actor_id || 'SYSTEM'}</span>
                         </div>
                         
                         <div className="font-code-sm text-[11px] text-on-surface leading-relaxed">
