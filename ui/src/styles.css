@@ -143,3 +143,9 @@ h1, h2, h3, h4 { font-family: 'Space Grotesk', sans-serif; margin: 0; letter-spa
     animation: none !important;
   }
 }
+
+/* Visible keyboard focus on all interactive controls. */
+:where(a, button, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+}

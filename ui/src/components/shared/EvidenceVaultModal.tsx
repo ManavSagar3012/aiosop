@@ -36,7 +36,7 @@ export const EvidenceVaultModal: React.FC<Props> = ({ isOpen, onClose, findingTi
                 <div className="font-code-sm text-[10px] text-on-surface-variant uppercase tracking-tighter opacity-60">Evidence Vault Package // {packageData?.id}</div>
               </div>
            </div>
-           <button onClick={onClose} className="p-2 hover:bg-surface-variant transition-all text-on-surface-variant"><XCircle size={20} /></button>
+           <button onClick={onClose} aria-label="Close" className="p-2 hover:bg-surface-variant transition-all text-on-surface-variant"><XCircle size={20} /></button>
         </div>
 
         {/* Content Grid */}
