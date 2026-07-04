@@ -123,7 +123,7 @@ export const ResearchIntelligence: React.FC = () => {
       header: 'PAYOUT',
       width: 'text-right',
       render: (p) => (
-        <div className="text-right text-[16px] text-primary-fixed font-bold">
+        <div className="text-right text-[16px] font-code-sm text-primary-fixed font-bold">
           ${(p.program_payout || 0).toLocaleString()}
         </div>
       ),
