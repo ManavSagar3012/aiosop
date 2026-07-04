@@ -34,7 +34,7 @@ export const NewMissionModal: React.FC<NewMissionModalProps> = ({ isOpen, onClos
             <Rocket className="text-primary-fixed" size={20} />
             <span className="font-label-caps text-headline-md text-primary-fixed tracking-widest">INITIALIZE NEW MISSION</span>
           </div>
-          <button onClick={onClose} className="text-on-surface-variant hover:text-primary transition-colors">
+          <button onClick={onClose} aria-label="Close" className="text-on-surface-variant hover:text-primary transition-colors">
             <X size={20} />
           </button>
         </div>

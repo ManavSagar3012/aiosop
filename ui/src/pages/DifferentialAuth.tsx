@@ -41,7 +41,7 @@ export const DifferentialAuth: React.FC = () => {
             {diffAuthFindings.length > 1 && (
                 <div className="flex gap-1 mr-4">
                     {diffAuthFindings.map((_, i) => (
-                        <button key={i} onClick={() => setActiveFindingIdx(i)} className={`w-2 h-2 ${activeFindingIdx === i ? 'bg-primary-fixed' : 'bg-surface-variant'}`}></button>
+                        <button key={i} onClick={() => setActiveFindingIdx(i)} aria-label={`Show finding ${i + 1}`} className={`w-2 h-2 ${activeFindingIdx === i ? 'bg-primary-fixed' : 'bg-surface-variant'}`}></button>
                     ))}
                 </div>
             )}

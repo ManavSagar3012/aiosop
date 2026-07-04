@@ -124,7 +124,7 @@ export const AuthAudit: React.FC = () => {
       width: 'text-right',
       render: () => (
         <div className="text-right">
-          <button className="text-on-surface-variant hover:text-primary-fixed transition-colors">
+          <button aria-label="View control details" className="text-on-surface-variant hover:text-primary-fixed transition-colors">
              <Eye size={16} />
           </button>
         </div>
