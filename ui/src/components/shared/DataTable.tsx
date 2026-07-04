@@ -18,7 +18,7 @@ export function DataTable<T>({
 }) {
   return (
     <div className="overflow-y-auto custom-scrollbar -mx-2">
-      <table className="w-full text-left font-code-sm">
+      <table className="w-full text-left font-code-sm text-code-sm">
         <thead className="sticky top-0 z-10">
           <tr className="text-on-surface-variant bg-surface-container-high">
             {columns.map((c) => (
