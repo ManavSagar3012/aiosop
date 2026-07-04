@@ -32,7 +32,7 @@ export const NewMissionModal: React.FC<NewMissionModalProps> = ({ isOpen, onClos
         <div className="p-6 border-b border-outline-variant flex justify-between items-center">
           <div className="flex items-center gap-3">
             <Rocket className="text-primary-fixed" size={20} />
-            <span className="font-label-caps text-primary-fixed tracking-widest">INITIALIZE NEW MISSION</span>
+            <span className="font-label-caps text-headline-md text-primary-fixed tracking-widest">INITIALIZE NEW MISSION</span>
           </div>
           <button onClick={onClose} className="text-on-surface-variant hover:text-primary transition-colors">
             <X size={20} />
@@ -50,7 +50,7 @@ export const NewMissionModal: React.FC<NewMissionModalProps> = ({ isOpen, onClos
               placeholder="e.g. ginandjuice.shop"
               value={domain}
               onChange={(e) => setDomain(e.target.value)}
-              className="w-full bg-black border border-outline-variant p-4 text-primary font-code-sm focus:border-primary-fixed/50 outline-none transition-all placeholder:opacity-20"
+              className="w-full bg-black border border-outline-variant p-4 text-primary font-code-sm text-code-sm focus:border-primary-fixed/50 outline-none transition-all placeholder:opacity-20"
             />
           </div>
 
