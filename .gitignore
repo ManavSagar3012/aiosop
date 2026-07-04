@@ -210,3 +210,18 @@ fix_*.py
 
 # operational run logs (Sprint 0 supervisor / live-test session)
 .runlogs/
+# Added by code-review-graph
+.code-review-graph/
+
+# scratch/generated artifacts (live-test / analysis sessions)
+*_validation_results.json
+*_sizes.txt
+*_sizes_windows.txt
+largest_files_windows.txt
+*_stderr.txt
+*_err.txt
+TOP_100_*.md
+dashboard_evidence/
+
+# k8s per-environment secrets (secrets.yaml.example template stays tracked)
+k8s/secrets.yaml
