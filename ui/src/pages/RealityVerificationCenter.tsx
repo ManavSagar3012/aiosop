@@ -25,7 +25,7 @@ const ledgerColumns: Column<LedgerFinding>[] = [
     key: 'title',
     header: 'Finding',
     render: (f) => (
-      <span className="font-code-sm text-on-surface font-bold uppercase">{f.title}</span>
+      <span className="font-code-sm text-code-sm text-on-surface font-bold uppercase">{f.title}</span>
     ),
   },
   {
@@ -41,7 +41,7 @@ const ledgerColumns: Column<LedgerFinding>[] = [
   {
     key: 'confidence',
     header: 'Confidence',
-    render: (f) => <span className="font-code-sm text-on-surface-variant tabular-nums">{f.confidence}%</span>,
+    render: (f) => <span className="font-code-sm text-label-xs text-on-surface-variant tabular-nums">{f.confidence}%</span>,
   },
 ];
 
