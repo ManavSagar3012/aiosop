@@ -82,7 +82,7 @@ export const Overview: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="font-display-lg text-on-surface tracking-tight">
+                <h1 className="font-display-lg text-display-lg text-on-surface tracking-tight">
                   COMMAND CORE
                 </h1>
                 <span className="w-1.5 h-1.5 rounded-full bg-primary-fixed live-dot" />
@@ -159,7 +159,7 @@ export const Overview: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-4">
                   <Cpu size={22} className="text-primary-fixed animate-pulse-neon" />
-                  <div className="font-display-lg text-primary-fixed leading-none">
+                  <div className="font-display-lg text-display-lg text-primary-fixed leading-none">
                     {(agents || []).length}
                   </div>
                   <div className="font-code-sm text-on-surface-variant text-label-xs uppercase leading-tight">
