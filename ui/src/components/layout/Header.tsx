@@ -97,8 +97,8 @@ export const Header: React.FC = () => {
         </div>
         <div className="flex flex-col min-w-[240px]">
           <div className="flex justify-between items-end mb-1 gap-2">
-            <span className="font-label-caps text-on-surface-variant text-[9px] whitespace-nowrap">TARGET: {currentObjective.toUpperCase()}</span>
-            <span className="font-label-caps text-primary-container text-[9px] whitespace-nowrap">PHASE: {currentPhase.toUpperCase().replace(/_/g, ' ')}</span>
+            <span className="font-label-caps text-label-caps text-on-surface-variant whitespace-nowrap">TARGET: {currentObjective.toUpperCase()}</span>
+            <span className="font-label-caps text-label-caps text-primary-container whitespace-nowrap">PHASE: {currentPhase.toUpperCase().replace(/_/g, ' ')}</span>
           </div>
           <select
             aria-label="Active engagement"
