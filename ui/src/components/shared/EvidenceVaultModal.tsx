@@ -45,7 +45,7 @@ export const EvidenceVaultModal: React.FC<Props> = ({ isOpen, onClose, findingTi
            {/* Sidebar: Metadata & Scoring */}
            <div className="col-span-3 border-r border-outline-variant p-6 space-y-8 bg-surface-container-high/30">
               <div>
-                 <div className="font-label-caps text-[9px] text-on-surface-variant mb-3 uppercase tracking-widest">Submission Readiness</div>
+                 <div className="font-label-caps text-label-xs text-on-surface-variant mb-3 uppercase tracking-widest">Submission Readiness</div>
                  <div className="space-y-4">
                     <div className="bg-black/40 p-4 border border-outline-variant">
                        <div className="flex justify-between items-end mb-2">
@@ -63,7 +63,7 @@ export const EvidenceVaultModal: React.FC<Props> = ({ isOpen, onClose, findingTi
               </div>
 
               <div>
-                 <div className="font-label-caps text-[9px] text-on-surface-variant mb-3 uppercase tracking-widest">Artifact Manifest</div>
+                 <div className="font-label-caps text-label-xs text-on-surface-variant mb-3 uppercase tracking-widest">Artifact Manifest</div>
                  <div className="space-y-2">
                     <div className="flex items-center gap-3 text-on-surface font-code-sm text-[11px]">
                        <FileText size={14} className="text-secondary" /> {packageData?.raw_requests.length} RAW REQUESTS
@@ -78,8 +78,8 @@ export const EvidenceVaultModal: React.FC<Props> = ({ isOpen, onClose, findingTi
               </div>
 
               <div className="pt-6 border-t border-outline-variant/30">
-                 <div className="font-label-caps text-[8px] text-on-surface-variant mb-2 uppercase">Integrity Hash</div>
-                 <div className="font-code-sm text-[9px] text-on-surface-variant break-all bg-black/40 p-2 border border-outline-variant leading-tight">
+                 <div className="font-label-caps text-label-xs text-on-surface-variant mb-2 uppercase">Integrity Hash</div>
+                 <div className="font-code-sm text-label-xs text-on-surface-variant break-all bg-black/40 p-2 border border-outline-variant leading-tight">
                     {packageData?.integrity_hash}
                  </div>
               </div>
@@ -111,7 +111,7 @@ export const EvidenceVaultModal: React.FC<Props> = ({ isOpen, onClose, findingTi
                           <div key={i} className="flex items-center gap-4 p-3 bg-black/40 border border-outline-variant border-l-2 border-l-secondary">
                              <span className="font-code-sm text-[10px] text-on-surface-variant w-8">0{i+1}</span>
                              <span className="font-code-sm text-[12px] text-on-surface flex-1">{step.step}</span>
-                             <span className={`font-label-caps text-[9px] ${step.status === 'exploit' ? 'text-error' : 'text-primary-fixed'}`}>{step.status?.toUpperCase()}</span>
+                             <span className={`font-label-caps text-label-xs ${step.status === 'exploit' ? 'text-error' : 'text-primary-fixed'}`}>{step.status?.toUpperCase()}</span>
                           </div>
                        ))}
                     </div>
