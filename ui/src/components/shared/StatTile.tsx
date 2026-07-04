@@ -31,14 +31,14 @@ export const StatTile: React.FC<StatTileProps> = ({
     >
       <div className="absolute inset-0 terminal-grid opacity-[0.04] pointer-events-none" />
       <div className="relative flex items-start justify-between">
-        <div className="font-label-caps text-on-surface-variant uppercase">{label}</div>
+        <div className="font-label-caps text-label-caps text-on-surface-variant uppercase">{label}</div>
         {icon && <div className={`${a.text} opacity-40 group-hover:opacity-90 transition-opacity`}>{icon}</div>}
       </div>
       <div className="relative mt-4 flex items-end gap-3">
         <div className={`font-display-lg text-display-lg ${a.text} leading-none tabular-nums`}>{value}</div>
-        {meta && <div className="mb-1.5 font-code-sm text-on-surface-variant">{meta}</div>}
+        {meta && <div className="mb-1.5 font-code-sm text-code-sm text-on-surface-variant">{meta}</div>}
       </div>
-      {caption && <div className="relative mt-2 font-code-sm text-on-surface-variant/80 uppercase">{caption}</div>}
+      {caption && <div className="relative mt-2 font-code-sm text-code-sm text-on-surface-variant/80 uppercase">{caption}</div>}
     </div>
   );
 };
