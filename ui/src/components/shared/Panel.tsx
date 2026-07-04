@@ -15,9 +15,9 @@ export const Panel: React.FC<PanelProps> = ({
   const base = variant === 'inset' ? 'bg-black/40' : 'bg-surface-container';
   const glowClass = glow === 'none' ? '' : `glow-${glow}`;
   return (
-    <div className={`${base} border border-outline-variant p-6 flex flex-col relative overflow-hidden ${glowClass} ${className}`}>
+    <div className={`${base} border border-outline-variant p-6 flex flex-col relative overflow-hidden transition-all ${glowClass} ${className}`}>
       {title && (
-        <div className="font-label-caps text-on-surface-variant mb-4 border-b border-outline-variant/30 pb-2 flex justify-between items-center uppercase opacity-80">
+        <div className="font-label-caps text-label-caps text-on-surface-variant mb-4 border-b border-outline-variant/30 pb-2 flex justify-between items-center uppercase opacity-80">
           <span>{title}</span>
           {action}
         </div>
