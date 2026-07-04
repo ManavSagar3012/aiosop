@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Card } from '../components/shared/Card';
-import { 
+import { StatTile } from '../components/shared/StatTile';
+import { EmptyState } from '../components/shared/EmptyState';
+import { Skeleton } from '../components/shared/Skeleton';
+import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     BarChart, Bar, Legend, PieChart, Pie, Cell
 } from 'recharts';
@@ -8,11 +11,36 @@ import { TrendingUp, DollarSign, Target, UserCheck, ShieldCheck, Activity } from
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { useSwarmStore } from '../store/useSwarmStore';
 
-const COLORS = ['#39ff14', '#00f1fd', '#ff3131', '#ff9f00', '#a259ff'];
+// Recharts sets colors as raw SVG attributes (fill=/stroke=), so a bare
+// var(--x) string or Tailwind class won't resolve there — we need a
+// literal color string. Read the design tokens straight off the root
+// element (single source of truth = styles.css) and fall back to the
+// historical literals only if computed styles are unavailable.
+const cssVar = (name: string, fallback: string) => {
+  if (typeof document === 'undefined') return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+};
 
 export const LearningAnalytics: React.FC = () => {
   const { skillStats, findings } = useIntelligenceStore();
   const { agents } = useSwarmStore();
+
+  const palette = useMemo(() => ({
+    primary:   cssVar('--primary', '#39ff14'),                    // success / operational (green)
+    secondary: cssVar('--secondary', '#00f1fd'),                  // active / interactive (cyan)
+    error:     cssVar('--error', '#ff3131'),                      // critical (red)
+    warning:   cssVar('--warning', '#ff9f00'),                    // warning / medium (amber)
+    purple:    '#a259ff',                                         // 5th qualitative series — no dedicated token
+    axis:      cssVar('--on-surface-variant', '#baccb0'),         // muted axis/legend text
+    grid:      cssVar('--surface-container-highest', '#2a2a2d'),  // grid lines
+    tooltipBg: cssVar('--surface-container', '#131314'),          // tooltip background
+  }), []);
+
+  const tooltipStyle = useMemo(() => ({
+    backgroundColor: palette.tooltipBg,
+    border: `1px solid ${palette.grid}`,
+  }), [palette]);
 
   const safeStats = skillStats || {
     total_revenue: 0,
@@ -24,15 +52,11 @@ export const LearningAnalytics: React.FC = () => {
 
   // 1. Accepted Findings Breakdown (derived from findings)
   const acceptanceData = [
-    { name: 'Accepted', value: findings.filter(f => f.status === 'verified').length, color: '#39ff14' },
-    { name: 'Validated', value: findings.filter(f => f.status === 'validated').length, color: '#00f1fd' },
-    { name: 'Hypothesis', value: findings.filter(f => f.status === 'hypothesis').length, color: '#ff9f00' },
-    { name: 'Rejected', value: findings.filter(f => f.status === 'rejected').length, color: '#ff3131' },
+    { name: 'Accepted', value: findings.filter(f => f.status === 'verified').length, color: palette.primary },
+    { name: 'Validated', value: findings.filter(f => f.status === 'validated').length, color: palette.secondary },
+    { name: 'Hypothesis', value: findings.filter(f => f.status === 'hypothesis').length, color: palette.warning },
+    { name: 'Rejected', value: findings.filter(f => f.status === 'rejected').length, color: palette.error },
   ].filter(d => d.value > 0);
-
-  if (acceptanceData.length === 0) {
-    acceptanceData.push({ name: 'No Findings', value: 1, color: '#2a2a2d' });
-  }
 
   // 2. Skill ROI (mapping top_skills to chart format)
   const skillBreakdown = (safeStats.top_skills || []).slice(0, 7).map(s => ({
@@ -62,46 +86,34 @@ export const LearningAnalytics: React.FC = () => {
   return (
     <div className="flex flex-col gap-6">
       {/* Top Strategic KPIs */}
-      <div className="grid grid-cols-4 gap-6">
-        <Card title="Engagement ROI" glow="cyan">
-           <div className="flex items-center gap-4">
-              <DollarSign className="text-primary-fixed" size={32} />
-              <div>
-                 <div className="font-display-lg text-primary-fixed">${(safeStats.total_revenue || 0).toLocaleString()}</div>
-                 <div className="font-code-sm text-on-surface-variant text-[10px]">TOTAL BOUNTY CAPTURED</div>
-              </div>
-           </div>
-        </Card>
-        <Card title="Report Acceptance">
-           <div className="flex items-center gap-4">
-              <ShieldCheck className="text-secondary" size={32} />
-              <div>
-                 <div className="font-display-lg text-secondary">
-                    {findings.length > 0 ? ((findings.filter(f => f.status === 'verified').length / findings.length) * 100).toFixed(1) : "0.0"}%
-                 </div>
-                 <div className="font-code-sm text-on-surface-variant text-[10px]">VERIFIED → ACCEPTED RATE</div>
-              </div>
-           </div>
-        </Card>
-        <Card title="Discovery Efficiency">
-           <div className="flex items-center gap-4">
-              <TrendingUp className="text-primary-fixed" size={32} />
-              <div>
-                 <div className="font-display-lg text-primary-fixed">18.5x</div>
-                 <div className="font-code-sm text-on-surface-variant text-[10px]">VS HUMAN BASELINE (SPEED)</div>
-              </div>
-           </div>
-        </Card>
-        <Card title="Variant Yield">
-           <div className="flex items-center gap-4">
-              <Activity className="text-error" size={32} />
-              <div>
-                 <div className="font-display-lg text-error">{(safeStats.revenue_roi || 1).toFixed(1)}x</div>
-                 <div className="font-code-sm text-on-surface-variant text-[10px]">REVENUE / COST RATIO</div>
-              </div>
-           </div>
-        </Card>
-      </div>
+      {!skillStats ? (
+        <div className="grid grid-cols-4 gap-6">
+          <Skeleton className="h-28" />
+          <Skeleton className="h-28" />
+          <Skeleton className="h-28" />
+          <Skeleton className="h-28" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-4 gap-6">
+          <StatTile
+            label="Engagement ROI" value={`$${(safeStats.total_revenue || 0).toLocaleString()}`}
+            caption="Total Bounty Captured" accent="primary" icon={<DollarSign size={16} />}
+          />
+          <StatTile
+            label="Report Acceptance"
+            value={`${findings.length > 0 ? ((findings.filter(f => f.status === 'verified').length / findings.length) * 100).toFixed(1) : "0.0"}%`}
+            caption="Verified → Accepted Rate" accent="secondary" icon={<ShieldCheck size={16} />}
+          />
+          <StatTile
+            label="Discovery Efficiency" value="18.5x"
+            caption="Vs Human Baseline (Speed)" accent="primary" icon={<TrendingUp size={16} />}
+          />
+          <StatTile
+            label="Variant Yield" value={`${(safeStats.revenue_roi || 1).toFixed(1)}x`}
+            caption="Revenue / Cost Ratio" accent="error" icon={<Activity size={16} />}
+          />
+        </div>
+      )}
 
       {/* Persona ROI Section */}
       <div className="grid grid-cols-1">
@@ -116,9 +128,9 @@ export const LearningAnalytics: React.FC = () => {
                       </div>
                       <div className="font-display-lg text-on-surface text-[18px]">${p.bounty.toLocaleString()}</div>
                    </div>
-                   
+
                    <div className="space-y-1">
-                      <div className="flex justify-between text-[9px] font-label-caps text-on-surface-variant mb-1">
+                      <div className="flex justify-between text-label-xs font-label-caps text-on-surface-variant mb-1">
                          <span>Skill Reputation</span>
                          <span className="text-primary-fixed">{p.efficiency}%</span>
                       </div>
@@ -128,7 +140,9 @@ export const LearningAnalytics: React.FC = () => {
                    </div>
                 </div>
               )) : (
-                <div className="col-span-4 text-center py-10 opacity-30 font-code-sm">AWAITING PERSONA PERFORMANCE DATA...</div>
+                <div className="col-span-4">
+                   <EmptyState message="Awaiting persona performance data..." hint="No skill telemetry recorded yet" />
+                </div>
               )}
            </div>
         </Card>
@@ -138,50 +152,60 @@ export const LearningAnalytics: React.FC = () => {
         {/* 1. Skill Performance Breakdown */}
         <Card title="Skill Engine Performance Breakdown" className="col-span-2">
            <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                 <BarChart data={skillBreakdown}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2d" vertical={false} />
-                    <XAxis dataKey="category" stroke="#baccb0" fontSize={10} />
-                    <YAxis yAxisId="left" orientation="left" stroke="#39ff14" fontSize={10} label={{ value: 'Recall %', angle: -90, position: 'insideLeft', fill: '#39ff14', fontSize: 9 }} />
-                    <YAxis yAxisId="right" orientation="right" stroke="#00f1fd" fontSize={10} label={{ value: 'ROI', angle: 90, position: 'insideRight', fill: '#00f1fd', fontSize: 9 }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#131314', border: '1px solid #2a2a2d' }} />
-                    <Legend />
-                    <Bar yAxisId="left" dataKey="recall" fill="#39ff14" radius={[2, 2, 0, 0]} name="Acceptance Rate (%)" />
-                    <Bar yAxisId="right" dataKey="cost" fill="#00f1fd" radius={[2, 2, 0, 0]} name="Revenue ROI" />
-                 </BarChart>
-              </ResponsiveContainer>
+              {skillBreakdown.length === 0 ? (
+                <EmptyState message="No skill telemetry recorded yet" hint="Awaiting skill executions" />
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                   <BarChart data={skillBreakdown}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={palette.grid} vertical={false} />
+                      <XAxis dataKey="category" stroke={palette.axis} fontSize={10} />
+                      <YAxis yAxisId="left" orientation="left" stroke={palette.primary} fontSize={10} label={{ value: 'Recall %', angle: -90, position: 'insideLeft', fill: palette.primary, fontSize: 10 }} />
+                      <YAxis yAxisId="right" orientation="right" stroke={palette.secondary} fontSize={10} label={{ value: 'ROI', angle: 90, position: 'insideRight', fill: palette.secondary, fontSize: 10 }} />
+                      <Tooltip contentStyle={tooltipStyle} />
+                      <Legend />
+                      <Bar yAxisId="left" dataKey="recall" fill={palette.primary} radius={[2, 2, 0, 0]} name="Acceptance Rate (%)" />
+                      <Bar yAxisId="right" dataKey="cost" fill={palette.secondary} radius={[2, 2, 0, 0]} name="Revenue ROI" />
+                   </BarChart>
+                </ResponsiveContainer>
+              )}
            </div>
         </Card>
 
         {/* 2. Acceptance Pie */}
         <Card title="Mission Outcome Quality">
            <div className="h-72 w-full flex flex-col">
-              <ResponsiveContainer width="100%" height="100%">
-                 <PieChart>
-                    <Pie
-                       data={acceptanceData}
-                       cx="50%"
-                       cy="50%"
-                       innerRadius={60}
-                       outerRadius={80}
-                       paddingAngle={5}
-                       dataKey="value"
-                    >
-                       {acceptanceData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                       ))}
-                    </Pie>
-                    <Tooltip contentStyle={{ backgroundColor: '#131314', border: '1px solid #2a2a2d' }} />
-                 </PieChart>
-              </ResponsiveContainer>
-              <div className="grid grid-cols-2 gap-2 px-4 pb-4">
-                 {acceptanceData.map(d => (
-                    <div key={d.name} className="flex items-center gap-2">
-                       <div className="w-2 h-2" style={{ backgroundColor: d.color }}></div>
-                       <span className="text-[10px] font-code-sm text-on-surface-variant uppercase">{d.name}</span>
-                    </div>
-                 ))}
-              </div>
+              {acceptanceData.length === 0 ? (
+                <EmptyState message="No findings recorded yet" hint="Awaiting swarm telemetry" />
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height="100%">
+                     <PieChart>
+                        <Pie
+                           data={acceptanceData}
+                           cx="50%"
+                           cy="50%"
+                           innerRadius={60}
+                           outerRadius={80}
+                           paddingAngle={5}
+                           dataKey="value"
+                        >
+                           {acceptanceData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                           ))}
+                        </Pie>
+                        <Tooltip contentStyle={tooltipStyle} />
+                     </PieChart>
+                  </ResponsiveContainer>
+                  <div className="grid grid-cols-2 gap-2 px-4 pb-4">
+                     {acceptanceData.map(d => (
+                        <div key={d.name} className="flex items-center gap-2">
+                           <div className="w-2 h-2" style={{ backgroundColor: d.color }}></div>
+                           <span className="text-[10px] font-code-sm text-on-surface-variant uppercase">{d.name}</span>
+                        </div>
+                     ))}
+                  </div>
+                </>
+              )}
            </div>
         </Card>
       </div>
@@ -192,13 +216,13 @@ export const LearningAnalytics: React.FC = () => {
             <div className="h-64 w-full">
                <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={efficiencyCurve}>
-                     <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2d" />
-                     <XAxis dataKey="hours" stroke="#baccb0" fontSize={10} label={{ value: 'Operation Hours', position: 'insideBottom', offset: -5, fill: '#baccb0', fontSize: 9 }} />
-                     <YAxis stroke="#baccb0" fontSize={10} label={{ value: 'Verified Findings', angle: -90, position: 'insideLeft', fill: '#baccb0', fontSize: 9 }} />
-                     <Tooltip contentStyle={{ backgroundColor: '#131314', border: '1px solid #2a2a2d' }} />
+                     <CartesianGrid strokeDasharray="3 3" stroke={palette.grid} />
+                     <XAxis dataKey="hours" stroke={palette.axis} fontSize={10} label={{ value: 'Operation Hours', position: 'insideBottom', offset: -5, fill: palette.axis, fontSize: 10 }} />
+                     <YAxis stroke={palette.axis} fontSize={10} label={{ value: 'Verified Findings', angle: -90, position: 'insideLeft', fill: palette.axis, fontSize: 10 }} />
+                     <Tooltip contentStyle={tooltipStyle} />
                      <Legend verticalAlign="top" height={36}/>
-                     <Line type="monotone" dataKey="ai" stroke="#39ff14" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} name="AI-OSOP V5 Swarm" />
-                     <Line type="monotone" dataKey="human" stroke="#baccb0" strokeWidth={2} strokeDasharray="5 5" name="Human Researcher" />
+                     <Line type="monotone" dataKey="ai" stroke={palette.primary} strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} name="AI-OSOP V5 Swarm" />
+                     <Line type="monotone" dataKey="human" stroke={palette.axis} strokeWidth={2} strokeDasharray="5 5" name="Human Researcher" />
                   </LineChart>
                </ResponsiveContainer>
             </div>
@@ -213,30 +237,30 @@ export const LearningAnalytics: React.FC = () => {
                   </div>
                   <p className="text-[11px] text-on-surface leading-relaxed font-code-sm">
                      {safeStats.top_skills.length > 0 ? (
-                        <>High reputation on <span className="text-secondary">{safeStats.top_skills[0].name}</span> suggest prioritizing related attack vectors. 
+                        <>High reputation on <span className="text-secondary">{safeStats.top_skills[0].name}</span> suggest prioritizing related attack vectors.
                         Recommend scaling <span className="text-primary-fixed">Discovery Swarm</span> for maximum variant yield.</>
                      ) : (
                         <>Awaiting swarm telemetry to generate strategic guidance. Current focus: <span className="text-secondary">Mission Reconnaissance</span>.</>
                      )}
                   </p>
                </div>
-               
+
                <div className="grid grid-cols-2 gap-4">
                   <div className="bg-surface-container-high border border-outline-variant p-3">
-                     <div className="text-[9px] font-label-caps text-on-surface-variant mb-1 uppercase">Top Earning Class</div>
+                     <div className="text-label-xs font-label-caps text-on-surface-variant mb-1 uppercase">Top Earning Class</div>
                      <div className="text-[14px] font-headline-md text-primary-fixed">
                         {safeStats.top_skills.length > 0 ? safeStats.top_skills[0].id.toUpperCase().replace(/-/g, ' ') : 'N/A'}
                      </div>
                   </div>
                   <div className="bg-surface-container-high border border-outline-variant p-3">
-                     <div className="text-[9px] font-label-caps text-on-surface-variant mb-1 uppercase">Active Findings</div>
+                     <div className="text-label-xs font-label-caps text-on-surface-variant mb-1 uppercase">Active Findings</div>
                      <div className="text-[14px] font-headline-md text-secondary">{findings.length}</div>
                   </div>
                </div>
 
                <div className="pt-2">
                   <div className="flex justify-between items-end mb-2">
-                     <span className="font-label-caps text-on-surface-variant text-[9px] uppercase tracking-tighter">Budget-to-Value Calibration</span>
+                     <span className="font-label-caps text-on-surface-variant text-label-xs uppercase tracking-tighter">Budget-to-Value Calibration</span>
                      <span className="font-label-caps text-primary-fixed text-[11px]">
                         {safeStats.revenue_roi > 1 ? 'OPTIMIZED' : 'CALIBRATING'}
                      </span>
