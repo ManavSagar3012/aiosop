@@ -121,13 +121,11 @@ export const AuthAudit: React.FC = () => {
     {
       key: 'action',
       header: 'ACTION',
-      width: 'text-right',
+      align: 'right',
       render: () => (
-        <div className="text-right">
-          <button aria-label="View control details" className="text-on-surface-variant hover:text-primary-fixed transition-colors">
-             <Eye size={16} />
-          </button>
-        </div>
+        <button aria-label="View control details" className="text-on-surface-variant hover:text-primary-fixed transition-colors">
+           <Eye size={16} />
+        </button>
       ),
     },
   ];

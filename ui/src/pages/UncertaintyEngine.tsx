@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
-import { StatTile } from '../components/shared/StatTile';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
@@ -36,8 +35,14 @@ export const UncertaintyEngine: React.FC = () => {
             <span className="font-code-sm text-primary text-[14px]">SKEPTICAL_OPTIMISM (FORMAL TRACKING OF UNKNOWNS)</span>
          </div>
          <div className="flex gap-4">
-            <StatTile label="TOTAL UNKNOWNS" value={uncertainties?.length || 0} accent="secondary" />
-            <StatTile label="BLOCKED PATHS" value={blockedPathsCount} accent="error" />
+            <div className="bg-black/40 px-4 py-2 border border-outline-variant text-center">
+               <div className="font-code-sm text-secondary text-[14px] font-bold">{uncertainties?.length || 0}</div>
+               <div className="font-label-caps text-on-surface-variant text-label-xs">TOTAL UNKNOWNS</div>
+            </div>
+            <div className="bg-black/40 px-4 py-2 border border-outline-variant text-center">
+               <div className="font-code-sm text-error text-[14px] font-bold">{blockedPathsCount}</div>
+               <div className="font-label-caps text-on-surface-variant text-label-xs">BLOCKED PATHS</div>
+            </div>
          </div>
       </div>
 
