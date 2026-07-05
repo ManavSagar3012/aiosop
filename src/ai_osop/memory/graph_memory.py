@@ -1163,8 +1163,20 @@ class GraphMemory:
             "result_summary": json.dumps(result_summary or {}, default=str),
             "payload": json.dumps(getattr(task, "payload", {}) or {}, default=str),
             "priority": getattr(task, "priority", 5),
-            "result": getattr(task, "result", None),
-            "error": getattr(task, "error", None)
+            # ROOT-CAUSE FIX (2026-07-05): task.result is frequently a DICT (agent
+            # output on completion). Neo4j properties may only be primitives/arrays,
+            # so a raw dict here makes the write fail — and because the result of
+            # s.run() was never consumed (see below), that failure surfaced only at
+            # session close, AFTER this function had already returned True. Net effect:
+            # the assignment-time write (result=None) persisted 'running', but the
+            # completion write (result=dict) silently vanished, pinning EVERY task at
+            # 'running' in the graph forever. Serialize result like result_summary.
+            "result": (
+                json.dumps(_r, default=str)
+                if (_r := getattr(task, "result", None)) is not None
+                else None
+            ),
+            "error": (str(_e) if (_e := getattr(task, "error", None)) is not None else None),
         }
         # Bounded retry so a brief Neo4j blip doesn't silently drop a lifecycle
         # transition (would make Neo4j diverge from in-memory -> zombie tasks).
@@ -1181,7 +1193,11 @@ class GraphMemory:
                             "engagement_id": task.engagement_id,
                         },
                     ):
-                        await s.run(cypher, params)
+                        # Consume the result so the write actually completes and any
+                        # server-side error (e.g. bad property type) is raised HERE —
+                        # inside the try/except for retry+logging — instead of being
+                        # swallowed at session close after we've returned success.
+                        await (await s.run(cypher, params)).consume()
                 return True
             except Exception as e:
                 if attempt < len(backoffs):
