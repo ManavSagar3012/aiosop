@@ -141,6 +141,14 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_subdomain_takeover_scan(payload)
         elif task_type == "secret_liveness_scan":
             return await self._execute_secret_liveness_scan(payload)
+        elif task_type == "file_upload_scan":
+            return await self._execute_file_upload_scan(payload)
+        elif task_type == "prototype_pollution_scan":
+            return await self._execute_prototype_pollution_scan(payload)
+        elif task_type == "websocket_scan":
+            return await self._execute_websocket_scan(payload)
+        elif task_type == "saml_scan":
+            return await self._execute_saml_scan(payload)
         elif task_type == "race_limit_scan":
             return await self._execute_race_limit_scan(payload)
         elif task_type == "ssrf_metadata_chain":
@@ -289,7 +297,7 @@ class VulnAnalysisAgent(BaseAgent):
                     engagement_id=engagement_id,
                 )
 
-        logger.debug(r"Total unique endpoints for {domain}: {len(all_endpoints)}")
+        logger.debug(f"Total unique endpoints for {domain}: {len(all_endpoints)}")
 
         # PATCH (REL-035, 2026-06-15): Persist findings + endpoints FIRST.
         # Pre-patch order was: reasoning (Ollama, often 60–1800s) → persist.
@@ -304,7 +312,7 @@ class VulnAnalysisAgent(BaseAgent):
                 await self.ctx.graph_memory.add_vulnerability(vuln)
                 self.findings[vuln.id] = vuln
             except Exception as e:
-                logger.error(r"Failed to add vulnerability {vuln.id} to graph: {e}")
+                logger.error(f"Failed to add vulnerability {vuln.id} to graph: {e}")
 
         for ep in all_endpoints.values():
             try:
@@ -312,7 +320,7 @@ class VulnAnalysisAgent(BaseAgent):
                 ep.asset_id = asset.id
                 await self.ctx.graph_memory.add_endpoint(ep)
             except Exception as e:
-                logger.error(r"Failed to add endpoint {ep.url} to graph: {e}")
+                logger.error(f"Failed to add endpoint {ep.url} to graph: {e}")
 
         # Perform reasoning using security skills (best-effort, never blocks
         # finding persistence; bounded by a short timeout so vuln_agent fits
@@ -375,7 +383,7 @@ class VulnAnalysisAgent(BaseAgent):
             "tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}"
         )
 
-        logger.debug(r"Deploying Intruder attack against {url}")
+        logger.debug(f"Deploying Intruder attack against {url}")
 
         # Prepare the base request definition expected by our Java MCP adapter
         mock_request = {
@@ -475,6 +483,23 @@ class VulnAnalysisAgent(BaseAgent):
         raw_findings = response.result.get("findings", [])
         vulns = []
 
+        # FP triage (AIOSOP-FP-CATCHALL-001): probe the host ONCE for catch-all /
+        # wildcard behavior (returns 2xx with a real body for random non-existent
+        # paths). On such hosts nuclei status/word matchers fire on the generic
+        # catch-all page and yield false positives (e.g. a "default-login" template
+        # 'succeeding' against a marketing SPA). Detected here so matches can be
+        # down-ranked BEFORE they are persisted or reach the exploitation gate.
+        catch_all = (
+            await self._detect_catch_all(targets[0]) if targets else {"is_catch_all": False}
+        )
+        if catch_all.get("is_catch_all"):
+            logger.warning(
+                "catch_all_host_detected",
+                target=targets[0],
+                baseline_status=catch_all.get("baseline_status"),
+                baseline_len=catch_all.get("baseline_len"),
+            )
+
         for finding in raw_findings:
             # nuclei-mcp emits each finding as a JSONL string (one JSON object per
             # line from `nuclei -jsonl`). Parse strings into dicts before
@@ -490,17 +515,30 @@ class VulnAnalysisAgent(BaseAgent):
                 logger.warning(f"skipping non-dict nuclei finding: {finding!r}")
                 continue
             vuln = self._normalize_nuclei_finding(finding)
+            if catch_all.get("is_catch_all"):
+                self._apply_catch_all_fp_downrank(vuln, catch_all)
             if engagement_id:
                 vuln.engagement_id = engagement_id
             await self.ctx.graph_memory.add_vulnerability(vuln)
             self.findings[vuln.id] = vuln
             vulns.append(vuln)
 
+        fp_count = sum(1 for v in vulns if getattr(v, "confidence", 1.0) <= 0.25)
+        if fp_count:
+            logger.info(
+                "nuclei_fp_downranked",
+                target=targets[0] if targets else None,
+                likely_false_positives=fp_count,
+                total=len(vulns),
+            )
+
         return {
             "status": "success",
             "tool": "nuclei",
             "targets": targets,
             "findings_count": len(vulns),
+            "catch_all_host": bool(catch_all.get("is_catch_all")),
+            "likely_false_positives": fp_count,
             "findings": [v.model_dump() for v in vulns],
         }
 
@@ -1622,6 +1660,347 @@ class VulnAnalysisAgent(BaseAgent):
             "findings": [v.model_dump() for v in minted],
         }
 
+    async def _execute_file_upload_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm unrestricted file upload with the standalone FileUploadTester.
+
+        The tester uploads benign marker files (html/svg/php/double-ext/...) and
+        confirms only when the file is retrievable and served in a dangerous way
+        (executable extension / matching content-type). Mints ONE Vulnerability per
+        result with confirmed == True — unconfirmed attempts mint nothing.
+
+        Payload:
+            upload_url     endpoint accepting the multipart upload (required)
+            retrieval_base optional base URL where uploaded files are served
+            file_field     multipart field name for the file (default "file")
+            extra_data     extra multipart form fields the endpoint requires
+            engagement_id  injected by _execute
+        """
+        from ai_osop.core.file_upload_tester import FileUploadTester
+
+        upload_url = payload.get("upload_url")
+        if not upload_url:
+            raise AgentException("file_upload_scan requires 'upload_url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("file_upload_scan: cannot determine engagement_id")
+
+        tester = FileUploadTester(
+            upload_url,
+            retrieval_base=payload.get("retrieval_base"),
+            file_field=payload.get("file_field", "file"),
+            extra_data=payload.get("extra_data"),
+        )
+        results = await tester.run()
+
+        minted: List[Vulnerability] = []
+        for r in results:
+            if not getattr(r, "confirmed", False):
+                continue
+            vuln = Vulnerability(
+                cwe="CWE-434",  # Unrestricted Upload of File with Dangerous Type
+                vuln_type=VulnClass.VULN_SCAN,
+                severity=Severity.HIGH,
+                title=f"Unrestricted file upload confirmed ({r.technique})",
+                description=(
+                    f"FileUploadTester uploaded a benign marker file to {upload_url} and "
+                    f"retrieved it served in a way that confirms unrestricted upload: "
+                    f"{getattr(r, 'detail', '')}"
+                ),
+                evidence=[{
+                    "type": "unrestricted_file_upload",
+                    "provenance": "file_upload_tester",
+                    "technique": r.technique,
+                    "detail": getattr(r, "detail", ""),
+                    "filename": getattr(r, "filename", ""),
+                    "retrieval_url": getattr(r, "retrieval_url", ""),
+                    "served_content_type": getattr(r, "served_content_type", ""),
+                    "marker": getattr(r, "marker", ""),
+                    "tester_evidence": getattr(r, "evidence", {}),
+                }],
+                tool_source="file_upload_scan",
+                confidence=0.95,
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                self.findings[vuln.id] = vuln
+                minted.append(vuln)
+            except Exception as e:
+                logger.error("file_upload_persist_failed", vuln_id=vuln.id, error=str(e))
+            logger.info("file_upload_confirmed", technique=r.technique)
+
+        return {
+            "status": "success",
+            "tool": "file_upload_scan",
+            "results_checked": len(results),
+            "confirmed": len(minted) > 0,
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
+    async def _execute_prototype_pollution_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm server-side prototype pollution with PrototypePollutionTester.
+
+        The tester injects a unique inherited property (via __proto__ /
+        constructor.prototype gadgets) then observes a payload-free probe for the
+        polluted value / an overridden status. Mints ONE Vulnerability per result
+        with confirmed == True.
+
+        Payload:
+            pollute_url    endpoint that ingests/merges attacker JSON (required)
+            probe_url      endpoint observed after pollution (default pollute_url)
+            pollute_method HTTP method for the pollution payload (default POST)
+            probe_method   HTTP method for the payload-free probe (default GET)
+            engagement_id  injected by _execute
+        """
+        from ai_osop.core.prototype_pollution_tester import PrototypePollutionTester
+
+        pollute_url = payload.get("pollute_url")
+        if not pollute_url:
+            raise AgentException("prototype_pollution_scan requires 'pollute_url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("prototype_pollution_scan: cannot determine engagement_id")
+
+        tester = PrototypePollutionTester(
+            pollute_url,
+            probe_url=payload.get("probe_url"),
+            pollute_method=payload.get("pollute_method", "POST"),
+            probe_method=payload.get("probe_method", "GET"),
+        )
+        results = await tester.run()
+
+        minted: List[Vulnerability] = []
+        for r in results:
+            if not getattr(r, "confirmed", False):
+                continue
+            vuln = Vulnerability(
+                cwe="CWE-1321",  # Improperly Controlled Modification of Object Prototype Attributes
+                vuln_type=VulnClass.VULN_SCAN,
+                severity=Severity.HIGH,
+                title=f"Server-side prototype pollution confirmed ({r.technique})",
+                description=(
+                    f"PrototypePollutionTester polluted the object prototype at {pollute_url} "
+                    f"(gadget {getattr(r, 'gadget', '')}) and observed the effect in a "
+                    f"payload-free probe: {getattr(r, 'detail', '')}"
+                ),
+                evidence=[{
+                    "type": "prototype_pollution",
+                    "provenance": "prototype_pollution_tester",
+                    "technique": r.technique,
+                    "gadget": getattr(r, "gadget", ""),
+                    "detail": getattr(r, "detail", ""),
+                    "tester_evidence": getattr(r, "evidence", {}),
+                }],
+                tool_source="prototype_pollution_scan",
+                confidence=0.95,
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                self.findings[vuln.id] = vuln
+                minted.append(vuln)
+            except Exception as e:
+                logger.error("prototype_pollution_persist_failed", vuln_id=vuln.id, error=str(e))
+            logger.info("prototype_pollution_confirmed", technique=r.technique)
+
+        return {
+            "status": "success",
+            "tool": "prototype_pollution_scan",
+            "results_checked": len(results),
+            "confirmed": len(minted) > 0,
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
+    async def _execute_websocket_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm WebSocket flaws (CSWSH / missing-auth / cleartext) with
+        WebSocketTester. Each oracle only confirms on objective server behaviour
+        (authed data returned to a foreign Origin, a privileged action honoured on
+        an unauthenticated socket, a ws:// endpoint). Mints ONE Vulnerability per
+        result with confirmed == True.
+
+        Payload:
+            url                          ws:// or wss:// endpoint (required)
+            origin                       the site's real same-site origin
+            cookies                      victim's ambient cookie header value
+            auth_markers                 substrings that appear only in authed data
+            probe                        message to send to elicit a data frame
+            privileged_message           message driving the missing-auth oracle
+            privileged_success_markers   success substrings for the missing-auth oracle
+            engagement_id                injected by _execute
+        """
+        from ai_osop.core.websocket_tester import WebSocketTester
+
+        url = payload.get("url")
+        if not url:
+            raise AgentException("websocket_scan requires 'url'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("websocket_scan: cannot determine engagement_id")
+
+        tester = WebSocketTester(
+            url,
+            origin=payload.get("origin"),
+            cookies=payload.get("cookies"),
+            auth_markers=payload.get("auth_markers"),
+            probe=payload.get("probe"),
+            privileged_message=payload.get("privileged_message"),
+            privileged_success_markers=payload.get("privileged_success_markers"),
+        )
+        results = await tester.run()
+
+        # Per-technique CWE / class. CSWSH is a cross-site socket forgery (CWE-1385);
+        # missing-auth is an origin/authorization failure (CWE-346); cleartext is
+        # sensitive transport (CWE-319). Fall back to a generic origin-validation CWE.
+        tech_map = {
+            "cswsh": ("CWE-1385", VulnClass.CSRF),
+            "missing_auth": ("CWE-346", VulnClass.BROKEN_ACCESS_CONTROL),
+            "unencrypted_transport": ("CWE-319", VulnClass.VULN_SCAN),
+        }
+
+        minted: List[Vulnerability] = []
+        for r in results:
+            if not getattr(r, "confirmed", False):
+                continue
+            cwe, vclass = tech_map.get(r.technique, ("CWE-346", VulnClass.VULN_SCAN))
+            vuln = Vulnerability(
+                cwe=cwe,
+                vuln_type=vclass,
+                severity=Severity.HIGH,
+                title=f"WebSocket security flaw confirmed ({r.technique})",
+                description=(
+                    f"WebSocketTester confirmed a real flaw against {url} via the "
+                    f"{r.technique} oracle: {getattr(r, 'detail', '')}"
+                ),
+                evidence=[{
+                    "type": "websocket_flaw",
+                    "provenance": "websocket_tester",
+                    "technique": r.technique,
+                    "detail": getattr(r, "detail", ""),
+                    "tester_evidence": getattr(r, "evidence", {}),
+                }],
+                tool_source="websocket_scan",
+                confidence=0.95,
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                self.findings[vuln.id] = vuln
+                minted.append(vuln)
+            except Exception as e:
+                logger.error("websocket_persist_failed", vuln_id=vuln.id, error=str(e))
+            logger.info("websocket_confirmed", technique=r.technique)
+
+        return {
+            "status": "success",
+            "tool": "websocket_scan",
+            "results_checked": len(results),
+            "confirmed": len(minted) > 0,
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
+    async def _execute_saml_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm SAML assertion-forgery flaws (XSW / unsigned / replay /
+        comment-injection) with SAMLTester by replaying tampered SAMLResponses
+        against a real ACS and confirming only when the attacker identity is
+        actually granted a session. Mints ONE Vulnerability per result with
+        confirmed == True.
+
+        Payload:
+            acs_url        Assertion Consumer Service endpoint (required)
+            saml_response  sample SAMLResponse (raw XML or base64) (required)
+            victim_nameid  privileged identity to impersonate
+            attacker_nameid attacker-controlled sentinel identity
+            relay_state    optional RelayState value
+            param          form param name (default "SAMLResponse")
+            method         HTTP method (default "POST")
+            engagement_id  injected by _execute
+        """
+        from ai_osop.core.saml_tester import SAMLTester
+
+        acs_url = payload.get("acs_url")
+        saml_response = payload.get("saml_response")
+        if not acs_url:
+            raise AgentException("saml_scan requires 'acs_url'")
+        if not saml_response:
+            raise AgentException("saml_scan requires 'saml_response'")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("saml_scan: cannot determine engagement_id")
+
+        kwargs: Dict[str, Any] = {}
+        for k in ("victim_nameid", "attacker_nameid", "relay_state", "param", "method"):
+            if payload.get(k) is not None:
+                kwargs[k] = payload[k]
+        tester = SAMLTester(acs_url, saml_response, **kwargs)
+        results = await tester.run()
+
+        minted: List[Vulnerability] = []
+        for r in results:
+            if not getattr(r, "confirmed", False):
+                continue
+            vuln = Vulnerability(
+                cwe="CWE-347",  # Improper Verification of Cryptographic Signature
+                vuln_type=VulnClass.AUTHENTICATION_WEAKNESS,
+                severity=Severity.CRITICAL,
+                title=f"SAML assertion forgery confirmed ({r.technique})",
+                description=(
+                    f"SAMLTester replayed a tampered SAMLResponse against {acs_url} and the "
+                    f"ACS granted a session for the attacker identity "
+                    f"'{getattr(r, 'attacker_identity', '')}' via {r.technique}: "
+                    f"{getattr(r, 'detail', '')}"
+                ),
+                evidence=[{
+                    "type": "saml_assertion_forgery",
+                    "provenance": "saml_tester",
+                    "technique": r.technique,
+                    "detail": getattr(r, "detail", ""),
+                    "attacker_identity": getattr(r, "attacker_identity", ""),
+                    "tester_evidence": getattr(r, "evidence", {}),
+                }],
+                tool_source="saml_scan",
+                confidence=0.97,
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                self.findings[vuln.id] = vuln
+                minted.append(vuln)
+            except Exception as e:
+                logger.error("saml_persist_failed", vuln_id=vuln.id, error=str(e))
+            logger.info("saml_confirmed", technique=r.technique)
+
+        return {
+            "status": "success",
+            "tool": "saml_scan",
+            "results_checked": len(results),
+            "confirmed": len(minted) > 0,
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
     async def _probe_host_for_takeover(self, host: str):
         """Fetch a host over http/https and best-effort resolve its CNAME aliases.
         Returns (response_body, cnames). Network errors yield ("", [])."""
@@ -2092,6 +2471,115 @@ class VulnAnalysisAgent(BaseAgent):
             "triage_result": vuln.metadata["triage_result"],
             "confidence": vuln.confidence,
         }
+
+    # Template classes whose nuclei matches are especially prone to catch-all FPs:
+    # they assert existence/success from a generic response, which a wildcard host
+    # returns for everything.
+    _FP_PRONE_TEMPLATE_MARKERS = (
+        "default-login",
+        "default-credential",
+        "-detect",
+        "detection",
+        "-panel",
+        "login-panel",
+        "takeover",
+        "exposure",
+        "wildcard",
+    )
+
+    async def _detect_catch_all(self, base_url: str) -> Dict[str, Any]:
+        """Probe random non-existent paths to detect catch-all / wildcard hosts.
+
+        A host that answers 2xx with a substantive body for random garbage paths
+        makes "got a 200" meaningless, so nuclei status/word matchers fire on the
+        generic page and produce false positives. Returns a baseline used to
+        down-rank such findings. Best-effort: any failure -> is_catch_all False
+        (never blocks the scan).
+        """
+        import uuid
+        from urllib.parse import urlparse
+
+        try:
+            import httpx
+        except Exception:  # pragma: no cover - httpx is a hard dep at runtime
+            return {"is_catch_all": False}
+
+        parsed = urlparse(base_url if "://" in base_url else f"https://{base_url}")
+        origin = f"{parsed.scheme or 'https'}://{parsed.netloc or parsed.path}"
+        probes = [
+            f"{origin}/{uuid.uuid4().hex}",
+            f"{origin}/{uuid.uuid4().hex}/{uuid.uuid4().hex}.aspx",
+        ]
+        statuses: List[int] = []
+        lengths: List[int] = []
+        try:
+            async with httpx.AsyncClient(
+                timeout=10.0, follow_redirects=True, verify=False
+            ) as client:
+                for u in probes:
+                    try:
+                        r = await client.get(u, headers={"User-Agent": "AI-OSOP-FP-Probe/1.0"})
+                        statuses.append(r.status_code)
+                        lengths.append(len(r.content))
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.debug(f"catch_all_probe_failed: {e}")
+            return {"is_catch_all": False}
+
+        avg_len = int(sum(lengths) / len(lengths)) if lengths else 0
+        # Catch-all iff every random path returned 2xx with a real (non-trivial) body.
+        is_catch_all = (
+            bool(statuses)
+            and all(200 <= s < 300 for s in statuses)
+            and avg_len > 200
+        )
+        return {
+            "is_catch_all": is_catch_all,
+            "baseline_status": statuses[0] if statuses else None,
+            "baseline_len": avg_len,
+            "probes": probes,
+        }
+
+    def _apply_catch_all_fp_downrank(
+        self, vuln: Vulnerability, catch_all: Dict[str, Any]
+    ) -> None:
+        """Down-rank a finding that is likely a catch-all false positive.
+
+        Lowers confidence and demotes exploitability (so it will not pass the
+        exploitation gate's confidence floor) and records a transparent
+        false_positive_signal in the evidence — the original finding/severity is
+        preserved for the report, never silently deleted.
+        """
+        ev = vuln.evidence[0] if getattr(vuln, "evidence", None) else {}
+        template = str(ev.get("template", "")).lower()
+        resp = ev.get("response") or ""
+        baseline_len = int(catch_all.get("baseline_len", 0) or 0)
+
+        reasons: List[str] = []
+        if any(m in template for m in self._FP_PRONE_TEMPLATE_MARKERS):
+            reasons.append(f"catch_all_host + fp_prone_template:{template or 'unknown'}")
+        if (
+            resp
+            and baseline_len
+            and abs(len(resp) - baseline_len) / max(baseline_len, 1) < 0.25
+        ):
+            reasons.append("matched_response_indistinguishable_from_catch_all_baseline")
+
+        if not reasons:
+            return
+
+        vuln.confidence = min(getattr(vuln, "confidence", 1.0), 0.2)
+        vuln.exploitability = "low"
+        if isinstance(ev, dict):
+            ev["false_positive_signal"] = {
+                "catch_all": True,
+                "reasons": reasons,
+                "baseline_status": catch_all.get("baseline_status"),
+                "baseline_len": baseline_len,
+            }
+            if getattr(vuln, "evidence", None):
+                vuln.evidence[0] = ev
 
     def _normalize_nuclei_finding(self, finding: Dict[str, Any]) -> Vulnerability:
         """Convert Nuclei finding to Vulnerability model."""
