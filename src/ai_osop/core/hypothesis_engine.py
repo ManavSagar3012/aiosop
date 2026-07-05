@@ -94,6 +94,18 @@ class HypothesisEngine:
             self._workflow_hypotheses(engagement_id, endpoints, seen_titles, focus)
         )
         hypotheses.extend(
+            self._file_upload_hypotheses(engagement_id, endpoints, seen_titles, focus)
+        )
+        hypotheses.extend(
+            self._saml_hypotheses(engagement_id, endpoints, seen_titles, focus)
+        )
+        hypotheses.extend(
+            self._websocket_hypotheses(engagement_id, endpoints, seen_titles, focus)
+        )
+        hypotheses.extend(
+            self._prototype_pollution_hypotheses(engagement_id, endpoints, seen_titles, focus)
+        )
+        hypotheses.extend(
             self._cloud_hypotheses(engagement_id, endpoints, assets, seen_titles, focus)
         )
 
@@ -358,6 +370,191 @@ class HypothesisEngine:
                         "Check idempotency-key and coupon reuse handling",
                     ],
                     recommended_skills=["map_business_process", "violate_invariant", "test_race_condition"],
+                    engagement_id=engagement_id,
+                )
+            )
+            seen_titles.add(title.lower())
+        return out
+
+    def _file_upload_hypotheses(
+        self,
+        engagement_id: str,
+        endpoints: Sequence[Dict[str, Any]],
+        seen_titles: Set[str],
+        focus: str,
+    ) -> List[Hypothesis]:
+        out: List[Hypothesis] = []
+        keywords = ["upload", "attachment", "avatar", "import", "media", "document", "photo", "profile-image"]
+        for ep in endpoints:
+            path = self._path(ep)
+            query_keys = self._normalize_strings(ep.get("query_keys", []))
+            body_keys = self._normalize_strings(ep.get("body_schema_keys", []))
+            signal_keys = set(query_keys + body_keys)
+            if not any(self._contains_any(key, keywords) for key in signal_keys | {path}):
+                continue
+            title = "File-upload surface may permit unrestricted / dangerous file upload"
+            if title.lower() in seen_titles:
+                continue
+            out.append(
+                Hypothesis(
+                    title=title,
+                    description=(
+                        f"Endpoint {self._url(ep)} accepts file uploads. Weak extension / "
+                        f"content-type validation would let an attacker upload executable or "
+                        f"active content and have it served back — a classic high-impact bug."
+                    ),
+                    category="file_upload",
+                    target_id=str(ep.get("id") or ""),
+                    confidence=0.79,
+                    supporting_entities=[str(ep.get("id") or ""), path] + sorted(signal_keys)[:4],
+                    evidence=[{"signal": "file_upload_endpoint", "focus": focus}],
+                    recommended_tests=[
+                        "Upload html/svg/php with a marker and retrieve it",
+                        "Check served content-type and executable extension handling",
+                        "Attempt double-extension and path-traversal filenames",
+                    ],
+                    recommended_skills=["file_upload_scan"],
+                    engagement_id=engagement_id,
+                )
+            )
+            seen_titles.add(title.lower())
+        return out
+
+    def _saml_hypotheses(
+        self,
+        engagement_id: str,
+        endpoints: Sequence[Dict[str, Any]],
+        seen_titles: Set[str],
+        focus: str,
+    ) -> List[Hypothesis]:
+        out: List[Hypothesis] = []
+        keywords = ["saml", "samlresponse", "/acs", "acs", "sso", "assertion", "idp", "single-sign-on"]
+        for ep in endpoints:
+            path = self._path(ep)
+            query_keys = self._normalize_strings(ep.get("query_keys", []))
+            body_keys = self._normalize_strings(ep.get("body_schema_keys", []))
+            techs = self._normalize_strings(ep.get("technologies", []))
+            signal_keys = set(query_keys + body_keys + techs)
+            if not any(self._contains_any(key, keywords) for key in signal_keys | {path}):
+                continue
+            title = "SAML/SSO assertion consumer may accept forged or tampered assertions"
+            if title.lower() in seen_titles:
+                continue
+            out.append(
+                Hypothesis(
+                    title=title,
+                    description=(
+                        f"Endpoint {self._url(ep)} exposes a SAML/SSO assertion-consumer surface. "
+                        f"Missing or weak signature validation enables XML signature wrapping, "
+                        f"unsigned-assertion acceptance, replay, or comment-injection impersonation."
+                    ),
+                    category="saml_sso",
+                    target_id=str(ep.get("id") or ""),
+                    confidence=0.8,
+                    supporting_entities=[str(ep.get("id") or ""), path] + sorted(signal_keys)[:4],
+                    evidence=[{"signal": "saml_acs_endpoint", "focus": focus}],
+                    recommended_tests=[
+                        "Replay a tampered SAMLResponse with a swapped NameID",
+                        "Attempt XML signature wrapping and unsigned-assertion variants",
+                        "Test assertion replay and comment-injection on the NameID",
+                    ],
+                    recommended_skills=["saml_scan"],
+                    engagement_id=engagement_id,
+                )
+            )
+            seen_titles.add(title.lower())
+        return out
+
+    def _websocket_hypotheses(
+        self,
+        engagement_id: str,
+        endpoints: Sequence[Dict[str, Any]],
+        seen_titles: Set[str],
+        focus: str,
+    ) -> List[Hypothesis]:
+        out: List[Hypothesis] = []
+        keywords = ["ws://", "wss://", "socket.io", "websocket", "/ws", "/socket"]
+        for ep in endpoints:
+            path = self._path(ep)
+            url = self._url(ep)
+            ep_type = str(ep.get("type") or "").lower()
+            techs = self._normalize_strings(ep.get("technologies", []))
+            haystack = [url, path, ep_type] + techs
+            if not any(self._contains_any(h, keywords) for h in haystack):
+                continue
+            title = "WebSocket endpoint may be vulnerable to CSWSH or missing origin/auth checks"
+            if title.lower() in seen_titles:
+                continue
+            out.append(
+                Hypothesis(
+                    title=title,
+                    description=(
+                        f"WebSocket endpoint {url} was discovered. Sockets frequently skip "
+                        f"Origin validation (Cross-Site WebSocket Hijacking), authenticate weakly, "
+                        f"or run over cleartext ws:// — all confirmable with behavioural oracles."
+                    ),
+                    category="websocket",
+                    target_id=str(ep.get("id") or ""),
+                    confidence=0.78,
+                    supporting_entities=[str(ep.get("id") or ""), path] + techs[:4],
+                    evidence=[{"signal": "websocket_endpoint", "focus": focus}],
+                    recommended_tests=[
+                        "Attempt a handshake from a foreign Origin with victim cookies (CSWSH)",
+                        "Send privileged messages on an unauthenticated socket",
+                        "Check for cleartext ws:// transport of a wss:// site",
+                    ],
+                    recommended_skills=["websocket_scan"],
+                    engagement_id=engagement_id,
+                )
+            )
+            seen_titles.add(title.lower())
+        return out
+
+    def _prototype_pollution_hypotheses(
+        self,
+        engagement_id: str,
+        endpoints: Sequence[Dict[str, Any]],
+        seen_titles: Set[str],
+        focus: str,
+    ) -> List[Hypothesis]:
+        out: List[Hypothesis] = []
+        node_stack = ["node", "nodejs", "node.js", "express", "koa", "hapi", "fastify", "nest"]
+        merge_keywords = ["merge", "assign", "extend", "deepmerge", "clone", "__proto__", "constructor", "settings", "config", "options"]
+        for ep in endpoints:
+            path = self._path(ep)
+            query_keys = self._normalize_strings(ep.get("query_keys", []))
+            body_keys = self._normalize_strings(ep.get("body_schema_keys", []))
+            techs = self._normalize_strings(ep.get("technologies", []))
+            signal_keys = set(query_keys + body_keys)
+            node_stack_hit = any(t in techs for t in node_stack)
+            merge_surface_hit = any(
+                self._contains_any(key, merge_keywords) for key in signal_keys | {path}
+            )
+            # A JSON-merge/object-assign surface, or a Node/Express stack, warrants it.
+            if not (node_stack_hit or merge_surface_hit):
+                continue
+            title = "JSON-merge surface on a Node/JS stack may enable server-side prototype pollution"
+            if title.lower() in seen_titles:
+                continue
+            out.append(
+                Hypothesis(
+                    title=title,
+                    description=(
+                        f"Endpoint {self._url(ep)} ingests structured JSON on a JavaScript stack. "
+                        f"Unsafe recursive merge/assign lets an attacker inject __proto__ / "
+                        f"constructor.prototype properties, polluting the object prototype server-side."
+                    ),
+                    category="prototype_pollution",
+                    target_id=str(ep.get("id") or ""),
+                    confidence=0.75,
+                    supporting_entities=[str(ep.get("id") or ""), path] + (techs[:2] + sorted(signal_keys)[:2]),
+                    evidence=[{"signal": "json_merge_surface", "focus": focus}],
+                    recommended_tests=[
+                        "Submit a __proto__ gadget then observe a payload-free probe",
+                        "Try constructor.prototype status-override gadgets",
+                        "Confirm the injected inherited property is reflected globally",
+                    ],
+                    recommended_skills=["prototype_pollution_scan"],
                     engagement_id=engagement_id,
                 )
             )
