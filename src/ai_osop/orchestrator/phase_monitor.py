@@ -62,7 +62,11 @@ class PhaseMonitor:
                     engagement_id=session.session_id,
                 )
                 await self._orch.task_scheduler.schedule_task(task)
-            url_hint = f"https://{session.scope.domains[0]}/" if session.scope.domains else None
+            url_hint = (
+                self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
+                if session.scope.domains
+                else None
+            )
             await self._orch.engagement_manager.ensure_authenticated_discovery(
                 session.session_id, url_hint=url_hint
             )
@@ -77,20 +81,21 @@ class PhaseMonitor:
 
             # 1) Per-asset Burp scan (Burp crawls from the host root).
             assets: List[str] = []
-            async with self._orch.graph_memory._driver.session() as g_session:
-                result = await g_session.run(
-                    "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain",
-                    {"sid": session.session_id},
-                )
-                async for record in result:
-                    assets.append(record["domain"])
+            asset_records = await self._orch.graph_memory.run_read_query(
+                "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain",
+                {"sid": session.session_id},
+            )
+            for record in asset_records:
+                domain = record.get("domain")
+                if domain:
+                    assets.append(domain)
 
             for domain in assets:
                 burp_task = Task(
                     type="burp_scan",
                     priority=7,
                     agent_type=AgentType.VULN_ANALYSIS,
-                    payload={"url": f"https://{domain}"},
+                    payload={"url": self._orch.engagement_manager._domain_to_url(domain)},
                     engagement_id=session.session_id,
                     timeout_seconds=600,
                 )
@@ -98,21 +103,26 @@ class PhaseMonitor:
 
             # 2) Endpoint-aware, value-ordered, batched Nuclei scans.
             endpoints: List[Dict[str, Any]] = []
-            async with self._orch.graph_memory._driver.session() as g_session:
-                result = await g_session.run(
-                    """MATCH (e:Endpoint {engagement_id: $sid})
-                       RETURN e.url AS url, e.method AS method,
-                              e.status_code AS status_code, e.technologies AS technologies""",
-                    {"sid": session.session_id},
-                )
-                async for r in result:
-                    if r["url"]:
-                        endpoints.append({
-                            "url": r["url"],
-                            "method": r["method"] or "GET",
-                            "status_code": r["status_code"],
-                            "technologies": r["technologies"] or [],
-                        })
+            # Only scan endpoints confirmed reachable by a probe (status_code set).
+            # Seed endpoints (e.g. the scope domain seeded as https:// for recon to
+            # start from) and failed probes carry a NULL status_code; feeding those
+            # to nuclei made every template TLS-timeout against a dead scheme,
+            # roughly doubling scan wall-time for zero added coverage.
+            endpoint_records = await self._orch.graph_memory.run_read_query(
+                """MATCH (e:Endpoint {engagement_id: $sid})
+                   WHERE e.status_code IS NOT NULL
+                   RETURN e.url AS url, e.method AS method,
+                          e.status_code AS status_code, e.technologies AS technologies""",
+                {"sid": session.session_id},
+            )
+            for r in endpoint_records:
+                if r.get("url"):
+                    endpoints.append({
+                        "url": r["url"],
+                        "method": r.get("method") or "GET",
+                        "status_code": r.get("status_code"),
+                        "technologies": r.get("technologies") or [],
+                    })
 
             batches = batch_endpoints_for_scan(endpoints, batch_size=20, max_targets=200)
             if batches:
@@ -129,7 +139,7 @@ class PhaseMonitor:
                         agent_type=AgentType.VULN_ANALYSIS,
                         payload={
                             "targets": batch,
-                            "severity": "critical,high,medium",
+                            "severity": "critical,high,medium,info",
                             "batch_index": i,
                         },
                         engagement_id=session.session_id,
@@ -143,25 +153,132 @@ class PhaseMonitor:
                         priority=7,
                         agent_type=AgentType.VULN_ANALYSIS,
                         payload={
-                            "targets": [f"https://{domain}"],
-                            "severity": "critical,high,medium",
+                            "targets": [self._orch.engagement_manager._domain_to_url(domain)],
+                            "severity": "critical,high,medium,info",
                         },
                         engagement_id=session.session_id,
                         timeout_seconds=settings.nuclei_mcp_timeout + 120,
                     )
                     await self._orch.task_scheduler.schedule_task(nuclei_task)
 
+            # 3) Autonomous authenticated authorization testing — IDOR / BOLA /
+            #    broken access control / horizontal + vertical privilege escalation.
+            #    Runs only when the engagement has stored credentials. The
+            #    diff-auth engine replays each captured API endpoint as
+            #    user_a / user_b / anonymous and flags cross-identity access;
+            #    high-confidence findings are bridged to CONFIRMED vulnerabilities.
+            try:
+                sessions = await self._orch.session_store.list_sessions(session.session_id)
+            except Exception as e:  # noqa: BLE001 - session lookup must not break phase entry
+                sessions = []
+                logger.warning(
+                    "authz_session_lookup_failed",
+                    session_id=session.session_id,
+                    error=str(e),
+                )
+
+            if sessions:
+                labels = [s.user_label for s in sessions]
+                primary = session.scope.domains[0] if session.scope.domains else None
+                # 3a) Map the authenticated API surface (-> Endpoint{type:'api'}
+                #     nodes carrying object IDs the diff-auth engine will test).
+                surface_task = Task(
+                    type="capture_authenticated_surface",
+                    priority=8,
+                    agent_type=AgentType.WORKFLOW,
+                    payload={
+                        "engagement_id": session.session_id,
+                        "user_label": labels[0],
+                        "url": self._orch.engagement_manager._domain_to_url(primary) if primary else None,
+                    },
+                    engagement_id=session.session_id,
+                    timeout_seconds=300,
+                )
+                await self._orch.task_scheduler.schedule_task(surface_task)
+
+                # 3b) Differential-authorization replay (depends on the surface
+                #     capture). With a single stored identity it still runs the
+                #     user-vs-anonymous comparison; with two it adds the
+                #     user_a-vs-user_b IDOR/BOLA test.
+                user_a = labels[0]
+                user_b = labels[1] if len(labels) > 1 else labels[0]
+                diff_task = Task(
+                    type="run_diff_auth_analysis",
+                    priority=8,
+                    agent_type=AgentType.WORKFLOW,
+                    payload={
+                        "engagement_id": session.session_id,
+                        "user_a": user_a,
+                        "user_b": user_b,
+                    },
+                    engagement_id=session.session_id,
+                    dependencies=[surface_task.id],
+                    timeout_seconds=300,
+                )
+                await self._orch.task_scheduler.schedule_task(diff_task)
+                logger.info(
+                    "authz_testing_scheduled",
+                    session_id=session.session_id,
+                    sessions=len(labels),
+                    user_a=user_a,
+                    user_b=user_b,
+                )
+            else:
+                logger.info(
+                    "authz_testing_skipped_no_sessions",
+                    session_id=session.session_id,
+                )
+
         elif phase == EngagementPhase.EXPLOITATION:
-            cypher = "MATCH (v:Vulnerability {engagement_id: $sid}) RETURN v.id as vuln_id"
-            vuln_ids = []
-            async with self._orch.graph_memory._driver.session() as g_session:
-                result = await g_session.run(cypher, {"sid": session.session_id})
-                async for record in result:
-                    vuln_ids.append(record["vuln_id"])
-            logger.info(
-                "exhaustive_mode", session_id=session.session_id, vuln_count=len(vuln_ids)
+            # AIOSOP-EXPLOIT-FILTER-001: only attempt exploit-validation on findings that
+            # are plausibly exploitable. Info/low/unknown-severity detections (e.g. the
+            # SSL/DNS informational nuclei templates) are never exploitable; creating an
+            # approval-gated exploit task per such finding floods the operator (observed:
+            # 58 info findings -> 58 high-risk approvals) and produces spurious traffic to
+            # the target. Gate on severity; carry severity into the payload so the approval
+            # risk is derived (not hardcoded) downstream.
+            EXPLOITABLE_SEVERITIES = {"critical", "high", "medium"}
+            # AIOSOP-FP-CATCHALL-001: findings below this confidence (e.g. catch-all
+            # false positives the vuln agent down-ranked to ~0.2) are NOT auto-exploited.
+            # They still appear in the report, but a human must confirm before the
+            # platform throws payloads at what is probably a wildcard/catch-all artifact.
+            MIN_EXPLOIT_CONFIDENCE = 0.4
+            cypher = (
+                "MATCH (v:Vulnerability {engagement_id: $sid}) "
+                "RETURN v.id AS vuln_id, coalesce(v.severity, 'unknown') AS severity, "
+                "coalesce(v.confidence, 1.0) AS confidence"
             )
-            for vid in vuln_ids:
+            vuln_records = await self._orch.graph_memory.run_read_query(
+                cypher, {"sid": session.session_id}
+            )
+            candidates = [
+                (
+                    r.get("vuln_id"),
+                    str(r.get("severity", "")).strip().lower(),
+                    float(r.get("confidence", 1.0) or 0.0),
+                )
+                for r in vuln_records
+                if r.get("vuln_id")
+            ]
+            exploitable = [
+                (vid, sev)
+                for vid, sev, conf in candidates
+                if sev in EXPLOITABLE_SEVERITIES and conf >= MIN_EXPLOIT_CONFIDENCE
+            ]
+            skipped_low_conf = sum(
+                1
+                for _vid, sev, conf in candidates
+                if sev in EXPLOITABLE_SEVERITIES and conf < MIN_EXPLOIT_CONFIDENCE
+            )
+            logger.info(
+                "exhaustive_mode",
+                session_id=session.session_id,
+                vuln_count=len(candidates),
+                exploitable=len(exploitable),
+                skipped_non_exploitable=len(candidates) - len(exploitable),
+                skipped_low_confidence=skipped_low_conf,
+            )
+            for vid, sev in exploitable:
                 endpoint_url = await self._orch.graph_memory.get_endpoint_url_for_vulnerability(vid)
                 task = Task(
                     type="exploit_validation",
@@ -171,8 +288,8 @@ class PhaseMonitor:
                     payload={
                         "target": endpoint_url,
                         "vulnerability_id": vid,
+                        "severity": sev,
                         "operator_approved": False,
-                        "approval_id": f"auto-{vid}",
                     },
                     engagement_id=session.session_id,
                 )
