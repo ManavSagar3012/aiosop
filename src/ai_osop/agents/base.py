@@ -375,6 +375,35 @@ class BaseAgent(ABC):
                 return {"status": "failed", "error": str(e)}
 
             finally:
+                # LIFECYCLE ROOT-CAUSE FIX (2026-07-05): persist the task's TERMINAL
+                # status to the graph. The live executor is the agent _task_worker loop
+                # calling execute_task (the orchestrator's _execute_via_agent path is
+                # not exercised here — proven by task.assigned=0 in a real autonomous
+                # run). But execute_task only wrote terminal status to the audit log +
+                # Postgres hot state — NEVER to Neo4j via upsert_task. The Task node was
+                # set 'running' at schedule time and never advanced, so EVERY task showed
+                # 'running' forever in the graph, which is the ground truth for the
+                # stuck-task reaper, restart recovery, and dedupe. That is the true
+                # "0/372 ever completed" disease. upsert_task is an idempotent MERGE and
+                # this is best-effort so graph persistence can never break execution.
+                _gm = getattr(self.ctx, "graph_memory", None)
+                if _gm is not None and getattr(task, "status", None) in (
+                    "completed",
+                    "failed",
+                    "error",
+                    "timeout",
+                    "cancelled",
+                ):
+                    try:
+                        _rs = task.result if isinstance(getattr(task, "result", None), dict) else None
+                        await _gm.upsert_task(task, result_summary=_rs)
+                    except Exception as _persist_err:  # noqa: BLE001 - never break the task
+                        agent_logger.warning(
+                            "graph_terminal_persist_failed",
+                            task_id=getattr(task, "id", "?"),
+                            status=getattr(task, "status", "?"),
+                            error=str(_persist_err),
+                        )
                 self.ctx.current_task = None
                 self.ctx.status = "idle"
                 self.ctx.last_heartbeat = datetime.utcnow()

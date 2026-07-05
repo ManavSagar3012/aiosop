@@ -25,6 +25,16 @@ class RecoveryService:
 
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
+        # Task ids whose TERMINAL status has been reconciled to the graph. Several
+        # execution paths (agent.execute_task, _execute_task_durable) advance the
+        # in-memory task to 'completed'/'failed' WITHOUT persisting that terminal
+        # state to Neo4j — the node stays 'running' (agent=None, updated_at frozen at
+        # assignment) forever. Neo4j is the ground truth for the reaper, restart
+        # recovery, dedupe, and reporting, so an unsynced terminal task is invisible
+        # as "done" — the true "0 tasks ever completed in the graph" disease. The
+        # reaper reconciles each such task ONCE (below) and records it here so it is
+        # not re-written every 30s pass.
+        self._graph_terminal_synced: set = set()
 
     async def _reaper_loop(self) -> None:
         """Background reaper: periodically recover/fail tasks stuck past their timeout."""
@@ -41,8 +51,24 @@ class RecoveryService:
         """Detect pending/running tasks older than their timeout and recover or fail them."""
         now = datetime.utcnow()
         reaped = 0
+        _TERMINAL = ("completed", "failed", "cancelled", "timeout", "error")
         for task in list(self._orch._tasks.values()):
             if task.status not in ("pending", "running"):
+                # Durable-state reconciliation: the in-memory task is TERMINAL but the
+                # graph may still say 'running' (some executors never persist the
+                # terminal transition). Sync it ONCE so Neo4j — the ground truth for
+                # reaper/recovery/dedupe/reporting — reflects that the task is done.
+                if task.status in _TERMINAL and task.id not in self._graph_terminal_synced:
+                    try:
+                        await self._orch.graph_memory.upsert_task(
+                            task,
+                            result_summary=task.result if isinstance(task.result, dict) else None,
+                        )
+                        self._graph_terminal_synced.add(task.id)
+                    except Exception as e:  # noqa: BLE001 - never let resync break the reaper
+                        logger.warning(
+                            "reaper_terminal_resync_failed", task_id=task.id, error=str(e)
+                        )
                 continue
             ref = task.started_at if (task.status == "running" and task.started_at) else task.created_at
             if not ref:
@@ -68,6 +94,8 @@ class RecoveryService:
             reaped += 1
         if reaped:
             logger.info("reaper_reaped_stuck_tasks", count=reaped)
+        # DIAG (2026-07-05, temporary): expose what the reaper actually iterates so we
+        # can confirm in-memory-terminal tasks are visible for graph reconciliation.
         return reaped
 
     @staticmethod
