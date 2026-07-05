@@ -909,6 +909,56 @@ class SessionMemory:
             )
             return 0.5
 
+    async def get_historical_outcome_counts(
+        self, finding_type: str
+    ) -> tuple[int, int]:
+        """Return ``(n_valid, n_total)`` decided outcomes for a finding type.
+
+        The count-aware companion to :meth:`get_historical_success_rate`: the
+        calibration engine's Beta-Binomial path needs the SAMPLE SIZE, not just the
+        rate, so a class with 1 accept isn't treated like a class with 100. Same
+        HackerOne/Bugcrowd vocabulary; ``n_total`` counts only *decided* outcomes
+        (valid + invalid), ignoring undecided/unknown states. Returns ``(0, 0)`` on
+        cold start or a warm-tier hiccup so the engine falls back to its prior
+        instead of breaking.
+        """
+        if self._async_session is None:
+            return (0, 0)
+
+        _VALID = {"accepted", "paid", "triaged", "duplicate"}
+        _INVALID = {"rejected", "na", "informative"}
+        try:
+            with trace_span(
+                "postgres.get_historical_outcome_counts",
+                attributes={"ai_osop.finding_type": finding_type},
+            ):
+                async with self._async_session() as session:
+                    from sqlalchemy import func
+
+                    query = (
+                        select(
+                            FindingCorpusORM.outcome, func.count(FindingCorpusORM.id)
+                        )
+                        .where(FindingCorpusORM.category == finding_type)
+                        .group_by(FindingCorpusORM.outcome)
+                    )
+                    result = await session.execute(query)
+                    valid = 0
+                    total = 0
+                    for outcome, count in result.all():
+                        bucket = (outcome or "").lower()
+                        if bucket in _VALID:
+                            valid += count
+                            total += count
+                        elif bucket in _INVALID:
+                            total += count
+                    return (valid, total)
+        except Exception as e:  # noqa: BLE001 - calibration signal is advisory
+            logger.warning(
+                "get_historical_outcome_counts failed for %s: %s", finding_type, e
+            )
+            return (0, 0)
+
     # ============== TASKS ==============
 
     async def store_task(self, task: Task) -> None:
