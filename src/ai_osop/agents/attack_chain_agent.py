@@ -12,7 +12,8 @@ import structlog
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import AgentException, OutOfScopeError, ScopeValidationError
-from ai_osop.core.models import AttackPath, Exploit, Task, Vulnerability
+from ai_osop.core.chain_composer import ChainComposer
+from ai_osop.core.models import AttackPath, Exploit, PrimitiveLedger, PrimitiveType, Task, Vulnerability
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)
@@ -373,6 +374,45 @@ class AttackChainAgent(BaseAgent):
                         node_id
                     )
 
+                    # Build a real PoC from vulnerability node data via ChainComposer.
+                    # Map the vulnerability to a PrimitiveLedger so ChainComposer can
+                    # select the appropriate PoC builder for its type.
+                    node_props = node.get("props", {})
+                    vuln_type_raw = node_props.get("vuln_type", "generic")
+                    # Map VulnClass string → PrimitiveType (best-effort; falls back to GENERIC)
+                    _VULN_TO_PRIM = {
+                        "ssrf": PrimitiveType.SSRF_HINT,
+                        "idor": PrimitiveType.IDOR_HINT,
+                        "bola": PrimitiveType.IDOR_HINT,
+                        "xss": PrimitiveType.ENDPOINT_OBSERVED,
+                        "sqli": PrimitiveType.ENDPOINT_OBSERVED,
+                        "rce": PrimitiveType.NUCLEI_SIGNAL,
+                        "race_condition": PrimitiveType.RATE_LIMIT_MISS,
+                        "js_secret": PrimitiveType.JS_SECRET,
+                    }
+                    prim_type = _VULN_TO_PRIM.get(str(vuln_type_raw).lower(), PrimitiveType.GENERIC)
+                    synthetic_prim = PrimitiveLedger(
+                        primitive_type=prim_type,
+                        engagement_id=self.ctx.current_task.engagement_id,
+                        source="attack_chain_agent",
+                        dedup_key=f"chain-validate-{node_id}",
+                        target=endpoint_url or "",
+                        raw={
+                            "method": node_props.get("method", "GET"),
+                            "headers": node_props.get("request_headers", {}),
+                            "body": node_props.get("request_body", ""),
+                            "template_id": node_props.get("template_id", ""),
+                            "victim_cookie": node_props.get("victim_cookie", ""),
+                            "attacker_cookie": node_props.get("attacker_cookie", ""),
+                        },
+                        confidence=node_props.get("confidence", 0.7),
+                        severity_hint=str(node_props.get("severity", "medium")).lower(),
+                    )
+                    composer = ChainComposer()
+                    tmp_chain = composer.compose([synthetic_prim])
+                    tmp_chain = composer.generate_poc(tmp_chain, [synthetic_prim])
+                    exploit_payload = tmp_chain.poc_script  # concrete argv list, never "TBD"
+
                     # Schedule validation task for the exploit agent
                     task = Task(
                         type="validate_exploit",
@@ -381,7 +421,8 @@ class AttackChainAgent(BaseAgent):
                         payload={
                             "target": endpoint_url,
                             "vulnerability_id": node_id,
-                            "payload": "TBD",  # Placeholder for now
+                            "payload": exploit_payload,  # real PoC argv, not "TBD"
+                            "poc_source": "chain_composer",
                         },
                         engagement_id=self.ctx.current_task.engagement_id,
                     )

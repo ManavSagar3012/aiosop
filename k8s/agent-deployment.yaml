@@ -24,15 +24,26 @@ spec:
         runAsUser: 1000
       containers:
       - name: agent-pool
-        image: ai-osop/agents:latest
+        # Agents run in-process within the API/orchestrator service (see main.py lifespan),
+        # so this deployment uses the same orchestrator image. If agents are ever extracted
+        # into a separate process, build and push a dedicated ai-osop/agents image.
+        image: ai-osop/orchestrator:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          seccompProfile:
+            type: RuntimeDefault
         env:
         - name: OSOP_ENV
           value: "production"
-        - name: AGENT_POOL_SIZE
+        - name: OSOP_AGENT_POOL_SIZE
           value: "10"
         - name: OSOP_ORCHESTRATOR_URL
           value: "http://ai-osop-orchestrator.ai-osop.svc.cluster.local"
+        envFrom:
+        - secretRef:
+            name: ai-osop-secrets
         resources:
           requests:
             memory: "1Gi"

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
+	"strings"
 
 	"github.com/ai-osop/mcp-servers/sdk"
 )
@@ -16,12 +17,14 @@ func main() {
 	// SQLMap Tool
 	server.Register(sdk.Tool{
 		Name:           "sqlmap",
-		Description:    "Automated SQL injection and database takeover tool.",
+		Description:    "Automated SQL injection and database takeover tool. Returns a parsed verdict (injectable, parameter, dbms, techniques, payloads).",
 		TimeoutSeconds: 1800,
 		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "url", "type": "string", "description": "Target URL", "required": true},
-			{"name": "data", "type": "string", "description": "Data string to be sent through POST", "required": false},
+			{"name": "data", "type": "string", "description": "Data string to be sent through POST (whitespace-free)", "required": false},
+			{"name": "level", "type": "number", "description": "Detection depth 1-5 (default 1). Higher tests more params/headers.", "required": false},
+			{"name": "risk", "type": "number", "description": "Risk of tests 1-3 (default 1). Higher includes heavier payloads.", "required": false},
 			{"name": "batch", "type": "boolean", "description": "Never ask for user input, use the default behavior", "required": false},
 			{"name": "dump", "type": "boolean", "description": "Dump DBMS database table entries", "required": false},
 		},
@@ -33,11 +36,30 @@ func main() {
 				return map[string]any{"status": "error", "error": "sqlmap not installed"}
 			}
 			args := []string{"-u", url, "--batch", "--random-agent"}
+			// level/risk arrive as JSON numbers (float64). Clamp to sqlmap's valid
+			// ranges and format as integer flags here so they never pass through the
+			// string argument-injection sanitizer and can't be tampered with.
+			if lvl, ok := params["level"].(float64); ok {
+				args = append(args, fmt.Sprintf("--level=%d", clampInt(int(lvl), 1, 5)))
+			}
+			if rk, ok := params["risk"].(float64); ok {
+				args = append(args, fmt.Sprintf("--risk=%d", clampInt(int(rk), 1, 3)))
+			}
+			if data, ok := params["data"].(string); ok && data != "" {
+				args = append(args, fmt.Sprintf("--data=%s", data))
+			}
 			if dump, ok := params["dump"].(bool); ok && dump {
 				args = append(args, "--dump")
 			}
 			output, execErr := exec.Command("sqlmap", args...).CombinedOutput()
-			return map[string]any{"status": "success", "raw": string(output), "error": fmt.Sprintf("%v", execErr)}
+			raw := string(output)
+			data := parseSqlmapOutput(raw)
+			return map[string]any{
+				"status": "success",
+				"data":   data,
+				"raw":    raw,
+				"error":  fmt.Sprintf("%v", execErr),
+			}
 		},
 	})
 
@@ -312,4 +334,70 @@ func main() {
 	})
 
 	_ = server.Run(":8087")
+}
+
+// clampInt bounds v to the inclusive range [lo, hi].
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+var (
+	// sqlmap prints one "Parameter:" header per injectable parameter, then one or
+	// more "Type:/Title:/Payload:" blocks beneath it.
+	reSqlmapParam   = regexp.MustCompile(`(?m)^\s*Parameter:\s*(.+?)\s*$`)
+	reSqlmapType    = regexp.MustCompile(`(?m)^\s*Type:\s*(.+?)\s*$`)
+	reSqlmapPayload = regexp.MustCompile(`(?m)^\s*Payload:\s*(.+?)\s*$`)
+	reSqlmapDBMS    = regexp.MustCompile(`(?i)back-end DBMS:\s*(.+)`)
+)
+
+// parseSqlmapOutput turns sqlmap's human-readable stdout into a structured verdict.
+// The decisive signal is the "sqlmap identified the following injection point(s)"
+// banner (and/or the per-parameter "Parameter:/Type:/Payload:" block) — a 500 or a
+// reflected error string is NOT proof of injection, so we never infer injectable
+// from HTTP status alone.
+func parseSqlmapOutput(raw string) map[string]any {
+	lower := strings.ToLower(raw)
+	injectable := strings.Contains(lower, "sqlmap identified the following injection point") ||
+		strings.Contains(lower, "is vulnerable") ||
+		(reSqlmapParam.MatchString(raw) && reSqlmapPayload.MatchString(raw))
+
+	params := firstGroups(reSqlmapParam.FindAllStringSubmatch(raw, -1))
+	techniques := firstGroups(reSqlmapType.FindAllStringSubmatch(raw, -1))
+	payloads := firstGroups(reSqlmapPayload.FindAllStringSubmatch(raw, -1))
+
+	dbms := ""
+	if m := reSqlmapDBMS.FindStringSubmatch(raw); len(m) > 1 {
+		dbms = strings.TrimSpace(m[1])
+	}
+
+	parameter := ""
+	if len(params) > 0 {
+		parameter = params[0]
+	}
+
+	return map[string]any{
+		"injectable": injectable,
+		"parameter":  parameter,
+		"parameters": params,
+		"dbms":       dbms,
+		"techniques": techniques,
+		"payloads":   payloads,
+	}
+}
+
+// firstGroups collects capture-group 1 from each regex match, skipping empties.
+func firstGroups(matches [][]string) []string {
+	out := []string{}
+	for _, m := range matches {
+		if len(m) > 1 && strings.TrimSpace(m[1]) != "" {
+			out = append(out, strings.TrimSpace(m[1]))
+		}
+	}
+	return out
 }

@@ -6,9 +6,7 @@
 import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { SwarmEvent } from './types';
-
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8200";
-const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://127.0.0.1:8200";
+import { API_BASE, WS_BASE, AUTH_TOKEN, authHeaders } from './api';
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error';
 
@@ -19,7 +17,8 @@ export class NetworkService {
   private reconnectDelay = 1000; // Start with 1s
   private status: ConnectionStatus = 'disconnected';
   private onStatusChange: (status: ConnectionStatus) => void;
-  private eventCount = 0;
+  private lastEventId: number = 0;
+  private eventBuffer: SwarmEvent[] = [];
   private lastLatency = 0;
   private eventThroughput = 0;
   private throughputTimer: NodeJS.Timeout | null = null;
@@ -35,7 +34,7 @@ export class NetworkService {
   async hydrate(sessionId: string) {
     console.log(`[Network] Hydrating session: ${sessionId}`);
     useIntelligenceStore.getState().setSessionId(sessionId);
-    const headers = { "Authorization": "Bearer dev-token" };
+    const headers = authHeaders();
     try {
       // 1. Session Info
       const sessionRes = await fetch(`${API_BASE}/engagements/${sessionId}`, { headers });
@@ -85,7 +84,7 @@ export class NetworkService {
     console.log(`[Network] Connecting to WS: ${WS_BASE}/ws/engagements/${sessionId}`);
     
     try {
-      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}?token=dev-token`);
+      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}?token=${AUTH_TOKEN}`);
 
       this.ws.onopen = () => {
         console.log("[Network] WS Connected");
@@ -122,6 +121,9 @@ export class NetworkService {
   }
 
   private handleEvent(event: SwarmEvent) {
+    this.lastEventId = event.id || this.lastEventId;
+    this.eventBuffer.push(event);
+    if (this.eventBuffer.length > 100) this.eventBuffer.shift();
     const swarm = useSwarmStore.getState();
     const intel = useIntelligenceStore.getState();
 
@@ -155,7 +157,7 @@ export class NetworkService {
       case 'graph_update':
         // Re-fetch graph data on update signal
         fetch(`${API_BASE}/engagements/${event.engagement_id}/graph`, {
-            headers: { "Authorization": "Bearer dev-token" }
+            headers: authHeaders()
         })
         .then(res => res.json())
         .then(data => intel.setGraphData(data))

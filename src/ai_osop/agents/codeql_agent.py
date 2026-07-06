@@ -111,29 +111,35 @@ class CodeQLAgent(BaseAgent):
             RETURN e.id as id
             """
 
-            async with self.ctx.graph_memory._driver.session() as session:
-                result = await session.run(cypher, {"path": file_path.split("/")[-1]})
-                async for record in result:
-                    endpoint_id = record["id"]
+            records = await self.ctx.graph_memory.run_read_query(
+                """
+                MATCH (e:Endpoint)
+                WHERE e.url CONTAINS $path OR e.metadata CONTAINS $path
+                RETURN e.id as id
+                """,
+                {"path": file_path.split("/")[-1]},
+            )
+            for record in records:
+                endpoint_id = record.get("id")
 
-                    # Create Vulnerability node from SAST finding
-                    vuln = Vulnerability(
-                        id=f"vuln-sast-{uuid.uuid4().hex[:6]}",
-                        title=f"SAST: {finding['rule_id']} in {finding['file_path']}",
-                        description=finding["message"],
-                        vuln_type="sast_sink",
-                        severity=(
-                            Severity.HIGH if finding["severity"] == "error" else Severity.MEDIUM
-                        ),
-                        confidence=0.9,
-                        endpoint_id=endpoint_id,
-                        tool_source="CodeQL",
-                        engagement_id=self.ctx.session_id,
-                        evidence=[{"file": file_path, "line": finding["line"]}],
-                    )
+                # Create Vulnerability node from SAST finding
+                vuln = Vulnerability(
+                    id=f"vuln-sast-{uuid.uuid4().hex[:6]}",
+                    title=f"SAST: {finding['rule_id']} in {finding['file_path']}",
+                    description=finding["message"],
+                    vuln_type="sast_sink",
+                    severity=(
+                        Severity.HIGH if finding["severity"] == "error" else Severity.MEDIUM
+                    ),
+                    confidence=0.9,
+                    endpoint_id=endpoint_id,
+                    tool_source="CodeQL",
+                    engagement_id=self.ctx.session_id,
+                    evidence=[{"file": file_path, "line": finding["line"]}],
+                )
 
-                    await self.ctx.graph_memory.add_vulnerability(vuln)
-                    mapped_count += 1
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                mapped_count += 1
 
         return {"status": "success", "mapped_findings": mapped_count}
 

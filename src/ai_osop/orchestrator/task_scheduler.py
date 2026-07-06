@@ -207,19 +207,50 @@ class TaskScheduler:
                     task.status = "awaiting_approval"
                     await self._orch.graph_memory.upsert_task(task)
                     await self._orch.session_memory.store_task(task)
+                # AIOSOP-APPROVAL-DEDUPE-001: raise an approval only if none is already
+                # pending for this task. Concurrent/re-entrant _assign_task calls — e.g.
+                # the same task present in memory AND reloaded from durable state as two
+                # separate objects, each still "pending" — otherwise raced past the status
+                # guard above and each raised its own ApprovalRequest, flooding the
+                # operator with duplicates for a single task.
+                if not self._orch.approval_coordinator.has_pending_approval(task.id):
+                    # AIOSOP-APPROVAL-RISK-001: derive approval risk from the finding
+                    # severity instead of hardcoding "high". Every gated task was
+                    # previously flagged "high" regardless of the underlying finding
+                    # (info-severity SSL/DNS detections included), inflating risk and
+                    # burying genuinely dangerous actions in noise. Unknown -> "high"
+                    # (conservative: an un-triaged action is treated as high-risk).
+                    _sev = str(task.payload.get("severity", "")).strip().lower()
+                    _risk = {
+                        "critical": "critical", "high": "high", "medium": "medium",
+                        "low": "low", "info": "low", "informational": "low",
+                    }.get(_sev, "high")
                     request = ApprovalRequest(
                         task_id=task.id,
                         agent_id="",
                         action_type=task.type,
                         target=str(task.payload.get("url", task.payload.get("target", "unknown"))),
                         payload_summary=str(task.payload),
-                        risk_assessment="high",
+                        risk_assessment=_risk,
                         engagement_id=task.engagement_id,
                     )
                     from ai_osop.core.observability import record_approval_requested
                     record_approval_requested(request.id)
                     await self._orch.approval_coordinator._raise_approval(request)
-                    return
+                # Always return on the unapproved path — never fall through to execution
+                # for a task that still requires (but lacks) operator approval.
+                return
+
+            # AIOSOP-APPROVAL-ID-001: approval-gated + genuinely approved -> derive the
+            # operator approval_id from the trusted ApprovalRequest record and hand it to
+            # the executor. The payload token is stripped on retry/ingress (GAP-2-1/2-3),
+            # so without this a retried-but-approved exploit_validation runs with no
+            # approval_id and fails "requires an approval_id".
+            if task.approval_required and isinstance(task.payload, dict):
+                _aid = self._orch.approval_coordinator.approved_request_id(task.id)
+                if _aid:
+                    task.payload["approval_id"] = _aid
+                    task.payload["operator_approved"] = True
 
             # Find + atomically claim an available agent
             agent = await self._find_available_agent(task.agent_type, task.type)
@@ -442,7 +473,14 @@ class TaskScheduler:
 
         with span_ctx:
             try:
-                result = await agent.execute_task(task)
+                # HANG GUARD (2026-07-05): bound every agent execution. An agent whose
+                # external call (LLM / MCP / browser) never returns would otherwise pin
+                # the task at 'running' FOREVER and never release the agent slot — the
+                # root cause of 0/372 tasks ever completing and of stalled autonomous
+                # runs. wait_for cancels the hung coroutine and we fail/retry the task,
+                # so every task is guaranteed to reach a terminal state.
+                _timeout = getattr(task, "timeout_seconds", None) or 300
+                result = await asyncio.wait_for(agent.execute_task(task), timeout=_timeout)
                 status = result.get("status") if isinstance(result, dict) else None
                 if status in self._FAILURE_STATUSES:
                     normalized = result if isinstance(result, dict) else {"status": "failed"}
@@ -453,6 +491,14 @@ class TaskScheduler:
                         result if isinstance(result, dict) else {"status": "success", "raw": result}
                     )
                     await self._on_task_success(task, normalized)
+
+            except asyncio.TimeoutError:
+                err = {
+                    "error": f"agent execution exceeded {_timeout}s hard timeout",
+                    "error_type": "TaskTimeout",
+                }
+                if not await self._maybe_retry(task, err):
+                    await self._on_task_failure(task, err)
 
             except asyncio.CancelledError:
                 await self._on_task_failure(

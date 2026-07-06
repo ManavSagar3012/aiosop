@@ -340,7 +340,7 @@ class ReconAgent(BaseAgent):
                 domain=domain, depth=depth, active=active
             )
         except Exception as e:
-            logger.warning(r"DNS enum failed for {domain}: {e}")
+            logger.warning(f"DNS enum failed for {domain}: {e}")
             # Fallback: create base domain asset
             assets = [
                 Asset(
@@ -360,7 +360,7 @@ class ReconAgent(BaseAgent):
                 await self.ctx.graph_memory.add_asset(asset)
                 self.asset_inventory[asset.id] = asset
             except Exception as e:
-                logger.error(r"Failed to add asset {asset.value} to graph: {e}")
+                logger.error(f"Failed to add asset {asset.value} to graph: {e}")
 
         return {
             "status": "success",
@@ -377,7 +377,7 @@ class ReconAgent(BaseAgent):
         try:
             assets = await self.recon_adapter.port_scan(targets=targets, ports=ports)
         except Exception as e:
-            logger.warning(r"Port scan failed: {e}")
+            logger.warning(f"Port scan failed: {e}")
             assets = []
 
         # Set engagement ID and store in graph memory
@@ -387,7 +387,7 @@ class ReconAgent(BaseAgent):
                 await self.ctx.graph_memory.add_asset(asset)
                 self.asset_inventory[asset.id] = asset
             except Exception as e:
-                logger.error(r"Failed to add asset {asset.value} to graph: {e}")
+                logger.error(f"Failed to add asset {asset.value} to graph: {e}")
 
         return {"status": "success", "targets": targets, "assets_discovered": len(assets)}
 
@@ -405,7 +405,7 @@ class ReconAgent(BaseAgent):
             logging.getLogger("ai_osop.recon").error(
                 "service_probe_failed", error=str(e), target_count=len(targets), exc_info=True
             )
-            logger.warning(r"Service probe failed ({len(targets)} targets): {e}")
+            logger.warning(f"Service probe failed ({len(targets)} targets): {e}")
             endpoints = []
 
         for endpoint in endpoints:
@@ -414,7 +414,7 @@ class ReconAgent(BaseAgent):
                 await self.ctx.graph_memory.add_endpoint(endpoint)
                 self.endpoint_inventory[endpoint.id] = endpoint
             except Exception as e:
-                logger.error(r"Failed to add endpoint {endpoint.url} to graph: {e}")
+                logger.error(f"Failed to add endpoint {endpoint.url} to graph: {e}")
 
         return {"status": "success", "endpoints_discovered": len(endpoints)}
 
@@ -459,7 +459,7 @@ class ReconAgent(BaseAgent):
             await self.ctx.graph_memory.add_asset(root_asset)
             self.asset_inventory[root_asset.id] = root_asset
         except Exception as e:
-            logger.debug(r"full_recon_failure: {str(e)}")
+            logger.debug(f"full_recon_failure: {str(e)}")
             import logging
             logging.getLogger("ai_osop.recon").error("full_recon_failure", error=str(e), exc_info=True)
             return {"status": "failed", "error": str(e)}
@@ -488,30 +488,30 @@ class ReconAgent(BaseAgent):
         endpoints_count = 0
         if urls_to_probe:
             try:
-                logger.debug(r"Probing {len(urls_to_probe)} URLs for web services...")
+                logger.debug(f"Probing {len(urls_to_probe)} URLs for web services...")
                 probe_res = await self._execute_service_probe({"targets": urls_to_probe})
                 endpoints_count = probe_res.get("endpoints_discovered", 0)
             except Exception as e:
-                logger.warning(r"Full recon service probe failed: {e}")
+                logger.warning(f"Full recon service probe failed: {e}")
 
         # 3.5. Active Web Crawling & Endpoint Explosion (Sprint 12)
         active_endpoints = []
         try:
-            logger.debug(r"Initiating active web crawl / endpoint explosion on {domain}...")
+            logger.debug(f"Initiating active web crawl / endpoint explosion on {domain}...")
             active_endpoints = await self._active_crawl_target(domain)
             for ep in active_endpoints:
                 try:
                     await self.ctx.graph_memory.add_endpoint(ep)
                     self.endpoint_inventory[ep.id] = ep
                 except Exception as ex:
-                    logger.error(r"Failed to add active crawled endpoint {ep.url} to graph: {ex}")
+                    logger.error(f"Failed to add active crawled endpoint {ep.url} to graph: {ex}")
         except Exception as e:
-            logger.warning(r"Active crawl failed: {e}")
+            logger.warning(f"Active crawl failed: {e}")
 
         # 4. Historical URLs (Wayback) (Sprint 12)
         historical_count = 0
         try:
-            logger.debug(r"Fetching historical URLs from Wayback for {domain}...")
+            logger.debug(f"Fetching historical URLs from Wayback for {domain}...")
             hist_endpoints = await self.recon_adapter.historical_urls(domain)
             for ep in hist_endpoints:
                 try:
@@ -520,14 +520,14 @@ class ReconAgent(BaseAgent):
                     self.endpoint_inventory[ep.id] = ep
                     historical_count += 1
                 except Exception as ex:
-                    logger.error(r"Failed to add historical endpoint {ep.url} to graph: {ex}")
+                    logger.error(f"Failed to add historical endpoint {ep.url} to graph: {ex}")
         except Exception as e:
-            logger.warning(r"Historical URLs lookup failed: {e}")
+            logger.warning(f"Historical URLs lookup failed: {e}")
             
         # 5. OSINT Shodan Lookup (Sprint 12)
         shodan_assets_count = 0
         try:
-            logger.debug(r"Running Shodan OSINT lookup for {domain}...")
+            logger.debug(f"Running Shodan OSINT lookup for {domain}...")
             shodan_assets = await self.recon_adapter.osint_lookup(domain)
             for asset in shodan_assets:
                 try:
@@ -536,9 +536,9 @@ class ReconAgent(BaseAgent):
                     self.asset_inventory[asset.id] = asset
                     shodan_assets_count += 1
                 except Exception as ex:
-                    logger.error(r"Failed to add Shodan asset {asset.value} to graph: {ex}")
+                    logger.error(f"Failed to add Shodan asset {asset.value} to graph: {ex}")
         except Exception as e:
-            logger.warning(r"Shodan OSINT lookup failed: {e}")
+            logger.warning(f"Shodan OSINT lookup failed: {e}")
 
         # P1 recon multiplier: consolidate every discovered URL (crawl + historical +
         # probes) into parameter/endpoint intelligence. This turns a raw URL dump into
@@ -593,7 +593,7 @@ class ReconAgent(BaseAgent):
         for s in sessions:
             identities.append({"label": s.user_label, "session": s})
             
-        logger.debug(r"Active crawler initialized with {len(identities)} identities: {[i['label'] for i in identities]}. Known paths: {len(known_paths)}")
+        logger.debug(f"Active crawler initialized with {len(identities)} identities: {[i['label'] for i in identities]}. Known paths: {len(known_paths)}")
         
         # Regex patterns for API routes and parameters in JS
         param_pattern = re.compile(r"[?&]([a-zA-Z0-9_\-]+)=")
@@ -602,7 +602,7 @@ class ReconAgent(BaseAgent):
             user_label = identity["label"]
             user_session = identity["session"]
             
-            logger.debug(r"Starting active crawl phase for identity: {user_label}")
+            logger.debug(f"Starting active crawl phase for identity: {user_label}")
             
             visited_urls = set()
             urls_to_crawl = list(set(initial_urls))
@@ -750,10 +750,10 @@ class ReconAgent(BaseAgent):
                                             self.endpoint_inventory[script_url] = js_ep
                                             
                     except Exception as e:
-                        logger.debug(r"Active crawl failed for {url} under {user_label}: {e}")
+                        logger.debug(f"Active crawl failed for {url} under {user_label}: {e}")
                         
                 # 4. Parse JavaScript Bundles for hidden API routes and parameters
-                logger.debug(r"Discovered {len(js_files)} JS bundles for {user_label}. Starting deep route extraction...")
+                logger.debug(f"Discovered {len(js_files)} JS bundles for {user_label}. Starting deep route extraction...")
                 for js_url in list(js_files)[:10]:
                     try:
                         async with session.get(js_url, timeout=5) as js_response:
@@ -790,9 +790,9 @@ class ReconAgent(BaseAgent):
                                     parameters_found.add(param)
                                     
                     except Exception as e:
-                        logger.debug(r"JS route extraction failed for {js_url} under {user_label}: {e}")
+                        logger.debug(f"JS route extraction failed for {js_url} under {user_label}: {e}")
                         
-            logger.debug(r"Active crawl complete for {user_label}. Found {len(discovered_endpoints)} total endpoints, {len(api_routes)} API routes, and {len(parameters_found)} parameters.")
+            logger.debug(f"Active crawl complete for {user_label}. Found {len(discovered_endpoints)} total endpoints, {len(api_routes)} API routes, and {len(parameters_found)} parameters.")
             
         return discovered_endpoints
     async def _cleanup_resources(self) -> None:

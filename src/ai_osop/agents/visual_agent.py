@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.models import CriticalOperation, Observation, Task, VisualAnalysis
+import logging
+logger = logging.getLogger(__name__)
 
 
 class VisualContextAgent(BaseAgent):
@@ -103,8 +105,10 @@ class VisualContextAgent(BaseAgent):
                 visible_actions = []
 
         except Exception as e:
-            print(
-                f"WARN: Vision model failed or file missing: {e}. Falling back to heuristic extraction."
+            logger.warning(
+                "vision_model_failed_fallback",
+                error=str(e),
+                message="Falling back to heuristic extraction.",
             )
             # Fallback heuristic if API fails or no real image exists in testing
             visible_actions = [
@@ -205,7 +209,7 @@ class VisualContextAgent(BaseAgent):
                 anomalies = []
 
         except Exception as e:
-            print(f"WARN: Vision comparison failed: {e}. Falling back to heuristic.")
+            logger.warning(f"WARN: Vision comparison failed: {e}. Falling back to heuristic.")
             anomalies = ["User B sees 'Delete' button expected only for Admin/User A"]
 
         if anomalies:

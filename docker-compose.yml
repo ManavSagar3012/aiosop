@@ -8,7 +8,7 @@ services:
       - "7474:7474"
       - "7687:7687"
     environment:
-      - NEO4J_AUTH=neo4j/${OSOP_NEO4J_PASSWORD:-change-me-local}
+      - NEO4J_AUTH=neo4j/${OSOP_NEO4J_PASSWORD}
       - NEO4J_PLUGINS=["apoc"]
     volumes:
       - neo4j_data:/data
@@ -20,11 +20,15 @@ services:
     image: pgvector/pgvector:pg15
     container_name: ai-osop-postgres
     ports:
-      - "5432:5432"
+      # PATCH (AIOSOP-PROD-001, 2026-06-27): Remap to 15432 to avoid conflict with
+      # wslrelay.exe (or local PostgreSQL) that shadows 127.0.0.1:5432 on dev hosts
+      # running WSL2. The API .env uses 127.0.0.1:15432 to reach this container
+      # from the host. The internal docker network (postgres:5432) is unaffected.
+      - "15432:5432"
     environment:
-      - POSTGRES_USER=osop
-      - POSTGRES_PASSWORD=osop
-      - POSTGRES_DB=osop
+      - POSTGRES_USER=${OSOP_POSTGRES_USER}
+      - POSTGRES_PASSWORD=${OSOP_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${OSOP_POSTGRES_DB:-osop}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -54,8 +58,10 @@ services:
       - "8200:8200"
     environment:
       - OSOP_ENV=development
+      - OSOP_API_TOKEN=${OSOP_API_TOKEN}
       - OSOP_NEO4J_URI=bolt://neo4j:7687
-      - OSOP_POSTGRES_URI=postgresql+asyncpg://osop:osop@postgres:5432/osop
+      - OSOP_NEO4J_PASSWORD=${OSOP_NEO4J_PASSWORD}
+      - OSOP_POSTGRES_URI=postgresql+asyncpg://${OSOP_POSTGRES_USER}:${OSOP_POSTGRES_PASSWORD}@postgres:5432/${OSOP_POSTGRES_DB}
       - OSOP_REDIS_URI=redis://redis:6379/0
     depends_on:
       - neo4j
@@ -63,8 +69,11 @@ services:
       - redis
     networks:
       - ai-osop
-    volumes:
-      - ./src:/app/src
+    # DEVELOPMENT USE ONLY: Uncomment the line below to enable live code reloading.
+    # For production, remove this volume mount to enforce immutable infrastructure.
+    # volumes:
+    #   - ./src:/app/src
+    volumes: []
 
 volumes:
   neo4j_data:

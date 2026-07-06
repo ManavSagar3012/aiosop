@@ -31,7 +31,10 @@ class CorrelationEngine:
         # with the same target_id within a certain time window.
         # For now, we simulate this or perform simple heuristic matching.
 
-        # TODO: Implement database lookup for related observations
+        correlated_observations = await self.session_memory.get_observations_by_target(
+            observation.target_id, window_seconds=3600
+        )
+        correlated_ids = [o.id for o in correlated_observations if o.id != observation.id]
 
         # 2. Heuristic: Shared Data Keys
         # If two observations share specific metadata (e.g., same IP, same token hash)
@@ -49,7 +52,7 @@ class CorrelationEngine:
         # Persist to warm storage
         await self.session_memory.add_observation(observation)
 
-        # TODO: Trigger higher-level events if correlation threshold is met
-        # e.g., if 3 agents observe the same anomaly, escalate to a Vulnerability hypothesis.
+        if len(observation.correlated_observation_ids) >= 3:
+            await self.session_memory.trigger_escalation(observation.engagement_id, "vulnerability_hypothesis")
 
         return observation

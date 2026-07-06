@@ -65,15 +65,13 @@ export const LearningAnalytics: React.FC = () => {
     cost: s.revenue_roi
   }));
 
-  // 3. Efficiency Curve (Keep mock for trend visualization if live data unavailable)
-  const efficiencyCurve = [
-    { hours: 1, ai: 5, human: 1 },
-    { hours: 2, ai: 12, human: 3 },
-    { hours: 4, ai: 25, human: 8 },
-    { hours: 8, ai: 45, human: 15 },
-    { hours: 16, ai: 85, human: 30 },
-    { hours: 24, ai: 120, human: 45 },
-  ];
+  // 3. Live findings-by-severity distribution. Replaces a former HARDCODED MOCK
+  //    "AI vs human velocity" curve that had no backend source (fabricated data
+  //    displayed as a real metric). Derived entirely from live findings.
+  const severityDist = (['critical', 'high', 'medium', 'low'] as const).map(sev => ({
+    severity: sev.toUpperCase(),
+    count: findings.filter(f => f.severity === sev).length,
+  }));
 
   // 4. Persona ROI (derived from agents and skill usage)
   const personaROI = (safeStats.top_skills || []).slice(0, 4).map(s => ({
@@ -105,8 +103,9 @@ export const LearningAnalytics: React.FC = () => {
             caption="Verified → Accepted Rate" accent="secondary" icon={<ShieldCheck size={16} />}
           />
           <StatTile
-            label="Discovery Efficiency" value="18.5x"
-            caption="Vs Human Baseline (Speed)" accent="primary" icon={<TrendingUp size={16} />}
+            label="High-Confidence Findings"
+            value={`${findings.filter(f => f.confidence >= 0.7).length}`}
+            caption="Confidence ≥ 0.70 (live)" accent="primary" icon={<TrendingUp size={16} />}
           />
           <StatTile
             label="Variant Yield" value={`${(safeStats.revenue_roi || 1).toFixed(1)}x`}
@@ -211,18 +210,16 @@ export const LearningAnalytics: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-2 gap-6">
-         {/* 3. AI-OSOP vs Human Efficiency */}
-         <Card title="Discovery Velocity (AI-OSOP vs Human)">
+         {/* 3. Findings by severity — LIVE (replaced a hardcoded AI-vs-human mock) */}
+         <Card title="Findings by Severity (Live)">
             <div className="h-64 w-full">
                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={efficiencyCurve}>
+                  <LineChart data={severityDist}>
                      <CartesianGrid strokeDasharray="3 3" stroke={palette.grid} />
-                     <XAxis dataKey="hours" stroke={palette.axis} fontSize={10} label={{ value: 'Operation Hours', position: 'insideBottom', offset: -5, fill: palette.axis, fontSize: 10 }} />
-                     <YAxis stroke={palette.axis} fontSize={10} label={{ value: 'Verified Findings', angle: -90, position: 'insideLeft', fill: palette.axis, fontSize: 10 }} />
+                     <XAxis dataKey="severity" stroke={palette.axis} fontSize={10} />
+                     <YAxis stroke={palette.axis} fontSize={10} allowDecimals={false} label={{ value: 'Findings', angle: -90, position: 'insideLeft', fill: palette.axis, fontSize: 10 }} />
                      <Tooltip contentStyle={tooltipStyle} />
-                     <Legend verticalAlign="top" height={36}/>
-                     <Line type="monotone" dataKey="ai" stroke={palette.primary} strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} name="AI-OSOP V5 Swarm" />
-                     <Line type="monotone" dataKey="human" stroke={palette.axis} strokeWidth={2} strokeDasharray="5 5" name="Human Researcher" />
+                     <Line type="monotone" dataKey="count" stroke={palette.primary} strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} name="Findings" />
                   </LineChart>
                </ResponsiveContainer>
             </div>

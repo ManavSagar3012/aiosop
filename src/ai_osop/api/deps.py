@@ -121,7 +121,7 @@ async def verify_token(
          <that value> (constant-time equality).
       3. Otherwise, log CRITICAL and reject the request (dev fallback removed).
     """
-    if type(credentials).__name__ == "Depends":
+    if not isinstance(credentials, HTTPAuthorizationCredentials):
         credentials = None
     if not credentials and not token:
         raise HTTPException(status_code=403, detail="Not authenticated")
@@ -247,5 +247,6 @@ def require_role(*allowed_roles: str):
 
 
 def update_active_agents(count: int) -> None:
-    """Update Prometheus-style active agents metric (placeholder)."""
-    pass
+    """Update Prometheus-style active agents metric."""
+    from ai_osop.core.metrics import ACTIVE_AGENTS
+    ACTIVE_AGENTS.set(count)

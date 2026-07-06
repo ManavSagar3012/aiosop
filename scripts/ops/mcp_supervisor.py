@@ -81,7 +81,7 @@ SERVERS: List[Server] = [
     Server("source-map-mcp", 8096, "python", "source_map_mcp.py"),
     Server("turbo-intruder-mcp", 8098, "python", "turbo_intruder_mcp.py"),
     Server("threat-intel-mcp", 8086, "python", "threat_intel_mcp.py"),
-    Server("browser-mcp", 8089, "python", "browser_mcp.py"),
+    Server("browser-mcp", 8091, "python", "browser_mcp.py"),
 ]
 
 

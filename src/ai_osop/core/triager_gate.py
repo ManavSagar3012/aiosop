@@ -122,6 +122,16 @@ class TriagerGate:
         else:
             reasons.append("passes dedup check")
 
+        # 6. Manual-confirmation flag — a detector explicitly marked this finding an
+        #    unproven lead (reflected-but-not-executed XSS, unreproduced desync timing,
+        #    reflected-only mass assignment). It is never auto-emittable, regardless of
+        #    confidence/PoC, because the detector itself is not asserting the exploit.
+        requires_manual_confirm = self._requires_manual_confirm(primitive, evidence)
+        if requires_manual_confirm:
+            blockers.append(
+                "detector flagged manual_confirm_required — unproven lead, needs manual confirmation"
+            )
+
         # ---- Compute reproducibility score ----
         repro_score = self._reproducibility_score(has_poc, has_captured, confidence)
 
@@ -143,6 +153,7 @@ class TriagerGate:
             has_poc=has_poc,
             has_captured_evidence=has_captured,
             is_duplicate=is_duplicate,
+            requires_manual_confirm=requires_manual_confirm,
             engagement_id=primitive.engagement_id,
         )
 
@@ -162,6 +173,31 @@ class TriagerGate:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _requires_manual_confirm(
+        primitive: PrimitiveLedger, evidence: Optional[EvidencePackage]
+    ) -> bool:
+        """True when any carried evidence dict is flagged ``manual_confirm_required``.
+
+        Detectors set this on unproven leads (reflected-but-not-executed XSS, unreproduced
+        smuggling timing, reflected-only mass assignment). The flag rides in the finding's
+        evidence dicts, which reach the gate either in ``primitive.raw["evidence"]`` (the
+        ledger path) or in ``EvidencePackage.raw_responses`` (reconstructed for the gate).
+        """
+        def _any_flagged(items: Any) -> bool:
+            if not isinstance(items, (list, tuple)):
+                return False
+            return any(
+                isinstance(d, dict) and d.get("manual_confirm_required") for d in items
+            )
+
+        raw = getattr(primitive, "raw", None) or {}
+        if _any_flagged(raw.get("evidence")):
+            return True
+        if evidence is not None and _any_flagged(getattr(evidence, "raw_responses", None)):
+            return True
+        return False
 
     @staticmethod
     def _has_captured_evidence(evidence: Optional[EvidencePackage]) -> bool:

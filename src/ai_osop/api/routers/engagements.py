@@ -48,22 +48,47 @@ async def create_engagement(
         authorization_ref=request.authorization_ref,
     )
 
-    session = await state["orchestrator"].create_engagement(
-        scope, request.roe, created_by=operator.get("sub")
-    )
-    return session
+    import traceback as _tb
+    _orch = state.get("orchestrator")
+    if _orch is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    try:
+        session = await _orch.create_engagement(
+            scope, request.roe, created_by=operator.get("sub")
+        )
+        return session
+    except Exception:
+        _tb_content = _tb.format_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Engagement creation failed: {_tb_content[:2000]}",
+        )
 
 
-@router.get("", response_model=List[SessionState])
+@router.get("")
 async def list_engagements(operator: Dict[str, Any] = Depends(verify_token)):
     """List all active engagements sorted by creation time (latest last)."""
-    sessions = list(state["orchestrator"]._sessions.values())
-    sessions.sort(key=lambda x: x.created_at, reverse=True)
-    # Ownership filter: operators see only their own engagements;
-    # senior_operator sees all.
-    if operator.get("role") != "senior_operator":
-        sessions = [s for s in sessions if s.created_by == operator.get("sub")]
-    return sessions
+    try:
+        orch = state.get("orchestrator")
+        if orch is None:
+            return {"error": "Orchestrator not initialized", "engagements": []}
+        sessions = list(orch._sessions.values())
+        sessions.sort(key=lambda x: x.created_at, reverse=True)
+        # Ownership filter: operators see only their own engagements;
+        # senior_operator sees all.
+        if operator.get("role") != "senior_operator":
+            sessions = [s for s in sessions if s.created_by == operator.get("sub")]
+        return [s.model_dump(mode="json") for s in sessions]
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        import logging
+        logging.getLogger("ai_osop.api.engagements").error("list_engagements_failed: %s\n%s", e, tb)
+        from starlette.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Failed to list engagements: {str(e)}", "error_type": type(e).__name__},
+        )
 
 
 @router.get("/{session_id}")

@@ -83,8 +83,21 @@ class ReactSpecialistAgent(BaseAgent):
             return {"status": "failed", "error": str(e)}
 
     async def _probe_components(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Dynamically probe React components for state-based logic flaws."""
-        return {"status": "success", "msg": "Dynamic component probing initialized."}
+        """Dynamically probe React components for state-based logic flaws.
+
+        Dynamic component probing is not yet implemented. Rather than claim a
+        misleading "success", report the real status so callers don't treat a
+        no-op as a completed probe. Static React bundle analysis (real) is
+        available via the `analyze_bundle` task type.
+        """
+        return {
+            "status": "not_implemented",
+            "msg": (
+                "Dynamic React component probing is not implemented; no probing "
+                "was performed. Use 'analyze_bundle' for real static analysis."
+            ),
+            "findings_count": 0,
+        }
 
     async def _cleanup_resources(self) -> None:
         pass

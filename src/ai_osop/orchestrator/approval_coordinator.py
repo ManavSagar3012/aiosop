@@ -75,7 +75,8 @@ class ApprovalCoordinator:
         for callback in self._orch._approval_callbacks:
             try:
                 await callback(request)
-            except Exception:
+            except Exception as e:
+                logger.warning("broad_exception_caught", error=str(e))
                 pass
 
     async def _raise_approval(self, request: ApprovalRequest) -> None:
@@ -106,11 +107,26 @@ class ApprovalCoordinator:
                 task, {"error": f"Approval denied: {request.status}"}
             )
 
-    async def _wait_for_approval(self, request_id: str) -> None:
-        """Wait for approval request to be resolved."""
+    async def _wait_for_approval(self, request_id: str, max_wait_seconds: Optional[int] = None) -> None:
+        """Wait for approval request to be resolved.
+
+        Args:
+            request_id: The approval request ID to wait for.
+            max_wait_seconds: DEPRECATED. Timeout is handled by the caller via
+                asyncio.wait_for() so that the full approval_timeout_seconds
+                (default 1800s) is honoured.
+        """
+        start = asyncio.get_event_loop().time()
         while True:
             request = self._orch._approval_requests.get(request_id)
             if request and request.status in ["approved", "rejected", "modified"]:
+                return
+            if max_wait_seconds is not None and asyncio.get_event_loop().time() - start > max_wait_seconds:
+                logger.warning(
+                    "approval_wait_timeout",
+                    request_id=request_id,
+                    max_wait_seconds=max_wait_seconds,
+                )
                 return
             await asyncio.sleep(1)
 
@@ -130,6 +146,14 @@ class ApprovalCoordinator:
             if not request:
                 raise WorkflowException(f"Approval request {request_id} not found")
 
+            # AIOSOP-APPROVAL-VOCAB-001: normalize the operator decision to the
+            # canonical status set (approved/rejected/modified). Callers (the API,
+            # ops scripts) have historically sent "denied"/"deny"/"reject" — none of
+            # which the approval waiters recognize (_wait_for_approval only matches
+            # approved/rejected/modified), so a "denied" decision left the gated task
+            # parked in `awaiting_approval` until the 1800s timeout and stalled the
+            # whole exploitation phase.
+            decision = self._canonical_decision(decision)
             request.status = decision
             request.operator_id = operator_id
             request.operator_notes = notes
@@ -143,14 +167,32 @@ class ApprovalCoordinator:
 
             await self._orch.session_memory.store_approval_request(request)
 
-            # Update task payload if approved
             if decision == "approved":
+                # Grant: inject the operator-resolved approval_id and re-dispatch.
                 task = self._orch._tasks.get(request.task_id)
                 if task:
                     task.payload["operator_approved"] = True
                     task.payload["approval_id"] = request.id
                     await self._orch.task_scheduler._assign_task(task)
                     await self._orch.session_memory.store_task(task)
+            elif decision in ("rejected", "modified"):
+                # Deny: fail the parked task NOW. Previously a non-approval decision
+                # did nothing here — the only denial path was a background timeout
+                # watcher that (a) exists only for scheduler-raised approvals and
+                # (b) waited out the full approval_timeout_seconds — so a rejected
+                # exploit left the engagement stuck in `exploitation` for up to 30 min.
+                # _on_task_failure sets a terminal "failed" status (no retry), which
+                # lets _is_phase_complete advance the phase.
+                task = self._orch._tasks.get(request.task_id)
+                if task and task.status == "awaiting_approval":
+                    await self._orch.task_scheduler._on_task_failure(
+                        task,
+                        {
+                            "status": "failed",
+                            "error": f"Approval {decision}: {notes or 'operator decision'}",
+                            "error_type": "ApprovalDenied",
+                        },
+                    )
 
             # Audit log
             await self._orch._audit_log(
@@ -189,6 +231,48 @@ class ApprovalCoordinator:
             ):
                 return True
         return False
+
+    def approved_request_id(self, task_id: str) -> Optional[str]:
+        """Return the id of the operator-approved ApprovalRequest for this task, if any.
+
+        The trusted source of an approval token. The scheduler uses this to re-inject
+        payload["approval_id"] just-in-time before executing a genuinely-approved task,
+        because the payload token is deliberately stripped on retry/ingress (GAP-2-1/2-3)
+        while the ApprovalRequest record remains the durable authority. Without this a
+        retried-but-approved exploit runs with a stripped id and fails
+        "requires an approval_id".
+        """
+        for req in self._orch._approval_requests.values():
+            if req.task_id == task_id and req.status == "approved" and req.operator_id:
+                return req.id
+        return None
+
+    def has_pending_approval(self, task_id: str) -> bool:
+        """True if an unresolved approval request already exists for this task.
+
+        AIOSOP-APPROVAL-DEDUPE-001: the scheduler consults this before raising a
+        new ApprovalRequest so that concurrent/re-entrant _assign_task calls for the
+        same task (e.g. the in-memory Task plus a copy reloaded from durable state,
+        both still "pending") cannot each raise a duplicate approval and flood the
+        operator. Authority remains the ApprovalRequest record, never task.payload.
+        """
+        for req in self._orch._approval_requests.values():
+            if req.task_id == task_id and req.status == "pending":
+                return True
+        return False
+
+    @staticmethod
+    def _canonical_decision(decision: str) -> str:
+        """Map operator-decision synonyms onto the canonical status vocabulary
+        (approved / rejected / modified) used by the approval waiters and gate."""
+        d = str(decision or "").strip().lower()
+        if d in ("approved", "approve", "accept", "accepted", "allow", "allowed", "grant", "granted"):
+            return "approved"
+        if d in ("rejected", "reject", "denied", "deny", "decline", "declined", "refused", "refuse"):
+            return "rejected"
+        if d in ("modified", "modify", "amend", "amended", "changed"):
+            return "modified"
+        return d
 
     @staticmethod
     def _strip_stale_approval(task) -> None:

@@ -48,6 +48,36 @@ async def _trigger_authenticated_discovery(session_id: str) -> None:
         )
 
 
+async def _project_session_to_graph(engagement_id: str, user_label: str, sess: Any) -> None:
+    """Project an imported session as a :Session node in the graph.
+
+    ROOT-CAUSE FIX (2026-07-04, surfaced by the autonomous-pipeline benchmark):
+    the autonomous-discovery gate (`EngagementManager._engagement_is_authenticated`)
+    reads ``MATCH (s:Session {engagement_id}) RETURN s.authenticated`` — but NOTHING
+    in the codebase ever wrote that node (sessions were persisted only to Postgres).
+    So the gate was permanently closed and ``map_workflow`` never auto-dispatched.
+    We MERGE the node here so authenticated discovery can actually fire. A session
+    is considered authenticated when it carries real auth material (cookies/bearer).
+    """
+    orch = state.get("orchestrator") if isinstance(state, dict) else state["orchestrator"]
+    gm = getattr(orch, "graph_memory", None) if orch is not None else None
+    if gm is None:
+        return
+    authenticated = bool(getattr(sess, "cookies", None) or getattr(sess, "bearer_token", ""))
+    try:
+        await gm.run_write_query(
+            "MERGE (s:Session {engagement_id: $eid, username: $u}) "
+            "SET s.authenticated = $auth, s.user_label = $u, s.updated_at = timestamp()",
+            {"eid": engagement_id, "u": user_label, "auth": authenticated},
+        )
+    except Exception as e:  # graph projection is best-effort; never block the import
+        import logging
+
+        logging.getLogger("ai_osop.api.sessions").warning(
+            f"session graph projection failed for {engagement_id}/{user_label}: {e}"
+        )
+
+
 @router.put("/{session_id}/sessions/{user_label}", response_model=UserSessionResponse)
 async def put_user_session(
     session_id: str,
@@ -73,6 +103,7 @@ async def put_user_session(
         user_agent=body.user_agent,
         metadata_blob={**body.metadata, "imported_by": operator.get("sub", "?")},
     )
+    await _project_session_to_graph(session_id, user_label, sess)
     await _trigger_authenticated_discovery(session_id)
     return _session_response(sess)
 
@@ -101,6 +132,7 @@ async def post_user_session(
         user_agent=body.user_agent,
         metadata_blob={**body.metadata, "imported_by": operator.get("sub", "?")},
     )
+    await _project_session_to_graph(session_id, body.user_label, sess)
     await _trigger_authenticated_discovery(session_id)
     return _session_response(sess)
 

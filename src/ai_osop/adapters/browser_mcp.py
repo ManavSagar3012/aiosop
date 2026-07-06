@@ -65,13 +65,42 @@ class BrowserMCPAdapter:
         the browser context is seeded with those credentials so navigation runs as
         the imported user.
         """
-        return await self.execute_action(
-            "navigate",
-            {"url": url},
-            user_label=user_label,
-            engagement_id=engagement_id,
-            storage_state=storage_state,
-        )
+        try:
+            return await self.execute_action(
+                "navigate",
+                {"url": url},
+                user_label=user_label,
+                engagement_id=engagement_id,
+                storage_state=storage_state,
+            )
+        except MCPException as e:
+            # Defense-in-depth (2026-07-04): a localhost/private-range target that is
+            # HTTP-only fails an https:// navigation with net::ERR_SSL_PROTOCOL_ERROR,
+            # which otherwise kills the whole autonomous chain. Retry once over http.
+            # Public targets are never downgraded (real bounty targets stay https).
+            if ("SSL" in str(e) or "ERR_SSL" in str(e)) and self._is_local_http_target(url):
+                return await self.execute_action(
+                    "navigate",
+                    {"url": "http://" + url[len("https://"):]},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                    storage_state=storage_state,
+                )
+            raise
+
+    @staticmethod
+    def _is_local_http_target(url: str) -> bool:
+        if not url.startswith("https://"):
+            return False
+        host = url[len("https://"):].split("/")[0].split(":")[0].lower()
+        if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            return True
+        if host.startswith(("10.", "192.168.")):
+            return True
+        if host.startswith("172.") and host.count(".") >= 1:
+            parts = host.split(".")
+            return len(parts) > 1 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31
+        return False
 
     async def capture_state(
         self, user_label: str = "guest", engagement_id: str = ""

@@ -113,7 +113,7 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
         ("payload-mcp", settings.payload_mcp_host, settings.payload_mcp_port, None),
         ("nuclei-mcp", settings.nuclei_mcp_host, settings.nuclei_mcp_port, None),
         ("shodan-mcp", settings.shodan_mcp_host, settings.shodan_mcp_port, settings.shodan_api_key),
-        ("browser-mcp", "127.0.0.1", 8091, None),
+        ("browser-mcp", settings.browser_mcp_host, settings.browser_mcp_port, None),
         ("security-bridge", settings.security_bridge_host, settings.security_bridge_port, None),
         ("threat-intel-mcp", settings.threat_intel_mcp_host, settings.threat_intel_mcp_port, None),
         ("cloud-mcp", settings.cloud_mcp_host, settings.cloud_mcp_port, None),
