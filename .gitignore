@@ -225,3 +225,25 @@ dashboard_evidence/
 
 # k8s per-environment secrets (secrets.yaml.example template stays tracked)
 k8s/secrets.yaml
+
+# --- Local machine-specific & runtime (added during consolidation) ---
+# machine-specific MCP config (pinned local .exe path)
+.mcp.json
+# vite build cache
+.vite/
+# runtime engagement artifact
+engagement.json
+# benchmark run outputs (evidence, not source)
+benchmarks/*/results/
+
+# Local scratch / debug / one-off validation scripts
+/debug_eng.py
+/search_engagement.py
+/start_api.py
+/comprehensive_live_validation.py
+/final_live_validation.py
+/live_validation.py
+/task_dlq_lifecycle_v2.py
+/task_dlq_lifecycle_validation.py
+/scripts/run_api_debug.sh
+/scripts/docker_trace_500.py
