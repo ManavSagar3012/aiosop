@@ -55,7 +55,8 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             operator = request.scope.get("operator", {})
             if isinstance(operator, dict):
                 user_id = operator.get("sub")
-        except Exception:
+        except Exception as e:
+            logger.warning("broad_exception_caught", error=str(e))
             pass
 
         # 3. Bind to contextvars and structlog

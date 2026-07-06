@@ -43,7 +43,7 @@ async def list_dlq_entries(
             raise HTTPException(status_code=503, detail="Orchestrator not available")
 
         # Ownership check: if user is not senior_operator, restrict to their engagement
-        if "senior_operator" not in operator.get("roles", []):
+        if operator.get("role") != "senior_operator":
             if not engagement_id:
                 raise HTTPException(status_code=403, detail="engagement_id required for non-senior operators")
             if engagement_id != operator.get("engagement_id"):
@@ -69,7 +69,7 @@ async def get_dlq_entry(
             raise HTTPException(status_code=404, detail="DLQ entry not found")
 
         # Ownership check
-        if "senior_operator" not in operator.get("roles", []):
+        if operator.get("role") != "senior_operator":
             if entry.engagement_id != operator.get("engagement_id"):
                 raise HTTPException(status_code=403, detail="Not authorized for this engagement")
 
@@ -102,6 +102,7 @@ async def requeue_dlq_entry(
                 actor_id=operator.get("id", "unknown"),
                 action={"dlq_entry_id": entry_id, "task_id": entry.task_id},
                 result={"success": True},
+                context={},
                 engagement_id=entry.engagement_id,
             )
         )
@@ -140,6 +141,7 @@ async def discard_dlq_entry(
                 actor_id=operator.get("id", "unknown"),
                 action={"dlq_entry_id": entry_id, "task_id": entry.task_id, "notes": notes},
                 result={"success": True},
+                context={},
                 engagement_id=entry.engagement_id,
             )
         )
@@ -177,6 +179,7 @@ async def retry_dlq_entry(
                 actor_id=operator.get("id", "unknown"),
                 action={"dlq_entry_id": entry_id, "task_id": entry.task_id},
                 result={"success": True},
+                context={},
                 engagement_id=entry.engagement_id,
             )
         )

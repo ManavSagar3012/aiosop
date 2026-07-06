@@ -9,6 +9,49 @@ from ai_osop.core.models import DiffAuthFinding
 logger = structlog.get_logger("ai_osop.findings_quality")
 
 
+class FindingClass:
+    """Bug-bounty-oriented classification of a finding's reportability.
+
+    The platform previously treated every nuclei detection as a candidate
+    vulnerability and certified it "actionable" on confidence+exploitability
+    alone — so technology/infrastructure detections (WAF, CDN, framework
+    fingerprints) were mislabeled actionable. This taxonomy separates:
+
+      RECON      — technology / infrastructure / framework detection. Not a
+                   vulnerability; never reportable to a bounty program.
+      POTENTIAL  — a possible issue that requires manual validation / a PoC
+                   before it could be reported (exposed keys without proven
+                   privileged access, version-based CVEs, generic secret
+                   matches, disclosure checks with no demonstrated leak).
+      CONFIRMED  — validated security impact with a reproducible PoC. The only
+                   class that is genuinely reportable as-is.
+    """
+
+    RECON = "recon"
+    POTENTIAL = "potential"
+    CONFIRMED = "confirmed"
+
+
+# Technology / infrastructure / framework detection families (nuclei "tech",
+# "*-detect", fingerprinting templates). These are reconnaissance, not findings.
+_RECON_PATTERNS = re.compile(
+    r"\bdetect\b|\bdetection\b|fingerprint|wappalyzer|\bwaf\b|\bcdn\b|"
+    r"cloudfront|technology|favicon|\bbanner\b|service[\s\-_]*detect|"
+    r"version[\s\-_]*detect|tech[\s\-_]*detect",
+    re.IGNORECASE,
+)
+
+# Real exploit/vulnerability classes that, when demonstrated with a PoC, are
+# genuinely reportable.
+_EXPLOIT_CLASSES = (
+    "sqli", "sql_injection", "xss", "cross_site_scripting", "idor", "bola",
+    "ssrf", "rce", "command_injection", "exec", "xxe", "lfi", "ssti",
+    "broken_access_control", "broken_object", "privilege_escalation", "csrf",
+    "deserialization", "business_logic", "business-logic", "auth_bypass",
+    "authentication_bypass", "jwt_abuse", "mass_assignment", "open_redirect",
+)
+
+
 class FindingQualityEngine:
     """
     Sprint 7: Evaluates, scores, and refines differential authorization findings.
@@ -296,14 +339,83 @@ class FindingCertificationEngine:
         if severity in ("CRITICAL", "HIGH") and confidence < 0.5:
             reasons.append("critical_finding_needs_verification")
 
+        # Bug-bounty classification: is this a real vulnerability, a candidate
+        # needing validation, or just reconnaissance?
+        classification = cls.classify_finding(
+            vuln, evidence, exploitability, evidence_score
+        )
+        reasons.append(f"classified_{classification}")
+
+        # A finding is only genuinely reportable to a bounty program when it is
+        # CONFIRMED (validated impact + PoC). Recon is never reportable; a
+        # POTENTIAL needs manual validation first. "actionable" is kept for
+        # backward compatibility but is now classification-aware so technology
+        # detections can no longer be labeled actionable on score alone.
+        reportable = classification == FindingClass.CONFIRMED
+        actionable = (
+            classification != FindingClass.RECON
+            and confidence >= 0.75
+            and exploitability >= 0.5
+        )
+
         return {
             "confidence_score": confidence,
             "exploitability_score": exploitability,
             "business_impact": impact,
             "evidence_completeness": evidence_score,
             "reasons": reasons,
-            "actionable": confidence >= 0.75 and exploitability >= 0.5,
+            "classification": classification,
+            "reportable": reportable,
+            "actionable": actionable,
         }
+
+    @classmethod
+    def classify_finding(
+        cls,
+        vuln: Any,
+        evidence: Optional[str],
+        exploitability: float,
+        evidence_score: float,
+    ) -> str:
+        """Classify a finding as RECON, POTENTIAL, or CONFIRMED.
+
+        Decision order:
+          1. CONFIRMED — explicitly validated, or a real exploit class shown
+             with a request+response+match proof of concept.
+          2. RECON — technology / infrastructure / framework detection.
+          3. POTENTIAL — anything else (needs manual validation before report).
+        """
+        vuln_type = (getattr(vuln, "vuln_type", None) or "").lower()
+        title = (getattr(vuln, "title", None) or "").lower()
+        severity = (getattr(vuln, "severity", None) or "INFO").upper()
+        validated = bool(getattr(vuln, "validated", False))
+        tool = (getattr(vuln, "tool_source", None) or "").lower()
+        ev = (evidence or "").lower()
+
+        # 1. RECON FIRST — technology / infrastructure / framework detection.
+        #    Keyed on the TITLE (the template name is the source of truth); the
+        #    vuln_type can be a coarse default and must not drive this. A
+        #    detection that has been independently validated is the rare
+        #    exception and falls through to CONFIRMED below.
+        if not validated and _RECON_PATTERNS.search(title):
+            return FindingClass.RECON
+
+        # 2. CONFIRMED — only platform-validated findings, or exploits actively
+        #    demonstrated by the platform's own exploit agents (a real request
+        #    that PROVES impact). A raw scanner/template match is NOT confirmed —
+        #    it is a candidate that still needs a working PoC, so it is POTENTIAL.
+        if validated:
+            return FindingClass.CONFIRMED
+        demonstrated = tool in (
+            "stateful_logic", "diff_auth", "diffauth", "exploit_validation", "concurrency"
+        ) and any(t in ev for t in ("violation", "replay", "bypass", "demonstrated"))
+        if demonstrated and exploitability >= 0.6 and severity != "INFO":
+            return FindingClass.CONFIRMED
+
+        # 3. POTENTIAL — scanner matches, exposed keys, CVEs-by-version,
+        #    disclosure checks: real candidates, but each needs manual validation
+        #    and a reproducible PoC before it could be reported.
+        return FindingClass.POTENTIAL
 
     @classmethod
     async def generate_mission_certificate(
@@ -321,11 +433,12 @@ class FindingCertificationEngine:
         # Fetch all vulnerabilities from Neo4j
         vulnerabilities = []
         try:
-            query = "MATCH (v:Vulnerability) WHERE v.engagement_id = $eid RETURN v"
-            async with graph_memory._driver.session() as session:
-                result = await session.run(query, eid=engagement_id)
-                for record in await result.data():
-                    vulnerabilities.append(record["v"])
+            records = await graph_memory.run_read_query(
+                "MATCH (v:Vulnerability) WHERE v.engagement_id = $eid RETURN v",
+                {"eid": engagement_id},
+            )
+            for record in records:
+                vulnerabilities.append(record.get("v"))
         except Exception as e:
             logger.error("failed_fetch_vulns_for_certificate", error=str(e))
 
@@ -363,6 +476,20 @@ class FindingCertificationEngine:
             total_evidence_completeness += cert["evidence_completeness"]
             if cert["actionable"]:
                 actionable_count += 1
+
+        # Bucket findings by bug-bounty classification for honest reporting.
+        recon_count = sum(
+            1 for f in certified_findings
+            if f["certification"].get("classification") == FindingClass.RECON
+        )
+        potential_count = sum(
+            1 for f in certified_findings
+            if f["certification"].get("classification") == FindingClass.POTENTIAL
+        )
+        reportable_count = sum(
+            1 for f in certified_findings
+            if f["certification"].get("reportable")
+        )
 
         avg_evidence_completeness = (
             total_evidence_completeness / len(vulnerabilities)
@@ -419,9 +546,15 @@ This certificate verifies the overall quality, operational validity, and finding
 | **Assets Discovered** | {assets_count} | Neo4j Graph Memory |
 | **Endpoints Mapped** | {endpoints_count} | Neo4j Graph Memory |
 | **Total Findings** | {len(vulnerabilities)} | Neo4j Graph Memory |
-| **Actionable Findings** | {actionable_count} | Finding Certification Engine |
+| **Reportable (CONFIRMED)** | {reportable_count} | Finding Certification Engine |
+| **Needs Validation (POTENTIAL)** | {potential_count} | Finding Certification Engine |
+| **Reconnaissance (RECON, non-reportable)** | {recon_count} | Finding Certification Engine |
 | **Avg Evidence Completeness** | {avg_evidence_completeness:.1%} | Attestation Pipeline |
-| **Estimated False Positive Rate** | {unconfirmed_serious / len(vulnerabilities) * 100 if vulnerabilities else 0:.1f}% | Confidence Engine |
+
+> **Reportability note:** Only **CONFIRMED** findings (validated impact + reproducible PoC)
+> are candidates for submission to a bug-bounty program. **RECON** findings are
+> technology/infrastructure detections and are never reportable. **POTENTIAL**
+> findings require manual validation and a working PoC before they could be submitted.
 
 ---
 
@@ -433,12 +566,18 @@ This certificate verifies the overall quality, operational validity, and finding
                 "_No vulnerabilities were identified during this engagement._\n"
             )
         else:
-            md_content += "| Finding ID | Title | Severity | Confidence | Exploitability | Impact | Actionable? |\n"
-            md_content += "|---|---|---|---|---|---|---|\n"
+            md_content += "| Finding ID | Title | Severity | Class | Confidence | Reportable? |\n"
+            md_content += "|---|---|---|---|---|---|\n"
+            _class_label = {
+                FindingClass.RECON: "🔍 RECON",
+                FindingClass.POTENTIAL: "🟡 POTENTIAL",
+                FindingClass.CONFIRMED: "🔴 CONFIRMED",
+            }
             for f in certified_findings:
                 cert = f["certification"]
-                act_str = "✅ YES" if cert["actionable"] else "❌ NO"
-                md_content += f"| `{f['id']}` | {f['title']} | **{f['severity']}** | {cert['confidence_score']:.1%} | {cert['exploitability_score']:.1%} | {cert['business_impact'].upper()} | {act_str} |\n"
+                cls_str = _class_label.get(cert.get("classification"), cert.get("classification", "?"))
+                rep_str = "✅ YES" if cert.get("reportable") else "❌ NO"
+                md_content += f"| `{f['id']}` | {f['title']} | **{f['severity']}** | {cls_str} | {cert['confidence_score']:.1%} | {rep_str} |\n"
 
         if issues:
             md_content += "\n## 4. Quality Issues Identified\n"
@@ -446,7 +585,23 @@ This certificate verifies the overall quality, operational validity, and finding
                 md_content += f"- ⚠️ {issue}\n"
         else:
             md_content += "\n## 4. Quality Statement\n"
-            md_content += "✅ **All quality checks passed.** The reconnaissance mapped a valid attack surface, and all reported findings contain complete evidence and meet the platform's high-confidence threshold. This mission is certified as fully trustworthy and actionable.\n"
+            if reportable_count > 0:
+                md_content += (
+                    f"✅ **Quality checks passed.** The reconnaissance mapped a valid attack "
+                    f"surface and {reportable_count} CONFIRMED finding(s) carry validated impact "
+                    f"with a reproducible PoC — these are candidates for bug-bounty submission. "
+                    f"{potential_count} POTENTIAL finding(s) require manual validation first; "
+                    f"{recon_count} RECON detection(s) are informational and not reportable.\n"
+                )
+            else:
+                md_content += (
+                    f"ℹ️ **Reconnaissance complete; no reportable vulnerabilities.** The engagement "
+                    f"mapped the attack surface, but **0 findings are CONFIRMED** (validated impact + "
+                    f"PoC). {potential_count} POTENTIAL finding(s) need manual validation before they "
+                    f"could be reported; {recon_count} RECON detection(s) (technology/CDN/WAF/"
+                    f"framework fingerprints) are informational and **not** reportable to a bounty "
+                    f"program. No items should be submitted as-is.\n"
+                )
 
         # Save to disk
         reports_dir = os.path.join("reports", engagement_id)
@@ -465,7 +620,8 @@ This certificate verifies the overall quality, operational validity, and finding
                         "MISSION_QUALITY_CERTIFICATE.md", "w", encoding="utf-8"
                     ) as fh:
                         fh.write(md_content)
-            except Exception:
+            except Exception as e:
+                logger.warning("broad_exception_caught", error=str(e))
                 pass
 
         return {
@@ -474,6 +630,9 @@ This certificate verifies the overall quality, operational validity, and finding
             "endpoints_count": endpoints_count,
             "total_findings": len(vulnerabilities),
             "actionable_findings": actionable_count,
+            "reportable_findings": reportable_count,
+            "potential_findings": potential_count,
+            "recon_findings": recon_count,
             "avg_evidence_completeness": avg_evidence_completeness,
             "certificate_path": os.path.abspath(cert_path),
             "issues": issues,
@@ -503,19 +662,19 @@ class AttackSurfaceCertifier:
         raw_crawled_count = 0
         try:
             query_task = "MATCH (t:Task {type: 'full_recon'}) WHERE t.engagement_id = $eid RETURN t.result_summary AS res"
-            async with graph_memory._driver.session() as session:
-                res_task = await session.run(query_task, eid=engagement_id)
-                record_task = await res_task.single()
-                if record_task and record_task["res"]:
-                    res_summary = record_task["res"]
+            records = await graph_memory.run_read_query(query_task, {"eid": engagement_id})
+            if records:
+                record_task = records[0]
+                res_summary = record_task.get("res")
+                if res_summary:
                     if isinstance(res_summary, str):
                         res_dict = json.loads(res_summary)
                     else:
                         res_dict = res_summary
                     if isinstance(res_dict, dict):
                         raw_crawled_count = res_dict.get("endpoints_found", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("broad_exception_caught", error=str(e))
 
         # Fallback: raw crawled count is at least the persisted count
         if raw_crawled_count == 0:
@@ -532,64 +691,66 @@ class AttackSurfaceCertifier:
 
         try:
             # Query all assets
-            asset_query = "MATCH (a:Asset) WHERE a.engagement_id = $eid RETURN a"
-            async with graph_memory._driver.session() as session:
-                res = await session.run(asset_query, eid=engagement_id)
-                for record in await res.data():
-                    a = record["a"]
-                    atype = a.get("type", "")
-                    value = a.get("value", "")
-                    if atype == "subdomain":
-                        subdomains.append(value)
-                    elif atype == "host":
-                        hosts.append(value)
+            asset_records = await graph_memory.run_read_query(
+                "MATCH (a:Asset) WHERE a.engagement_id = $eid RETURN a",
+                {"eid": engagement_id},
+            )
+            for record in asset_records:
+                a = record.get("a", {})
+                atype = a.get("type", "")
+                value = a.get("value", "")
+                if atype == "subdomain":
+                    subdomains.append(value)
+                elif atype == "host":
+                    hosts.append(value)
 
             # Query all endpoints
-            ep_query = "MATCH (e:Endpoint) WHERE e.engagement_id = $eid RETURN e"
-            async with graph_memory._driver.session() as session:
-                res = await session.run(ep_query, eid=engagement_id)
-                for record in await res.data():
-                    e = record["e"]
-                    url = e.get("url", "")
-                    path = e.get("path", "")
-                    query_keys = e.get("query_keys", []) or []
-                    body_keys = e.get("body_schema_keys", []) or []
+            ep_records = await graph_memory.run_read_query(
+                "MATCH (e:Endpoint) WHERE e.engagement_id = $eid RETURN e",
+                {"eid": engagement_id},
+            )
+            for record in ep_records:
+                e = record.get("e", {})
+                url = e.get("url", "")
+                path = e.get("path", "")
+                query_keys = e.get("query_keys", []) or []
+                body_keys = e.get("body_schema_keys", []) or []
 
                     # Check for API endpoint
-                    if any(
-                        x in url.lower() or x in path.lower()
-                        for x in [
-                            "/api",
-                            "/v1",
-                            "/v2",
-                            "/graphql",
-                            "/swagger",
-                            "/openapi",
-                        ]
-                    ):
-                        api_endpoints.append(url)
+                if any(
+                    x in url.lower() or x in path.lower()
+                    for x in [
+                        "/api",
+                        "/v1",
+                        "/v2",
+                        "/graphql",
+                        "/swagger",
+                        "/openapi",
+                    ]
+                ):
+                    api_endpoints.append(url)
 
                     # Check for JS file
-                    if url.lower().endswith(".js") or any(
-                        x in url.lower()
-                        for x in ["/chunks/", "/webpack/", "/static/js/"]
-                    ):
-                        js_endpoints.append(url)
+                if url.lower().endswith(".js") or any(
+                    x in url.lower()
+                    for x in ["/chunks/", "/webpack/", "/static/js/"]
+                ):
+                    js_endpoints.append(url)
 
                     # Check for parameters
-                    if query_keys or body_keys:
-                        parameter_endpoints.append(url)
+                if query_keys or body_keys:
+                    parameter_endpoints.append(url)
         except Exception as e:
             logger.error("failed_fetch_details_for_attack_surface", error=str(e))
         # Categorize endpoints by Privilege Level (Sprint 13 Swarm Identity Matrix)
         all_endpoints_list = []
         try:
             query_all_eps = "MATCH (e:Endpoint) WHERE e.engagement_id = $eid RETURN e.auth_required AS auth_required, e.user_label AS user_label"
-            async with graph_memory._driver.session() as session:
-                res_eps = await session.run(query_all_eps, eid=engagement_id)
-                all_endpoints_list = await res_eps.data()
-        except Exception:
-            pass
+            all_endpoints_list = await graph_memory.run_read_query(
+                query_all_eps, {"eid": engagement_id}
+            )
+        except Exception as e:
+            logger.warning("broad_exception_caught", error=str(e))
 
         anonymous_count = 0
         auth_only_count = 0
@@ -739,7 +900,8 @@ The platform achieved an estimated **{coverage_percent:.1%}** coverage density o
                         "ATTACK_SURFACE_EXPANSION_CERTIFICATE.md", "w", encoding="utf-8"
                     ) as fh:
                         fh.write(md_content)
-            except Exception:
+            except Exception as e:
+                logger.warning("broad_exception_caught", error=str(e))
                 pass
 
         return {

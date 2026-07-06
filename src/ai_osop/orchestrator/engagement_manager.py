@@ -188,31 +188,53 @@ class EngagementManager:
         )
         return session
 
+    @staticmethod
+    def _domain_to_url(domain: str) -> str:
+        """Build the discovery URL from a scope domain, choosing a sane scheme.
+
+        Real bounty targets are HTTPS, but localhost/private-range test targets
+        (e.g. a local Juice Shop on :3000) are HTTP; forcing https:// there yields
+        net::ERR_SSL_PROTOCOL_ERROR and kills the autonomous run at navigation
+        (surfaced by the autonomous benchmark, 2026-07-04). Respect an explicit
+        scheme if the operator provided one.
+        """
+        d = (domain or "").strip()
+        if d.startswith(("http://", "https://")):
+            return d if d.endswith("/") else d + "/"
+        host = d.split("/")[0].split(":")[0].lower()
+        is_local = (
+            host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+            or host.startswith(("10.", "192.168."))
+            or (host.startswith("172.") and host.count(".") >= 1
+                and host.split(".")[1].isdigit()
+                and 16 <= int(host.split(".")[1]) <= 31)
+        )
+        scheme = "http" if is_local else "https"
+        return f"{scheme}://{d}/"
+
     async def _engagement_is_authenticated(self, engagement_id: str) -> bool:
         """Check whether the engagement has an authenticated session."""
         try:
-            cypher = (
-                "MATCH (s:Session {engagement_id: $eid}) "
-                "RETURN s.authenticated as authenticated"
+            records = await self._orch.graph_memory.run_read_query(
+                "MATCH (s:Session {engagement_id: $eid}) RETURN s.authenticated as authenticated",
+                {"eid": engagement_id},
             )
-            async with self._orch.graph_memory._driver.session() as g_session:
-                result = await g_session.run(cypher, {"eid": engagement_id})
-                record = await result.single()
-                return bool(record and record.get("authenticated"))
+            if records:
+                return bool(records[0].get("authenticated"))
+            return False
         except Exception:
             return False
 
     async def _pick_auth_user_label(self, engagement_id: str) -> Optional[str]:
         """Pick a stable user label for authenticated discovery."""
         try:
-            cypher = (
-                "MATCH (s:Session {engagement_id: $eid}) "
-                "RETURN s.username as username"
+            records = await self._orch.graph_memory.run_read_query(
+                "MATCH (s:Session {engagement_id: $eid}) RETURN s.username as username",
+                {"eid": engagement_id},
             )
-            async with self._orch.graph_memory._driver.session() as g_session:
-                result = await g_session.run(cypher, {"eid": engagement_id})
-                record = await result.single()
-                return record.get("username") if record else None
+            if records:
+                return records[0].get("username")
+            return None
         except Exception:
             return None
 
@@ -241,7 +263,7 @@ class EngagementManager:
         if not url:
             session = self._orch._sessions.get(engagement_id)
             if session and getattr(session, "scope", None) and session.scope.domains:
-                url = f"https://{session.scope.domains[0]}/"
+                url = self._domain_to_url(session.scope.domains[0])
 
         task = Task(
             type="map_workflow",

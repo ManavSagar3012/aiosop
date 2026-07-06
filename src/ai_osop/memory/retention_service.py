@@ -110,15 +110,16 @@ class RetentionService:
         RETURN count(DISTINCT e) as engagements, count(DISTINCT n) as nodes
         """
 
-        async with self.graph_memory._driver.session() as session:
-            result = await session.run(cypher, {"cutoff": cutoff_iso})
-            record = await result.single()
-            if record:
-                return {
-                    "archived_engagements": record["engagements"],
-                    "archived_nodes": record["nodes"],
-                    "cutoff": cutoff_iso,
-                }
+        records = await self.graph_memory.run_read_query(
+            cypher, {"cutoff": cutoff_iso}
+        )
+        if records:
+            record = records[0]
+            return {
+                "archived_engagements": record.get("engagements", 0),
+                "archived_nodes": record.get("nodes", 0),
+                "cutoff": cutoff_iso,
+            }
         return {"archived_engagements": 0, "archived_nodes": 0}
 
     async def _cleanup_postgres(self) -> dict:

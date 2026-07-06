@@ -53,13 +53,11 @@ class ReportingAgent(BaseAgent):
         engagement_id = self.ctx.current_task.engagement_id
         version = payload.get("version", "v1.0")
 
-        # 1. Gather Data from Memories
-        # In a full implementation, we'd query graph_memory.get_vulnerabilities()
-        # Mocking data retrieval for P1 scope
+        # 1. Gather real data from memories (no mocks — OSOP-P0-02 anti-fabrication).
+        # graph_stats: live per-engagement asset/endpoint counts from Neo4j.
         graph_stats = await self.ctx.graph_memory.get_graph_stats(engagement_id)
 
-        # We need actual vulnerability data. For this implementation we mock querying them
-        # if the real method isn't fully implemented in graph_memory.
+        # Real vulnerability nodes for this engagement, fetched from the graph below.
         findings = []
         try:
             vuln_nodes = await self.ctx.graph_memory.get_vulnerabilities_by_engagement(engagement_id)
@@ -149,14 +147,33 @@ class ReportingAgent(BaseAgent):
             logger.warning("could_not_fetch_findings_from_graph", error=str(e))
 
         # 2. Generate Risk Narrative via LLM
+        # AIOSOP-REPORT-SEVCASE-001: severities are stored lowercase (nuclei emits
+        # "info"/"high"/...), but the counts previously compared against uppercase
+        # literals ("HIGH"/"CRITICAL") — so high_count/critical_count were ALWAYS 0,
+        # silently hiding the most important findings AND causing the LLM narrative
+        # (fed from these counts) to falsely assert "no high-severity findings".
+        # Normalize case and count every bucket.
+        def _sev(f: Dict[str, Any]) -> str:
+            return str(f.get("severity", "info")).strip().upper()
+
         stats = {
             "assets_count": graph_stats.get("assets", 0),
             "endpoints_count": graph_stats.get("endpoints", 0),
-            "critical_count": sum(1 for f in findings if f["severity"] == "CRITICAL"),
-            "high_count": sum(1 for f in findings if f["severity"] == "HIGH"),
+            "critical_count": sum(1 for f in findings if _sev(f) == "CRITICAL"),
+            "high_count": sum(1 for f in findings if _sev(f) == "HIGH"),
+            "medium_count": sum(1 for f in findings if _sev(f) == "MEDIUM"),
+            "low_count": sum(1 for f in findings if _sev(f) == "LOW"),
+            "info_count": sum(1 for f in findings if _sev(f) == "INFO"),
+            "total_findings": len(findings),
         }
 
-        context = f"Engagement {engagement_id} findings: {stats}. Top findings: {[f['title'] for f in findings[:3]]}"
+        top_titled = [f"{f.get('title', 'Unknown')} [{_sev(f)}]" for f in findings[:5]]
+        context = (
+            f"Engagement {engagement_id}. Finding counts: {stats}. "
+            f"Top findings: {top_titled}. "
+            "Base the narrative strictly on these counts and severities; do not state "
+            "there are no high/critical findings if the counts show otherwise."
+        )
         messages = [
             {
                 "role": "system",

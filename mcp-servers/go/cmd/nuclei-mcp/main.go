@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ai-osop/mcp-servers/sdk"
 )
@@ -29,7 +32,20 @@ func main() {
 			if len(targets) == 0 {
 				return map[string]any{"findings": []any{}, "error": "target parameter is required and cannot be empty"}
 			}
-			args := []string{"-jsonl", "-silent"}
+			// Concurrency and rate-limit are tunable via params so the orchestrator
+			// can scan within its task budget. Previously these were hardcoded at
+			// -c 10 / -rate-limit 15, which throttled scans to ~15 req/s — full
+			// template runs then overran the agent timeout, got cancelled, and
+			// retried, orphaning nuclei subprocesses (the NUCLEI-FANOUT storm).
+			// Faster scans complete well within budget, so retries never fire.
+			concurrency := intParam(params["concurrency"], 25)
+			rateLimit := intParam(params["rate_limit"], 150)
+			args := []string{
+				"-jsonl", "-silent",
+				"-c", strconv.Itoa(concurrency),
+				"-rate-limit", strconv.Itoa(rateLimit),
+				"-no-mhe",
+			}
 			for _, target := range targets {
 				args = append(args, "-target", target)
 			}
@@ -47,7 +63,15 @@ func main() {
 			if tags, ok := params["tags"].(string); ok && strings.TrimSpace(tags) != "" {
 				args = append(args, "-tags", strings.TrimSpace(tags))
 			}
-			output, err := exec.Command("nuclei", args...).CombinedOutput()
+			// Hard ceiling: kill nuclei if it overruns the scan budget so a slow
+			// scan can never become an orphaned subprocess after the client
+			// disconnects. Mirrors the tool's declared 900s TimeoutSeconds.
+			ctx, cancel := context.WithTimeout(context.Background(), 900*time.Second)
+			defer cancel()
+			output, err := exec.CommandContext(ctx, "nuclei", args...).CombinedOutput()
+			if ctx.Err() == context.DeadlineExceeded {
+				return map[string]any{"findings": []any{}, "error": "nuclei scan exceeded 900s budget and was terminated", "raw": string(output)}
+			}
 			if err != nil {
 				return map[string]any{"findings": []any{}, "error": err.Error(), "raw": string(output)}
 			}
@@ -126,4 +150,24 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// intParam coerces a JSON-decoded parameter (float64, int, or numeric string)
+// into an int, falling back to def when absent or unparseable.
+func intParam(value any, def int) int {
+	switch v := value.(type) {
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	case int:
+		if v > 0 {
+			return v
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
 }

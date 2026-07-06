@@ -21,14 +21,13 @@ class SubmissionIntelligenceEngine:
         MATCH (d:DiffAuthFinding {category: $category})
         RETURN d.outcome as outcome, count(d) as count
         """
-        async with self.graph_memory._driver.session() as session:
-            result = await session.run(cypher, {"category": category})
-            stats = {"accepted": 0, "duplicate": 0, "informative": 0, "na": 0}
-            async for record in result:
-                outcome = record["outcome"]
-                if outcome in stats:
-                    stats[outcome] = record["count"]
-            return stats
+        records = await self.graph_memory.run_read_query(cypher, {"category": category})
+        stats = {"accepted": 0, "duplicate": 0, "informative": 0, "na": 0}
+        for record in records:
+            outcome = record.get("outcome")
+            if outcome in stats:
+                stats[outcome] = record.get("count", 0)
+        return stats
 
     async def calculate_acceptance_probability(self, finding: DiffAuthFinding) -> float:
         """Calculate acceptance probability based on historical category performance."""

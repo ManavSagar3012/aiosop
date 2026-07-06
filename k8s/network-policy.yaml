@@ -1,0 +1,76 @@
+# k8s/network-policy.yaml
+#
+# Default-deny NetworkPolicy for AI-OSOP pods.
+# Enforces zero-trust network segmentation so compromised pods cannot
+# freely communicate with internal or external services.
+#
+# Each component (orchestrator, agents, sandbox) has its own NetworkPolicy.
+# Apply all policies with: kubectl apply -f k8s/network-policy.yaml
+#
+# See also:
+#   - orchestrator-deployment.yaml (includes orchestrator-specific policy)
+#   - sandbox-network-guard.yaml (includes sandbox-specific policy)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-osop-default-deny
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+spec:
+  podSelector: {}  # applies to ALL pods in the namespace
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-osop-agent
+  namespace: ai-osop
+  labels:
+    app: ai-osop
+    component: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: ai-osop
+      component: agents
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ai-osop
+              component: orchestrator
+      ports:
+        - protocol: TCP
+          port: 8200
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: ai-osop
+              component: orchestrator
+      ports:
+        - protocol: TCP
+          port: 8200
+    - to:
+        - podSelector:
+            matchLabels:
+              app: ai-osop
+              component: sandbox
+    # DNS resolution (kube-dns / CoreDNS)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+  # All other egress denied by default via ai-osop-default-deny

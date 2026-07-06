@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Card } from '../components/shared/Card';
-import { StatTile } from '../components/shared/StatTile';
 import { ErrorState } from '../components/shared/ErrorState';
 import { Settings, Shield, Cpu } from 'lucide-react';
 import { API_BASE, authHeaders } from '../services/api';
@@ -151,10 +150,12 @@ export const Administration: React.FC = () => {
             </div>
             <div className="bg-black/40 p-4 border border-outline-variant border-dashed">
                <div className="text-on-surface-variant font-code-sm text-[10px] uppercase mb-2 tracking-widest">Active Knowledge Base Statistics</div>
-               <div className="grid grid-cols-2 gap-4">
-                  <StatTile label="VALIDATED OUTCOMES" value="1,245" accent="primary" />
-                  <StatTile label="FAILURE PATTERNS" value="842" accent="primary" />
-                  <StatTile label="FINGERPRINTED STACKS" value="52" accent="primary" />
+               {/* Removed hardcoded placeholder KPIs (VALIDATED OUTCOMES=1,245,
+                   FAILURE PATTERNS=842, FINGERPRINTED STACKS=52) — they were fabricated
+                   constants with no backend source. Show an honest empty state until a
+                   live KB-stats endpoint is wired. */}
+               <div className="text-on-surface-variant font-code-sm text-[10px] opacity-60">
+                  No live knowledge-base metrics available yet.
                </div>
             </div>
          </div>

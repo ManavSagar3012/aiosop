@@ -75,6 +75,15 @@ export const FindingsVerification: React.FC = () => {
   };
 
   const verifiedCount = findings.filter(f => f.status === 'verified').length;
+  // Live-derived evidence-integrity metrics (replaced hardcoded "92.4%" / "88/100"
+  // placeholders that displayed fabricated numbers regardless of real findings).
+  const avgConfidence = findings.length
+    ? findings.reduce((s, f) => s + (f.confidence || 0), 0) / findings.length
+    : 0;
+  const avgEvRaw = findings.length
+    ? findings.reduce((s, f) => s + (f.evScore || 0), 0) / findings.length
+    : 0;
+  const evidenceChainScore = Math.round(avgEvRaw <= 1 ? avgEvRaw * 100 : avgEvRaw);
   const liveCount = findings.filter(f => f.provenance === 'live').length;
 
   return (
@@ -116,11 +125,11 @@ export const FindingsVerification: React.FC = () => {
       {/* Evidence Integrity Stats */}
       <div className="grid grid-cols-4 gap-gutter mb-2">
          <StatTile
-           label="Avg Acceptance Prob" value="92.4%"
+           label="Avg Acceptance Prob" value={`${(avgConfidence * 100).toFixed(1)}%`}
            accent="primary" icon={<TrendingUp size={16} />} delay={0}
          />
          <StatTile
-           label="Evidence Chain Score" value="88/100"
+           label="Evidence Chain Score" value={`${evidenceChainScore}/100`}
            accent="secondary" icon={<LinkIcon size={16} />} delay={60}
          />
          <StatTile

@@ -661,6 +661,7 @@ class TriageReport(BaseModel):
     has_poc: bool = False
     has_captured_evidence: bool = False
     is_duplicate: bool = False
+    requires_manual_confirm: bool = False  # a detector flagged this as an unproven lead
     engagement_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

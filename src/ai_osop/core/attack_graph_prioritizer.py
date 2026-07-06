@@ -24,17 +24,16 @@ class AttackGraphChainPrioritizer:
         WHERE target.criticality = 'high'
         RETURN count(path) as path_count, max(length(path)) as max_depth
         """
-        async with self.graph_memory._driver.session() as session:
-            result = await session.run(cypher, {"finding_id": finding_id})
-            record = await result.single()
-            print(f"DEBUG: Record type={type(record)}, Record={record}")
-            if not record or record["path_count"] == 0:
-                return 0.1 # Baseline low impact
-            
-            # Simple heuristic: higher count and shallower depth = higher priority
-            path_count = record["path_count"]
-            max_depth = record["max_depth"]
-            return min(1.0, (path_count * 0.1) + (1.0 / (max_depth + 1)))
+        records = await self.graph_memory.run_read_query(cypher, {"finding_id": finding_id})
+        if not records:
+            return 0.1  # Baseline low impact
+        record = records[0]
+        logger.debug("path_impact_record", record=record)
+        path_count = record.get("path_count", 0)
+        if path_count == 0:
+            return 0.1
+        max_depth = record.get("max_depth", 1)
+        return min(1.0, (path_count * 0.1) + (1.0 / (max_depth + 1)))
 
     async def prioritize_finding(self, finding: DiffAuthFinding) -> Dict[str, Any]:
         """Compute the prioritized risk score."""

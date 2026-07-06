@@ -462,7 +462,9 @@ class Orchestrator:
         if not url:
             session = self._sessions.get(engagement_id)
             if session and session.scope.domains:
-                url = f"https://{session.scope.domains[0]}/"
+                # Scheme heuristic (http for localhost/private, https for real
+                # targets) — forcing https on an HTTP local target broke navigation.
+                url = self.engagement_manager._domain_to_url(session.scope.domains[0])
 
         task = Task(
             type="map_workflow",
