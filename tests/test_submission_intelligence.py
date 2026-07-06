@@ -7,19 +7,14 @@ from ai_osop.core.config import AgentType
 @pytest.mark.asyncio
 async def test_recommend_submission():
     # Setup
-    mock_graph = MagicMock()
-    # Mock result from the graph query
-    mock_result = AsyncMock()
-    mock_result.__aiter__.return_value = [
+    mock_graph = AsyncMock()
+    mock_graph.run_read_query = AsyncMock(return_value=[
         {"outcome": "accepted", "count": 8},
         {"outcome": "duplicate", "count": 2}
-    ]
-    mock_session = AsyncMock()
-    mock_session.run.return_value = mock_result
-    mock_graph._driver.session.return_value.__aenter__.return_value = mock_session
-    
+    ])
+
     engine = SubmissionIntelligenceEngine(mock_graph)
-    
+
     finding = DiffAuthFinding(
         category="horizontal_pe",
         resource_id="res-1",
@@ -29,10 +24,10 @@ async def test_recommend_submission():
         confidence=0.9,
         engagement_id="eng-1",
     )
-    
+
     # Act
     recommendation = await engine.recommend_submission(finding)
-    
+
     # Assert
     assert recommendation["acceptance_probability"] > 0
     assert recommendation["recommendation"] == "submit"

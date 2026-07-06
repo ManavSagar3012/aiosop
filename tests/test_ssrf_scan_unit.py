@@ -16,7 +16,7 @@ class _FakeOAST:
         self._hit = hit
     async def initialize(self, *a, **k):
         return None
-    async def register(self, label=""):
+    async def register(self, label="", context=None):
         return "tok123", "http://127.0.0.1:8099/tok123"
     async def poll(self, token):
         return [{"method": "GET", "path": "/tok123", "source_ip": "127.0.0.1"}] if self._hit else []

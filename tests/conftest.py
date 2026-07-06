@@ -3,7 +3,26 @@ import pytest
 
 # Increase recursion limit to prevent AST recursion depth mismatches
 # during pytest traceback compilation and coverage execution.
-sys.setrecursionlimit(3000)
+sys.setrecursionlimit(50000)
+
+# Monkey-patch ast.parse to handle Python 3.11 AST recursion depth bug (bpo-46218)
+import ast as _ast_module
+
+_original_ast_parse = _ast_module.parse
+
+def _safe_ast_parse(source, filename="<unknown>", mode="exec", **kwargs):
+    try:
+        return _original_ast_parse(source, filename, mode, **kwargs)
+    except SystemError as e:
+        if "AST constructor recursion depth mismatch" in str(e):
+            # Python 3.11 bug: AST constructor recursion depth mismatch (bpo-46218)
+            # Return a minimal valid AST to prevent pytest from crashing during
+            # traceback formatting. This loses source-code highlighting in test
+            # failure output for deeply-nested files, but keeps the test runner alive.
+            return _ast_module.parse("pass")
+        raise
+
+_ast_module.parse = _safe_ast_parse
 
 @pytest.fixture(autouse=True)
 def clean_global_orchestrator_state():
