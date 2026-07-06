@@ -95,8 +95,10 @@ async def test_react_agent_probe_components(agent) -> None:
     )
 
     result = await agent._execute(task)
-    assert result["status"] == "success"
-    assert result["msg"] == "Dynamic component probing initialized."
+    # Dynamic probing is not implemented; the agent reports this honestly
+    # instead of claiming a misleading "success" with no work performed.
+    assert result["status"] == "not_implemented"
+    assert result["findings_count"] == 0
 
 
 @pytest.mark.asyncio

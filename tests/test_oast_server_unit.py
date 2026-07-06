@@ -73,3 +73,57 @@ def test_capture_returns_gif():
     token = _register()["result"]["token"]
     r = client.get(f"/{token}")
     assert r.headers["content-type"] == "image/gif"
+
+
+def _register_ctx(context):
+    return client.post("/mcp/execute", json={
+        "tool_name": "oast_register",
+        "parameters": {"label": "p", "context": context},
+        "request_id": "rc"}).json()["result"]["token"]
+
+
+def _drain(since=0, engagement_id=None):
+    params = {"since": since}
+    if engagement_id:
+        params["engagement_id"] = engagement_id
+    return client.post("/mcp/execute", json={
+        "tool_name": "oast_drain", "parameters": params, "request_id": "rd"}).json()["result"]
+
+
+def test_interaction_has_seq_and_kind():
+    token = _register()["result"]["token"]
+    client.get(f"/{token}")
+    hit = client.post("/mcp/execute", json={
+        "tool_name": "oast_poll", "parameters": {"token": token},
+        "request_id": "rp"}).json()["result"]["interactions"][0]
+    assert hit["kind"] == "http" and isinstance(hit["seq"], int) and hit["interaction_id"]
+
+
+def test_drain_echoes_probe_context():
+    ctx = {"engagement_id": "engS", "vuln_class": "ssrf", "injection_point": "url"}
+    token = _register_ctx(ctx)
+    client.get(f"/{token}")
+    res = _drain(since=0)
+    mine = [i for i in res["interactions"] if i["token"] == token]
+    assert len(mine) == 1
+    assert mine[0]["context"] == ctx
+
+
+def test_drain_cursor_only_returns_fresh_interactions():
+    token = _register_ctx({"engagement_id": "engCur"})
+    client.get(f"/{token}")
+    first = _drain(since=0, engagement_id="engCur")
+    assert first["count"] == 1
+    # Re-draining from the returned cursor yields nothing new.
+    second = _drain(since=first["cursor"], engagement_id="engCur")
+    assert second["count"] == 0
+
+
+def test_drain_engagement_filter():
+    t1 = _register_ctx({"engagement_id": "engA"})
+    t2 = _register_ctx({"engagement_id": "engB"})
+    client.get(f"/{t1}")
+    client.get(f"/{t2}")
+    res = _drain(since=0, engagement_id="engA")
+    tokens = {i["token"] for i in res["interactions"]}
+    assert t1 in tokens and t2 not in tokens

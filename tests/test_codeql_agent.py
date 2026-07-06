@@ -153,24 +153,10 @@ async def test_map_sast_to_graph(agent) -> None:
         }
     ]
 
-    # Set up mock Neo4j driver chain — _driver must be MagicMock so session()
-    # returns the context manager directly, not a coroutine (AsyncMock quirk).
-    mock_record = {"id": "ep-123"}
-    mock_result = AsyncMock()
-    mock_result.__aiter__ = lambda self: self  # noqa: E731
-    mock_result.__anext__ = AsyncMock(side_effect=[mock_record, StopAsyncIteration])
-
-    mock_session = AsyncMock()
-    mock_session.run.return_value = mock_result
-
-    # Create async context manager for session
-    mock_session_cm = AsyncMock()
-    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
-
-    from unittest.mock import MagicMock
-    agent.ctx.graph_memory._driver = MagicMock()
-    agent.ctx.graph_memory._driver.session.return_value = mock_session_cm
+    # Set up mock Neo4j via run_read_query abstraction
+    agent.ctx.graph_memory.run_read_query = AsyncMock(return_value=[
+        {"id": "ep-123"}
+    ])
 
     task = Task(
         id="task-4",

@@ -38,15 +38,10 @@ async def test_reporting_stats_keys():
     # Mock LLM response
     ctx.llm_client.complete = AsyncMock(return_value="Mocked risk narrative.")
     
-    # Mock session for Cypher queries (empty findings and graph)
-    session_mock = AsyncMock()
-    session_mock.run = AsyncMock()
-    # Mock result.data() to return empty list
-    result_mock = AsyncMock()
-    result_mock.data = AsyncMock(return_value=[])
-    session_mock.run.return_value = result_mock
-    
-    ctx.graph_memory._driver.session = MagicMock(return_value=session_mock)
+    # Mock the new encapsulated GraphMemory methods
+    ctx.graph_memory.get_vulnerabilities_by_engagement = AsyncMock(return_value=[])
+    ctx.graph_memory.get_all_nodes_for_engagement = AsyncMock(return_value=[])
+    ctx.graph_memory.get_all_edges_for_engagement = AsyncMock(return_value=[])
     
     agent = ReportingAgent(ctx)
     await agent.initialize()
@@ -94,28 +89,15 @@ async def test_reporting_graph_render():
         "total_nodes": 3
     })
     ctx.llm_client.complete = AsyncMock(return_value="Mocked risk narrative.")
-    # Mock session to return real node dictionaries with 'id' and 'labels' keys
-    session_mock = AsyncMock()
-    session_mock.__aenter__.return_value = session_mock
-    # Mock result.data() for findings, nodes, and edges
-    findings_result = AsyncMock()
-    findings_result.data = AsyncMock(return_value=[])
-    
-    nodes_result = AsyncMock()
-    nodes_result.data = AsyncMock(return_value=[
+    # Mock the new encapsulated GraphMemory methods
+    ctx.graph_memory.get_vulnerabilities_by_engagement = AsyncMock(return_value=[])
+    ctx.graph_memory.get_all_nodes_for_engagement = AsyncMock(return_value=[
         {"id": "asset-1", "labels": ["Asset", "Domain"]},
         {"id": "endpoint-1", "labels": ["Endpoint"]}
     ])
-    
-    edges_result = AsyncMock()
-    edges_result.data = AsyncMock(return_value=[
+    ctx.graph_memory.get_all_edges_for_engagement = AsyncMock(return_value=[
         {"source": "asset-1", "target": "endpoint-1", "type": "HAS_ENDPOINT"}
     ])
-    
-    # Configure session.run to return the appropriate mock on successive calls
-    session_mock.run.side_effect = [findings_result, nodes_result, edges_result]
-    
-    ctx.graph_memory._driver.session = MagicMock(return_value=session_mock)
     
     agent = ReportingAgent(ctx)
     await agent.initialize()
@@ -200,17 +182,13 @@ async def test_finding_certification_engine():
     # 3. Test generate_mission_certificate with mocked memories
     session_memory_mock = AsyncMock()
     graph_memory_mock = AsyncMock()
-    
+
     graph_memory_mock.get_graph_stats = AsyncMock(return_value={
         "assets": 10,
         "endpoints": 5,
         "total_nodes": 15
     })
-    
-    session_mock = AsyncMock()
-    # Mock result.data() to return our mock RCE vulnerability node
-    vuln_result = AsyncMock()
-    vuln_result.data = AsyncMock(return_value=[
+    graph_memory_mock.run_read_query = AsyncMock(return_value=[
         {
             "v": {
                 "id": "vuln-high-1",
@@ -222,9 +200,6 @@ async def test_finding_certification_engine():
             }
         }
     ])
-    session_mock.run = AsyncMock(return_value=vuln_result)
-    session_mock.__aenter__.return_value = session_mock
-    graph_memory_mock._driver.session = MagicMock(return_value=session_mock)
     
     # Run certificate generation
     eid = "eng-test-cert"
@@ -277,44 +252,28 @@ async def test_attack_surface_certifier():
         "endpoints": 1,
         "total_nodes": 3
     })
-    
-    session_mock = AsyncMock()
-    
-    # Mock task result (to get raw crawled count)
-    task_result = AsyncMock()
-    task_result.single = AsyncMock(return_value={"res": '{"endpoints_found": 194}'})
-    
-    # Mock assets result
-    assets_result = AsyncMock()
-    assets_result.data = AsyncMock(return_value=[
-        {"a": {"type": "subdomain", "value": "api.target.com"}},
-        {"a": {"type": "subdomain", "value": "www.target.com"}},
-        {"a": {"type": "host", "value": "12.34.56.78"}}
-    ])
-    
-    # Mock endpoints result
-    endpoints_result = AsyncMock()
-    endpoints_result.data = AsyncMock(return_value=[
-        {
-            "e": {
-                "url": "https://api.target.com/v1/users",
-                "path": "/v1/users",
-                "query_keys": ["id"],
-                "body_schema_keys": []
+    graph_memory_mock.run_read_query = AsyncMock(side_effect=[
+        [{"res": '{"endpoints_found": 194}'}],
+        [
+            {"a": {"type": "subdomain", "value": "api.target.com"}},
+            {"a": {"type": "subdomain", "value": "www.target.com"}},
+            {"a": {"type": "host", "value": "12.34.56.78"}}
+        ],
+        [
+            {
+                "e": {
+                    "url": "https://api.target.com/v1/users",
+                    "path": "/v1/users",
+                    "query_keys": ["id"],
+                    "body_schema_keys": []
+                }
             }
-        }
+        ],
+        [
+            {"auth_required": False, "user_label": "anonymous"},
+            {"auth_required": True, "user_label": "admin"}
+        ],
     ])
-    
-    # Mock auth endpoints result for Privilege Expansion (PER)
-    auth_eps_result = AsyncMock()
-    auth_eps_result.data = AsyncMock(return_value=[
-        {"auth_required": False, "user_label": "anonymous"},
-        {"auth_required": True, "user_label": "admin"}
-    ])
-    
-    session_mock.run.side_effect = [task_result, assets_result, endpoints_result, auth_eps_result]
-    session_mock.__aenter__.return_value = session_mock
-    graph_memory_mock._driver.session = MagicMock(return_value=session_mock)
     
     # Run certificate generation
     eid = "eng-test-surface"
