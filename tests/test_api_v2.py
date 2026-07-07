@@ -141,10 +141,25 @@ def test_websocket_endpoint(client):
     )
     with client.websocket_connect("/ws/engagements/test-session?token=dev-test-token") as websocket:
         websocket.send_json({"action": "ping"})
-        data = websocket.receive_json()
+        
+        # Drain any background heartbeat/observation/phase_transition messages
+        data = None
+        for _ in range(10):
+            msg = websocket.receive_json()
+            if "type" in msg:
+                data = msg
+                break
+        
         assert data == {"type": "pong"}
 
         websocket.send_json({"action": "status"})
-        data = websocket.receive_json()
+        data = None
+        for _ in range(10):
+            msg = websocket.receive_json()
+            if "type" in msg:
+                data = msg
+                break
+        
+        assert data is not None
         assert data["type"] == "status"
         assert data["session_id"] == "test-session"
