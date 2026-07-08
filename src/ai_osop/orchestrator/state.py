@@ -1,5 +1,7 @@
 from typing import Any, Dict, Optional
+
 from ai_osop.core.models import Task
+
 
 class OrchestrationState:
     def __init__(self):

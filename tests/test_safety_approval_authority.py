@@ -7,11 +7,10 @@ The mutable task.payload['operator_approved'] field must never be trusted.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
-from types import SimpleNamespace
 
 from ai_osop.core.config import AgentType, scope_signing_key
 from ai_osop.core.models import ApprovalRequest, ScopeDefinition, Task
@@ -51,8 +50,10 @@ class _Orch:
         self.approval_coordinator = ApprovalCoordinator(self)
         # Inject a mock state_machine to avoid NoneType errors in task assignment
         from unittest.mock import MagicMock
-        from ai_osop.core.exceptions import WorkflowException
+
         from ai_osop.core.config import EngagementPhase
+        from ai_osop.core.exceptions import WorkflowException
+
         self.task_scheduler.state_machine = MagicMock()
 
         def _mock_assert_task_allowed(task, phase):
@@ -143,9 +144,15 @@ async def test_exploit_task_refused_outside_exploitation_phase():
     task.approval_required = True
     orch._tasks[task.id] = task
     req = ApprovalRequest(
-        task_id=task.id, agent_id="", action_type=task.type, target="t",
-        payload_summary="s", risk_assessment="high", engagement_id="eng-1",
-        status="approved", operator_id="alice",
+        task_id=task.id,
+        agent_id="",
+        action_type=task.type,
+        target="t",
+        payload_summary="s",
+        risk_assessment="high",
+        engagement_id="eng-1",
+        status="approved",
+        operator_id="alice",
     )
     orch._approval_requests[req.id] = req  # genuinely approved...
 
@@ -162,9 +169,15 @@ async def test_exploit_task_allowed_in_exploitation_phase():
     task.approval_required = True
     orch._tasks[task.id] = task
     req = ApprovalRequest(
-        task_id=task.id, agent_id="", action_type=task.type, target="t",
-        payload_summary="s", risk_assessment="high", engagement_id="eng-1",
-        status="approved", operator_id="alice",
+        task_id=task.id,
+        agent_id="",
+        action_type=task.type,
+        target="t",
+        payload_summary="s",
+        risk_assessment="high",
+        engagement_id="eng-1",
+        status="approved",
+        operator_id="alice",
     )
     orch._approval_requests[req.id] = req
     await orch.task_scheduler._assign_task(task)
@@ -218,9 +231,15 @@ async def test_approval_record_requires_operator_id():
     orch = _Orch()
     task = _exploit_task()
     req = ApprovalRequest(
-        task_id=task.id, agent_id="", action_type=task.type, target="t",
-        payload_summary="s", risk_assessment="high", engagement_id="eng-1",
-        status="approved", operator_id=None,
+        task_id=task.id,
+        agent_id="",
+        action_type=task.type,
+        target="t",
+        payload_summary="s",
+        risk_assessment="high",
+        engagement_id="eng-1",
+        status="approved",
+        operator_id=None,
     )
     orch._approval_requests[req.id] = req
     assert orch.approval_coordinator.is_task_approved(task.id) is False

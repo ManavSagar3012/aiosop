@@ -24,11 +24,7 @@ def test_repo_has_source():
 @pytest.mark.parametrize("path", PY_FILES, ids=lambda p: str(p.relative_to(SRC)))
 def test_no_bare_except(path: Path) -> None:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    bare = [
-        h.lineno
-        for h in ast.walk(tree)
-        if isinstance(h, ast.ExceptHandler) and h.type is None
-    ]
+    bare = [h.lineno for h in ast.walk(tree) if isinstance(h, ast.ExceptHandler) and h.type is None]
     assert not bare, (
         f"{path.relative_to(SRC)} has bare `except:` at line(s) {bare}; "
         f"catch a specific exception (or `except Exception`) and log it."

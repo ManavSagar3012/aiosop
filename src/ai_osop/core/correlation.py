@@ -53,6 +53,8 @@ class CorrelationEngine:
         await self.session_memory.add_observation(observation)
 
         if len(observation.correlated_observation_ids) >= 3:
-            await self.session_memory.trigger_escalation(observation.engagement_id, "vulnerability_hypothesis")
+            await self.session_memory.trigger_escalation(
+                observation.engagement_id, "vulnerability_hypothesis"
+            )
 
         return observation

@@ -13,11 +13,10 @@ import time
 import uuid
 from typing import Optional
 
+import structlog
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse
-
-import structlog
 
 from ai_osop.core.telemetry import (
     RequestContext,

@@ -10,6 +10,7 @@ validated) from merely reflected (create-response echo → manual-confirm lead, 
 All hermetic: httpx.AsyncClient is monkeypatched with a fake that returns queued bodies
 in call order — no network.
 """
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -64,15 +65,20 @@ async def test_persisted_via_independent_readback_is_validated_high(monkeypatch)
     """Injected value absent in control read-back, present in injected read-back -> persisted."""
     # order: control request, control readback, injected request, injected readback
     monkeypatch.setattr(
-        va.httpx, "AsyncClient",
+        va.httpx,
+        "AsyncClient",
         _fake_client_factory(['{"id":1}', '{"role":"user"}', '{"id":1}', '{"role":"admin"}']),
     )
     agent = _agent()
-    res = await agent._execute_mass_assignment_scan({
-        "url": "https://x/api/users", "engagement_id": "e1",
-        "base_body": {"name": "bob"}, "inject": {"role": "admin"},
-        "readback_url": "https://x/api/users/1",
-    })
+    res = await agent._execute_mass_assignment_scan(
+        {
+            "url": "https://x/api/users",
+            "engagement_id": "e1",
+            "base_body": {"name": "bob"},
+            "inject": {"role": "admin"},
+            "readback_url": "https://x/api/users/1",
+        }
+    )
     assert res["confirmed"] is True
     assert res["provenance"] == "persisted"
     assert res["manual_confirm_required"] is False
@@ -87,15 +93,20 @@ async def test_server_default_is_suppressed_by_baseline(monkeypatch):
     """Field present even in the control (server default / echo-all) -> NOT confirmed."""
     # control readback ALREADY has role=admin -> attacker did not control it.
     monkeypatch.setattr(
-        va.httpx, "AsyncClient",
+        va.httpx,
+        "AsyncClient",
         _fake_client_factory(['{"id":1}', '{"role":"admin"}', '{"id":1}', '{"role":"admin"}']),
     )
     agent = _agent()
-    res = await agent._execute_mass_assignment_scan({
-        "url": "https://x/api/users", "engagement_id": "e1",
-        "base_body": {"name": "bob"}, "inject": {"role": "admin"},
-        "readback_url": "https://x/api/users/1",
-    })
+    res = await agent._execute_mass_assignment_scan(
+        {
+            "url": "https://x/api/users",
+            "engagement_id": "e1",
+            "base_body": {"name": "bob"},
+            "inject": {"role": "admin"},
+            "readback_url": "https://x/api/users/1",
+        }
+    )
     assert res["confirmed"] is False
     assert res["findings_count"] == 0
     agent.ctx.graph_memory.add_vulnerability.assert_not_awaited()
@@ -106,14 +117,19 @@ async def test_reflected_only_is_manual_confirm_medium(monkeypatch):
     """No independent read-back; create response echoes the field -> reflected lead."""
     # order (no readback_url): control request, injected request
     monkeypatch.setattr(
-        va.httpx, "AsyncClient",
+        va.httpx,
+        "AsyncClient",
         _fake_client_factory(['{"id":1}', '{"id":1,"role":"admin"}']),
     )
     agent = _agent()
-    res = await agent._execute_mass_assignment_scan({
-        "url": "https://x/api/users", "engagement_id": "e1",
-        "base_body": {"name": "bob"}, "inject": {"role": "admin"},
-    })
+    res = await agent._execute_mass_assignment_scan(
+        {
+            "url": "https://x/api/users",
+            "engagement_id": "e1",
+            "base_body": {"name": "bob"},
+            "inject": {"role": "admin"},
+        }
+    )
     assert res["confirmed"] is True
     assert res["provenance"] == "reflected"
     assert res["manual_confirm_required"] is True
@@ -126,14 +142,19 @@ async def test_reflected_only_is_manual_confirm_medium(monkeypatch):
 async def test_clean_endpoint_not_confirmed(monkeypatch):
     """Injected field neither reflected nor persisted -> clean."""
     monkeypatch.setattr(
-        va.httpx, "AsyncClient",
+        va.httpx,
+        "AsyncClient",
         _fake_client_factory(['{"id":1}', '{"id":1}']),
     )
     agent = _agent()
-    res = await agent._execute_mass_assignment_scan({
-        "url": "https://x/api/users", "engagement_id": "e1",
-        "base_body": {"name": "bob"}, "inject": {"role": "admin"},
-    })
+    res = await agent._execute_mass_assignment_scan(
+        {
+            "url": "https://x/api/users",
+            "engagement_id": "e1",
+            "base_body": {"name": "bob"},
+            "inject": {"role": "admin"},
+        }
+    )
     assert res["confirmed"] is False
     agent.ctx.graph_memory.add_vulnerability.assert_not_awaited()
 
@@ -141,6 +162,7 @@ async def test_clean_endpoint_not_confirmed(monkeypatch):
 @pytest.mark.asyncio
 async def test_requires_url(monkeypatch):
     from ai_osop.core.exceptions import AgentException
+
     agent = _agent()
     with pytest.raises(AgentException):
         await agent._execute_mass_assignment_scan({"engagement_id": "e1"})

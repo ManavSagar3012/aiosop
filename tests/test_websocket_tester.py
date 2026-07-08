@@ -4,6 +4,7 @@ Every test injects a fake connector so no live server is needed. The fake models
 the three server behaviours the oracles key on: Origin enforcement, cookie-scoped
 authed data, and handshake acceptance/rejection.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +12,6 @@ import asyncio
 import pytest
 
 from ai_osop.core.websocket_tester import WebSocketTester, WSFinding
-
 
 AUTH_DATA = '{"user":"victim@corp.test","balance":9001,"secret":"SENTINEL-PRIVATE"}'
 PUBLIC_DATA = '{"motd":"welcome, please log in"}'

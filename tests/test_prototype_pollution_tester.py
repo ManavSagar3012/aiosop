@@ -4,15 +4,13 @@ Uses httpx.MockTransport to model: a server whose prototype gets polluted (marke
 leaks into a payload-free probe), a status-override-gadget server, a hardened
 server (raw reflection only, no pollution), and a timing-out server.
 """
+
 import json
 
 import httpx
 import pytest
 
-from ai_osop.core.prototype_pollution_tester import (
-    PrototypePollutionTester,
-    SENTINEL_STATUS,
-)
+from ai_osop.core.prototype_pollution_tester import SENTINEL_STATUS, PrototypePollutionTester
 
 
 def _client(handler) -> httpx.AsyncClient:
@@ -50,8 +48,9 @@ async def test_vulnerable_reflected_property_confirms():
         findings = await tester.run()
 
     confirmed = tester.confirmed(findings)
-    assert any(f.technique == "reflected_property" for f in confirmed), \
-        "inherited-property leak must confirm prototype pollution"
+    assert any(
+        f.technique == "reflected_property" for f in confirmed
+    ), "inherited-property leak must confirm prototype pollution"
 
 
 async def test_vulnerable_status_override_confirms():
@@ -74,13 +73,15 @@ async def test_vulnerable_status_override_confirms():
         findings = await tester.run()
 
     confirmed = tester.confirmed(findings)
-    assert any(f.technique == "status_override" for f in confirmed), \
-        "status flip to sentinel must confirm prototype pollution"
+    assert any(
+        f.technique == "status_override" for f in confirmed
+    ), "status flip to sentinel must confirm prototype pollution"
 
 
 async def test_reflection_only_is_not_confirmation():
     """Hardened server: it ECHOES the raw payload back (reflection) but never
     mutates a shared prototype, so a payload-free probe stays clean -> no confirm."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             # echo the payload straight back (pure reflection, no pollution)
@@ -101,6 +102,7 @@ async def test_reflection_only_is_not_confirmation():
 
 async def test_timeout_path_does_not_raise():
     """A timing-out endpoint degrades to unconfirmed, never raises."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("simulated timeout", request=request)
 

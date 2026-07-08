@@ -46,6 +46,7 @@ from ai_osop.memory.session_memory import Base, SessionMemory
 
 if TYPE_CHECKING:  # avoid circular import at runtime
     from ai_osop.auth.session_client import SessionClient
+    from ai_osop.memory.graph_memory import GraphMemory
 
 
 logger = logging.getLogger(__name__)
@@ -284,8 +285,13 @@ class SessionStore:
 
     REDIS_PREFIX = "usersession"
 
-    def __init__(self, session_memory: SessionMemory):
+    def __init__(
+        self,
+        session_memory: SessionMemory,
+        graph_memory: Optional[GraphMemory] = None,
+    ):
         self.sm = session_memory
+        self.gm = graph_memory
         self._encryption = SessionEncryption()
 
     # -- key helpers -----------------------------------------------------------
@@ -369,6 +375,12 @@ class SessionStore:
         # 2. hot cache
         await self._cache_set(sess)
 
+        if self.gm:
+            try:
+                await self.gm.sync_user_session(sess)
+            except Exception as e:
+                logger.error("Failed to sync session to GraphMemory: %s", e)
+
         logger.info(
             "session.saved engagement=%s user=%s cookies=%d has_bearer=%s expires_at=%s",
             engagement_id,
@@ -434,6 +446,11 @@ class SessionStore:
             )
             await db.commit()
         await self.sm._redis.delete(self._redis_key(engagement_id, user_label))
+        if self.gm:
+            try:
+                await self.gm.delete_user_session_node(engagement_id, user_label)
+            except Exception as e:
+                logger.error("Failed to delete session in GraphMemory: %s", e)
         return result.rowcount > 0
 
     # -- as_user context manager ----------------------------------------------

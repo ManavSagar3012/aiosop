@@ -25,7 +25,8 @@ def test_navigate_real_dom(local_target):
     base = require_server("browser")
     host, open_port, _ = local_target
     res = mcp_execute(
-        base, "execute",
+        base,
+        "execute",
         {"action": "navigate", "url": f"http://{host}:{open_port}", "engagement_id": "qual"},
         timeout=60.0,
     )
@@ -39,7 +40,8 @@ def test_screenshot_is_real_png(local_target):
     base = require_server("browser")
     host, open_port, _ = local_target
     res = mcp_execute(
-        base, "execute",
+        base,
+        "execute",
         {"action": "screenshot", "url": f"http://{host}:{open_port}", "engagement_id": "qual"},
         timeout=60.0,
     )

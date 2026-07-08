@@ -49,13 +49,12 @@ async def create_engagement(
     )
 
     import traceback as _tb
+
     _orch = state.get("orchestrator")
     if _orch is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
     try:
-        session = await _orch.create_engagement(
-            scope, request.roe, created_by=operator.get("sub")
-        )
+        session = await _orch.create_engagement(scope, request.roe, created_by=operator.get("sub"))
         return session
     except Exception:
         _tb_content = _tb.format_exc()
@@ -81,13 +80,19 @@ async def list_engagements(operator: Dict[str, Any] = Depends(verify_token)):
         return [s.model_dump(mode="json") for s in sessions]
     except Exception as e:
         import traceback
+
         tb = traceback.format_exc()
         import logging
+
         logging.getLogger("ai_osop.api.engagements").error("list_engagements_failed: %s\n%s", e, tb)
         from starlette.responses import JSONResponse
+
         return JSONResponse(
             status_code=500,
-            content={"detail": f"Failed to list engagements: {str(e)}", "error_type": type(e).__name__},
+            content={
+                "detail": f"Failed to list engagements: {str(e)}",
+                "error_type": type(e).__name__,
+            },
         )
 
 
@@ -140,6 +145,7 @@ async def transition_phase(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
         import logging
+
         logging.getLogger("ai_osop.api.engagements").exception("transition_phase_failed")
         raise HTTPException(status_code=400, detail="Phase transition failed")
 

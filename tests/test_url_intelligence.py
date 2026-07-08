@@ -1,4 +1,5 @@
 """Tests for the P1 URL-intelligence recon multiplier."""
+
 from ai_osop.core.url_intelligence import (
     INTERESTING_PARAMS,
     classify_url,
@@ -35,11 +36,11 @@ def test_classify_url_flags_interesting():
 def test_mine_urls_dedupes_and_prioritises():
     urls = [
         "https://t.com/user/1?id=1",
-        "https://t.com/user/2?id=2",          # same endpoint template as above
-        "https://t.com/go?redirect=/evil",     # open-redirect param
-        "https://t.com/fetch?url=http://x",     # ssrf param
-        "https://t.com/db-backup.sql",          # interesting file
-        "https://t.com/api/internal/debug",     # interesting path
+        "https://t.com/user/2?id=2",  # same endpoint template as above
+        "https://t.com/go?redirect=/evil",  # open-redirect param
+        "https://t.com/fetch?url=http://x",  # ssrf param
+        "https://t.com/db-backup.sql",  # interesting file
+        "https://t.com/api/internal/debug",  # interesting path
     ]
     intel = mine_urls(urls)
 

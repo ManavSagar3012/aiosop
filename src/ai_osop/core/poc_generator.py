@@ -19,6 +19,7 @@ The rendered ``## Proof of Concept`` block is embedded into the bounty report; t
 ``PoCArtifact.reproducible`` flag lets the triager gate / findings-quality treat an
 auto-runnable PoC as stronger evidence than a manual note.
 """
+
 from __future__ import annotations
 
 import shlex
@@ -102,6 +103,7 @@ def _curl(
 # --------------------------------------------------------------------------- #
 # Per-class builders — each returns a runnable PoCArtifact or None (no PoC).   #
 # --------------------------------------------------------------------------- #
+
 
 def _poc_sqli(vuln: Vulnerability, ev: Dict[str, Any]) -> Optional[PoCArtifact]:
     url = _endpoint(ev)

@@ -6,8 +6,10 @@ from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 
 def _capture(store, v):
     store.append(v)
+
     async def _ok():
         return None
+
     return _ok()
 
 
@@ -26,6 +28,7 @@ def _agent(fetch_body, captured):
 
     async def _probe(host):
         return fetch_body, ["example.github.io"]
+
     a._probe_host_for_takeover = _probe
     return a
 
@@ -33,8 +36,11 @@ def _agent(fetch_body, captured):
 def test_takeover_confirmed_mints_finding():
     captured = []
     agent = _agent("There isn't a GitHub Pages site here.", captured)
-    res = asyncio.run(agent._execute_subdomain_takeover_scan({
-        "hosts": ["blog.example.com"], "engagement_id": "eng-st"}))
+    res = asyncio.run(
+        agent._execute_subdomain_takeover_scan(
+            {"hosts": ["blog.example.com"], "engagement_id": "eng-st"}
+        )
+    )
     assert res["confirmed"] is True and res["findings_count"] == 1
     v = captured[0]
     assert v.vuln_type.value == "subdomain_takeover" and v.validated is True
@@ -44,7 +50,10 @@ def test_takeover_confirmed_mints_finding():
 def test_no_takeover_on_clean_host():
     captured = []
     agent = _agent("<html>normal site</html>", captured)
-    res = asyncio.run(agent._execute_subdomain_takeover_scan({
-        "hosts": ["www.example.com"], "engagement_id": "eng-st"}))
+    res = asyncio.run(
+        agent._execute_subdomain_takeover_scan(
+            {"hosts": ["www.example.com"], "engagement_id": "eng-st"}
+        )
+    )
     assert res["confirmed"] is False and res["findings_count"] == 0
     assert captured == []

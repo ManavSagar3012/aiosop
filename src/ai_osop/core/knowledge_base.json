@@ -1,0 +1,944 @@
+{
+  "vulnerabilities": {
+    "unknown": {
+      "title": "Unknown Vulnerability",
+      "description": "Unclassified or unknown security vulnerability.",
+      "cwe": [],
+      "capec": [],
+      "mitre_attack": [],
+      "owasp_wstg": []
+    },
+    "sqli": {
+      "title": "SQL Injection (SQLi)",
+      "description": "An attacker can append or inject SQL commands into an application's input parameters, leading to unauthorized read/write access to the database or execution of administrative commands.",
+      "cwe": [
+        "CWE-89"
+      ],
+      "capec": [
+        "CAPEC-66",
+        "CAPEC-108",
+        "CAPEC-109",
+        "CAPEC-110"
+      ],
+      "mitre_attack": [
+        "T1190",
+        "T1505"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-05"
+      ]
+    },
+    "xss": {
+      "title": "Cross-Site Scripting (XSS)",
+      "description": "An attacker injects malicious scripts into trusted websites, which are then executed by the victim's browser, leading to session hijacking, defacement, or redirection.",
+      "cwe": [
+        "CWE-79"
+      ],
+      "capec": [
+        "CAPEC-19",
+        "CAPEC-32",
+        "CAPEC-85",
+        "CAPEC-244"
+      ],
+      "mitre_attack": [
+        "T1189",
+        "T1204.001"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-01",
+        "WSTG-INPV-02"
+      ]
+    },
+    "ssrf": {
+      "title": "Server-Side Request Forgery (SSRF)",
+      "description": "The web application fetches a remote resource without validating the user-supplied URL, allowing an attacker to coerce the application to send crafted requests to internal or external systems.",
+      "cwe": [
+        "CWE-918"
+      ],
+      "capec": [
+        "CAPEC-225"
+      ],
+      "mitre_attack": [
+        "T1190",
+        "T1133"
+      ],
+      "owasp_wstg": [
+        "WSTG-ERRH-02",
+        "WSTG-INPV-19"
+      ]
+    },
+    "ssti": {
+      "title": "Server-Side Template Injection (SSTI)",
+      "description": "An attacker injects malicious input into a template, which is executed on the server by the template engine, potentially leading to remote code execution (RCE).",
+      "cwe": [
+        "CWE-1336",
+        "CWE-94"
+      ],
+      "capec": [
+        "CAPEC-153"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-18"
+      ]
+    },
+    "idor": {
+      "title": "Insecure Direct Object References (IDOR)",
+      "description": "An application provides direct access to objects based on user-supplied input, allowing attackers to bypass authorization and access other users' data by modifying the identifier.",
+      "cwe": [
+        "CWE-639",
+        "CWE-22"
+      ],
+      "capec": [
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1119"
+      ],
+      "owasp_wstg": [
+        "WSTG-ATHZ-04"
+      ]
+    },
+    "csrf": {
+      "title": "Cross-Site Request Forgery (CSRF)",
+      "description": "An attacker forces an authenticated user's browser to send a forged HTTP request, including session cookies, to execute unauthorized actions on behalf of the victim.",
+      "cwe": [
+        "CWE-352"
+      ],
+      "capec": [
+        "CAPEC-62"
+      ],
+      "mitre_attack": [
+        "T1204.001"
+      ],
+      "owasp_wstg": [
+        "WSTG-SESS-05"
+      ]
+    },
+    "mass_assignment": {
+      "title": "Mass Assignment",
+      "description": "The application automatically binds user-supplied input parameters to internal model attributes or variables without filtering, allowing attackers to modify restricted properties.",
+      "cwe": [
+        "CWE-915"
+      ],
+      "capec": [
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": [
+        "WSTG-BUSL-02"
+      ]
+    },
+    "graphql": {
+      "title": "GraphQL Security Issues",
+      "description": "Vulnerabilities specific to GraphQL endpoints, such as introspection abuse, excessive query depth/complexity leading to denial of service, or improper field-level authorization.",
+      "cwe": [
+        "CWE-200",
+        "CWE-400",
+        "CWE-285"
+      ],
+      "capec": [
+        "CAPEC-576"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-20"
+      ]
+    },
+    "jwt_abuse": {
+      "title": "JSON Web Token (JWT) Abuse",
+      "description": "Weak cryptographic signatures, support for the 'none' algorithm, insecure key storage, key confusion attacks, or lack of signature verification that allows attackers to forge or manipulate JWT tokens.",
+      "cwe": [
+        "CWE-345",
+        "CWE-347",
+        "CWE-287"
+      ],
+      "capec": [
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1556",
+        "T1606"
+      ],
+      "owasp_wstg": [
+        "WSTG-SESS-04"
+      ]
+    },
+    "rce": {
+      "title": "Remote Code Execution (RCE)",
+      "description": "An attacker can execute arbitrary commands or code on the host operating system of the target application, leading to complete system compromise.",
+      "cwe": [
+        "CWE-94",
+        "CWE-78",
+        "CWE-120"
+      ],
+      "capec": [
+        "CAPEC-88",
+        "CAPEC-253",
+        "CAPEC-234"
+      ],
+      "mitre_attack": [
+        "T1190",
+        "T1203",
+        "T1210"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-11",
+        "WSTG-INPV-12"
+      ]
+    },
+    "lfi": {
+      "title": "Local File Inclusion (LFI)",
+      "description": "An application includes a local file based on user input without proper validation, allowing attackers to read sensitive local files or execute code if paired with log poisoning or file upload.",
+      "cwe": [
+        "CWE-22",
+        "CWE-98"
+      ],
+      "capec": [
+        "CAPEC-126"
+      ],
+      "mitre_attack": [
+        "T1190",
+        "T1083"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-11"
+      ]
+    },
+    "xxe": {
+      "title": "XML External Entity (XXE) Injection",
+      "description": "An application processes XML input containing references to external entities, allowing attackers to read internal files, perform port scans, or initiate SSRF attacks.",
+      "cwe": [
+        "CWE-611"
+      ],
+      "capec": [
+        "CAPEC-221"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-07"
+      ]
+    },
+    "deserialization": {
+      "title": "Insecure Deserialization",
+      "description": "The application deserializes untrusted data without verification, allowing an attacker to manipulate object state and execute arbitrary code, bypass access controls, or cause denial of service.",
+      "cwe": [
+        "CWE-502"
+      ],
+      "capec": [
+        "CAPEC-153"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-15"
+      ]
+    },
+    "oauth2": {
+      "title": "OAuth 2.0 Security Flaws",
+      "description": "Improper validation of redirect URIs, state parameters (CSRF), token leakage, scope escalation, or client credential exposure in OAuth 2.0 / OpenID Connect authorization flows.",
+      "cwe": [
+        "CWE-287",
+        "CWE-601",
+        "CWE-352"
+      ],
+      "capec": [
+        "CAPEC-62",
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1556",
+        "T1606"
+      ],
+      "owasp_wstg": [
+        "WSTG-ATHN-01",
+        "WSTG-ATHZ-02"
+      ]
+    },
+    "broken_access_control": {
+      "title": "Broken Access Control",
+      "description": "Failure to restrict access to resources, allowing unauthorized users to perform administrative tasks, read confidential data, or modify other users' settings.",
+      "cwe": [
+        "CWE-284",
+        "CWE-285",
+        "CWE-862"
+      ],
+      "capec": [
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1078",
+        "T1068"
+      ],
+      "owasp_wstg": [
+        "WSTG-ATHZ-01",
+        "WSTG-ATHZ-02"
+      ]
+    },
+    "bola": {
+      "title": "Broken Object Level Authorization (BOLA)",
+      "description": "Vulnerability in API design where the server does not validate if the logged-in user has permission to access a specific object using its identifier.",
+      "cwe": [
+        "CWE-285",
+        "CWE-639"
+      ],
+      "capec": [
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1119"
+      ],
+      "owasp_wstg": [
+        "WSTG-ATHZ-04"
+      ]
+    },
+    "authentication_weakness": {
+      "title": "Authentication Weakness",
+      "description": "Flaws in credential management, lack of multi-factor authentication, support for weak password policies, or vulnerability to credential stuffing and brute force.",
+      "cwe": [
+        "CWE-287",
+        "CWE-307",
+        "CWE-521"
+      ],
+      "capec": [
+        "CAPEC-70",
+        "CAPEC-112"
+      ],
+      "mitre_attack": [
+        "T1110",
+        "T1589"
+      ],
+      "owasp_wstg": [
+        "WSTG-ATHN-01",
+        "WSTG-ATHN-02"
+      ]
+    },
+    "sca_vuln": {
+      "title": "Software Composition Analysis (SCA) Vulnerability",
+      "description": "Use of outdated third-party libraries, modules, or dependencies containing known security vulnerabilities (CVEs).",
+      "cwe": [
+        "CWE-1395",
+        "CWE-1104"
+      ],
+      "capec": [
+        "CAPEC-184"
+      ],
+      "mitre_attack": [
+        "T1195.002"
+      ],
+      "owasp_wstg": [
+        "WSTG-INFO-02"
+      ]
+    },
+    "container_vuln": {
+      "title": "Container Security Vulnerability",
+      "description": "Misconfigurations or security flaws in container images (Docker, OCI), rootless policy violations, container escapes, or insecure Docker socket exposure.",
+      "cwe": [
+        "CWE-250",
+        "CWE-269"
+      ],
+      "capec": [
+        "CAPEC-233"
+      ],
+      "mitre_attack": [
+        "T1610",
+        "T1611",
+        "T1609"
+      ],
+      "owasp_wstg": []
+    },
+    "active_directory": {
+      "title": "Active Directory Security Issues",
+      "description": "Common AD misconfigurations and attack vectors including Kerberoasting, AS-REP roasting, DCSync/DCShadow, trust abuse, and insecure GPO settings.",
+      "cwe": [
+        "CWE-287",
+        "CWE-640"
+      ],
+      "capec": [
+        "CAPEC-70",
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1558",
+        "T1484",
+        "T1003.006"
+      ],
+      "owasp_wstg": []
+    },
+    "cloud_vuln": {
+      "title": "Cloud Security Issues",
+      "description": "Overly permissive IAM roles, publicly accessible storage buckets, insecure instance metadata services (IMDS), or misconfigured VPC firewall rules.",
+      "cwe": [
+        "CWE-284",
+        "CWE-732"
+      ],
+      "capec": [
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1580",
+        "T1078.004",
+        "T1578"
+      ],
+      "owasp_wstg": []
+    },
+    "osint_leak": {
+      "title": "OSINT Information Leakage",
+      "description": "Exposure of sensitive company credentials, API keys, intellectual property, or architectural diagrams on public repositories, paste sites, or search engines.",
+      "cwe": [
+        "CWE-200",
+        "CWE-538"
+      ],
+      "capec": [
+        "CAPEC-127",
+        "CAPEC-224"
+      ],
+      "mitre_attack": [
+        "T1593",
+        "T1592"
+      ],
+      "owasp_wstg": [
+        "WSTG-INFO-01",
+        "WSTG-INFO-02"
+      ]
+    },
+    "network_anomaly": {
+      "title": "Network Traffic Anomaly",
+      "description": "Suspicious or unexpected traffic patterns indicating unauthorized port scanning, C2 beaconing, DNS tunneling, or data exfiltration.",
+      "cwe": [
+        "CWE-200",
+        "CWE-400"
+      ],
+      "capec": [
+        "CAPEC-224",
+        "CAPEC-290"
+      ],
+      "mitre_attack": [
+        "T1040",
+        "T1043",
+        "T1071"
+      ],
+      "owasp_wstg": []
+    },
+    "lateral_movement": {
+      "title": "Lateral Movement",
+      "description": "Techniques used by adversaries to access and control remote systems on an internal network (e.g. SMB execution, WMI, RDP session hijacking).",
+      "cwe": [
+        "CWE-285",
+        "CWE-287"
+      ],
+      "capec": [
+        "CAPEC-70",
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1021",
+        "T1072",
+        "T1570"
+      ],
+      "owasp_wstg": []
+    },
+    "privilege_escalation": {
+      "title": "Privilege Escalation",
+      "description": "Adversaries attempt to gain higher-level permissions on a system or network by exploiting security vulnerabilities, design flaws, or misconfigurations.",
+      "cwe": [
+        "CWE-269",
+        "CWE-250"
+      ],
+      "capec": [
+        "CAPEC-233",
+        "CAPEC-234"
+      ],
+      "mitre_attack": [
+        "T1068",
+        "T1548",
+        "T1078"
+      ],
+      "owasp_wstg": []
+    },
+    "subdomain_enum": {
+      "title": "Subdomain Enumeration",
+      "description": "The gathering of subdomain records belonging to a target domain, which maps the external attack surface and exposes hidden interfaces.",
+      "cwe": [
+        "CWE-200"
+      ],
+      "capec": [
+        "CAPEC-224"
+      ],
+      "mitre_attack": [
+        "T1595",
+        "T1596"
+      ],
+      "owasp_wstg": [
+        "WSTG-INFO-01",
+        "WSTG-INFO-02"
+      ]
+    },
+    "subdomain_takeover": {
+      "title": "Subdomain Takeover",
+      "description": "An attacker registers a domain name referenced by a target organization's DNS alias (CNAME), gaining control of requests sent to that subdomain.",
+      "cwe": [
+        "CWE-350"
+      ],
+      "capec": [
+        "CAPEC-290"
+      ],
+      "mitre_attack": [
+        "T1584.001"
+      ],
+      "owasp_wstg": [
+        "WSTG-INFO-10"
+      ]
+    },
+    "exposed_secret": {
+      "title": "Exposed Secret / Credentials",
+      "description": "Hardcoded API keys, private keys, database passwords, or auth tokens found in source code, configuration files, or build artifacts.",
+      "cwe": [
+        "CWE-798",
+        "CWE-522"
+      ],
+      "capec": [
+        "CAPEC-127"
+      ],
+      "mitre_attack": [
+        "T1552.001",
+        "T1552.002"
+      ],
+      "owasp_wstg": [
+        "WSTG-INFO-05"
+      ]
+    },
+    "race_condition": {
+      "title": "Race Condition",
+      "description": "A concurrency issue where the system's execution sequence depends on the relative timing of events, allowing attackers to bypass rate limits or transaction locks.",
+      "cwe": [
+        "CWE-362",
+        "CWE-367"
+      ],
+      "capec": [
+        "CAPEC-26"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": [
+        "WSTG-BUSL-03"
+      ]
+    },
+    "request_smuggling": {
+      "title": "HTTP Request Smuggling",
+      "description": "Discrepancies in how front-end and back-end servers interpret Content-Length and Transfer-Encoding headers, allowing attackers to inject requests into user sessions.",
+      "cwe": [
+        "CWE-444"
+      ],
+      "capec": [
+        "CAPEC-33"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": [
+        "WSTG-INFO-02"
+      ]
+    },
+    "vuln_scan": {
+      "title": "Vulnerability Scanning Target",
+      "description": "Generic system, network, or service target configured to undergo automated vulnerability scanning.",
+      "cwe": [],
+      "capec": [],
+      "mitre_attack": [
+        "T1595"
+      ],
+      "owasp_wstg": []
+    },
+    "graphql_security": {
+      "title": "GraphQL Security Evaluation",
+      "description": "Assessment of a GraphQL service's endpoints for vulnerability to injection, authorization bypass, and resource exhaustion.",
+      "cwe": [
+        "CWE-200",
+        "CWE-400"
+      ],
+      "capec": [
+        "CAPEC-576"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": [
+        "WSTG-INPV-20"
+      ]
+    },
+    "serverless_security": {
+      "title": "Serverless Security Flaws",
+      "description": "Vulnerabilities in ephemeral cloud functions (Lambda, Cloud Functions) including insecure event parameters, excessive IAM permissions, or secret leakage.",
+      "cwe": [
+        "CWE-284",
+        "CWE-250"
+      ],
+      "capec": [
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1610",
+        "T1078.004"
+      ],
+      "owasp_wstg": []
+    },
+    "kubernetes_security": {
+      "title": "Kubernetes Security Vulnerability",
+      "description": "Misconfigured pod security policies, open etcd endpoints, API server exposure, or weak RBAC policies within a Kubernetes cluster.",
+      "cwe": [
+        "CWE-284",
+        "CWE-862"
+      ],
+      "capec": [
+        "CAPEC-593"
+      ],
+      "mitre_attack": [
+        "T1610",
+        "T1611",
+        "T1609"
+      ],
+      "owasp_wstg": []
+    },
+    "mobile_security": {
+      "title": "Mobile Application Security Vulnerability",
+      "description": "Security flaws in iOS or Android applications, such as insecure local data storage, poor transit security, binary tampering, or intent injection.",
+      "cwe": [
+        "CWE-922",
+        "CWE-538"
+      ],
+      "capec": [
+        "CAPEC-126",
+        "CAPEC-127"
+      ],
+      "mitre_attack": [
+        "T1636",
+        "T1637"
+      ],
+      "owasp_wstg": []
+    },
+    "incident_response": {
+      "title": "Incident Response Indicator",
+      "description": "Security event or signal indicating active intrusion, data exfiltration, ransomware encryption, or workstation compromise.",
+      "cwe": [],
+      "capec": [],
+      "mitre_attack": [
+        "T1589",
+        "T1078",
+        "T1110"
+      ],
+      "owasp_wstg": []
+    },
+    "threat_hunting": {
+      "title": "Threat Hunting Hypothesis",
+      "description": "Proactive investigation scenario targeted at uncovering undetected attacker activity across the network or system logs.",
+      "cwe": [],
+      "capec": [],
+      "mitre_attack": [
+        "T1003",
+        "T1078",
+        "T1021"
+      ],
+      "owasp_wstg": []
+    },
+    "forensics": {
+      "title": "Forensic Analysis Target",
+      "description": "System memory dump, disk image, or log file to be parsed for digital artifacts and timeline reconstruction.",
+      "cwe": [],
+      "capec": [],
+      "mitre_attack": [
+        "T1070",
+        "T1112"
+      ],
+      "owasp_wstg": []
+    },
+    "sast_sink": {
+      "title": "SAST Vulnerability Sink",
+      "description": "Dangerous API call or code pattern identified by Static Application Security Testing that receives untrusted source input (e.g. exec, eval, innerHTML).",
+      "cwe": [
+        "CWE-20",
+        "CWE-242"
+      ],
+      "capec": [
+        "CAPEC-153"
+      ],
+      "mitre_attack": [
+        "T1190"
+      ],
+      "owasp_wstg": []
+    }
+  },
+  "technology_matrix": {
+    "laravel": [
+      "sqli",
+      "xss",
+      "csrf",
+      "idor",
+      "rce",
+      "deserialization",
+      "exposed_secret",
+      "broken_access_control",
+      "bola",
+      "sast_sink"
+    ],
+    "nextjs": [
+      "xss",
+      "ssrf",
+      "idor",
+      "exposed_secret",
+      "broken_access_control",
+      "bola",
+      "sca_vuln"
+    ],
+    "react": [
+      "xss",
+      "sca_vuln",
+      "csrf"
+    ],
+    "redis": [
+      "network_anomaly",
+      "exposed_secret",
+      "rce",
+      "cloud_vuln"
+    ],
+    "aws_s3": [
+      "cloud_vuln",
+      "exposed_secret",
+      "bola"
+    ],
+    "graphql": [
+      "graphql",
+      "graphql_security",
+      "bola",
+      "idor",
+      "authentication_weakness",
+      "race_condition"
+    ],
+    "django": [
+      "sqli",
+      "xss",
+      "csrf",
+      "rce",
+      "ssti",
+      "idor",
+      "broken_access_control",
+      "bola",
+      "deserialization"
+    ],
+    "spring": [
+      "rce",
+      "deserialization",
+      "ssti",
+      "sqli",
+      "xss",
+      "sca_vuln",
+      "broken_access_control"
+    ]
+  },
+  "recommendation_chains": {
+    "sqli": [
+      "rce",
+      "lfi",
+      "exposed_secret",
+      "privilege_escalation"
+    ],
+    "xss": [
+      "csrf",
+      "jwt_abuse",
+      "authentication_weakness"
+    ],
+    "ssrf": [
+      "rce",
+      "cloud_vuln",
+      "lfi",
+      "network_anomaly"
+    ],
+    "ssti": [
+      "rce",
+      "lfi"
+    ],
+    "idor": [
+      "bola",
+      "broken_access_control",
+      "exposed_secret"
+    ],
+    "bola": [
+      "idor",
+      "broken_access_control",
+      "exposed_secret"
+    ],
+    "csrf": [
+      "xss",
+      "oauth2"
+    ],
+    "mass_assignment": [
+      "rce",
+      "privilege_escalation",
+      "broken_access_control"
+    ],
+    "graphql": [
+      "graphql_security",
+      "bola",
+      "idor"
+    ],
+    "graphql_security": [
+      "graphql",
+      "bola",
+      "idor"
+    ],
+    "jwt_abuse": [
+      "authentication_weakness",
+      "broken_access_control",
+      "oauth2"
+    ],
+    "oauth2": [
+      "jwt_abuse",
+      "authentication_weakness",
+      "broken_access_control"
+    ],
+    "rce": [
+      "privilege_escalation",
+      "lateral_movement",
+      "exposed_secret"
+    ],
+    "lfi": [
+      "rce",
+      "exposed_secret",
+      "sast_sink"
+    ],
+    "xxe": [
+      "ssrf",
+      "lfi",
+      "rce"
+    ],
+    "deserialization": [
+      "rce",
+      "lfi"
+    ],
+    "broken_access_control": [
+      "privilege_escalation",
+      "idor",
+      "bola"
+    ],
+    "authentication_weakness": [
+      "privilege_escalation",
+      "jwt_abuse",
+      "oauth2",
+      "exposed_secret"
+    ],
+    "subdomain_enum": [
+      "subdomain_takeover",
+      "vuln_scan",
+      "osint_leak"
+    ],
+    "subdomain_takeover": [
+      "xss",
+      "vuln_scan"
+    ],
+    "exposed_secret": [
+      "privilege_escalation",
+      "lateral_movement",
+      "cloud_vuln",
+      "active_directory"
+    ],
+    "active_directory": [
+      "privilege_escalation",
+      "lateral_movement",
+      "exposed_secret"
+    ],
+    "cloud_vuln": [
+      "privilege_escalation",
+      "exposed_secret",
+      "ssrf"
+    ],
+    "container_vuln": [
+      "privilege_escalation",
+      "rce",
+      "kubernetes_security"
+    ],
+    "kubernetes_security": [
+      "privilege_escalation",
+      "container_vuln",
+      "rce"
+    ],
+    "serverless_security": [
+      "cloud_vuln",
+      "exposed_secret",
+      "rce"
+    ],
+    "network_anomaly": [
+      "lateral_movement",
+      "threat_hunting",
+      "forensics"
+    ],
+    "privilege_escalation": [
+      "lateral_movement",
+      "exposed_secret",
+      "active_directory"
+    ],
+    "lateral_movement": [
+      "privilege_escalation",
+      "active_directory",
+      "exposed_secret"
+    ],
+    "osint_leak": [
+      "exposed_secret",
+      "subdomain_enum"
+    ],
+    "race_condition": [
+      "idor",
+      "bola",
+      "broken_access_control"
+    ],
+    "request_smuggling": [
+      "rce",
+      "xss",
+      "csrf"
+    ],
+    "sca_vuln": [
+      "rce",
+      "sast_sink"
+    ],
+    "sast_sink": [
+      "rce",
+      "lfi",
+      "sqli"
+    ],
+    "vuln_scan": [
+      "sqli",
+      "xss",
+      "ssrf",
+      "rce"
+    ],
+    "mobile_security": [
+      "exposed_secret",
+      "authentication_weakness",
+      "jwt_abuse"
+    ],
+    "incident_response": [
+      "threat_hunting",
+      "forensics"
+    ],
+    "threat_hunting": [
+      "incident_response",
+      "forensics"
+    ],
+    "forensics": [
+      "threat_hunting",
+      "incident_response"
+    ],
+    "unknown": [
+      "vuln_scan"
+    ]
+  }
+}

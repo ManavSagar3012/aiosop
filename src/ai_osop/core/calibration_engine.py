@@ -148,9 +148,7 @@ class ConfidenceCalibrationEngine:
             Calibrated confidence, clamped to ``[_CONF_FLOOR, _CONF_CEIL]``.
         """
         if n_total < 0 or n_valid < 0 or n_valid > n_total:
-            raise ValueError(
-                f"invalid outcome counts: n_valid={n_valid}, n_total={n_total}"
-            )
+            raise ValueError(f"invalid outcome counts: n_valid={n_valid}, n_total={n_total}")
         if prior_strength < 0:
             raise ValueError(f"prior_strength must be >= 0, got {prior_strength}")
 
@@ -191,9 +189,7 @@ class ConfidenceCalibrationEngine:
             )
         # Fallback: only a rate is available — cannot shrink by sample size, so
         # reuse the established rate blend (which treats 0.5 as "no signal").
-        rate = await self.session_memory.get_historical_success_rate(
-            finding_type, workflow_intent
-        )
+        rate = await self.session_memory.get_historical_success_rate(finding_type, workflow_intent)
         return self.calibrate_from_rate(base_confidence, rate)
 
     async def calibrate_confidence(

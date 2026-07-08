@@ -15,6 +15,7 @@ so no chain was ever gated before becoming report-ready. These tests prove the w
 
 Everything is hermetic — no DB, no network.
 """
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -63,6 +64,7 @@ def _colocated(evidence=None):
 # --------------------------------------------------------------------------- #
 # gate_chains + analyze_primitives(gate=...)                                   #
 # --------------------------------------------------------------------------- #
+
 
 def test_chain_without_evidence_is_not_emit():
     """A composed chain with a PoC but no captured evidence must NOT be report-ready."""
@@ -129,6 +131,7 @@ def test_gate_chains_skips_unknown_root():
 # vuln_to_primitive carries evidence; primitive_from_node roundtrips           #
 # --------------------------------------------------------------------------- #
 
+
 def test_vuln_to_primitive_carries_evidence():
     v = Vulnerability(
         vuln_type="idor",
@@ -175,8 +178,10 @@ def test_primitive_from_node_roundtrip():
 # Orchestrator consume pass (_analyze_chains_once)                             #
 # --------------------------------------------------------------------------- #
 
+
 def _node(ptype, target, evidence=None):
     import json
+
     raw = {"evidence": evidence} if evidence is not None else {}
     return {
         "id": f"{ptype}:{target}",
@@ -208,10 +213,12 @@ async def test_consume_pass_persists_chains_but_does_not_promote_unproven():
     """Co-located primitives without evidence -> chain persisted, but NOT promoted
     (gate withholds EMIT), so nothing becomes report-ready on unproven signal."""
     ledger = MagicMock()
-    ledger.query_unpromoted = AsyncMock(return_value=[
-        _node("idor_hint", "https://x/api/user"),
-        _node("auth_signal", "https://x/api/user"),
-    ])
+    ledger.query_unpromoted = AsyncMock(
+        return_value=[
+            _node("idor_hint", "https://x/api/user"),
+            _node("auth_signal", "https://x/api/user"),
+        ]
+    )
     ledger.upsert_chain = AsyncMock()
     ledger.promote_to_finding = AsyncMock()
     orch = _orch({"eng-1": object()}, ledger)
@@ -230,10 +237,12 @@ async def test_consume_pass_promotes_emit_ready_chain():
     are promoted so future passes don't re-chain them."""
     ev = [{"request": "GET /api/1", "response": "200"}]
     ledger = MagicMock()
-    ledger.query_unpromoted = AsyncMock(return_value=[
-        _node("idor_hint", "https://x/api/user", evidence=ev),
-        _node("auth_signal", "https://x/api/user", evidence=ev),
-    ])
+    ledger.query_unpromoted = AsyncMock(
+        return_value=[
+            _node("idor_hint", "https://x/api/user", evidence=ev),
+            _node("auth_signal", "https://x/api/user", evidence=ev),
+        ]
+    )
     ledger.upsert_chain = AsyncMock()
     ledger.promote_to_finding = AsyncMock()
     orch = _orch({"eng-1": object()}, ledger)
@@ -267,10 +276,12 @@ async def test_consume_pass_skips_single_primitive_engagements():
 async def test_consume_pass_isolates_per_engagement_query_failure():
     """One engagement's query raising must not abort the others."""
     ledger = MagicMock()
-    ledger.query_unpromoted = AsyncMock(side_effect=[
-        RuntimeError("boom"),
-        [_node("idor_hint", "https://x/api/user"), _node("auth_signal", "https://x/api/user")],
-    ])
+    ledger.query_unpromoted = AsyncMock(
+        side_effect=[
+            RuntimeError("boom"),
+            [_node("idor_hint", "https://x/api/user"), _node("auth_signal", "https://x/api/user")],
+        ]
+    )
     ledger.upsert_chain = AsyncMock()
     ledger.promote_to_finding = AsyncMock()
     orch = _orch({"eng-bad": object(), "eng-ok": object()}, ledger)

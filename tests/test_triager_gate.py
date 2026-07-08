@@ -21,10 +21,10 @@ from ai_osop.core.models import (
 )
 from ai_osop.core.triager_gate import TriagerGate
 
-
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
+
 
 def _prim(confidence=0.75, target="http://example.com/vuln", **kw):
     return PrimitiveLedger(
@@ -68,6 +68,7 @@ def _evidence(
 # --------------------------------------------------------------------------
 # Tests
 # --------------------------------------------------------------------------
+
 
 class TestTriagerGate:
     def test_emit_when_all_criteria_met(self):

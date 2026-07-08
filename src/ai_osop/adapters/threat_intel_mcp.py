@@ -150,19 +150,23 @@ class ThreatIntelAdapter:
             exploits: List[Dict] = []
             reader = csv.DictReader(io.StringIO(resp.text))
             for row in reader:
-                codes = {c.strip().upper() for c in re.split(r"[;,\s]+", row.get("codes", "") or "")}
+                codes = {
+                    c.strip().upper() for c in re.split(r"[;,\s]+", row.get("codes", "") or "")
+                }
                 if cve_id.upper() not in codes:
                     continue
                 eid = (row.get("id") or "").strip()
-                exploits.append({
-                    "id": eid,
-                    "title": (row.get("description") or "").strip(),
-                    "type": (row.get("type") or "").strip(),
-                    "platform": (row.get("platform") or "").strip(),
-                    "url": f"https://www.exploit-db.com/exploits/{eid}",
-                    "verified": bool((row.get("date_verified") or "").strip()),
-                    "source": "exploitdb",
-                })
+                exploits.append(
+                    {
+                        "id": eid,
+                        "title": (row.get("description") or "").strip(),
+                        "type": (row.get("type") or "").strip(),
+                        "platform": (row.get("platform") or "").strip(),
+                        "url": f"https://www.exploit-db.com/exploits/{eid}",
+                        "verified": bool((row.get("date_verified") or "").strip()),
+                        "source": "exploitdb",
+                    }
+                )
             self._set_cache(cache_key, exploits)
             return exploits
         except Exception as e:

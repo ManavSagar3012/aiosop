@@ -10,5 +10,5 @@ Move _busy_agents from in-memory set to Redis SET.
 # Status
 - Researching: Done.
 - Planning: Done.
-- Implementation: Pending.
-- Verification: Pending.
+- Implementation: Done.
+- Verification: Done.

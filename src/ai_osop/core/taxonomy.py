@@ -37,9 +37,9 @@ _FINDING_TYPE_TO_CATEGORY = {
     "bfla": "authz",
     "broken_access_control": "authz",
     "privilege_escalation": "authz",
-    "mass_assignment": "authz",           # VulnClass.MASS_ASSIGNMENT (vuln_agent)
-    "privesc": "authz",                    # HackerOne classifier shorthand
-    "ato": "authz",                        # account takeover — fundamentally an auth/authz compromise
+    "mass_assignment": "authz",  # VulnClass.MASS_ASSIGNMENT (vuln_agent)
+    "privesc": "authz",  # HackerOne classifier shorthand
+    "ato": "authz",  # account takeover — fundamentally an auth/authz compromise
     "authz": "authz",
     "authorization": "authz",
     # diff-auth raw category labels (DiffAuthFinding.category)
@@ -52,8 +52,8 @@ _FINDING_TYPE_TO_CATEGORY = {
     "reflected_xss": "client_side",
     "dom_xss": "client_side",
     "csrf": "client_side",
-    "request_smuggling": "client_side",   # VulnClass.REQUEST_SMUGGLING (vuln_agent)
-    "sast_sink": "client_side",           # codeql_agent raw vuln_type
+    "request_smuggling": "client_side",  # VulnClass.REQUEST_SMUGGLING (vuln_agent)
+    "sast_sink": "client_side",  # codeql_agent raw vuln_type
     "client_side": "client_side",
     # --- ssrf / redirect / url handling -> ssrf_redirect ---
     "ssrf": "ssrf_redirect",
@@ -62,27 +62,27 @@ _FINDING_TYPE_TO_CATEGORY = {
     "ssrf_redirect": "ssrf_redirect",
     # --- graphql -> graphql ---
     "graphql": "graphql",
-    "graphql_security": "graphql",        # VulnClass.GRAPHQL_SECURITY (graphql_agent — the real emitter)
+    "graphql_security": "graphql",  # VulnClass.GRAPHQL_SECURITY (graphql_agent — the real emitter)
     "graphql_batch": "graphql",
     "graphql_batch_abuse": "graphql",
     # --- business logic / workflow / race -> workflow ---
-    "race_condition": "workflow",         # VulnClass.RACE_CONDITION (vuln_agent)
+    "race_condition": "workflow",  # VulnClass.RACE_CONDITION (vuln_agent)
     "business_logic": "workflow",
-    "workflow_bypass": "workflow",        # diff-auth raw category label
+    "workflow_bypass": "workflow",  # diff-auth raw category label
     "rate_limit": "workflow",
     "workflow": "workflow",
     # --- cloud / infra -> cloud ---
-    "cloud_vuln": "cloud",                # VulnClass.CLOUD_VULN
-    "container_vuln": "cloud",            # VulnClass.CONTAINER_VULN
-    "kubernetes_security": "cloud",       # VulnClass.KUBERNETES_SECURITY
-    "serverless_security": "cloud",       # VulnClass.SERVERLESS_SECURITY
+    "cloud_vuln": "cloud",  # VulnClass.CLOUD_VULN
+    "container_vuln": "cloud",  # VulnClass.CONTAINER_VULN
+    "kubernetes_security": "cloud",  # VulnClass.KUBERNETES_SECURITY
+    "serverless_security": "cloud",  # VulnClass.SERVERLESS_SECURITY
     "cloud": "cloud",
     "s3": "cloud",
     "metadata_ssrf": "cloud",
     "iam": "cloud",
     # --- session / token / auth -> session ---
-    "jwt_abuse": "session",               # VulnClass.JWT_ABUSE (the real emitted value)
-    "oauth2": "session",                  # VulnClass.OAUTH2
+    "jwt_abuse": "session",  # VulnClass.JWT_ABUSE (the real emitted value)
+    "oauth2": "session",  # VulnClass.OAUTH2
     "authentication_weakness": "session",  # VulnClass.AUTHENTICATION_WEAKNESS
     "jwt": "session",
     "session": "session",

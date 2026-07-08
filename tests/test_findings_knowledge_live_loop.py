@@ -4,6 +4,7 @@ Covers the two seams that make the loop run automatically end-to-end:
   1. GraphMemory.add_vulnerability auto-records real findings into the KB.
   2. BaseAgent.recall_prior_findings lets any agent consult that KB.
 """
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,9 +17,13 @@ from ai_osop.memory.graph_memory import GraphMemory
 
 def _real_vuln(**kw):
     base = dict(
-        vuln_type=VulnClass.SSRF, severity=Severity.HIGH, title="Blind SSRF",
-        description="url param fetches metadata", tool_source="nuclei",
-        confidence=0.9, engagement_id="e1",
+        vuln_type=VulnClass.SSRF,
+        severity=Severity.HIGH,
+        title="Blind SSRF",
+        description="url param fetches metadata",
+        tool_source="nuclei",
+        confidence=0.9,
+        engagement_id="e1",
     )
     base.update(kw)
     return Vulnerability(**base)
@@ -118,9 +123,15 @@ async def test_vuln_agent_enriches_context_with_prior_findings():
     ctx = MagicMock()
     agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)  # skip heavy __init__
     agent.ctx = ctx
-    agent.recall_prior_findings = AsyncMock(return_value=[
-        KnowledgeHit(score=0.62, document="d", metadata={"severity": "high", "vuln_type": "ssrf", "title": "Blind SSRF via url"}),
-    ])
+    agent.recall_prior_findings = AsyncMock(
+        return_value=[
+            KnowledgeHit(
+                score=0.62,
+                document="d",
+                metadata={"severity": "high", "vuln_type": "ssrf", "title": "Blind SSRF via url"},
+            ),
+        ]
+    )
 
     out = await agent._enrich_with_prior_findings("Analyzing endpoints for shop.com", "shop.com")
     assert "Prior similar findings" in out

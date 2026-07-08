@@ -3,7 +3,6 @@ NextJS Specialist Agent
 Specializes in identifying NextJS-specific vulnerabilities, middleware bypasses, and Server Action flaws.
 """
 
-
 import logging
 from typing import Any, Dict, List, Optional
 

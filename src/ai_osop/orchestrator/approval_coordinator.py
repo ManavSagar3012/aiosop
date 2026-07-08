@@ -9,13 +9,13 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from ai_osop.core.config import settings
-from ai_osop.core.models import ApprovalRequest, AuditEvent
-from ai_osop.core.tracing import trace_span
-from ai_osop.core.observability import record_approval_requested, record_approval_resolved
-from ai_osop.core.exceptions import WorkflowException
-
 import structlog
+
+from ai_osop.core.config import settings
+from ai_osop.core.exceptions import WorkflowException
+from ai_osop.core.models import ApprovalRequest, AuditEvent
+from ai_osop.core.observability import record_approval_requested, record_approval_resolved
+from ai_osop.core.tracing import trace_span
 
 logger = structlog.get_logger("ai_osop.orchestrator.approval_coordinator")
 
@@ -29,10 +29,12 @@ class ApprovalCoordinator:
     async def request_approval(self, request: ApprovalRequest) -> ApprovalRequest:
         """Submit approval request and BLOCK until the operator decides (or timeout)."""
         # Get engagement session to verify scope signature
-        session = await self._orch.session_memory.get_session_by_engagement_id(request.engagement_id)
+        session = await self._orch.session_memory.get_session_by_engagement_id(
+            request.engagement_id
+        )
         if not session:
             raise WorkflowException(f"Engagement {request.engagement_id} not found")
-        
+
         # Verify scope signature with the SINGLE shared signing key (OSOP-P0-03), so
         # verification can never diverge from how engagement_manager signed it. This
         # fail-closes in production when OSOP_AUDIT_SECRET_KEY is unset.
@@ -107,7 +109,9 @@ class ApprovalCoordinator:
                 task, {"error": f"Approval denied: {request.status}"}
             )
 
-    async def _wait_for_approval(self, request_id: str, max_wait_seconds: Optional[int] = None) -> None:
+    async def _wait_for_approval(
+        self, request_id: str, max_wait_seconds: Optional[int] = None
+    ) -> None:
         """Wait for approval request to be resolved.
 
         Args:
@@ -121,7 +125,10 @@ class ApprovalCoordinator:
             request = self._orch._approval_requests.get(request_id)
             if request and request.status in ["approved", "rejected", "modified"]:
                 return
-            if max_wait_seconds is not None and asyncio.get_event_loop().time() - start > max_wait_seconds:
+            if (
+                max_wait_seconds is not None
+                and asyncio.get_event_loop().time() - start > max_wait_seconds
+            ):
                 logger.warning(
                     "approval_wait_timeout",
                     request_id=request_id,
@@ -224,11 +231,7 @@ class ApprovalCoordinator:
         Approval lives in the (operator-resolved) ApprovalRequest record only.
         """
         for req in self._orch._approval_requests.values():
-            if (
-                req.task_id == task_id
-                and req.status == "approved"
-                and req.operator_id
-            ):
+            if req.task_id == task_id and req.status == "approved" and req.operator_id:
                 return True
         return False
 
@@ -266,9 +269,27 @@ class ApprovalCoordinator:
         """Map operator-decision synonyms onto the canonical status vocabulary
         (approved / rejected / modified) used by the approval waiters and gate."""
         d = str(decision or "").strip().lower()
-        if d in ("approved", "approve", "accept", "accepted", "allow", "allowed", "grant", "granted"):
+        if d in (
+            "approved",
+            "approve",
+            "accept",
+            "accepted",
+            "allow",
+            "allowed",
+            "grant",
+            "granted",
+        ):
             return "approved"
-        if d in ("rejected", "reject", "denied", "deny", "decline", "declined", "refused", "refuse"):
+        if d in (
+            "rejected",
+            "reject",
+            "denied",
+            "deny",
+            "decline",
+            "declined",
+            "refused",
+            "refuse",
+        ):
             return "rejected"
         if d in ("modified", "modify", "amend", "amended", "changed"):
             return "modified"

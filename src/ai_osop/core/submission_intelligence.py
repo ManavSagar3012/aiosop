@@ -1,9 +1,12 @@
 from typing import Any, Dict, List, Optional
+
 import structlog
-from ai_osop.memory.graph_memory import GraphMemory
+
 from ai_osop.core.models import DiffAuthFinding
+from ai_osop.memory.graph_memory import GraphMemory
 
 logger = structlog.get_logger("ai_osop.submission_intelligence")
+
 
 class SubmissionIntelligenceEngine:
     """
@@ -35,25 +38,25 @@ class SubmissionIntelligenceEngine:
         total = sum(stats.values())
         if total == 0:
             return 0.5  # Neutral baseline
-        
+
         # Bayesian-inspired simple probability
         acceptance_prob = stats.get("accepted", 0) / total
-        
+
         # Adjust by confidence
         return acceptance_prob * finding.confidence
 
     async def recommend_submission(self, finding: DiffAuthFinding) -> Dict[str, Any]:
         """Generate a submission recommendation for an operator."""
         prob = await self.calculate_acceptance_probability(finding)
-        
+
         recommendation = "monitor"
         if prob > 0.7:
             recommendation = "submit"
         elif prob > 0.4:
             recommendation = "verify_manually"
-        
+
         return {
             "acceptance_probability": round(prob, 2),
             "recommendation": recommendation,
-            "priority": "high" if prob > 0.7 else "medium"
+            "priority": "high" if prob > 0.7 else "medium",
         }

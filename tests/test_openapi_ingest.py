@@ -1,9 +1,6 @@
 """Tests for P1.3 OpenAPI/Swagger ingestion."""
-from ai_osop.core.openapi_ingest import (
-    is_spec,
-    parse_spec,
-    spec_candidate_urls,
-)
+
+from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
 
 OPENAPI3 = {
     "openapi": "3.0.1",

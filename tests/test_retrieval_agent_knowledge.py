@@ -3,10 +3,11 @@
 Exercises the record -> recall loop through the agent using a real mock-mode
 VectorMemory backend and a deterministic embedder (no DB, no LLM).
 """
+
 import hashlib
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.retrieval_agent import RetrievalAgent
@@ -49,20 +50,38 @@ async def test_record_then_recall_through_agent(agent):
     await agent._setup_resources()
     assert agent.findings_kb is not None  # wired to the vector backend
 
-    r = await agent._execute(_task(
-        "record_finding",
-        finding={"vuln_type": "ssrf", "severity": "high", "title": "SSRF via url",
-                 "description": "url param hits internal metadata", "id": "v1", "engagement_id": "e1"},
-    ))
+    r = await agent._execute(
+        _task(
+            "record_finding",
+            finding={
+                "vuln_type": "ssrf",
+                "severity": "high",
+                "title": "SSRF via url",
+                "description": "url param hits internal metadata",
+                "id": "v1",
+                "engagement_id": "e1",
+            },
+        )
+    )
     assert r["status"] == "completed" and r["recorded"] is True
 
-    await agent._execute(_task(
-        "record_finding",
-        finding={"vuln_type": "xss", "severity": "medium", "title": "Reflected XSS",
-                 "description": "q param reflected unescaped", "id": "v2", "engagement_id": "e1"},
-    ))
+    await agent._execute(
+        _task(
+            "record_finding",
+            finding={
+                "vuln_type": "xss",
+                "severity": "medium",
+                "title": "Reflected XSS",
+                "description": "q param reflected unescaped",
+                "id": "v2",
+                "engagement_id": "e1",
+            },
+        )
+    )
 
-    rec = await agent._execute(_task("recall_findings", query="url param hits internal metadata ssrf", limit=2))
+    rec = await agent._execute(
+        _task("recall_findings", query="url param hits internal metadata ssrf", limit=2)
+    )
     assert rec["status"] == "completed"
     assert rec["results"], "expected a recalled finding"
     assert rec["results"][0]["metadata"]["finding_id"] == "v1"

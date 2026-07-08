@@ -4,16 +4,26 @@ Multi-step exploitation reasoning, privilege escalation mapping,
 and attack graph path discovery.
 """
 
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import structlog
 
 from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.core.chain_composer import ChainComposer
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import AgentException, OutOfScopeError, ScopeValidationError
-from ai_osop.core.chain_composer import ChainComposer
-from ai_osop.core.models import AttackPath, Exploit, PrimitiveLedger, PrimitiveType, Task, Vulnerability
+from ai_osop.core.goal_planner import GoalAction, GoalPlanner, GoalState
+from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
+from ai_osop.core.models import (
+    AttackPath,
+    Exploit,
+    PrimitiveLedger,
+    PrimitiveType,
+    Task,
+    Vulnerability,
+)
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)
@@ -175,9 +185,16 @@ class AttackChainAgent(BaseAgent):
                     severity=Severity.CRITICAL,
                     title=f"JWT forgery enabling impersonation ({f.technique})",
                     description=f"{f.detail} Used as the takeover primitive for {victim_email}.",
-                    evidence=[{"type": "jwt_forgery", "provenance": "jwt_tester",
-                               "technique": f.technique, "verify_url": verify_url,
-                               "victim": victim_email, **f.evidence}],
+                    evidence=[
+                        {
+                            "type": "jwt_forgery",
+                            "provenance": "jwt_tester",
+                            "technique": f.technique,
+                            "verify_url": verify_url,
+                            "victim": victim_email,
+                            **f.evidence,
+                        }
+                    ],
                     tool_source="jwt_tester",
                     confidence=0.98,
                     validated=True,
@@ -199,8 +216,10 @@ class AttackChainAgent(BaseAgent):
 
             try:
                 async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
-                    r = await c.get(idor_url, headers={"Authorization": f"Bearer {token}",
-                                                       "Cookie": f"token={token}"})
+                    r = await c.get(
+                        idor_url,
+                        headers={"Authorization": f"Bearer {token}", "Cookie": f"token={token}"},
+                    )
                     if r.status_code == 200 and idor_marker in r.text:
                         primitive_vulns.append(
                             Vulnerability(
@@ -209,9 +228,15 @@ class AttackChainAgent(BaseAgent):
                                 severity=Severity.HIGH,
                                 title="IDOR exposing victim account object",
                                 description=f"Attacker token read {victim_email}'s object at {idor_url}.",
-                                evidence=[{"type": "idor_read", "provenance": "http",
-                                           "url": idor_url, "victim": victim_email,
-                                           "status": r.status_code}],
+                                evidence=[
+                                    {
+                                        "type": "idor_read",
+                                        "provenance": "http",
+                                        "url": idor_url,
+                                        "victim": victim_email,
+                                        "status": r.status_code,
+                                    }
+                                ],
                                 tool_source="ato_orchestrator",
                                 confidence=0.93,
                                 validated=True,
@@ -252,14 +277,16 @@ class AttackChainAgent(BaseAgent):
                 f"{', '.join(c['primitive'] for c in chain)}. The server granted access "
                 f"under the victim's identity."
             ),
-            evidence=[{
-                "type": "account_takeover_chain",
-                "provenance": "ato_orchestrator",
-                "victim": victim_email,
-                "verify_url": verify_url,
-                "chain": chain,
-                "primitive_vuln_ids": [pv.id for pv in primitive_vulns],
-            }],
+            evidence=[
+                {
+                    "type": "account_takeover_chain",
+                    "provenance": "ato_orchestrator",
+                    "victim": victim_email,
+                    "verify_url": verify_url,
+                    "chain": chain,
+                    "primitive_vuln_ids": [pv.id for pv in primitive_vulns],
+                }
+            ],
             tool_source="ato_orchestrator",
             confidence=0.97,
             validated=True,
@@ -290,7 +317,8 @@ class AttackChainAgent(BaseAgent):
             logger.warning("ato_attack_path_persist_failed", error=str(e))
 
         logger.info(
-            "ato_confirmed", victim=victim_email,
+            "ato_confirmed",
+            victim=victim_email,
             primitives=[c["primitive"] for c in chain],
         )
         return {
@@ -316,12 +344,235 @@ class AttackChainAgent(BaseAgent):
         else:
             entry_nodes = [entry_node_id]
 
+        # Use SecurityKnowledgeEngine & GoalPlanner
+        ske = SecurityKnowledgeEngine()
+        planner = GoalPlanner()
+
+        # Query session information from Neo4j for the initial state
+        role = "anonymous"
+        has_token = False
+        if self.ctx.graph_memory:
+            try:
+                # Query active sessions
+                cypher_session = """
+                MATCH (s:Session {engagement_id: $eid, status: 'active'})-[:AUTHENTICATED_AS]->(i:Identity)-[:HAS_ROLE]->(r:Role)
+                RETURN r.name as role_name LIMIT 1
+                """
+                records_session = await self.ctx.graph_memory.run_read_query(
+                    cypher_session, {"eid": engagement_id}
+                )
+                if records_session:
+                    role = records_session[0].get("role_name", "standard")
+
+                # Query if there are any active credentials synced
+                cypher_cred = """
+                MATCH (c:Credential {engagement_id: $eid})
+                RETURN c.type as cred_type LIMIT 1
+                """
+                records_cred = await self.ctx.graph_memory.run_read_query(
+                    cypher_cred, {"eid": engagement_id}
+                )
+                if records_cred:
+                    has_token = True
+            except Exception as e:
+                logger.warning("failed_to_query_session_for_planner", error=str(e))
+
+        # Query existing vulnerabilities to establish known vulnerabilities
+        known_vulns: List[str] = []
+        if self.ctx.graph_memory:
+            try:
+                vulns = await self.ctx.graph_memory.get_vulnerabilities_by_engagement(engagement_id)
+                for v in vulns:
+                    if v:
+                        v_type = v.get("vuln_type")
+                        if v_type:
+                            if hasattr(v_type, "value"):
+                                known_vulns.append(str(v_type.value))
+                            else:
+                                known_vulns.append(str(v_type))
+            except Exception as e:
+                logger.warning("failed_to_query_vulnerabilities_for_planner", error=str(e))
+
+        # 1. Map current engagement state into GoalState
+        initial_state = GoalState(
+            properties={
+                "role": role,
+                "has_token": has_token,
+                "vuln_discovered": known_vulns,
+                "network_zone": "external" if role == "anonymous" else "internal",
+            }
+        )
+
+        # 2. Build the set of possible actions from SecurityKnowledgeEngine recommendation mappings
+        actions = []
+
+        # Build actions from recommendation chains in knowledge engine
+        # E.g. sqli -> rce implies if sqli is discovered, we can perform sqli_to_rce to discover rce
+        recommendation_chains = ske._data.get("recommendation_chains", {})
+        for vuln_key, next_steps in recommendation_chains.items():
+            for step in next_steps:
+                actions.append(
+                    GoalAction(
+                        name=f"{vuln_key}_to_{step}",
+                        preconditions={"vuln_discovered": vuln_key},
+                        effects={"vuln_discovered": step},
+                        cost=1.5,
+                    )
+                )
+
+        # Add initial discovery actions (e.g. scanning or exploiting to find entry points)
+        # Vulnerability scanning discovers basic vulns
+        actions.append(
+            GoalAction(
+                name="vuln_scan_discover_sqli",
+                preconditions={"role": "anonymous"},
+                effects={"vuln_discovered": "sqli"},
+                cost=2.0,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="vuln_scan_discover_xss",
+                preconditions={"role": "anonymous"},
+                effects={"vuln_discovered": "xss"},
+                cost=1.0,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="vuln_scan_discover_ssrf",
+                preconditions={"role": "anonymous"},
+                effects={"vuln_discovered": "ssrf"},
+                cost=1.5,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="vuln_scan_discover_ssti",
+                preconditions={"role": "anonymous"},
+                effects={"vuln_discovered": "ssti"},
+                cost=2.0,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="vuln_scan_discover_idor",
+                preconditions={"role": "anonymous"},
+                effects={"vuln_discovered": "idor"},
+                cost=1.0,
+            )
+        )
+
+        # Actions for role escalation / privilege escalation
+        actions.append(
+            GoalAction(
+                name="exploit_sqli_takeover",
+                preconditions={"vuln_discovered": "sqli"},
+                effects={"role": "admin", "network_zone": "internal"},
+                cost=3.0,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="exploit_idor_vertical_pe",
+                preconditions={"vuln_discovered": "idor"},
+                effects={"role": "admin", "network_zone": "internal"},
+                cost=2.0,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="token_abuse_privilege_escalation",
+                preconditions={"vuln_discovered": "exposed_secret"},
+                effects={"role": "admin", "network_zone": "internal", "has_token": True},
+                cost=1.5,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="rce_privilege_escalation",
+                preconditions={"vuln_discovered": "rce"},
+                effects={"role": "admin", "network_zone": "internal"},
+                cost=1.0,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="jwt_bypass_admin",
+                preconditions={"vuln_discovered": "jwt_abuse"},
+                effects={"role": "admin"},
+                cost=1.0,
+            )
+        )
+
+        # Action for exfiltration goal
+        actions.append(
+            GoalAction(
+                name="data_exfiltration_from_sqli",
+                preconditions={"vuln_discovered": "sqli"},
+                effects={"data_exfiltrated": True},
+                cost=1.5,
+            )
+        )
+        actions.append(
+            GoalAction(
+                name="data_exfiltration_from_admin",
+                preconditions={"role": "admin"},
+                effects={"data_exfiltrated": True},
+                cost=0.5,
+            )
+        )
+
+        # 3. Solve for paths for each goal type
         all_paths = []
         for entry in entry_nodes:
-            paths = await self.ctx.graph_memory.find_attack_paths(
-                entry_node_id=entry, goal_types=goal_types, max_depth=max_depth
-            )
-            all_paths.extend(paths)
+            for goal_type in goal_types:
+                # Setup goal state based on the requested goal type
+                goal_props: Dict[str, Any] = {}
+                if goal_type == "rce":
+                    goal_props = {"vuln_discovered": "rce"}
+                elif goal_type == "admin_access":
+                    goal_props = {"role": "admin"}
+                elif goal_type == "data_exfiltration":
+                    goal_props = {"data_exfiltrated": True}
+                else:
+                    # Generic target properties based on string matching
+                    goal_props = {"vuln_discovered": goal_type}
+                goal_state = GoalState(properties=goal_props)
+
+                planned_actions = planner.plan(initial_state, goal_state, actions)
+                if planned_actions:
+                    # Construct AttackPath
+                    node_ids = [entry]
+                    for idx, act in enumerate(planned_actions):
+                        # Generate or find matching node ID for the transition state
+                        effect_keys = list(act.effects.keys())
+                        if effect_keys:
+                            main_effect = act.effects[effect_keys[0]]
+                            node_ids.append(f"node-{main_effect}-{idx}-{uuid.uuid4().hex[:6]}")
+                        else:
+                            node_ids.append(f"node-step-{idx}-{uuid.uuid4().hex[:6]}")
+
+                    edge_ids = [f"LEADS_TO-{i}" for i in range(len(node_ids) - 1)]
+
+                    # Estimate confidence and risk based on cost
+                    total_cost = sum(act.cost for act in planned_actions)
+                    confidence = max(1.0 - (total_cost * 0.1), 0.1)
+                    risk_score = min(total_cost, 10.0)
+
+                    path = AttackPath(
+                        node_ids=node_ids,
+                        edge_ids=edge_ids,
+                        confidence=confidence,
+                        risk_score=risk_score,
+                        total_time_estimate=int(total_cost * 60),
+                        detection_risk=min(total_cost * 0.05, 1.0),
+                        validated=False,
+                        entry_node_id=entry,
+                        goal_node_id=node_ids[-1],
+                        engagement_id=engagement_id,
+                    )
+                    all_paths.append(path)
 
         # Score and rank paths
         scored_paths = []
@@ -469,13 +720,15 @@ class AttackChainAgent(BaseAgent):
         """
         if not self.ctx.graph_memory:
             return []
-        ids = []
+        ids: List[str] = []
         records = await self.ctx.graph_memory.run_read_query(
             "MATCH (a:Asset {engagement_id: $sid}) RETURN a.id as id",
             {"sid": engagement_id},
         )
         for record in records:
-            ids.append(record.get("id"))
+            r_id = record.get("id")
+            if isinstance(r_id, str):
+                ids.append(r_id)
         return ids
 
     def _score_path(self, path: AttackPath) -> float:

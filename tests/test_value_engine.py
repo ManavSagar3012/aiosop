@@ -1,5 +1,7 @@
 import pytest
+
 from ai_osop.core.value_engine import score_endpoint
+
 
 def test_score_endpoint_prioritization():
     # 1. Admin/Auth sensitive paths should score higher
@@ -24,12 +26,14 @@ def test_score_endpoint_prioritization():
     assert with_params["score"] == no_params["score"] + 12
     assert "has-params" in with_params["signals"]
 
+
 def test_score_endpoint_api_premium():
     # API endpoints should be prioritized
     api_score = score_endpoint("/api/v1/resource", method="GET")
     generic_score = score_endpoint("/resources", method="GET")
     assert api_score["score"] > generic_score["score"]
     assert "api-surface" in api_score["signals"]
+
 
 def test_protected_resource_premium():
     # Protected resources should be prioritized

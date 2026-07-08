@@ -1,8 +1,10 @@
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
-from datetime import datetime
+
 from ai_osop.core.config import EngagementPhase
-from typing import Dict, Any, Optional
+
 
 class EngagementState(BaseModel):
     id: str
@@ -12,4 +14,4 @@ class EngagementState(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
-        frozen = False # Allow mutation, but update version manually
+        frozen = False  # Allow mutation, but update version manually

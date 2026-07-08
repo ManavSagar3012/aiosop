@@ -188,10 +188,13 @@ async def test_violate_invariant_real_execution_success(agent) -> None:
     class _Client:
         def __init__(self, *a, **k):
             pass
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             return False
+
         async def request(self, *a, **k):
             return _Resp()
 
@@ -232,10 +235,13 @@ async def test_violate_invariant_real_execution_blocked(agent) -> None:
     class _Client:
         def __init__(self, *a, **k):
             pass
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             return False
+
         async def request(self, *a, **k):
             return _Resp()
 
@@ -266,6 +272,7 @@ async def test_violate_invariant_real_execution_blocked(agent) -> None:
 @pytest.mark.asyncio
 async def test_violate_invariant_out_of_scope(mock_context) -> None:
     from datetime import datetime, timedelta
+
     from ai_osop.core.models import ScopeDefinition
 
     mock_context.scope = ScopeDefinition(

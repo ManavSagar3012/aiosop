@@ -6,8 +6,10 @@ from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 
 def _capture(store, v):
     store.append(v)
+
     async def _ok():
         return None
+
     return _ok()
 
 
@@ -27,9 +29,14 @@ def _agent(verdicts, captured):
 
     async def _verify(secret, base_override=None):
         live = verdicts.get(secret, False)
-        return {"provider": "github" if secret.startswith("ghp_") else None,
-                "classified": secret.startswith("ghp_"), "live": live,
-                "status": 200 if live else 401, "detail": "authenticated" if live else "rejected"}
+        return {
+            "provider": "github" if secret.startswith("ghp_") else None,
+            "classified": secret.startswith("ghp_"),
+            "live": live,
+            "status": 200 if live else 401,
+            "detail": "authenticated" if live else "rejected",
+        }
+
     a._verify_one_secret = _verify
     return a
 
@@ -37,8 +44,11 @@ def _agent(verdicts, captured):
 def test_live_secret_mints_finding():
     captured = []
     agent = _agent({"ghp_LIVEKEY": True}, captured)
-    res = asyncio.run(agent._execute_secret_liveness_scan({
-        "secrets": ["ghp_LIVEKEY"], "engagement_id": "eng-sec"}))
+    res = asyncio.run(
+        agent._execute_secret_liveness_scan(
+            {"secrets": ["ghp_LIVEKEY"], "engagement_id": "eng-sec"}
+        )
+    )
     assert res["confirmed"] is True and res["findings_count"] == 1
     v = captured[0]
     assert v.vuln_type.value == "exposed_secret" and v.validated is True
@@ -50,7 +60,10 @@ def test_live_secret_mints_finding():
 def test_dead_secret_no_finding():
     captured = []
     agent = _agent({"ghp_DEADKEY": False}, captured)
-    res = asyncio.run(agent._execute_secret_liveness_scan({
-        "secrets": ["ghp_DEADKEY"], "engagement_id": "eng-sec"}))
+    res = asyncio.run(
+        agent._execute_secret_liveness_scan(
+            {"secrets": ["ghp_DEADKEY"], "engagement_id": "eng-sec"}
+        )
+    )
     assert res["confirmed"] is False and res["findings_count"] == 0
     assert captured == []

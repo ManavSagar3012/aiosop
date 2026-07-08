@@ -27,10 +27,14 @@ from ai_osop.core.metrics import READY_STATUS
 from ai_osop.core.telemetry import RequestContext
 
 router = APIRouter(tags=["health"])
+
+
 @router.get("/health/mcp")
 async def health_mcp():
     """Execution-level reality probe for the MCP tooling layer."""
     return await _check_tool_reality()
+
+
 @router.get("/health/platform")
 async def health_platform():
     """Liveness probe for internal platform services."""
@@ -38,31 +42,33 @@ async def health_platform():
         "redis": await _check_redis(),
         "postgres": await _check_postgres(),
         "neo4j": await _check_neo4j(),
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
     }
+
 
 @router.get("/health/system")
 async def health_system():
     """Unified system health check."""
-    return {
-        "platform": await health_platform(),
-        "mcp": await health_mcp()
-    }
+    return {"platform": await health_platform(), "mcp": await health_mcp()}
+
+
 @router.get("/health/metrics")
 async def health_metrics():
     """Expose high-level platform performance and engagement metrics."""
     from ai_osop.core.metrics import (
         ACTIVE_ENGAGEMENTS,
-        TASK_THROUGHPUT,
         AGENT_SUCCESS_RATE,
-        READY_STATUS
+        READY_STATUS,
+        TASK_THROUGHPUT,
     )
+
     return {
         "active_engagements": ACTIVE_ENGAGEMENTS._value.get(),
         "task_throughput": TASK_THROUGHPUT._value.get(),
         "agent_success_rate": AGENT_SUCCESS_RATE._value.get(),
         "overall_readiness": READY_STATUS._value.get(),
     }
+
 
 # Sprint 8: readiness history for flapping detection
 _readiness_history: Deque[Dict[str, Any]] = deque(maxlen=5)
@@ -111,6 +117,7 @@ async def _check_postgres() -> Dict[str, Any]:
             return {"status": "unhealthy", "error": "postgres engine not initialized"}
         start = time.monotonic()
         from sqlalchemy import text
+
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return {"status": "healthy", "latency_ms": round((time.monotonic() - start) * 1000, 2)}
@@ -230,9 +237,7 @@ async def _check_tool_reality() -> Dict[str, Any]:
                         )
                         result = (rr.json() or {}).get("result", {})
                         hosts = result.get("hosts", [])
-                        open_ports = [
-                            p.get("port") for h in hosts for p in h.get("ports", [])
-                        ]
+                        open_ports = [p.get("port") for h in hosts for p in h.get("ports", [])]
                         # The API itself listens on 8200, so a REAL scan must see it
                         # and must NOT report the mock's canned 80/443 for this input.
                         if 8200 in open_ports:
@@ -249,7 +254,11 @@ async def _check_tool_reality() -> Dict[str, Any]:
 
     await asyncio.gather(*(probe(n, h, p) for n, (h, p) in servers.items()))
 
-    real = sum(1 for v in per_server.values() if v.get("verdict") in ("real_execution_verified", "tools_registered"))
+    real = sum(
+        1
+        for v in per_server.values()
+        if v.get("verdict") in ("real_execution_verified", "tools_registered")
+    )
     stubs = [n for n, v in per_server.items() if v.get("verdict") == "stub"]
     suspect = [n for n, v in per_server.items() if v.get("verdict") == "suspect_mock"]
     down = [n for n, v in per_server.items() if v.get("verdict") == "down"]
@@ -330,28 +339,48 @@ async def _deep_probe() -> Dict[str, Any]:
     async def recon_probe():
         async with httpx.AsyncClient() as c:
             # Scan the API's own port (8200, known-open) — proves real socket scan.
-            res = await execute(c, recon, "nmap_scan",
-                                {"targets": ["127.0.0.1"], "ports": str(settings.mcp_server_port)}, 30.0)
+            res = await execute(
+                c,
+                recon,
+                "nmap_scan",
+                {"targets": ["127.0.0.1"], "ports": str(settings.mcp_server_port)},
+                30.0,
+            )
             open_ports = [p.get("port") for h in res.get("hosts", []) for p in h.get("ports", [])]
             ok = settings.mcp_server_port in open_ports
             return ("real_execution_verified" if ok else "failed", {"open_ports": open_ports})
 
     async def nuclei_probe():
         async with httpx.AsyncClient() as c:
-            res = await execute(c, nuclei, "scan", {
-                "targets": [f"http://127.0.0.1:{settings.mcp_server_port}"],
-                "templates": ["http/misconfiguration/http-missing-security-headers.yaml"],
-            }, 90.0)
+            res = await execute(
+                c,
+                nuclei,
+                "scan",
+                {
+                    "targets": [f"http://127.0.0.1:{settings.mcp_server_port}"],
+                    "templates": ["http/misconfiguration/http-missing-security-headers.yaml"],
+                },
+                90.0,
+            )
             findings = [f for f in res.get("findings", []) if str(f).strip()]
-            return ("real_execution_verified" if findings else "failed", {"findings": len(findings)})
+            return (
+                "real_execution_verified" if findings else "failed",
+                {"findings": len(findings)},
+            )
 
     async def browser_probe():
         async with httpx.AsyncClient() as c:
-            res = await execute(c, browser, "execute", {
-                "action": "navigate",
-                "url": f"http://127.0.0.1:{settings.mcp_server_port}/health",
-                "engagement_id": "deep-probe",
-            }, 45.0)
+            res = await execute(
+                c,
+                browser,
+                "execute",
+                {
+                    "action": "navigate",
+                    "url": f"http://127.0.0.1:{settings.mcp_server_port}/health",
+                    "engagement_id": "deep-probe",
+                },
+                45.0,
+            )
             ready = res.get("state", {}).get("diagnostics", {}).get("readyState")
             ok = res.get("current_url", "").startswith("http")
             return ("real_execution_verified" if ok else "failed", {"readyState": ready})
@@ -363,25 +392,39 @@ async def _deep_probe() -> Dict[str, Any]:
         # Burp edition), so it reported real_execution_verified even when the active
         # scanner was unavailable (Community/unlicensed), masking a real capability gap.
         async with httpx.AsyncClient() as c:
-            http_res = await execute(c, burp, "send_http_request",
-                                     {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health", "method": "GET"}, 20.0)
+            http_res = await execute(
+                c,
+                burp,
+                "send_http_request",
+                {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health", "method": "GET"},
+                20.0,
+            )
             if http_res.get("status") != "success":
                 return ("failed", {"stage": "http", "detail": http_res})
             # Active-scan capability check. scan_target on Community/unlicensed Burp
             # errors at Scanner.startAudit() (returns null) BEFORE any audit begins, so
             # this is a safe, side-effect-free capability probe against the local API.
-            scan_res = await execute(c, burp, "scan_target",
-                                     {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health"}, 25.0)
+            scan_res = await execute(
+                c,
+                burp,
+                "scan_target",
+                {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health"},
+                25.0,
+            )
             scan_err = str(scan_res.get("error", "")) if isinstance(scan_res, dict) else ""
             if scan_res and not scan_err:
                 return ("real_execution_verified", {"scan_capable": True, "http_verified": True})
             # HTTP works but the active scanner does not — honest, distinct verdict so
             # channels_verified no longer over-counts Burp as scan-ready.
-            return ("scan_unavailable", {
-                "scan_capable": False,
-                "http_verified": True,
-                "reason": scan_err[:200] or "active scanner unavailable (requires Burp Suite Professional)",
-            })
+            return (
+                "scan_unavailable",
+                {
+                    "scan_capable": False,
+                    "http_verified": True,
+                    "reason": scan_err[:200]
+                    or "active scanner unavailable (requires Burp Suite Professional)",
+                },
+            )
 
     await asyncio.gather(
         probe("recon", recon_probe()),
@@ -391,8 +434,10 @@ async def _deep_probe() -> Dict[str, Any]:
     )
 
     verified = sum(1 for v in channels.values() if v["verdict"] == "real_execution_verified")
-    overall = "real_execution_verified" if verified == len(channels) else (
-        "degraded" if verified > 0 else "unhealthy"
+    overall = (
+        "real_execution_verified"
+        if verified == len(channels)
+        else ("degraded" if verified > 0 else "unhealthy")
     )
     return {
         "status": overall,
@@ -425,7 +470,10 @@ async def health() -> Dict[str, Any]:
     restart the container.
     """
     # Diagnostic: check for duplicate module imports
-    import sys as _sys, ai_osop.api.main as _m
+    import sys as _sys
+
+    import ai_osop.api.main as _m
+
     _mods = [k for k in _sys.modules if "ai_osop.api.main" in k]
     return {
         "status": "healthy",
@@ -433,7 +481,7 @@ async def health() -> Dict[str, Any]:
         "diag": {
             "loaded_from": getattr(_m, "__file__", "unknown"),
             "modules_keys": _mods,
-        }
+        },
     }
 
 
@@ -473,11 +521,13 @@ async def ready() -> Dict[str, Any]:
 
     if critical_unhealthy:
         READY_STATUS.set(0.0)
-        _readiness_history.append({
-            "timestamp": datetime.utcnow().isoformat(),
-            "status": "not_ready",
-            "checks": {name: c["status"] for name, c in checks.items()},
-        })
+        _readiness_history.append(
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "status": "not_ready",
+                "checks": {name: c["status"] for name, c in checks.items()},
+            }
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -496,11 +546,13 @@ async def ready() -> Dict[str, Any]:
         overall_status = "ready"
         READY_STATUS.set(1.0)
 
-    _readiness_history.append({
-        "timestamp": datetime.utcnow().isoformat(),
-        "status": overall_status,
-        "checks": {name: c["status"] for name, c in checks.items()},
-    })
+    _readiness_history.append(
+        {
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": overall_status,
+            "checks": {name: c["status"] for name, c in checks.items()},
+        }
+    )
 
     return {
         "status": overall_status,
@@ -508,6 +560,7 @@ async def ready() -> Dict[str, Any]:
         "checks": checks,
         "history": list(_readiness_history),
     }
+
 
 async def run_startup_self_test() -> Dict[str, Any]:
     """Run comprehensive startup self-test (Sprint 6.5).
@@ -596,7 +649,9 @@ async def run_startup_self_test() -> Dict[str, Any]:
         # Approval Store
         start = time.monotonic()
         try:
-            has_approval_store = hasattr(orch, "approval_coordinator") and orch.approval_coordinator is not None
+            has_approval_store = (
+                hasattr(orch, "approval_coordinator") and orch.approval_coordinator is not None
+            )
             results["approval_store"] = {
                 "status": "PASS" if has_approval_store else "degraded",
                 "latency_ms": round((time.monotonic() - start) * 1000, 2),
@@ -643,6 +698,7 @@ async def run_startup_self_test() -> Dict[str, Any]:
         start = time.monotonic()
         try:
             from opentelemetry import trace
+
             tracer = trace.get_tracer_provider()
             tracing_ok = tracer is not None
             results["tracing_layer"] = {
@@ -668,8 +724,11 @@ async def run_startup_self_test() -> Dict[str, Any]:
         start = time.monotonic()
         try:
             from prometheus_client import REGISTRY
+
             # Use internal registry mapping to check if any collectors are registered
-            metrics_ok = len(REGISTRY._names_to_collectors) > 0 or len(REGISTRY._collector_to_names) > 0
+            metrics_ok = (
+                len(REGISTRY._names_to_collectors) > 0 or len(REGISTRY._collector_to_names) > 0
+            )
             results["metrics_layer"] = {
                 "status": "PASS" if metrics_ok else "degraded",
                 "latency_ms": round((time.monotonic() - start) * 1000, 2),
@@ -690,8 +749,19 @@ async def run_startup_self_test() -> Dict[str, Any]:
             }
             checks_failed += 1
     else:
-        for name in ["task_queue", "session_store", "approval_store", "graph_layer", "tracing_layer", "metrics_layer"]:
-            results[name] = {"status": "FAIL", "error": "orchestrator not initialized", "critical": False}
+        for name in [
+            "task_queue",
+            "session_store",
+            "approval_store",
+            "graph_layer",
+            "tracing_layer",
+            "metrics_layer",
+        ]:
+            results[name] = {
+                "status": "FAIL",
+                "error": "orchestrator not initialized",
+                "critical": False,
+            }
             checks_failed += 1
 
     # A-5: execution-level tooling-reality probe (informational)
@@ -703,8 +773,7 @@ async def run_startup_self_test() -> Dict[str, Any]:
 
     # Critical failures block startup
     critical_failures = any(
-        r.get("status") in ("FAIL", "unhealthy") and r.get("critical")
-        for r in results.values()
+        r.get("status") in ("FAIL", "unhealthy") and r.get("critical") for r in results.values()
     )
 
     return {

@@ -117,7 +117,7 @@ def vuln_to_primitive(vuln: Vulnerability) -> PrimitiveLedger:
         confidence=float(vuln.confidence or 0.0),
         severity_hint=severity_hint,
         tags=[vt],
-        promoted_to_finding=True,   # it already IS a confirmed finding
+        promoted_to_finding=True,  # it already IS a confirmed finding
         finding_id=vuln.id,
     )
 
@@ -182,11 +182,17 @@ def analyze_primitives(
         if len(group) < min_chain_size:
             continue
         # Order by severity so the strongest primitive roots the chain/PoC.
-        ordered = sorted(group, key=lambda x: _SEVERITY_RANK.get((x.severity_hint or "").lower(), 0), reverse=True)
+        ordered = sorted(
+            group,
+            key=lambda x: _SEVERITY_RANK.get((x.severity_hint or "").lower(), 0),
+            reverse=True,
+        )
         try:
             chain = comp.compose(ordered)
             chain = comp.generate_poc(chain, ordered)
-            chain.id = _deterministic_chain_id(chain.engagement_id or ordered[0].engagement_id, ordered)
+            chain.id = _deterministic_chain_id(
+                chain.engagement_id or ordered[0].engagement_id, ordered
+            )
             chains.append(chain)
             roots[chain.id] = ordered[0]
         except Exception as e:  # noqa: BLE001 - one bad group must not abort the rest
@@ -195,9 +201,7 @@ def analyze_primitives(
     result: Dict[str, Any] = {"chains": chains, "escalations": escalations}
 
     if gate is not None:
-        reports = gate_chains(
-            chains, roots, gate=gate, evidence_by_primitive=evidence_by_primitive
-        )
+        reports = gate_chains(chains, roots, gate=gate, evidence_by_primitive=evidence_by_primitive)
         result["reports"] = reports
 
     logger.info(

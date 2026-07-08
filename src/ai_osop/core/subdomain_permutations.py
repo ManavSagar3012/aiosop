@@ -6,13 +6,40 @@ discovered (crt.sh, wayback, DNS), this expands them into likely-existing candid
 feed into subdomain_takeover_scan and recon. Pure + deterministic so it's testable
 and cheap; resolution is a separate step.
 """
+
 import re
 from typing import Iterable, List, Set
 
 DEFAULT_WORDS: List[str] = [
-    "dev", "staging", "stage", "test", "uat", "qa", "prod", "api", "admin", "internal",
-    "vpn", "beta", "demo", "app", "portal", "gateway", "auth", "sso", "mail", "git",
-    "jenkins", "jira", "confluence", "grafana", "kibana", "backup", "old", "new", "v2",
+    "dev",
+    "staging",
+    "stage",
+    "test",
+    "uat",
+    "qa",
+    "prod",
+    "api",
+    "admin",
+    "internal",
+    "vpn",
+    "beta",
+    "demo",
+    "app",
+    "portal",
+    "gateway",
+    "auth",
+    "sso",
+    "mail",
+    "git",
+    "jenkins",
+    "jira",
+    "confluence",
+    "grafana",
+    "kibana",
+    "backup",
+    "old",
+    "new",
+    "v2",
 ]
 
 

@@ -3,10 +3,10 @@ Visual Context Agent
 Performs multi-layer context fusion (Screenshot + DOM + Semantics + Workflow) to identify critical operations.
 """
 
-
 import base64
 import hashlib
 import json
+import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.models import CriticalOperation, Observation, Task, VisualAnalysis
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -138,7 +138,9 @@ class VisualContextAgent(BaseAgent):
             await self.ctx.graph_memory.add_critical_operation(op)
 
             # Emit Observation
-            await self.observe(target_id=analysis.id, obs_type="critical_operation", data=op.model_dump())
+            await self.observe(
+                target_id=analysis.id, obs_type="critical_operation", data=op.model_dump()
+            )
 
         self.analysis_history.append(analysis)
 

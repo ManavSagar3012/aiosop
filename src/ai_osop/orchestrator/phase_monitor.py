@@ -4,13 +4,14 @@ Handles phase monitoring and automatic task dispatch on phase entry.
 """
 
 from __future__ import annotations
-import asyncio
 
+import asyncio
 from typing import Any, Dict, List
 
 import structlog
 
-from ai_osop.core.config import AgentType, EngagementPhase, settings
+from ai_osop.core.config import AgentType, EngagementPhase, VulnClass, settings
+from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
 from ai_osop.core.models import SessionState, Task
 from ai_osop.core.tracing import trace_span
 from ai_osop.core.value_engine import batch_endpoints_for_scan
@@ -24,6 +25,47 @@ class PhaseMonitor:
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
         self._tick = 0
+
+    @staticmethod
+    def _select_injection_targets(
+        records: List[Dict[str, Any]], max_targets: int = 25
+    ) -> List[Dict[str, Any]]:
+        """One representative injectable URL per (path, parameter-set).
+
+        Collapses e.g. productId=1..18 into a single scan target, and for form
+        endpoints that carry ``query_keys`` but no literal query string (search
+        boxes) synthesizes a probe value (``?param=test``) so sqlmap/xss have
+        something to mutate. Bounded so the active-scan phase stays time-boxed.
+        """
+        from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+        seen: set = set()
+        targets: List[Dict[str, Any]] = []
+        for r in records:
+            url = r.get("url")
+            if not url:
+                continue
+            parsed = urlparse(url)
+            q = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            for k in r.get("query_keys") or []:
+                if k and k not in q:
+                    q[k] = "test"
+            if not q:
+                continue
+            key = (parsed.path, tuple(sorted(q.keys())))
+            if key in seen:
+                continue
+            seen.add(key)
+            target_url = urlunparse(parsed._replace(query=urlencode(q)))
+            targets.append(
+                {
+                    "url": target_url,
+                    "technologies": r.get("technologies") or [],
+                }
+            )
+            if len(targets) >= max_targets:
+                break
+        return targets
 
     async def _auto_advance_phase(self, session: SessionState) -> None:
         """Evaluate and advance the phase for a single session if tasks are complete."""
@@ -43,9 +85,7 @@ class PhaseMonitor:
                     return
                 try:
                     await self._orch.engagement_manager.transition_phase(session_id, next_phase)
-                    logger.info(
-                        "auto_transition", session_id=session_id, phase=next_phase.value
-                    )
+                    logger.info("auto_transition", session_id=session_id, phase=next_phase.value)
                     self._orch._auto_transition_failures.pop(session_id, None)
                 except Exception as e:
                     self._orch._record_auto_transition_failure(session_id, phase, self._tick, e)
@@ -117,12 +157,14 @@ class PhaseMonitor:
             )
             for r in endpoint_records:
                 if r.get("url"):
-                    endpoints.append({
-                        "url": r["url"],
-                        "method": r.get("method") or "GET",
-                        "status_code": r.get("status_code"),
-                        "technologies": r.get("technologies") or [],
-                    })
+                    endpoints.append(
+                        {
+                            "url": r["url"],
+                            "method": r.get("method") or "GET",
+                            "status_code": r.get("status_code"),
+                            "technologies": r.get("technologies") or [],
+                        }
+                    )
 
             batches = batch_endpoints_for_scan(endpoints, batch_size=20, max_targets=200)
             if batches:
@@ -139,7 +181,7 @@ class PhaseMonitor:
                         agent_type=AgentType.VULN_ANALYSIS,
                         payload={
                             "targets": batch,
-                            "severity": "critical,high,medium,info",
+                            "severity": "critical,high,medium",
                             "batch_index": i,
                         },
                         engagement_id=session.session_id,
@@ -154,12 +196,147 @@ class PhaseMonitor:
                         agent_type=AgentType.VULN_ANALYSIS,
                         payload={
                             "targets": [self._orch.engagement_manager._domain_to_url(domain)],
-                            "severity": "critical,high,medium,info",
+                            "severity": "critical,high,medium",
                         },
                         engagement_id=session.session_id,
                         timeout_seconds=settings.nuclei_mcp_timeout + 120,
                     )
                     await self._orch.task_scheduler.schedule_task(nuclei_task)
+
+            # 2b) ACTIVE INJECTION TESTING against the discovered parametrized
+            #     surface. nuclei (templates) + burp (crawl) above never inject
+            #     payloads into individual GET/POST parameters, so app-logic SQLi
+            #     and reflected/DOM XSS — the bulk of real findings on targets like
+            #     ginandjuice.shop — went completely untested and the platform
+            #     reported 0 vulns on a deliberately-vulnerable app. Here we
+            #     dispatch the (already-implemented) active scanners: sqlmap-backed
+            #     sqli_scan and browser-verified xss_scan, at ONE representative URL
+            #     per (path, parameter-set) so productId=1..N collapses to a single
+            #     job, bounded to keep wall-time sane.
+            #     (AIOSOP-ACTIVE-INJECTION-WIRE-2026-07-08)
+            param_endpoint_records = await self._orch.graph_memory.run_read_query(
+                """MATCH (e:Endpoint {engagement_id: $sid})
+                   WHERE e.url CONTAINS '?' OR size(coalesce(e.query_keys, [])) > 0
+                   RETURN e.url AS url, e.query_keys AS query_keys,
+                          coalesce(e.method, 'GET') AS method,
+                          e.technologies AS technologies""",
+                {"sid": session.session_id},
+            )
+
+            # Build a mapping of url -> list of technologies
+            url_to_techs: Dict[str, List[str]] = {}
+            for r in param_endpoint_records:
+                url = r.get("url")
+                if url:
+                    url_to_techs[url] = r.get("technologies") or []
+
+            injection_targets = self._select_injection_targets(
+                param_endpoint_records, max_targets=25
+            )
+
+            knowledge_engine = SecurityKnowledgeEngine()
+
+            vuln_to_scanners = {
+                VulnClass.SSTI: [AgentType.SSTI_SCANNER],
+                VulnClass.SSRF: [AgentType.SSRF_SCANNER],
+                VulnClass.CSRF: [AgentType.CSRF_SCANNER],
+                VulnClass.JWT_ABUSE: [AgentType.JWT_SCANNER],
+                VulnClass.REQUEST_SMUGGLING: [AgentType.SMUGGLING_SCANNER],
+                VulnClass.RACE_CONDITION: [AgentType.RACE_SCANNER],
+                VulnClass.SUBDOMAIN_TAKEOVER: [AgentType.TAKEOVER_SCANNER],
+                VulnClass.AUTHENTICATION_WEAKNESS: [AgentType.SAML_SCANNER],
+                VulnClass.LFI: [AgentType.UPLOAD_SCANNER],
+                VulnClass.DESERIALIZATION: [AgentType.POLLUTION_SCANNER],
+                VulnClass.VULN_SCAN: [
+                    AgentType.UPLOAD_SCANNER,
+                    AgentType.POLLUTION_SCANNER,
+                    AgentType.WEBSOCKET_SCANNER,
+                ],
+            }
+
+            for target in injection_targets:
+                target_url = target["url"]
+
+                # Retrieve technologies for this target from the mapping.
+                # Since _select_injection_targets might modify parameters,
+                # we match by parsed path and host, or fallback to direct lookups.
+                from urllib.parse import urlparse
+
+                target_parsed = urlparse(target_url)
+                target_key = (target_parsed.netloc, target_parsed.path)
+
+                target_techs: List[str] = []
+                for orig_url, techs in url_to_techs.items():
+                    orig_parsed = urlparse(orig_url)
+                    if (orig_parsed.netloc, orig_parsed.path) == target_key:
+                        target_techs = techs
+                        break
+
+                sqli_task = Task(
+                    type="sqli_scan",
+                    priority=8,
+                    agent_type=AgentType.VULN_ANALYSIS,
+                    payload={"url": target_url, "level": 2, "risk": 1},
+                    engagement_id=session.session_id,
+                    timeout_seconds=settings.nuclei_mcp_timeout + 120,
+                )
+                await self._orch.task_scheduler.schedule_task(sqli_task)
+
+                xss_task = Task(
+                    type="xss_scan",
+                    priority=8,
+                    agent_type=AgentType.VULN_ANALYSIS,
+                    payload={"url": target_url},
+                    engagement_id=session.session_id,
+                    timeout_seconds=300,
+                )
+                await self._orch.task_scheduler.schedule_task(xss_task)
+
+                recommended_vulns = set()
+                for tech in target_techs:
+                    for vc in knowledge_engine.get_tech_recommendations(tech):
+                        recommended_vulns.add(vc)
+
+                # Fallback to CSRF and JWT if no technologies are identified
+                if not recommended_vulns:
+                    recommended_vulns = {VulnClass.CSRF, VulnClass.JWT_ABUSE}
+
+                recommended_scanners = set()
+                for vc in recommended_vulns:
+                    scanners = vuln_to_scanners.get(vc, [])
+                    for s in scanners:
+                        recommended_scanners.add(s)
+
+                # New functional scanners
+                for scanner_type in [
+                    AgentType.SSTI_SCANNER,
+                    AgentType.SSRF_SCANNER,
+                    AgentType.CSRF_SCANNER,
+                    AgentType.JWT_SCANNER,
+                    AgentType.SMUGGLING_SCANNER,
+                    AgentType.RACE_SCANNER,
+                    AgentType.UPLOAD_SCANNER,
+                    AgentType.POLLUTION_SCANNER,
+                    AgentType.WEBSOCKET_SCANNER,
+                    AgentType.SAML_SCANNER,
+                    AgentType.TAKEOVER_SCANNER,
+                ]:
+                    if scanner_type in recommended_scanners:
+                        task = Task(
+                            type=f"{scanner_type.value.replace('_scanner', '').replace('_agent', '')}_scan",
+                            priority=8,
+                            agent_type=scanner_type,
+                            payload={"url": target_url},
+                            engagement_id=session.session_id,
+                            timeout_seconds=300,
+                        )
+                        await self._orch.task_scheduler.schedule_task(task)
+            if injection_targets:
+                logger.info(
+                    "active_injection_scheduled",
+                    session_id=session.session_id,
+                    targets=len(injection_targets),
+                )
 
             # 3) Autonomous authenticated authorization testing — IDOR / BOLA /
             #    broken access control / horizontal + vertical privilege escalation.
@@ -189,7 +366,11 @@ class PhaseMonitor:
                     payload={
                         "engagement_id": session.session_id,
                         "user_label": labels[0],
-                        "url": self._orch.engagement_manager._domain_to_url(primary) if primary else None,
+                        "url": (
+                            self._orch.engagement_manager._domain_to_url(primary)
+                            if primary
+                            else None
+                        ),
                     },
                     engagement_id=session.session_id,
                     timeout_seconds=300,
@@ -236,6 +417,29 @@ class PhaseMonitor:
             # approval-gated exploit task per such finding floods the operator (observed:
             # 58 info findings -> 58 high-risk approvals) and produces spurious traffic to
             # the target. Gate on severity; carry severity into the payload so the approval
+            # New functional scanners
+            for scanner_type in [
+                AgentType.SSTI_SCANNER,
+                AgentType.SSRF_SCANNER,
+                AgentType.CSRF_SCANNER,
+                AgentType.JWT_SCANNER,
+                AgentType.SMUGGLING_SCANNER,
+                AgentType.RACE_SCANNER,
+                AgentType.UPLOAD_SCANNER,
+                AgentType.POLLUTION_SCANNER,
+                AgentType.WEBSOCKET_SCANNER,
+                AgentType.SAML_SCANNER,
+                AgentType.TAKEOVER_SCANNER,
+            ]:
+                task = Task(
+                    type=f"{scanner_type.value.replace('_scanner', '').replace('_agent', '')}_scan",
+                    priority=8,
+                    agent_type=scanner_type,
+                    payload={"url": target_url},
+                    engagement_id=session.session_id,
+                    timeout_seconds=300,
+                )
+                await self._orch.task_scheduler.schedule_task(task)
             # risk is derived (not hardcoded) downstream.
             EXPLOITABLE_SEVERITIES = {"critical", "high", "medium"}
             # AIOSOP-FP-CATCHALL-001: findings below this confidence (e.g. catch-all

@@ -8,6 +8,7 @@ Covers the assessment status model in ai_osop.core.secret_verifier:
 
 All network probes are mocked so tests are deterministic and offline.
 """
+
 import asyncio
 
 from ai_osop.core.secret_verifier import (

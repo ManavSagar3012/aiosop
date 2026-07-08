@@ -3,6 +3,7 @@
 Uses httpx.MockTransport to model a vulnerable server, a hardened server, and a
 timing-out server. No real network, no shared services touched.
 """
+
 import httpx
 import pytest
 
@@ -23,6 +24,7 @@ async def test_vulnerable_server_confirms_stored_and_served_html():
             body = request.content.decode("latin-1", "ignore")
             # crude multipart parse for the marker + a filename
             import re
+
             fn = re.search(r'filename="([^"]+)"', body)
             marker = re.search(r"osop-upl-[0-9a-f]+", body)
             name = fn.group(1).replace("\\", "/").split("/")[-1] if fn else "x"
@@ -32,8 +34,9 @@ async def test_vulnerable_server_confirms_stored_and_served_html():
         # retrieval
         name = request.url.path.rsplit("/", 1)[-1]
         if name in stored:
-            return httpx.Response(200, text=f"<h1>{stored[name]}</h1>",
-                                  headers={"content-type": "text/html"})
+            return httpx.Response(
+                200, text=f"<h1>{stored[name]}</h1>", headers={"content-type": "text/html"}
+            )
         return httpx.Response(404, text="not found")
 
     async with _client(handler) as c:
@@ -54,6 +57,7 @@ async def test_vulnerable_server_confirms_stored_and_served_html():
 
 async def test_safe_server_no_false_positive():
     """Hardened server rejects the upload (415) and serves nothing -> no confirm."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             return httpx.Response(415, json={"error": "file type not allowed"})
@@ -75,6 +79,7 @@ async def test_safe_server_stores_but_serves_inert_type_no_false_positive():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             import re
+
             body = request.content.decode("latin-1", "ignore")
             marker = re.search(r"osop-upl-[0-9a-f]+", body)
             if marker:
@@ -82,20 +87,23 @@ async def test_safe_server_stores_but_serves_inert_type_no_false_positive():
             return httpx.Response(200, json={"url": "/uploads/safe.txt"})
         name = request.url.path.rsplit("/", 1)[-1]
         if name in stored:
-            return httpx.Response(200, text=f"{stored[name]}",
-                                  headers={"content-type": "application/octet-stream"})
+            return httpx.Response(
+                200, text=f"{stored[name]}", headers={"content-type": "application/octet-stream"}
+            )
         return httpx.Response(404)
 
     async with _client(handler) as c:
         tester = FileUploadTester("http://t/upload", client=c)
         findings = await tester.run()
 
-    assert not any(f.confirmed for f in findings), (
-        "inert content-type + stripped extension must not be a false positive")
+    assert not any(
+        f.confirmed for f in findings
+    ), "inert content-type + stripped extension must not be a false positive"
 
 
 async def test_timeout_path_does_not_raise():
     """A timing-out endpoint degrades to unconfirmed results, never raises."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("simulated timeout", request=request)
 

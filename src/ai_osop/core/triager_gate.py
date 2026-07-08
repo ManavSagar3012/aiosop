@@ -84,9 +84,7 @@ class TriagerGate:
 
         # 1. Confidence floor
         if confidence < MIN_CONFIDENCE:
-            blockers.append(
-                f"confidence {confidence:.2f} < minimum {MIN_CONFIDENCE:.2f}"
-            )
+            blockers.append(f"confidence {confidence:.2f} < minimum {MIN_CONFIDENCE:.2f}")
 
         # 2. Target non-empty
         if not primitive.target or primitive.target.strip() == "":
@@ -95,9 +93,7 @@ class TriagerGate:
         # 3. Evidence presence
         has_captured = self._has_captured_evidence(evidence)
         if not has_captured:
-            blockers.append(
-                "no captured evidence (raw_requests / raw_responses / screenshots)"
-            )
+            blockers.append("no captured evidence (raw_requests / raw_responses / screenshots)")
         else:
             reasons.append("captured evidence present")
 
@@ -106,9 +102,7 @@ class TriagerGate:
         if not has_poc:
             if confidence >= HIGH_CONFIDENCE_THRESHOLD and has_captured:
                 # Very high confidence with evidence: allow without PoC, but flag it
-                reasons.append(
-                    f"high confidence {confidence:.2f} with evidence — PoC waived"
-                )
+                reasons.append(f"high confidence {confidence:.2f} with evidence — PoC waived")
             else:
                 blockers.append(
                     "no runnable PoC (chain.poc_script or evidence.replay_script empty)"
@@ -185,12 +179,11 @@ class TriagerGate:
         evidence dicts, which reach the gate either in ``primitive.raw["evidence"]`` (the
         ledger path) or in ``EvidencePackage.raw_responses`` (reconstructed for the gate).
         """
+
         def _any_flagged(items: Any) -> bool:
             if not isinstance(items, (list, tuple)):
                 return False
-            return any(
-                isinstance(d, dict) and d.get("manual_confirm_required") for d in items
-            )
+            return any(isinstance(d, dict) and d.get("manual_confirm_required") for d in items)
 
         raw = getattr(primitive, "raw", None) or {}
         if _any_flagged(raw.get("evidence")):
@@ -211,9 +204,7 @@ class TriagerGate:
         )
 
     @staticmethod
-    def _has_poc(
-        chain: Optional[AttackChain], evidence: Optional[EvidencePackage]
-    ) -> bool:
+    def _has_poc(chain: Optional[AttackChain], evidence: Optional[EvidencePackage]) -> bool:
         if chain and chain.poc_script:
             return True
         if evidence and evidence.replay_script:
@@ -221,9 +212,7 @@ class TriagerGate:
         return False
 
     @staticmethod
-    def _dedup_key(
-        primitive: PrimitiveLedger, chain: Optional[AttackChain]
-    ) -> str:
+    def _dedup_key(primitive: PrimitiveLedger, chain: Optional[AttackChain]) -> str:
         """Stable fingerprint for deduplication.
 
         Prefer chain.id (most specific) → primitive.dedup_key → computed hash.
@@ -237,9 +226,7 @@ class TriagerGate:
         return hashlib.sha256(raw.encode()).hexdigest()
 
     @staticmethod
-    def _reproducibility_score(
-        has_poc: bool, has_captured: bool, confidence: float
-    ) -> float:
+    def _reproducibility_score(has_poc: bool, has_captured: bool, confidence: float) -> float:
         """Heuristic 0-1 reproducibility score used in the TriageReport."""
         score = 0.0
         if has_poc:

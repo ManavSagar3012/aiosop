@@ -3,7 +3,6 @@ Cloud Specialist Agent
 Specializes in identifying cloud-specific vulnerabilities, IAM trust relationship flaws, and exposed metadata.
 """
 
-
 import logging
 from typing import Any, Dict, List, Optional
 

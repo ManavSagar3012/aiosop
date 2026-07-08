@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from neo4j.graph import Node, Path, Relationship
 from neo4j.exceptions import ServiceUnavailable
+from neo4j.graph import Node, Path, Relationship
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import GraphQueryError, MemoryException
@@ -23,9 +23,9 @@ from ai_osop.core.models import (
     AttackPath,
     BusinessInvariant,
     DiffAuthFinding,
-    Hypothesis,
     Endpoint,
     Exploit,
+    Hypothesis,
     Payload,
     Vulnerability,
     Workflow,
@@ -106,6 +106,11 @@ class GraphMemory:
             "CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT engagement_id IF NOT EXISTS FOR (e:Engagement) REQUIRE e.engagement_id IS UNIQUE",
             "CREATE CONSTRAINT auto_discovery_claim_eid IF NOT EXISTS FOR (c:AutoDiscoveryClaim) REQUIRE c.engagement_id IS UNIQUE",
+            "CREATE CONSTRAINT taxonomy_node_id IF NOT EXISTS FOR (t:TaxonomyNode) REQUIRE t.id IS UNIQUE",
+            "CREATE CONSTRAINT identity_id IF NOT EXISTS FOR (i:Identity) REQUIRE i.id IS UNIQUE",
+            "CREATE CONSTRAINT credential_id IF NOT EXISTS FOR (c:Credential) REQUIRE c.id IS UNIQUE",
+            "CREATE CONSTRAINT session_id IF NOT EXISTS FOR (s:Session) REQUIRE s.id IS UNIQUE",
+            "CREATE CONSTRAINT role_id IF NOT EXISTS FOR (r:Role) REQUIRE r.id IS UNIQUE",
         ]
 
         indexes = [
@@ -261,9 +266,7 @@ class GraphMemory:
                         "content_type": endpoint.content_type,
                         "body_schema_keys": endpoint.body_schema_keys,
                         "auth_class": endpoint.auth_class,
-                        "request_headers_sample": json.dumps(
-                            endpoint.request_headers_sample
-                        ),
+                        "request_headers_sample": json.dumps(endpoint.request_headers_sample),
                         "status_codes_seen": endpoint.status_codes_seen,
                         "response_size_avg": endpoint.response_size_avg,
                         "response_content_type": endpoint.response_content_type,
@@ -341,7 +344,7 @@ class GraphMemory:
         try:
             from urllib.parse import urlsplit
 
-            for ev in (vuln.evidence or []):
+            for ev in vuln.evidence or []:
                 if not isinstance(ev, dict):
                     continue
                 candidate = ev.get("matched_at") or ev.get("url") or ev.get("host")
@@ -421,9 +424,7 @@ class GraphMemory:
         RETURN v.id
         """
         async with self._driver.session() as session:
-            await session.run(
-                cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()}
-            )
+            await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
 
     async def add_exploit(self, exploit: Exploit) -> str:
         """Add an Exploit and link to Vulnerability and Payload."""
@@ -496,8 +497,7 @@ class GraphMemory:
                     "to_id": path.node_ids[i + 1],
                     "type": "exploit_chain",
                     "probability": path.confidence,
-                    "time_estimate": path.total_time_estimate
-                    // max(len(path.node_ids) - 1, 1),
+                    "time_estimate": path.total_time_estimate // max(len(path.node_ids) - 1, 1),
                     "detection_risk": path.detection_risk,
                 }
             )
@@ -570,9 +570,7 @@ class GraphMemory:
 
                     path = AttackPath(
                         node_ids=record["node_ids"],
-                        edge_ids=[
-                            f"{e['type']}-{i}" for i, e in enumerate(record["edges"])
-                        ],
+                        edge_ids=[f"{e['type']}-{i}" for i, e in enumerate(record["edges"])],
                         confidence=min(max(conf, 0.0), 1.0),
                         risk_score=min(max(conf * 10, 0.0), 10.0),
                         total_time_estimate=record["total_time"],
@@ -627,9 +625,7 @@ class GraphMemory:
         """
 
         async with self._driver.session() as session:
-            await session.run(
-                cypher, {"exploit_id": exploit_id, "impact_score": impact_score}
-            )
+            await session.run(cypher, {"exploit_id": exploit_id, "impact_score": impact_score})
 
     async def get_node_details(self, node_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve details for a node by ID."""
@@ -756,7 +752,9 @@ class GraphMemory:
                 result = await session.run(cypher, {"engagement_id": engagement_id})
                 return await result.data()
 
-    async def run_read_query(self, cypher: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def run_read_query(
+        self, cypher: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Execute a parameterized read-only Cypher query and return records.
 
         This is the escape hatch for complex queries that don't have a dedicated
@@ -771,7 +769,9 @@ class GraphMemory:
                 result = await session.run(cypher, params)
                 return await result.data()
 
-    async def run_write_query(self, cypher: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def run_write_query(
+        self, cypher: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Execute a parameterized write Cypher query and return records if any.
 
         This is the escape hatch for writes that don't have a dedicated method yet.
@@ -916,9 +916,7 @@ class GraphMemory:
                     "created_at": finding.created_at.isoformat(),
                     "outcome": finding.outcome,
                     "outcome_notes": finding.outcome_notes,
-                    "outcome_at": finding.outcome_at.isoformat()
-                    if finding.outcome_at
-                    else None,
+                    "outcome_at": finding.outcome_at.isoformat() if finding.outcome_at else None,
                 },
             )
             record = await result.single()
@@ -1111,13 +1109,14 @@ class GraphMemory:
             async with self._driver.session() as session:
                 result = await session.run(cypher, {"engagement_id": engagement_id})
                 records = await result.data()
-                return [dict(record["h"]) if hasattr(record["h"], "items") else record["h"] for record in records]
+                return [
+                    dict(record["h"]) if hasattr(record["h"], "items") else record["h"]
+                    for record in records
+                ]
 
     # ---- Reliability sprint: durable task lifecycle + dedupe + recovery ----
 
-    async def upsert_task(
-        self, task: Any, result_summary: Optional[Dict[str, Any]] = None
-    ) -> bool:
+    async def upsert_task(self, task: Any, result_summary: Optional[Dict[str, Any]] = None) -> bool:
         """Persist a Task's lifecycle state to Neo4j. Ground truth for the stuck-task
         reaper, restart recovery, and graph-backed dedupe (replaces in-memory only state)."""
         # AIOSOP-AUDIT-2026-06-16: persist payload + priority so restart recovery can
@@ -1145,19 +1144,13 @@ class GraphMemory:
             "max_retries": getattr(task, "max_retries", 0),
             "timeout_seconds": getattr(task, "timeout_seconds", 300),
             "created_at": (
-                task.created_at.isoformat()
-                if getattr(task, "created_at", None)
-                else None
+                task.created_at.isoformat() if getattr(task, "created_at", None) else None
             ),
             "started_at": (
-                task.started_at.isoformat()
-                if getattr(task, "started_at", None)
-                else None
+                task.started_at.isoformat() if getattr(task, "started_at", None) else None
             ),
             "completed_at": (
-                task.completed_at.isoformat()
-                if getattr(task, "completed_at", None)
-                else None
+                task.completed_at.isoformat() if getattr(task, "completed_at", None) else None
             ),
             "updated_at": datetime.utcnow().isoformat(),
             "result_summary": json.dumps(result_summary or {}, default=str),
@@ -1206,9 +1199,7 @@ class GraphMemory:
                 # All callers ignore the return value, so re-raising would change
                 # behavior (and could crash lifecycle transitions); return False
                 # after logging at ERROR so the dropped write stays observable.
-                logger.error(
-                    "upsert_task failed for task %s after retries: %s", task.id, e
-                )
+                logger.error("upsert_task failed for task %s after retries: %s", task.id, e)
                 return False
 
     async def task_has_spawned(self, task_id: str) -> bool:
@@ -1317,9 +1308,7 @@ class GraphMemory:
     ) -> str:
         """Create an Evidence node and link it to a WorkflowStep and parent Workflow.
         Returns the evidence node id. Idempotent on (step_id, path)."""
-        evidence_id = (
-            f"ev-{hashlib.sha1(f'{step_id}|{path}'.encode()).hexdigest()[:16]}"
-        )
+        evidence_id = f"ev-{hashlib.sha1(f'{step_id}|{path}'.encode()).hexdigest()[:16]}"
         cypher = """
         MERGE (ev:Evidence {id: $id})
         SET ev.type = $type,
@@ -1397,9 +1386,7 @@ class GraphMemory:
 
     async def mark_invariant_violated(self, invariant_id: str) -> None:
         """Flag a previously-persisted invariant as violated."""
-        cypher = (
-            "MATCH (i:BusinessInvariant {id: $id}) SET i.is_violated = true RETURN i.id"
-        )
+        cypher = "MATCH (i:BusinessInvariant {id: $id}) SET i.is_violated = true RETURN i.id"
         async with self._driver.session() as session:
             await session.run(cypher, {"id": invariant_id})
 
@@ -1493,6 +1480,240 @@ class GraphMemory:
         except Exception as e:
             logger.debug("get_task_dependents_failed", error=str(e))
             return []
+
+    async def import_knowledge_base(self) -> None:
+        """Import the static security taxonomy from SecurityKnowledgeEngine into Neo4j."""
+        from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
+
+        engine = SecurityKnowledgeEngine()
+        vulnerabilities_data = engine._data.get("vulnerabilities", {})
+
+        # 1. Create VulnClass nodes
+        vulns_list: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            vulns_list.append(
+                {
+                    "id": vuln_key,
+                    "title": mapping.get("title", ""),
+                    "description": mapping.get("description", ""),
+                }
+            )
+
+        if vulns_list:
+            await self.run_write_query(
+                """
+                UNWIND $vulns AS vuln
+                MERGE (v:VulnClass:TaxonomyNode {id: vuln.id})
+                SET v.title = vuln.title, v.description = vuln.description
+                """,
+                {"vulns": vulns_list},
+            )
+
+        # 2. CWE mappings
+        cwe_mappings: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            for cwe_id in mapping.get("cwe", []):
+                cwe_mappings.append({"vuln_id": vuln_key, "cwe_id": cwe_id})
+
+        if cwe_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $cwes AS c
+                MERGE (vuln:VulnClass:TaxonomyNode {id: c.vuln_id})
+                MERGE (cwe:CWE:TaxonomyNode {id: c.cwe_id})
+                MERGE (vuln)-[:MAPPED_TO]->(cwe)
+                """,
+                {"cwes": cwe_mappings},
+            )
+
+        # 3. CAPEC mappings
+        capec_mappings: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            for capec_id in mapping.get("capec", []):
+                capec_mappings.append({"vuln_id": vuln_key, "capec_id": capec_id})
+
+        if capec_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $capecs AS cap
+                MERGE (vuln:VulnClass:TaxonomyNode {id: cap.vuln_id})
+                MERGE (capec:CAPEC:TaxonomyNode {id: cap.capec_id})
+                MERGE (vuln)-[:MAPPED_TO]->(capec)
+                """,
+                {"capecs": capec_mappings},
+            )
+
+        # 4. MitreAttack mappings
+        mitre_mappings: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            for mitre_id in mapping.get("mitre_attack", []):
+                mitre_mappings.append({"vuln_id": vuln_key, "mitre_id": mitre_id})
+
+        if mitre_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $mitres AS m
+                MERGE (vuln:VulnClass:TaxonomyNode {id: m.vuln_id})
+                MERGE (mitre:MitreAttack:TaxonomyNode {id: m.mitre_id})
+                MERGE (vuln)-[:MAPPED_TO]->(mitre)
+                """,
+                {"mitres": mitre_mappings},
+            )
+
+        # 5. OwaspWstg mappings
+        wstg_mappings: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            for wstg_id in mapping.get("owasp_wstg", []):
+                wstg_mappings.append({"vuln_id": vuln_key, "wstg_id": wstg_id})
+
+        if wstg_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $wstgs AS w
+                MERGE (vuln:VulnClass:TaxonomyNode {id: w.vuln_id})
+                MERGE (wstg:OwaspWstg:TaxonomyNode {id: w.wstg_id})
+                MERGE (vuln)-[:MAPPED_TO]->(wstg)
+                """,
+                {"wstgs": wstg_mappings},
+            )
+
+        # 6. Next step recommendation mappings
+        recommendation_chains: List[Dict[str, Any]] = []
+        for vuln_key, next_steps in engine._data.get("recommendation_chains", {}).items():
+            for ns_str in next_steps:
+                recommendation_chains.append({"vuln_id": vuln_key, "next_id": ns_str})
+
+        if recommendation_chains:
+            await self.run_write_query(
+                """
+                UNWIND $chains AS ch
+                MERGE (vuln:VulnClass:TaxonomyNode {id: ch.vuln_id})
+                MERGE (next:VulnClass:TaxonomyNode {id: ch.next_id})
+                MERGE (vuln)-[:NEXT_STEP]->(next)
+                """,
+                {"chains": recommendation_chains},
+            )
+
+        # 7. Technology mappings
+        tech_mappings: List[Dict[str, Any]] = []
+        for tech_name, vuln_classes in engine._data.get("technology_matrix", {}).items():
+            for vuln_class in vuln_classes:
+                tech_mappings.append({"tech_id": tech_name, "vuln_id": vuln_class})
+
+        if tech_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $techs AS t
+                MERGE (tech:Technology:TaxonomyNode {id: t.tech_id})
+                MERGE (vuln:VulnClass:TaxonomyNode {id: t.vuln_id})
+                MERGE (tech)-[:RELEVANT_VULN]->(vuln)
+                """,
+                {"techs": tech_mappings},
+            )
+
+    async def sync_user_session(self, session: Any) -> None:
+        """Sync user session (Identity, Session, Credential, Role) to Neo4j attack graph."""
+        engagement_id = session.engagement_id
+        user_label = session.user_label
+        captured_at = session.captured_at.isoformat() if session.captured_at else None
+        expires_at = session.expires_at.isoformat() if session.expires_at else None
+
+        # Determine type
+        if session.bearer_token:
+            cred_type = "bearer"
+        elif session.cookies:
+            cred_type = "cookie"
+        else:
+            cred_type = "anonymous"
+
+        # Determine role
+        role_name = "admin" if "admin" in user_label else "standard"
+
+        # Node IDs
+        identity_id = f"identity-{engagement_id}-{user_label}"
+        session_id = f"session-{engagement_id}-{user_label}"
+        credential_id = f"credential-{engagement_id}-{user_label}"
+        role_id = f"role-{engagement_id}-{role_name}"
+
+        cypher = """
+        MERGE (i:Identity {id: $identity_id})
+        SET i.user_label = $user_label,
+            i.engagement_id = $engagement_id
+
+        MERGE (s:Session {id: $session_id})
+        SET s.status = $status,
+            s.captured_at = $captured_at,
+            s.expires_at = $expires_at,
+            s.engagement_id = $engagement_id
+
+        MERGE (c:Credential {id: $credential_id})
+        SET c.type = $cred_type,
+            c.captured_at = $captured_at,
+            c.expires_at = $expires_at,
+            c.engagement_id = $engagement_id
+
+        MERGE (r:Role {id: $role_id})
+        SET r.name = $role_name,
+            r.engagement_id = $engagement_id
+
+        MERGE (s)-[:AUTHENTICATED_AS]->(i)
+        MERGE (i)-[:HAS_CREDENTIAL]->(c)
+        MERGE (i)-[:HAS_ROLE]->(r)
+        """
+
+        async with self._driver.session() as db_session:
+            with trace_span(
+                "graph_memory.sync_user_session",
+                attributes={
+                    "engagement_id": engagement_id,
+                    "user_label": user_label,
+                },
+            ):
+                await db_session.run(
+                    cypher,
+                    {
+                        "identity_id": identity_id,
+                        "session_id": session_id,
+                        "credential_id": credential_id,
+                        "role_id": role_id,
+                        "user_label": user_label,
+                        "engagement_id": engagement_id,
+                        "status": "active",
+                        "captured_at": captured_at,
+                        "expires_at": expires_at,
+                        "cred_type": cred_type,
+                        "role_name": role_name,
+                    },
+                )
+
+    async def delete_user_session_node(self, engagement_id: str, user_label: str) -> None:
+        """Mark Session as expired and DETACH DELETE the credential node."""
+        session_id = f"session-{engagement_id}-{user_label}"
+        credential_id = f"credential-{engagement_id}-{user_label}"
+
+        cypher = """
+        OPTIONAL MATCH (s:Session {id: $session_id})
+        SET s.status = 'expired'
+        WITH s
+        OPTIONAL MATCH (c:Credential {id: $credential_id})
+        DETACH DELETE c
+        """
+
+        async with self._driver.session() as db_session:
+            with trace_span(
+                "graph_memory.delete_user_session_node",
+                attributes={
+                    "engagement_id": engagement_id,
+                    "user_label": user_label,
+                },
+            ):
+                await db_session.run(
+                    cypher,
+                    {
+                        "session_id": session_id,
+                        "credential_id": credential_id,
+                    },
+                )
 
     async def close(self) -> None:
         if self._driver:

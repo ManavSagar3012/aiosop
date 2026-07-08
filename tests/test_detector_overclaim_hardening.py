@@ -11,6 +11,7 @@ same reflection/noise false positive that gets reports rejected:
 
 Hermetic — the browser/reflection probes and the desync probe are stubbed; no network.
 """
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -35,6 +36,7 @@ def _agent():
 # --------------------------------------------------------------------------- #
 # XSS: execution vs reflection                                                 #
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_xss_execution_is_validated_high():
@@ -78,6 +80,7 @@ async def test_xss_clean_when_neither():
 # --------------------------------------------------------------------------- #
 # Request smuggling: timing must reproduce                                     #
 # --------------------------------------------------------------------------- #
+
 
 def _probe_queue(monkeypatch, results):
     q = list(results)

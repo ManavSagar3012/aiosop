@@ -153,7 +153,9 @@ class MobileAnalysisAgent(BaseAgent):
             return None
 
         scheme_path = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".lower()
-        flow = next((h for h in HIGH_RISK_FLOW_HINTS if h in scheme_path or h in link.lower()), None)
+        flow = next(
+            (h for h in HIGH_RISK_FLOW_HINTS if h in scheme_path or h in link.lower()), None
+        )
         severity = "high" if flow else "medium"
 
         return {
@@ -166,11 +168,7 @@ class MobileAnalysisAgent(BaseAgent):
                 "Sensitive value transmitted inside a deep-link URL. Such values "
                 "leak via referrers, browser/app history, logs, and inter-app "
                 "intent interception"
-                + (
-                    f"; in a '{flow}' flow this enables account takeover."
-                    if flow
-                    else "."
-                )
+                + (f"; in a '{flow}' flow this enables account takeover." if flow else ".")
             ),
         }
 
@@ -345,7 +343,10 @@ class MobileAnalysisAgent(BaseAgent):
                     )
                     # (d) sensitive data returned to an unauthenticated client.
                     matched = sorted(
-                        {m.group(1).lower() for m in SENSITIVE_FIELD_PATTERNS.finditer(snap["body"] or "")}
+                        {
+                            m.group(1).lower()
+                            for m in SENSITIVE_FIELD_PATTERNS.finditer(snap["body"] or "")
+                        }
                     )
                     if matched:
                         findings.append(
