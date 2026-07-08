@@ -95,9 +95,7 @@ class SkillEngine:
             tmp: Optional[str] = None
             try:
                 os.makedirs(directory, exist_ok=True)
-                fd, tmp = tempfile.mkstemp(
-                    dir=directory, prefix=".skill_stats.", suffix=".tmp"
-                )
+                fd, tmp = tempfile.mkstemp(dir=directory, prefix=".skill_stats.", suffix=".tmp")
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     json.dump(payload, f)
                 last_err: Optional[Exception] = None

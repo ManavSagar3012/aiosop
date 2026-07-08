@@ -5,9 +5,9 @@ memory integration, and structured reasoning.
 """
 
 import asyncio
+import json
 import os
 import socket
-import json
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
@@ -88,6 +88,8 @@ class BaseAgent(ABC):
 
     def __init__(self, context: AgentContext):
         self.ctx = context
+        self.logger = structlog.get_logger(f"ai_osop.agents.{self.__class__.__name__}")
+        self.findings: Dict[str, Any] = {}
         self._running = False
         self._shutting_down = False  # Sprint 7: prevent new tasks during shutdown
         self._task_queue: asyncio.Queue = asyncio.Queue()
@@ -220,7 +222,11 @@ class BaseAgent(ABC):
         RequestContext.bind(
             task_id=task.id,
             engagement_id=task.engagement_id,
-            trace_id=task.trace_context.get("traceparent", "").split("-")[1] if task.trace_context.get("traceparent") else "",
+            trace_id=(
+                task.trace_context.get("traceparent", "").split("-")[1]
+                if task.trace_context.get("traceparent")
+                else ""
+            ),
         )
 
         with trace_span_with_parent(
@@ -271,7 +277,9 @@ class BaseAgent(ABC):
             )
             tool = self.ctx.agent_type.value
             timeout_s = (
-                task.timeout_seconds or task.payload.get("task_timeout_seconds") or self.DEFAULT_TASK_TIMEOUT_SECONDS
+                task.timeout_seconds
+                or task.payload.get("task_timeout_seconds")
+                or self.DEFAULT_TASK_TIMEOUT_SECONDS
             )
 
             # Rate Limiting
@@ -395,7 +403,9 @@ class BaseAgent(ABC):
                     "cancelled",
                 ):
                     try:
-                        _rs = task.result if isinstance(getattr(task, "result", None), dict) else None
+                        _rs = (
+                            task.result if isinstance(getattr(task, "result", None), dict) else None
+                        )
                         await _gm.upsert_task(task, result_summary=_rs)
                     except Exception as _persist_err:  # noqa: BLE001 - never break the task
                         agent_logger.warning(
@@ -540,10 +550,14 @@ class BaseAgent(ABC):
                 # (agent started without a matching shutdown()); exit quietly.
                 if "Event loop is closed" in str(e) or "no running event loop" in str(e):
                     break
-                agent_logger.warning("heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e))
+                agent_logger.warning(
+                    "heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e)
+                )
             except Exception as e:
                 # One bad iteration must never permanently stop heartbeats.
-                agent_logger.warning("heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e))
+                agent_logger.warning(
+                    "heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e)
+                )
             try:
                 await asyncio.sleep(5)
             except (asyncio.CancelledError, RuntimeError):
@@ -618,13 +632,14 @@ class BaseAgent(ABC):
             pass
 
         from ai_osop.core.config import settings
+
         try:
             await asyncio.wait_for(
                 self._cleanup_resources(),
                 timeout=settings.agent_cleanup_timeout_seconds,
             )
         except asyncio.TimeoutError:
-            logger.warning(
+            agent_logger.warning(
                 "agent_cleanup_timed_out",
                 agent_id=self.ctx.agent_id,
                 timeout_seconds=settings.agent_cleanup_timeout_seconds,
@@ -632,7 +647,9 @@ class BaseAgent(ABC):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("cleanup_resources_error", agent_id=self.ctx.agent_id, error=str(e))
+            agent_logger.warning(
+                "cleanup_resources_error", agent_id=self.ctx.agent_id, error=str(e)
+            )
 
     @abstractmethod
     async def _cleanup_resources(self) -> None:
@@ -661,7 +678,9 @@ class BaseAgent(ABC):
             engagement_id=self.ctx.session_id,
         )
         try:
-            await self.ctx.coordination_bus.publish("observation", obs.model_dump(), self.ctx.agent_id)
+            await self.ctx.coordination_bus.publish(
+                "observation", obs.model_dump(), self.ctx.agent_id
+            )
         except Exception:
             pass
         try:
@@ -700,6 +719,7 @@ class BaseAgent(ABC):
             if hasattr(self.ctx.llm_client, "complete"):
                 # AIOSOP-LLM-WARM-001: cap advisory reasoning tokens (see recon_agent).
                 from ai_osop.core.config import settings as _settings
+
                 result = await self.ctx.llm_client.complete(
                     messages, max_tokens=_settings.llm_reasoning_max_tokens
                 )

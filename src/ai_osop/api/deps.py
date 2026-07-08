@@ -249,4 +249,5 @@ def require_role(*allowed_roles: str):
 def update_active_agents(count: int) -> None:
     """Update Prometheus-style active agents metric."""
     from ai_osop.core.metrics import ACTIVE_AGENTS
+
     ACTIVE_AGENTS.set(count)

@@ -2,8 +2,10 @@ from ai_osop.core.cloud_metadata import IMDS_TARGETS, extract_credentials
 
 
 def test_extracts_aws_imds_credentials():
-    body = ('{"Code":"Success","AccessKeyId":"ASIAEXAMPLE12345","SecretAccessKey":'
-            '"abc/def+ghiSECRET","Token":"IQoJb3JpZ2luX2Vj...","Expiration":"2026-07-01"}')
+    body = (
+        '{"Code":"Success","AccessKeyId":"ASIAEXAMPLE12345","SecretAccessKey":'
+        '"abc/def+ghiSECRET","Token":"IQoJb3JpZ2luX2Vj...","Expiration":"2026-07-01"}'
+    )
     creds = extract_credentials(body)
     assert creds and creds[0]["provider"] == "aws"
     # raw secret must never be surfaced in full

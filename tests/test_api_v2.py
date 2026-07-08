@@ -118,10 +118,9 @@ def test_api_startup_registers_agents(client):
     # main.py lifespan registers 11 agents: attack_chain, recon, vuln,
     # human_oversight, exploit, payload, reporting, context_manager,
     # concurrency, stack_profiler, playwright (AIOSOP-AUDIT-2026-06-16).
-    # main.py lifespan registers 11 core agents + 10 specialist agents (total 21;
-    # visual_context was added post-migration).
+    # main.py lifespan registers 11 core agents + 10 specialist agents + new vulnerability scanner agents (total 32).
     # Note: the "experimental" designation was removed post-migration.
-    assert client.orch.register_agent.call_count == 21
+    assert client.orch.register_agent.call_count == 32
 
 
 def test_root_not_found(client):
@@ -141,7 +140,7 @@ def test_websocket_endpoint(client):
     )
     with client.websocket_connect("/ws/engagements/test-session?token=dev-test-token") as websocket:
         websocket.send_json({"action": "ping"})
-        
+
         # Drain any background heartbeat/observation/phase_transition messages
         data = None
         for _ in range(10):
@@ -149,7 +148,7 @@ def test_websocket_endpoint(client):
             if "type" in msg:
                 data = msg
                 break
-        
+
         assert data == {"type": "pong"}
 
         websocket.send_json({"action": "status"})
@@ -159,7 +158,7 @@ def test_websocket_endpoint(client):
             if "type" in msg:
                 data = msg
                 break
-        
+
         assert data is not None
         assert data["type"] == "status"
         assert data["session_id"] == "test-session"

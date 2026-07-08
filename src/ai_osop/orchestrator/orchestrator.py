@@ -14,57 +14,54 @@ import structlog
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import ScopeException, WorkflowException, WorkflowTransitionError
-from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.metrics import (
-    ACTIVE_ENGAGEMENTS,
     ACTIVE_AGENT_COUNT,
-    PENDING_APPROVALS,
-    TASKS_BY_STATUS,
-    TASK_SCHEDULE_DURATION,
+    ACTIVE_ENGAGEMENTS,
     AGENT_EXECUTION_DURATION,
+    GRAPH_QUERY_DURATION,
+    LLM_CALL_DURATION,
     MCP_CALL_DURATION,
     MCP_CIRCUIT_BREAKER_STATE,
     MCP_ERRORS_TOTAL,
-    GRAPH_QUERY_DURATION,
-    LLM_CALL_DURATION,
+    PENDING_APPROVALS,
+    TASK_SCHEDULE_DURATION,
+    TASKS_BY_STATUS,
 )
-from ai_osop.reliability.dlq import DeadLetterQueue
-from ai_osop.orchestrator.task_scheduler import TaskScheduler
-from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
-from ai_osop.orchestrator.state_machine import EngagementStateMachine
-
-from ai_osop.orchestrator.phase_monitor import PhaseMonitor
-from ai_osop.orchestrator.engagement_manager import EngagementManager
-from ai_osop.orchestrator.recovery_service import RecoveryService
-from ai_osop.reliability.agent_reaper import AgentReaper
-from ai_osop.core.telemetry import RequestContext, inject_trace_context
-from ai_osop.core.tracing import trace_span, trace_span_with_parent
+from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.observability import (
-    record_engagement_started,
-    record_engagement_halted,
-    record_engagement_completed,
     record_approval_requested,
     record_approval_resolved,
-    update_task_counts,
+    record_engagement_completed,
+    record_engagement_halted,
+    record_engagement_started,
     update_active_agents,
+    update_task_counts,
 )
+from ai_osop.core.telemetry import RequestContext, inject_trace_context
+from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
+from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
 from ai_osop.orchestrator.coordination_bus import AgentCoordinationBus
+from ai_osop.orchestrator.engagement_manager import EngagementManager
+from ai_osop.orchestrator.phase_monitor import PhaseMonitor
+from ai_osop.orchestrator.recovery_service import RecoveryService
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
+from ai_osop.orchestrator.task_scheduler import TaskScheduler
 from ai_osop.orchestrator.temporal_worker import (
     TemporalTaskScheduler,
     TemporalUnavailableError,
     temporal_available,
 )
+from ai_osop.reliability.agent_reaper import AgentReaper
+from ai_osop.reliability.dlq import DeadLetterQueue
 from ai_osop.safety.rate_limiter import RateLimiter
 
 logger = structlog.get_logger("ai_osop.orchestrator")
-from ai_osop.orchestrator.state import OrchestrationState
-
-
-from ai_osop.core.config import AgentType, EngagementPhase
 from ai_osop.core.config import VALID_TRANSITIONS as _CONFIG_VALID_TRANSITIONS
+from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.orchestrator.state import OrchestrationState
 
 
 class Orchestrator:
@@ -111,6 +108,7 @@ class Orchestrator:
             "auto_next": EngagementPhase.COMPLETED,
         },
     }
+
     def __init__(
         self,
         session_memory: SessionMemory,
@@ -130,7 +128,7 @@ class Orchestrator:
         self.temporal_scheduler = temporal_scheduler
         self.temporal_enabled = settings.temporal_enabled
         self.coordination_bus = coordination_bus or AgentCoordinationBus()
-        self.session_store = SessionStore(session_memory)
+        self.session_store = SessionStore(session_memory, self.graph_memory)
         self.dlq = DeadLetterQueue(session_memory)
 
         # Sprint 9: Extracted sub-components for Architecture Excellence
@@ -254,9 +252,7 @@ class Orchestrator:
                     self.session_memory,
                     bug_bounty_adapter=BugBountyAdapter(),
                 )
-                self._outcome_ingestion_task = asyncio.create_task(
-                    self._outcome_ingestion_loop()
-                )
+                self._outcome_ingestion_task = asyncio.create_task(self._outcome_ingestion_loop())
         except Exception as e:  # noqa: BLE001 - learning loop is optional
             logger.warning("Outcome ingestion poller not started: %s", e)
         # Sprint 1.3 chain-first loop: periodically read persisted primitives, escalate
@@ -266,12 +262,11 @@ class Orchestrator:
             self._chain_analysis_interval = int(
                 getattr(settings, "chain_analysis_interval_seconds", 900)
             )
-            if self._chain_analysis_interval > 0 and getattr(
-                self.graph_memory, "primitive_ledger", None
-            ) is not None:
-                self._chain_analysis_task = asyncio.create_task(
-                    self._chain_analysis_loop()
-                )
+            if (
+                self._chain_analysis_interval > 0
+                and getattr(self.graph_memory, "primitive_ledger", None) is not None
+            ):
+                self._chain_analysis_task = asyncio.create_task(self._chain_analysis_loop())
         except Exception as e:  # noqa: BLE001 - chain loop is optional
             logger.warning("Chain analysis pass not started: %s", e)
         # Retention service: automated cleanup of old data
@@ -308,7 +303,9 @@ class Orchestrator:
         """Assign task to appropriate agent. Delegated to TaskScheduler."""
         return await self.task_scheduler._assign_task(task)
 
-    async def _find_available_agent(self, agent_type: AgentType, task_type: str = "") -> Optional[Any]:
+    async def _find_available_agent(
+        self, agent_type: AgentType, task_type: str = ""
+    ) -> Optional[Any]:
         """Find and atomically claim an idle agent. Delegated to TaskScheduler."""
         return await self.task_scheduler._find_available_agent(agent_type, task_type)
 
@@ -341,7 +338,9 @@ class Orchestrator:
         """Trigger tasks that depend on completed task. Delegated to TaskScheduler."""
         return await self.task_scheduler._trigger_downstream_tasks(completed_task)
 
-    async def _chain_authenticated_surface(self, task: Task, result: Optional[Dict[str, Any]] = None) -> None:
+    async def _chain_authenticated_surface(
+        self, task: Task, result: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Chain authenticated surface discovery. Delegated to TaskScheduler."""
         return await self.task_scheduler._chain_authenticated_surface(task, result)
 
@@ -509,18 +508,25 @@ class Orchestrator:
         """Wait for approval request to be resolved. Delegated to ApprovalCoordinator."""
         return await self.approval_coordinator._wait_for_approval(request_id)
 
-    async def resolve_approval(self, request_id: str, decision: str, operator_id: str, notes: Optional[str] = None) -> ApprovalRequest:
+    async def resolve_approval(
+        self, request_id: str, decision: str, operator_id: str, notes: Optional[str] = None
+    ) -> ApprovalRequest:
         """Resolve an approval request. Delegated to ApprovalCoordinator."""
-        return await self.approval_coordinator.resolve_approval(request_id, decision, operator_id, notes)
+        return await self.approval_coordinator.resolve_approval(
+            request_id, decision, operator_id, notes
+        )
 
     async def halt_engagement(self, session_id: str, reason: str) -> None:
         """Emergency halt of engagement. Delegated to EngagementManager."""
         return await self.engagement_manager.halt_engagement(session_id, reason)
 
-    async def claim_auto_discovery(self, engagement_id: str, auth_user_label: str, source_task_id: str) -> None:
+    async def claim_auto_discovery(
+        self, engagement_id: str, auth_user_label: str, source_task_id: str
+    ) -> None:
         """Claim autonomous discovery. Delegated to EngagementManager."""
-        return await self.engagement_manager.claim_auto_discovery(engagement_id, auth_user_label, source_task_id)
-
+        return await self.engagement_manager.claim_auto_discovery(
+            engagement_id, auth_user_label, source_task_id
+        )
 
     async def _on_phase_enter(self, session: SessionState, phase: EngagementPhase) -> None:
         """Trigger automatic tasks when entering a phase. Delegated to PhaseMonitor."""
@@ -645,9 +651,7 @@ class Orchestrator:
                     await ledger.upsert_chain(chain)
                     total_chains += 1
                 except Exception as e:  # noqa: BLE001 - persistence best-effort
-                    logger.warning(
-                        "chain_upsert_failed chain_id=%s error=%s", chain.id, e
-                    )
+                    logger.warning("chain_upsert_failed chain_id=%s error=%s", chain.id, e)
                     continue
                 report = reports.get(chain.id)
                 if report is not None and report.verdict == TriageVerdict.EMIT:
@@ -674,6 +678,7 @@ class Orchestrator:
     async def recover_state(self) -> Dict[str, Any]:
         """Restart recovery. Delegated to RecoveryService."""
         return await self.recovery_service.recover_state()
+
     async def _scheduler_loop(self) -> None:
         """Background task scheduler."""
         while self._running:
@@ -851,9 +856,7 @@ class Orchestrator:
         # durable pending tasks still exist. Union by task id; the durable record wins
         # for status so a not-yet-hydrated pending task still blocks completion.
         by_id: Dict[str, Task] = {
-            t.id: t
-            for t in self.state.get_all_tasks().values()
-            if t.engagement_id == session_id
+            t.id: t for t in self.state.get_all_tasks().values() if t.engagement_id == session_id
         }
         try:
             for t in await self.session_memory.load_all_active_tasks():

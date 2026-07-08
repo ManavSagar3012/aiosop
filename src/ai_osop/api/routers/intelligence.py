@@ -111,7 +111,10 @@ async def get_hypotheses(
         stored = await orch.graph_memory.get_hypotheses_by_engagement(session_id)
         hypotheses = [dict(item) for item in stored[:limit]]
         if not hypotheses:
-            hypotheses = [h.model_dump() for h in await engine.generate_hypotheses(session_id, focus=focus, limit=limit)]
+            hypotheses = [
+                h.model_dump()
+                for h in await engine.generate_hypotheses(session_id, focus=focus, limit=limit)
+            ]
 
     return {"session_id": session_id, "count": len(hypotheses), "hypotheses": hypotheses}
 

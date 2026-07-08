@@ -64,7 +64,9 @@ def mcp_initialize(base: str) -> Dict[str, Any]:
         return r.json() if r.status_code == 200 else {}
 
 
-def mcp_execute(base: str, tool: str, params: Dict[str, Any], timeout: float = 90.0) -> Dict[str, Any]:
+def mcp_execute(
+    base: str, tool: str, params: Dict[str, Any], timeout: float = 90.0
+) -> Dict[str, Any]:
     """Call /mcp/execute and return the `result` payload (or {} on failure)."""
     r = httpx.post(
         f"{base}/mcp/execute",
@@ -73,13 +75,17 @@ def mcp_execute(base: str, tool: str, params: Dict[str, Any], timeout: float = 9
     )
     r.raise_for_status()
     body = r.json()
-    assert body.get("status") == "success", f"{tool} execute status={body.get('status')} body={body}"
+    assert (
+        body.get("status") == "success"
+    ), f"{tool} execute status={body.get('status')} body={body}"
     return body.get("result", {})
 
 
 class _FixtureHandler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
-        body = b"<html><head><title>AI-OSOP Qualification Fixture</title></head><body>ok</body></html>"
+        body = (
+            b"<html><head><title>AI-OSOP Qualification Fixture</title></head><body>ok</body></html>"
+        )
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
@@ -111,17 +117,19 @@ class _JSFixtureHandler(BaseHTTPRequestHandler):
     JS_BUNDLE = (
         'console.log("hello");\n'
         'const apiKey = "sk-test-1234-deadbeef";\n'
-        '//# sourceMappingURL=bundle.js.map\n'
+        "//# sourceMappingURL=bundle.js.map\n"
     ).encode()
 
-    SOURCE_MAP = json.dumps({
-        "version": 3,
-        "sources": ["app.js"],
-        "sourcesContent": [
-            'const secret = "aws_secret_key_abcdef123456";\nconsole.log(secret);'
-        ],
-        "mappings": "AAAA"
-    }).encode()
+    SOURCE_MAP = json.dumps(
+        {
+            "version": 3,
+            "sources": ["app.js"],
+            "sourcesContent": [
+                'const secret = "aws_secret_key_abcdef123456";\nconsole.log(secret);'
+            ],
+            "mappings": "AAAA",
+        }
+    ).encode()
 
     def do_GET(self):  # noqa: N802
         if self.path == "/bundle.js":

@@ -13,13 +13,14 @@ from typing import Any, Dict, Optional
 
 import structlog
 
-from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.config import AgentType, EngagementPhase, VulnClass
 from ai_osop.core.exceptions import WorkflowException
-from ai_osop.orchestrator.state_machine import EngagementStateMachine
+from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
 from ai_osop.core.models import ApprovalRequest, AuditEvent, Task
+from ai_osop.core.observability import record_task, update_task_counts
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
-from ai_osop.core.observability import record_task, update_task_counts
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
 
 logger = structlog.get_logger("ai_osop.orchestrator.task_scheduler")
 
@@ -29,10 +30,10 @@ class TaskScheduler:
 
     # Terminal failure statuses that should not trigger retry success path
     _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
+
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
-        self.state_machine = None # Injected by Orchestrator post-init to break circularity
-
+        self.state_machine = None  # Injected by Orchestrator post-init to break circularity
 
     async def schedule_task(self, task: Task) -> Task:
         """Schedule a task for execution."""
@@ -43,9 +44,11 @@ class TaskScheduler:
         RequestContext.bind(
             task_id=task.id,
             engagement_id=task.engagement_id,
-            trace_id=task.trace_context.get("traceparent", "").split("-")[1]
-            if task.trace_context.get("traceparent")
-            else "",
+            trace_id=(
+                task.trace_context.get("traceparent", "").split("-")[1]
+                if task.trace_context.get("traceparent")
+                else ""
+            ),
         )
 
         with trace_span(
@@ -73,7 +76,12 @@ class TaskScheduler:
             await self._orch.session_memory.store_task(task)
             await self._orch.coordination_bus.publish(
                 "task.scheduled",
-                {"task_id": task.id, "task_type": task.type, "agent_type": task.agent_type.value, "engagement_id": task.engagement_id},
+                {
+                    "task_id": task.id,
+                    "task_type": task.type,
+                    "agent_type": task.agent_type.value,
+                    "engagement_id": task.engagement_id,
+                },
                 "orchestrator",
             )
             await self._orch.session_memory.push_task_queue(
@@ -81,7 +89,9 @@ class TaskScheduler:
             )
 
             if self._orch.temporal_enabled and self._orch.temporal_scheduler:
-                workflow_id = await self._orch.temporal_scheduler.start_task_workflow(task.model_dump())
+                workflow_id = await self._orch.temporal_scheduler.start_task_workflow(
+                    task.model_dump()
+                )
                 task.status = "scheduled"
                 task.result = {"workflow_id": workflow_id, "durable": True}
                 return task
@@ -112,7 +122,9 @@ class TaskScheduler:
                     else:
                         task.status = "completed"
                         task.result = (
-                            result if isinstance(result, dict) else {"status": "success", "raw": result}
+                            result
+                            if isinstance(result, dict)
+                            else {"status": "success", "raw": result}
                         )
                     await self._orch.session_memory.store_task(task)
                     return task.result
@@ -156,13 +168,9 @@ class TaskScheduler:
             session = self._orch._sessions.get(task.engagement_id)
             if session is not None:
                 try:
-                    self.state_machine.assert_task_allowed(
-                        task, EngagementPhase(session.phase)
-                    )
+                    self.state_machine.assert_task_allowed(task, EngagementPhase(session.phase))
                 except WorkflowException as e:
-                    logger.warning(
-                        "task_phase_violation", task_id=task.id, error=str(e)
-                    )
+                    logger.warning("task_phase_violation", task_id=task.id, error=str(e))
                     await self._on_task_failure(
                         task, {"error": str(e), "error_type": "PhaseViolation"}
                     )
@@ -222,8 +230,12 @@ class TaskScheduler:
                     # (conservative: an un-triaged action is treated as high-risk).
                     _sev = str(task.payload.get("severity", "")).strip().lower()
                     _risk = {
-                        "critical": "critical", "high": "high", "medium": "medium",
-                        "low": "low", "info": "low", "informational": "low",
+                        "critical": "critical",
+                        "high": "high",
+                        "medium": "medium",
+                        "low": "low",
+                        "info": "low",
+                        "informational": "low",
                     }.get(_sev, "high")
                     request = ApprovalRequest(
                         task_id=task.id,
@@ -235,6 +247,7 @@ class TaskScheduler:
                         engagement_id=task.engagement_id,
                     )
                     from ai_osop.core.observability import record_approval_requested
+
                     record_approval_requested(request.id)
                     await self._orch.approval_coordinator._raise_approval(request)
                 # Always return on the unapproved path — never fall through to execution
@@ -267,7 +280,11 @@ class TaskScheduler:
                     await self._orch.session_memory.store_task(task)
                     await self._orch.coordination_bus.publish(
                         "task.assigned",
-                        {"task_id": task.id, "agent_id": agent.ctx.agent_id, "engagement_id": task.engagement_id},
+                        {
+                            "task_id": task.id,
+                            "agent_id": agent.ctx.agent_id,
+                            "engagement_id": task.engagement_id,
+                        },
                         "orchestrator",
                     )
                     # GAP-2-6: retain the handle so halt_engagement can cancel it.
@@ -312,13 +329,13 @@ class TaskScheduler:
                 if task_type and hasattr(agent, "supports_task_type"):
                     if not agent.supports_task_type(task_type):
                         continue
-                
+
                 # Acquire distributed lock to prevent multi-orchestrator collisions
                 lock_key = f"lock:agent:{agent.ctx.agent_id}"
                 success = await self._orch.session_memory.acquire_lock(lock_key, "locked")
                 if not success:
                     continue
-                
+
                 await self._orch.session_memory.add_busy_agent(agent.ctx.agent_id)
                 # AIOSOP-LOCKWIN-001 (2026-07-03): flip status to "running" at claim
                 # time. The claim (lock + busy set) and the agent's own status flip
@@ -348,6 +365,7 @@ class TaskScheduler:
             agent = self._orch._agents.get(agent_id)
             if agent is not None:
                 agent.ctx.status = "idle"
+
     @staticmethod
     def _sanitize_external_payload(task: Task) -> None:
         """Strip operator-approval tokens injected by any non-orchestrator producer
@@ -446,7 +464,7 @@ class TaskScheduler:
         from ai_osop.core.tracing import trace_span_with_parent
 
         parent_span_context = extract_trace_context(task.trace_context)
-        
+
         if parent_span_context.is_valid:
             span_ctx = trace_span_with_parent(
                 "orchestrator._execute_via_agent",
@@ -553,10 +571,88 @@ class TaskScheduler:
             # Trigger downstream
             await self._trigger_downstream_tasks(task)
             await self._chain_authenticated_surface(task)
+            await self._schedule_autonomous_next_steps(task, result)
             await self._orch.graph_memory.upsert_task(
                 task, result_summary={"downstream_triggered": True}
             )
             await self._orch.session_memory.store_task(task)
+
+    async def _schedule_autonomous_next_steps(self, task: Task, result: Dict[str, Any]) -> None:
+        """Dynamically schedule follow-up scanner tasks on confirmed findings."""
+        status = result.get("status", "").lower()
+        if status not in ("vulnerable", "confirmed"):
+            return
+
+        target_url = task.payload.get("url")
+        if not target_url:
+            return
+
+        # Resolve the current vulnerability class from the completed task
+        task_type_to_vuln_class = {
+            "sqli_scan": VulnClass.SQLI,
+            "xss_scan": VulnClass.XSS,
+            "ssti_scan": VulnClass.SSTI,
+            "ssrf_scan": VulnClass.SSRF,
+            "csrf_scan": VulnClass.CSRF,
+            "jwt_scan": VulnClass.JWT_ABUSE,
+            "smuggling_scan": VulnClass.REQUEST_SMUGGLING,
+            "race_scan": VulnClass.RACE_CONDITION,
+            "saml_scan": VulnClass.AUTHENTICATION_WEAKNESS,
+            "upload_scan": VulnClass.LFI,
+            "pollution_scan": VulnClass.DESERIALIZATION,
+            "websocket_scan": VulnClass.VULN_SCAN,
+        }
+
+        current_vuln_class = task_type_to_vuln_class.get(task.type)
+        if not current_vuln_class:
+            return
+
+        knowledge_engine = SecurityKnowledgeEngine()
+        next_vuln_classes = knowledge_engine.get_next_steps(current_vuln_class)
+
+        vuln_class_to_task_details = {
+            VulnClass.SQLI: ("sqli_scan", AgentType.VULN_ANALYSIS),
+            VulnClass.XSS: ("xss_scan", AgentType.VULN_ANALYSIS),
+            VulnClass.SSTI: ("ssti_scan", AgentType.SSTI_SCANNER),
+            VulnClass.SSRF: ("ssrf_scan", AgentType.SSRF_SCANNER),
+            VulnClass.CSRF: ("csrf_scan", AgentType.CSRF_SCANNER),
+            VulnClass.JWT_ABUSE: ("jwt_scan", AgentType.JWT_SCANNER),
+            VulnClass.REQUEST_SMUGGLING: ("smuggling_scan", AgentType.SMUGGLING_SCANNER),
+            VulnClass.RACE_CONDITION: ("race_scan", AgentType.RACE_SCANNER),
+            VulnClass.SUBDOMAIN_TAKEOVER: ("takeover_scan", AgentType.TAKEOVER_SCANNER),
+            VulnClass.AUTHENTICATION_WEAKNESS: ("saml_scan", AgentType.SAML_SCANNER),
+            VulnClass.LFI: ("upload_scan", AgentType.UPLOAD_SCANNER),
+            VulnClass.DESERIALIZATION: ("pollution_scan", AgentType.POLLUTION_SCANNER),
+            VulnClass.CLOUD_VULN: ("probe_metadata", AgentType.CLOUD_SPECIALIST),
+        }
+
+        for next_vc in next_vuln_classes:
+            details = vuln_class_to_task_details.get(next_vc)
+            if details:
+                next_task_type, next_agent_type = details
+                # Build the task payload matching the scanner's expected structure
+                next_payload = {"url": target_url}
+
+                # Special cases for certain scanner types if they expect different payload schemas
+                if next_task_type == "sqli_scan":
+                    next_payload = {"url": target_url, "level": 2, "risk": 1}
+
+                follow_up_task = Task(
+                    type=next_task_type,
+                    priority=9,
+                    agent_type=next_agent_type,
+                    payload=next_payload,
+                    engagement_id=task.engagement_id,
+                    timeout_seconds=300,
+                )
+                logger.info(
+                    "autonomous_follow_up_scheduled",
+                    parent_task_id=task.id,
+                    parent_task_type=task.type,
+                    next_task_type=next_task_type,
+                    url=target_url,
+                )
+                await self.schedule_task(follow_up_task)
 
     async def _on_task_failure(self, task: Task, result: Dict[str, Any]) -> None:
         """Handle task failure."""
@@ -579,7 +675,12 @@ class TaskScheduler:
             await self._orch.session_memory.store_task(task)
             await self._orch.coordination_bus.publish(
                 "task.failed",
-                {"task_id": task.id, "agent_id": task.assigned_agent_id, "result": result, "engagement_id": task.engagement_id},
+                {
+                    "task_id": task.id,
+                    "agent_id": task.assigned_agent_id,
+                    "result": result,
+                    "engagement_id": task.engagement_id,
+                },
                 "orchestrator",
             )
             if task.retry_count >= task.max_retries:
@@ -609,7 +710,10 @@ class TaskScheduler:
             if child and child.status == "pending":
                 all_deps = await self._orch.graph_memory.get_task_dependencies(child.id)
                 if all(
-                    self._orch._tasks.get(dep_id, Task(id=dep_id, type="", agent_type=AgentType.RECON, engagement_id="")).status
+                    self._orch._tasks.get(
+                        dep_id,
+                        Task(id=dep_id, type="", agent_type=AgentType.RECON, engagement_id=""),
+                    ).status
                     in ("completed", "failed")
                     for dep_id in all_deps
                 ):
@@ -644,9 +748,7 @@ class TaskScheduler:
                 logger.info("no_auth_user_label_for_chained_surface", engagement_id=eid)
                 return
 
-            await self._orch.claim_auto_discovery(
-                eid, auth_user_label, task.id
-            )
+            await self._orch.claim_auto_discovery(eid, auth_user_label, task.id)
             return
 
         # 2. map_workflow -> capture_authenticated_surface
@@ -715,7 +817,7 @@ class TaskScheduler:
         # Persist spawned edge in Neo4j
         await self._orch.graph_memory.run_write_query(
             "MATCH (p:Task {id: $parent_id}), (c:Task {id: $child_id}) MERGE (p)-[:SPAWNED]->(c)",
-            {"parent_id": task.id, "child_id": child.id}
+            {"parent_id": task.id, "child_id": child.id},
         )
 
         # Audit log event
@@ -737,6 +839,7 @@ class TaskScheduler:
 
         # Schedule the child task
         await self._orch.schedule_task(child)
+
     async def _persist_task_dependency(self, parent: Task, child: Task) -> None:
         """Persist a parent→child dependency in the graph."""
         await self._orch.graph_memory.link_task_dependency(parent.id, child.id)

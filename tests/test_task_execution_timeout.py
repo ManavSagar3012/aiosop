@@ -6,14 +6,14 @@ call (LLM/MCP/browser) pinned its task at 'running' forever and never released
 the agent. These tests pin the guarantee that every execution reaches a terminal
 state within the task timeout.
 """
+
 import asyncio
 import time
 import types
-
 from unittest.mock import AsyncMock, MagicMock
 
+from ai_osop.core.models import AgentType, Task
 from ai_osop.orchestrator.task_scheduler import TaskScheduler
-from ai_osop.core.models import Task, AgentType
 
 
 def _orch():
@@ -47,8 +47,13 @@ class _FastAgent:
 
 def test_hanging_agent_fails_within_timeout():
     sched = TaskScheduler(_orch())
-    task = Task(type="full_recon", agent_type=AgentType.RECON, engagement_id="e",
-                timeout_seconds=1, max_retries=0)
+    task = Task(
+        type="full_recon",
+        agent_type=AgentType.RECON,
+        engagement_id="e",
+        timeout_seconds=1,
+        max_retries=0,
+    )
     t0 = time.time()
     asyncio.run(sched._execute_via_agent(_HangingAgent(), task))
     elapsed = time.time() - t0
@@ -59,7 +64,12 @@ def test_hanging_agent_fails_within_timeout():
 
 def test_fast_agent_still_completes():
     sched = TaskScheduler(_orch())
-    task = Task(type="full_recon", agent_type=AgentType.RECON, engagement_id="e",
-                timeout_seconds=30, max_retries=0)
+    task = Task(
+        type="full_recon",
+        agent_type=AgentType.RECON,
+        engagement_id="e",
+        timeout_seconds=30,
+        max_retries=0,
+    )
     asyncio.run(sched._execute_via_agent(_FastAgent(), task))
     assert task.status == "completed", f"expected completed, got {task.status}"

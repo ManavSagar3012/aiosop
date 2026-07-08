@@ -110,9 +110,7 @@ class RetentionService:
         RETURN count(DISTINCT e) as engagements, count(DISTINCT n) as nodes
         """
 
-        records = await self.graph_memory.run_read_query(
-            cypher, {"cutoff": cutoff_iso}
-        )
+        records = await self.graph_memory.run_read_query(cypher, {"cutoff": cutoff_iso})
         if records:
             record = records[0]
             return {
@@ -126,13 +124,13 @@ class RetentionService:
         """Delete old Postgres rows from warm tier."""
         from sqlalchemy import delete
 
+        from ai_osop.auth.session_store import UserSessionORM
         from ai_osop.memory.session_memory import (
             ApprovalRequestORM,
             AuditLogORM,
             SessionStateORM,
             TaskORM,
         )
-        from ai_osop.auth.session_store import UserSessionORM
 
         results = {}
 

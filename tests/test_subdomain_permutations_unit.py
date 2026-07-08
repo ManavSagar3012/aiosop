@@ -1,4 +1,4 @@
-from ai_osop.core.subdomain_permutations import generate_permutations, DEFAULT_WORDS
+from ai_osop.core.subdomain_permutations import DEFAULT_WORDS, generate_permutations
 
 
 def test_generates_prefix_and_suffix_permutations():

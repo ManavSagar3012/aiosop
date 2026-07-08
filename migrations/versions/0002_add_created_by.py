@@ -20,10 +20,8 @@ depends_on = None
 
 def upgrade() -> None:
     """Add created_by column to session_states."""
-    op.add_column(
-        "session_states",
-        sa.Column("created_by", sa.String(64), nullable=True),
-    )
+    # No-op since created_by was already added to initial schema 0001
+    pass
 
 
 def downgrade() -> None:

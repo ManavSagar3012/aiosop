@@ -9,6 +9,7 @@ Proves the loop that lets confidence self-correct from real submission outcomes:
 Everything runs offline: the reader is exercised against a fake async session, and
 the writer against the deterministic bug-bounty simulator — no Postgres, no network.
 """
+
 import pytest
 
 from ai_osop.core.calibration_engine import ConfidenceCalibrationEngine
@@ -68,8 +69,8 @@ def _sim_adapter():
     from ai_osop.adapters.bug_bounty_adapter import BugBountyAdapter
 
     adapter = BugBountyAdapter()
-    adapter.h1_api_key = "test-key"      # so sync_outcomes doesn't early-return []
-    adapter.simulation_mode = True       # deterministic synthetic outcomes
+    adapter.h1_api_key = "test-key"  # so sync_outcomes doesn't early-return []
+    adapter.simulation_mode = True  # deterministic synthetic outcomes
     return adapter
 
 
@@ -92,9 +93,7 @@ async def test_success_rate_all_valid():
 @pytest.mark.asyncio
 async def test_success_rate_mixed_outcomes():
     # valid = accepted(3) + duplicate(1) = 4 ; invalid = rejected(1) + informative(1) = 2
-    sm = _reader_with_rows(
-        [("accepted", 3), ("duplicate", 1), ("rejected", 1), ("informative", 1)]
-    )
+    sm = _reader_with_rows([("accepted", 3), ("duplicate", 1), ("rejected", 1), ("informative", 1)])
     assert await sm.get_historical_success_rate("xss") == pytest.approx(4 / 6)
 
 
@@ -190,9 +189,7 @@ async def test_full_loop_ingest_then_calibrate():
     # Calibration engine consumes the rate: a hot category pulls a weak base
     # confidence up; the engine no longer AttributeErrors on the missing method.
     engine = ConfidenceCalibrationEngine(session_memory=reader_authz)
-    calibrated = await engine.calibrate_confidence(
-        base_confidence=0.4, finding_type="authz"
-    )
+    calibrated = await engine.calibrate_confidence(base_confidence=0.4, finding_type="authz")
     # historical(1.0)*0.6 + base(0.4)*0.4 = 0.76 — learning lifted confidence above base.
     assert calibrated == pytest.approx(0.76)
     assert calibrated > 0.4
@@ -204,7 +201,7 @@ async def test_full_loop_ingest_then_calibrate():
 # emitter produces (which would make calibration a no-op for those categories). #
 # --------------------------------------------------------------------------- #
 def test_real_vulnclass_emitters_map_to_hypothesis_categories():
-    from ai_osop.core.taxonomy import category_for_finding_type, HYPOTHESIS_CATEGORIES
+    from ai_osop.core.taxonomy import HYPOTHESIS_CATEGORIES, category_for_finding_type
 
     # (emitted VulnClass.value  ->  expected hypothesis category)
     expected = {
@@ -216,11 +213,11 @@ def test_real_vulnclass_emitters_map_to_hypothesis_categories():
         "csrf": "client_side",
         "request_smuggling": "client_side",
         "ssrf": "ssrf_redirect",
-        "graphql_security": "graphql",   # the value the GraphQL agent actually emits
+        "graphql_security": "graphql",  # the value the GraphQL agent actually emits
         "race_condition": "workflow",
         "cloud_vuln": "cloud",
         "kubernetes_security": "cloud",
-        "jwt_abuse": "session",          # the value emitted, not the "jwt" synonym
+        "jwt_abuse": "session",  # the value emitted, not the "jwt" synonym
         "oauth2": "session",
         "authentication_weakness": "session",
     }

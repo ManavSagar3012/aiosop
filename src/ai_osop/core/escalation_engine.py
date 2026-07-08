@@ -24,11 +24,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ai_osop.core.models import (
-    EscalationPath,
-    PrimitiveLedger,
-    PrimitiveType,
-)
+from ai_osop.core.models import EscalationPath, PrimitiveLedger, PrimitiveType
 
 logger = structlog.get_logger("ai_osop.escalation_engine")
 
@@ -40,10 +36,13 @@ logger = structlog.get_logger("ai_osop.escalation_engine")
 # condition_fn takes the primitive dict and returns bool
 # ---------------------------------------------------------------------------
 
+
 def _has_tag(tag: str):
     """Closure: true if primitive has a given tag."""
+
     def _check(p: PrimitiveLedger) -> bool:
         return tag in (p.tags or [])
+
     return _check
 
 
@@ -53,6 +52,7 @@ def _severity_gte(level: str):
     def _check(p: PrimitiveLedger) -> bool:
         own = p.severity_hint.lower()
         return ORDER.index(own) >= ORDER.index(level)
+
     return _check
 
 

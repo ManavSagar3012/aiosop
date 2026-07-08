@@ -160,7 +160,9 @@ class LiteLLMClient:
         every item identical, which silently broke similarity search (skill
         selection, payload recall, findings knowledge) whenever mocks were on.
         """
-        selected = model or getattr(settings, "llm_embedding_model", None) or "text-embedding-3-small"
+        selected = (
+            model or getattr(settings, "llm_embedding_model", None) or "text-embedding-3-small"
+        )
         if settings.mock_llm:
             return _mock_embedding(text)
 

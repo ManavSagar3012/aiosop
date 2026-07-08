@@ -1,7 +1,9 @@
 import json
 from datetime import datetime
 from typing import Any, Dict, Optional
+
 from ai_osop.memory.session_memory import SessionMemory
+
 
 class HeartbeatManager:
     def __init__(self, session_memory: SessionMemory):

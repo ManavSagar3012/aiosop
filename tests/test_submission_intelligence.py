@@ -1,17 +1,19 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from ai_osop.core.submission_intelligence import SubmissionIntelligenceEngine
-from ai_osop.core.models import DiffAuthFinding
+
+import pytest
+
 from ai_osop.core.config import AgentType
+from ai_osop.core.models import DiffAuthFinding
+from ai_osop.core.submission_intelligence import SubmissionIntelligenceEngine
+
 
 @pytest.mark.asyncio
 async def test_recommend_submission():
     # Setup
     mock_graph = AsyncMock()
-    mock_graph.run_read_query = AsyncMock(return_value=[
-        {"outcome": "accepted", "count": 8},
-        {"outcome": "duplicate", "count": 2}
-    ])
+    mock_graph.run_read_query = AsyncMock(
+        return_value=[{"outcome": "accepted", "count": 8}, {"outcome": "duplicate", "count": 2}]
+    )
 
     engine = SubmissionIntelligenceEngine(mock_graph)
 

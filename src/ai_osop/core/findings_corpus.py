@@ -1,10 +1,12 @@
+import uuid
 from datetime import datetime
 from typing import Any, Optional
-import uuid
+
 import structlog
+from sqlalchemy.dialects.postgresql import insert
+
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
-from sqlalchemy.dialects.postgresql import insert
 
 logger = structlog.get_logger("ai_osop.findings_corpus")
 
@@ -101,7 +103,5 @@ class FindingCorpusService:
                     finding_id=record.finding_id,
                     error=str(e),
                 )
-        logger.info(
-            "Outcome ingestion complete.", engagement_id=engagement_id, ingested=ingested
-        )
+        logger.info("Outcome ingestion complete.", engagement_id=engagement_id, ingested=ingested)
         return ingested

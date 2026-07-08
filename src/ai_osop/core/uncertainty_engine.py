@@ -72,7 +72,10 @@ class UncertaintyEngine:
         error-to-success ratio. Returning {} is correct-but-incomplete, never
         misleading.
         """
-        logger.debug("identify_blocked_paths: graph-backed detector not yet implemented (engagement=%s)", engagement_id)
+        logger.debug(
+            "identify_blocked_paths: graph-backed detector not yet implemented (engagement=%s)",
+            engagement_id,
+        )
         return {}
 
     async def _identify_unknown_tech(self, engagement_id: str) -> List[Dict[str, str]]:
@@ -81,7 +84,10 @@ class UncertaintyEngine:
         De-fabricated (Sprint 0): honest-empty until backed by a real graph
         query for nodes with ``unknown`` tech properties.
         """
-        logger.debug("identify_unknown_tech: graph-backed detector not yet implemented (engagement=%s)", engagement_id)
+        logger.debug(
+            "identify_unknown_tech: graph-backed detector not yet implemented (engagement=%s)",
+            engagement_id,
+        )
         return []
 
     def record_task_uncertainty(self, task: Task, error: str) -> Optional[UncertaintyRecord]:

@@ -26,7 +26,8 @@ def test_single_request_completes(local_target):
     base = require_server("turbo_intruder")
     host, port, _ = local_target
     res = mcp_execute(
-        base, "execute_single_packet_attack",
+        base,
+        "execute_single_packet_attack",
         {"target_url": f"http://{host}:{port}/", "method": "GET", "concurrent_requests": 1},
         timeout=15.0,
     )
@@ -43,16 +44,17 @@ def test_concurrent_release_is_synchronized(local_target):
     base = require_server("turbo_intruder")
     host, port, _ = local_target
     res = mcp_execute(
-        base, "execute_single_packet_attack",
+        base,
+        "execute_single_packet_attack",
         {"target_url": f"http://{host}:{port}/", "method": "GET", "concurrent_requests": 5},
         timeout=20.0,
     )
     assert res.get("real") is True, res
     assert res.get("completed") == 5, res
     window = res.get("release_window_ms")
-    assert isinstance(window, (int, float)) and window < 100.0, (
-        f"release window should be tight for a true single-packet attack: {window}ms"
-    )
+    assert (
+        isinstance(window, (int, float)) and window < 100.0
+    ), f"release window should be tight for a true single-packet attack: {window}ms"
     assert isinstance(res.get("status_distribution"), dict) and res["status_distribution"], res
 
 
@@ -62,7 +64,8 @@ def test_response_structure_is_real(local_target):
     base = require_server("turbo_intruder")
     host, port, _ = local_target
     res = mcp_execute(
-        base, "execute_single_packet_attack",
+        base,
+        "execute_single_packet_attack",
         {"target_url": f"http://{host}:{port}/", "method": "GET", "concurrent_requests": 2},
         timeout=15.0,
     )

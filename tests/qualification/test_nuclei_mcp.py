@@ -26,7 +26,8 @@ def test_single_template_real_findings(local_target):
     base = require_server("nuclei")
     host, open_port, _ = local_target
     res = mcp_execute(
-        base, "scan",
+        base,
+        "scan",
         {"targets": [f"http://{host}:{open_port}"], "templates": [TEMPLATE]},
         timeout=120.0,
     )
@@ -41,8 +42,18 @@ def test_severity_filter_applied(local_target):
     base = require_server("nuclei")
     host, open_port, _ = local_target
     target = f"http://{host}:{open_port}"
-    crit = mcp_execute(base, "scan", {"targets": [target], "templates": [TEMPLATE], "severity": "critical"}, timeout=120.0)
-    info = mcp_execute(base, "scan", {"targets": [target], "templates": [TEMPLATE], "severity": "info"}, timeout=120.0)
+    crit = mcp_execute(
+        base,
+        "scan",
+        {"targets": [target], "templates": [TEMPLATE], "severity": "critical"},
+        timeout=120.0,
+    )
+    info = mcp_execute(
+        base,
+        "scan",
+        {"targets": [target], "templates": [TEMPLATE], "severity": "info"},
+        timeout=120.0,
+    )
     crit_n = len([f for f in crit.get("findings", []) if str(f).strip()])
     info_n = len([f for f in info.get("findings", []) if str(f).strip()])
     assert crit_n == 0, f"severity filter not applied (critical returned {crit_n})"

@@ -4,6 +4,7 @@ Verifies the JS-analyzer secret-liveness gate (2026-07-05 wiring):
   - an unverified static secret is emitted UNVALIDATED with capped confidence,
   - only a confirmed-live secret is validated=True.
 """
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -21,16 +22,23 @@ def _agent():
         captured["vuln"] = v
         return v.id
 
-    a.ctx = SimpleNamespace(graph_memory=SimpleNamespace(add_vulnerability=AsyncMock(side_effect=_add_vuln)),
-                            session_id="eng-test")
+    a.ctx = SimpleNamespace(
+        graph_memory=SimpleNamespace(add_vulnerability=AsyncMock(side_effect=_add_vuln)),
+        session_id="eng-test",
+    )
     return a, captured
 
 
 def _finding(value, rule="AWS Access Key", conf=0.9):
     return {
-        "value": value, "source_url": "https://x/app.js", "rule": rule,
-        "masked": "AKIA***", "severity": Severity.CRITICAL, "confidence": conf,
-        "context": "const k = '...'", "offset": 10,
+        "value": value,
+        "source_url": "https://x/app.js",
+        "rule": rule,
+        "masked": "AKIA***",
+        "severity": Severity.CRITICAL,
+        "confidence": conf,
+        "context": "const k = '...'",
+        "offset": 10,
     }
 
 
@@ -48,7 +56,9 @@ async def test_unverified_secret_is_unvalidated_and_capped():
     a, cap = _agent()
     # a real-looking high-entropy value with no live probe -> unverified
     vid = await a._persist_secret_finding(
-        _finding("wJalrXUtnFEMI9K7MDENGbPxRfiCYEXAMPLEKEY7", rule="Generic Secret Assignment", conf=0.9),
+        _finding(
+            "wJalrXUtnFEMI9K7MDENGbPxRfiCYEXAMPLEKEY7", rule="Generic Secret Assignment", conf=0.9
+        ),
         "eng-test",
     )
     if vid is not None:  # if classified as a (unverified) secret, it must be downgraded

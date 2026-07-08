@@ -1,15 +1,16 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from ai_osop.core.attack_graph_prioritizer import AttackGraphChainPrioritizer
 from ai_osop.core.models import DiffAuthFinding
+
 
 @pytest.mark.asyncio
 async def test_prioritizer_calculates_impact():
     # Setup
     mock_graph = AsyncMock()
-    mock_graph.run_read_query = AsyncMock(return_value=[
-        {"path_count": 2, "max_depth": 2}
-    ])
+    mock_graph.run_read_query = AsyncMock(return_value=[{"path_count": 2, "max_depth": 2}])
 
     prioritizer = AttackGraphChainPrioritizer(mock_graph)
 

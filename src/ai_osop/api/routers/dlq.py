@@ -45,7 +45,9 @@ async def list_dlq_entries(
         # Ownership check: if user is not senior_operator, restrict to their engagement
         if operator.get("role") != "senior_operator":
             if not engagement_id:
-                raise HTTPException(status_code=403, detail="engagement_id required for non-senior operators")
+                raise HTTPException(
+                    status_code=403, detail="engagement_id required for non-senior operators"
+                )
             if engagement_id != operator.get("engagement_id"):
                 raise HTTPException(status_code=403, detail="Not authorized for this engagement")
 

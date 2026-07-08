@@ -12,13 +12,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ai_osop.core.calibration_engine import ConfidenceCalibrationEngine
 from ai_osop.core.taxonomy import (
-    HYPOTHESIS_CATEGORIES,
     _FINDING_TYPE_TO_CATEGORY,
+    HYPOTHESIS_CATEGORIES,
     category_for_finding_type,
 )
-from ai_osop.core.calibration_engine import ConfidenceCalibrationEngine
-
 
 # ---------------------------------------------------------------------------
 # taxonomy.category_for_finding_type
@@ -100,9 +99,9 @@ def test_every_mapped_value_is_a_hypothesis_category():
     never match recorded outcomes.
     """
     for finding_type, category in _FINDING_TYPE_TO_CATEGORY.items():
-        assert category in HYPOTHESIS_CATEGORIES, (
-            f"mapping {finding_type!r} -> {category!r} is not a hypothesis category"
-        )
+        assert (
+            category in HYPOTHESIS_CATEGORIES
+        ), f"mapping {finding_type!r} -> {category!r} is not a hypothesis category"
 
 
 def test_known_mappings_land_in_hypothesis_categories():

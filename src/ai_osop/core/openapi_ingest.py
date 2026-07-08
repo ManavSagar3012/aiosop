@@ -10,6 +10,7 @@ The parser (``parse_spec``) is pure and testable. ``SPEC_CANDIDATES`` lists the
 conventional locations a spec is served from; the recon agent fetches these
 (scope-gated) and feeds whatever it finds here.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -17,9 +18,17 @@ from urllib.parse import urljoin, urlsplit
 
 # Conventional locations an API spec is exposed at (checked in order).
 SPEC_CANDIDATES: List[str] = [
-    "/openapi.json", "/openapi.yaml", "/swagger.json", "/swagger/v1/swagger.json",
-    "/v2/api-docs", "/v3/api-docs", "/api-docs", "/api/openapi.json",
-    "/api/swagger.json", "/api/v1/openapi.json", "/docs/openapi.json",
+    "/openapi.json",
+    "/openapi.yaml",
+    "/swagger.json",
+    "/swagger/v1/swagger.json",
+    "/v2/api-docs",
+    "/v3/api-docs",
+    "/api-docs",
+    "/api/openapi.json",
+    "/api/swagger.json",
+    "/api/v1/openapi.json",
+    "/docs/openapi.json",
 ]
 
 _METHODS = ("get", "post", "put", "delete", "patch", "options", "head", "trace")
@@ -27,9 +36,11 @@ _METHODS = ("get", "post", "put", "delete", "patch", "options", "head", "trace")
 
 def is_spec(doc: Any) -> bool:
     """Heuristic: does *doc* look like an OpenAPI/Swagger document?"""
-    return isinstance(doc, dict) and (
-        "openapi" in doc or "swagger" in doc
-    ) and isinstance(doc.get("paths"), dict)
+    return (
+        isinstance(doc, dict)
+        and ("openapi" in doc or "swagger" in doc)
+        and isinstance(doc.get("paths"), dict)
+    )
 
 
 def _schema_property_keys(schema: Any) -> List[str]:
@@ -101,20 +112,24 @@ def parse_spec(spec: Dict[str, Any], base_url: str = "") -> List[Dict[str, Any]]
             if not isinstance(op, dict):
                 continue
             names: List[str] = []
-            for p in shared_params + [q for q in op.get("parameters", []) or [] if isinstance(q, dict)]:
+            for p in shared_params + [
+                q for q in op.get("parameters", []) or [] if isinstance(q, dict)
+            ]:
                 nm = p.get("name")
                 if nm and p.get("in") in (None, "query", "path", "header", "cookie"):
                     names.append(nm)
             url = urljoin(base + "/", path.lstrip("/")) if base else path
-            endpoints.append({
-                "url": url,
-                "method": method.upper(),
-                "path": path,
-                "parameters": sorted(set(names)),
-                "body_keys": _body_keys(op),
-                "operation_id": op.get("operationId", ""),
-                "summary": op.get("summary", ""),
-            })
+            endpoints.append(
+                {
+                    "url": url,
+                    "method": method.upper(),
+                    "path": path,
+                    "parameters": sorted(set(names)),
+                    "body_keys": _body_keys(op),
+                    "operation_id": op.get("operationId", ""),
+                    "summary": op.get("summary", ""),
+                }
+            )
     return endpoints
 
 

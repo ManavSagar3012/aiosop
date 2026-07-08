@@ -209,9 +209,7 @@ class PrimitiveLedgerStore:
                 context={"primitive_id": primitive_id},
             ) from exc
 
-    async def query_unpromoted(
-        self, engagement_id: str
-    ) -> List[Dict[str, Any]]:
+    async def query_unpromoted(self, engagement_id: str) -> List[Dict[str, Any]]:
         """Return all unpromoted primitives for an engagement (raw Neo4j data)."""
         try:
             async with self._driver.session() as session:
@@ -226,9 +224,7 @@ class PrimitiveLedgerStore:
                 context={"engagement_id": engagement_id},
             ) from exc
 
-    async def query_unescalated(
-        self, engagement_id: str, limit: int = 50
-    ) -> List[Dict[str, Any]]:
+    async def query_unescalated(self, engagement_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Return primitives not yet assigned to any chain, for escalation."""
         try:
             async with self._driver.session() as session:

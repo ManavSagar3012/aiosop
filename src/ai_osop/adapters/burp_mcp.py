@@ -107,9 +107,7 @@ class BurpMCPAdapter:
     ) -> List[Dict[str, Any]]:
         """Retrieve captured proxy traffic with optional filtering."""
         params = {"filters": filters or {}, "limit": 1000, "offset": 0}
-        response = await self.registry.execute_tool(
-            self.SERVER_ID, "get_proxy_history", params
-        )
+        response = await self.registry.execute_tool(self.SERVER_ID, "get_proxy_history", params)
 
         if response.status == "success" and response.result:
             entries = response.result.get("entries", [])
@@ -117,14 +115,10 @@ class BurpMCPAdapter:
             return entries
         return []
 
-    async def get_scan_issues(
-        self, target: Optional[str] = None
-    ) -> List[Vulnerability]:
+    async def get_scan_issues(self, target: Optional[str] = None) -> List[Vulnerability]:
         """Retrieve and normalize scanner findings."""
         params = {"target": target} if target else {}
-        response = await self.registry.execute_tool(
-            self.SERVER_ID, "get_scan_issues", params
-        )
+        response = await self.registry.execute_tool(self.SERVER_ID, "get_scan_issues", params)
 
         if response.status != "success":
             self._check_response(response, "get_scan_issues")
@@ -150,9 +144,7 @@ class BurpMCPAdapter:
             "request": request,
             "tab_name": tab_name or f"auto-{datetime.utcnow().timestamp()}",
         }
-        response = await self.registry.execute_tool(
-            self.SERVER_ID, "send_to_repeater", params
-        )
+        response = await self.registry.execute_tool(self.SERVER_ID, "send_to_repeater", params)
         self._check_response(response, "send_to_repeater")
         return response
 
@@ -168,8 +160,7 @@ class BurpMCPAdapter:
             "request": request,
             "payload_positions": payload_positions,
             "payload_set": payload_set,
-            "config": config
-            or {"attack_type": "sniper", "thread_count": 10, "delay_ms": 100},
+            "config": config or {"attack_type": "sniper", "thread_count": 10, "delay_ms": 100},
         }
         response = await self.registry.execute_tool(
             self.SERVER_ID, "intruder_attack", params, timeout_override=1800
@@ -195,9 +186,7 @@ class BurpMCPAdapter:
     async def get_sitemap(self, url_prefix: Optional[str] = None) -> List[Endpoint]:
         """Extract site map as normalized endpoints."""
         params = {"url_prefix": url_prefix} if url_prefix else {}
-        response = await self.registry.execute_tool(
-            self.SERVER_ID, "get_sitemap", params
-        )
+        response = await self.registry.execute_tool(self.SERVER_ID, "get_sitemap", params)
 
         if response.status != "success" or not response.result:
             return []
@@ -309,9 +298,7 @@ class BurpMCPAdapter:
         """Maintain circular buffer of proxy history."""
         self._proxy_history_buffer.extend(entries)
         if len(self._proxy_history_buffer) > self._max_history_size:
-            self._proxy_history_buffer = self._proxy_history_buffer[
-                -self._max_history_size :
-            ]
+            self._proxy_history_buffer = self._proxy_history_buffer[-self._max_history_size :]
 
     async def get_request_by_id(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve specific request from proxy history."""

@@ -12,6 +12,7 @@ needing the in-process probe map. That is what lets the slow-path reconciler
 promote a blind finding minutes or hours later -- or even after a restart of
 the process that originally injected the payload.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -55,9 +56,9 @@ class OASTProbe(BaseModel):
     callback_url: str = ""
     engagement_id: str
     vuln_class: VulnClass = VulnClass.UNKNOWN
-    injection_point: str = ""     # param name or body field the callback went into
-    payload: str = ""             # what we injected (usually the callback URL)
-    request_summary: str = ""     # method + URL that triggered the sink
+    injection_point: str = ""  # param name or body field the callback went into
+    payload: str = ""  # what we injected (usually the callback URL)
+    request_summary: str = ""  # method + URL that triggered the sink
     source_agent_id: str = ""
     label: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -112,15 +113,17 @@ def _finding_from_interaction(interaction: Dict[str, Any]) -> Optional[Vulnerabi
             f"through injection point '{injection}'. "
             f"Triggering request: {ctx.get('request_summary') or 'n/a'}."
         ),
-        evidence=[{
-            "type": "oast_callback",
-            "provenance": "oast",
-            "token": interaction.get("token"),
-            "interaction_id": interaction.get("interaction_id"),
-            "injection": injection,
-            "payload": ctx.get("payload"),
-            "interaction": interaction,
-        }],
+        evidence=[
+            {
+                "type": "oast_callback",
+                "provenance": "oast",
+                "token": interaction.get("token"),
+                "interaction_id": interaction.get("interaction_id"),
+                "injection": injection,
+                "payload": ctx.get("payload"),
+                "interaction": interaction,
+            }
+        ],
         tool_source="oast_reconciler",
         confidence=0.97,
         validated=True,
@@ -246,8 +249,11 @@ class OASTCorrelationRegistry:
         if token:
             self._probes[token] = probe
         logger.info(
-            "oast_probe_minted", token=token, vuln_class=vclass.value,
-            injection=injection_point, engagement_id=engagement_id,
+            "oast_probe_minted",
+            token=token,
+            vuln_class=vclass.value,
+            injection=injection_point,
+            engagement_id=engagement_id,
         )
         return probe
 
@@ -271,7 +277,9 @@ class OASTCorrelationRegistry:
         result.cursor = self._cursor
         if result.findings or result.correlations:
             logger.info(
-                "oast_reconcile_promoted", count=len(result.findings),
-                correlations=len(result.correlations), cursor=self._cursor,
+                "oast_reconcile_promoted",
+                count=len(result.findings),
+                correlations=len(result.correlations),
+                cursor=self._cursor,
             )
         return result
