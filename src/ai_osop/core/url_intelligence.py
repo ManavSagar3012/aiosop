@@ -89,7 +89,9 @@ def extract_params(url: str) -> List[str]:
     segs = [s for s in path.split("/") if s]
     
     # Add common path parameter patterns: numeric IDs, UUIDs, resource names
-    resource_types = {"product", "catalog", "user", "account", "order", "post", "item", "doc", "api", "item", "service"}
+    resource_types = {"product", "catalog", "user", "account", "order", "post", "item", "doc", "api", "service", "stock", "inventory", "pricing"}
+    sub_resources = {"stock", "inventory", "pricing", "reviews", "comments", "history", "settings", "details"}
+    
     for i, seg in enumerate(segs):
         # Numeric ID (e.g. 123, 456)
         if seg.isdigit():
@@ -104,6 +106,11 @@ def extract_params(url: str) -> List[str]:
         elif i + 1 < len(segs) and segs[i + 1].isdigit():
             if any(seg.startswith(p) for p in resource_types):
                 params.add(f"{seg}Id")  # productId, userId, accountId, etc.
+        # Sub-resource after resource-type (e.g. /product/stock -> productId)
+        elif i > 0 and seg in sub_resources:
+            parent = segs[i - 1]
+            if any(parent.startswith(p) for p in resource_types):
+                params.add(f"{parent}Id")  # e.g., product/stock -> productId
         # Trailing resource endpoints (e.g. /product or /user) - infer likely param
         elif i == len(segs) - 1 and any(seg.startswith(p) for p in resource_types):
             params.add(f"{seg}Id")  # Last segment is a resource type
