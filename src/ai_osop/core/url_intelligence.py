@@ -84,12 +84,13 @@ def extract_params(url: str) -> List[str]:
     qs = parts.query
     params.update(k for k, _ in parse_qsl(qs, keep_blank_values=True))
     
-    # Extract path parameters (including numeric IDs that look like parameters)
+    # Extract path parameters (including numeric IDs and resource names)
     path = parts.path.lower()
     segs = [s for s in path.split("/") if s]
     
-    # Add common path parameter patterns: numeric IDs, UUIDs
-    for seg in segs:
+    # Add common path parameter patterns: numeric IDs, UUIDs, resource names
+    resource_types = {"product", "catalog", "user", "account", "order", "post", "item", "doc", "api", "item", "service"}
+    for i, seg in enumerate(segs):
         # Numeric ID (e.g. 123, 456)
         if seg.isdigit():
             params.add("id")  # Generic ID parameter
@@ -99,6 +100,13 @@ def extract_params(url: str) -> List[str]:
         # Segment name matching common patterns
         elif any(seg.endswith(p) for p in ["id", "uuid", "hash", "key"]):
             params.add(seg)
+        # Resource-type segments followed by numeric IDs (e.g. /product/123 -> productId)
+        elif i + 1 < len(segs) and segs[i + 1].isdigit():
+            if any(seg.startswith(p) for p in resource_types):
+                params.add(f"{seg}Id")  # productId, userId, accountId, etc.
+        # Trailing resource endpoints (e.g. /product or /user) - infer likely param
+        elif i == len(segs) - 1 and any(seg.startswith(p) for p in resource_types):
+            params.add(f"{seg}Id")  # Last segment is a resource type
     
     return sorted(params)
 
