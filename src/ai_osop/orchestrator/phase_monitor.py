@@ -280,7 +280,29 @@ class PhaseMonitor:
             )
             for vid, sev in exploitable:
                 endpoint_url = await self._orch.graph_memory.get_endpoint_url_for_vulnerability(vid)
-                task = Task(
+                vuln_details = await self._orch.graph_memory.get_node_details(vid) or {}
+                vuln_type = vuln_details.get("vuln_type") or vuln_details.get("classification") or "sqli"
+                
+                # 1. Generate adaptive payloads for this vulnerability
+                payload_task = Task(
+                    type="generate_payloads",
+                    priority=9,
+                    agent_type=AgentType.PAYLOAD_MUTATION,
+                    payload={
+                        "vuln_type": vuln_type,
+                        "context": {
+                            "url": endpoint_url,
+                            "vulnerability_id": vid,
+                            "engagement_id": session.session_id,
+                        },
+                        "count": 5,
+                    },
+                    engagement_id=session.session_id,
+                )
+                await self._orch.task_scheduler.schedule_task(payload_task)
+                
+                # 2. Schedule exploit validation with dependency on payload generation
+                exploit_task = Task(
                     type="exploit_validation",
                     priority=9,
                     agent_type=AgentType.EXPLOIT_VALIDATION,
@@ -292,8 +314,9 @@ class PhaseMonitor:
                         "operator_approved": False,
                     },
                     engagement_id=session.session_id,
+                    dependencies=[payload_task.id],
                 )
-                await self._orch.task_scheduler.schedule_task(task)
+                await self._orch.task_scheduler.schedule_task(exploit_task)
 
         elif phase == EngagementPhase.REPORTING:
             task = Task(

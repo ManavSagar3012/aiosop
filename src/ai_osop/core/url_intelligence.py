@@ -25,6 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Set, Tuple
 from urllib.parse import parse_qsl, urlsplit
+from html.parser import HTMLParser
 
 # Parameter name -> the bug class it most commonly enables. Used to prioritise
 # which discovered parameters the vuln/exploit agents should probe first.
@@ -66,12 +67,64 @@ _ID_SEG = re.compile(r"^(\d+|[0-9a-fA-F]{8,}|[0-9a-fA-F-]{16,})$")
 
 
 def extract_params(url: str) -> List[str]:
-    """Return the sorted unique query-parameter names present in *url*."""
+    """Return the sorted unique query-parameter names present in *url*.
+    
+    Extracts:
+    - Query-string parameters (e.g. ?id=123&name=abc)
+    - Path parameters (e.g. /user/{id} or /product/123)
+    """
     try:
-        qs = urlsplit(url).query
+        parts = urlsplit(url)
     except (ValueError, AttributeError):
         return []
-    return sorted({k for k, _ in parse_qsl(qs, keep_blank_values=True)})
+    
+    params = set()
+    
+    # Extract query-string parameters
+    qs = parts.query
+    params.update(k for k, _ in parse_qsl(qs, keep_blank_values=True))
+    
+    # Extract path parameters (including numeric IDs that look like parameters)
+    path = parts.path.lower()
+    segs = [s for s in path.split("/") if s]
+    
+    # Add common path parameter patterns: numeric IDs, UUIDs
+    for seg in segs:
+        # Numeric ID (e.g. 123, 456)
+        if seg.isdigit():
+            params.add("id")  # Generic ID parameter
+        # UUID or long hex (e.g. 550e8400-e29b-41d4-a716-446655440000)
+        elif len(seg) >= 8 and all(c in "0123456789abcdefABCDEF-" for c in seg):
+            params.add("id")
+        # Segment name matching common patterns
+        elif any(seg.endswith(p) for p in ["id", "uuid", "hash", "key"]):
+            params.add(seg)
+    
+    return sorted(params)
+
+
+def extract_form_fields(html_content: str) -> List[str]:
+    """Extract form field names from HTML content.
+    
+    Parses HTML and extracts all <input>, <textarea>, <select> field names.
+    Returns sorted unique field names.
+    """
+    class FormFieldParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.fields = set()
+            
+        def handle_starttag(self, tag, attrs):
+            attrs_dict = dict(attrs)
+            if tag in ("input", "textarea", "select") and "name" in attrs_dict:
+                self.fields.add(attrs_dict["name"])
+    
+    try:
+        parser = FormFieldParser()
+        parser.feed(html_content)
+        return sorted(parser.fields)
+    except Exception:
+        return []
 
 
 def endpoint_template(url: str) -> str:

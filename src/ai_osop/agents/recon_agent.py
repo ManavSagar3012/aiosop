@@ -14,7 +14,7 @@ from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, make_asset_id
 from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
-from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params, mine_urls
+from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params, extract_form_fields, mine_urls
 from ai_osop.safety.scope import ScopeEnforcer
 import re
 from ai_osop.agents.retrieval_agent import RetrievalAgent
@@ -152,13 +152,20 @@ class ReconAgent(BaseAgent):
         """Build an enriched Endpoint from a raw URL (params, tags, template).
 
         ``parameters`` defaults to the URL's query keys but callers (e.g. OpenAPI
-        ingest) may override it with spec-derived parameter names.
+        ingest) may override it with spec-derived parameter names. Merges with any
+        form fields extracted from HTML content.
         """
         from urllib.parse import urlsplit as _us
         _p = _us(url)
         params = extra.pop("parameters", None)
         if params is None:
             params = extract_params(url)
+        
+        # Merge any form fields extracted from HTML response
+        form_fields = extra.pop("form_fields", [])
+        if form_fields:
+            params = sorted(set(params) | set(form_fields))
+        
         return Endpoint(
             url=url, source=source, confidence=extra.pop("confidence", 0.85),
             engagement_id=engagement_id,
@@ -169,12 +176,35 @@ class ReconAgent(BaseAgent):
             **extra,
         )
 
+    async def _fetch_and_extract_form_fields(self, url: str) -> List[str]:
+        """Fetch a URL and extract form field names from HTML response.
+        
+        Returns a list of field names. On any error (network, timeout, non-HTML),
+        returns an empty list to allow discovery to continue.
+        """
+        import asyncio
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, 
+                    timeout=aiohttp.ClientTimeout(total=5),
+                    allow_redirects=True,
+                    ssl=False
+                ) as resp:
+                    if resp.status == 200 and "text/html" in resp.headers.get("content-type", ""):
+                        html = await resp.text()
+                        return extract_form_fields(html)
+        except (asyncio.TimeoutError, aiohttp.ClientError, Exception):
+            pass
+        return []
+
     async def _execute_content_discovery(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Deep content/parameter discovery via katana (P1.2).
 
         JS-aware crawl of the target, then every discovered URL is mined for hidden
         parameters and high-risk surface and written to the graph as enriched
-        endpoints. Reuses the P1.1 url_intelligence module for the mining.
+        endpoints. Additionally fetches a sample of discovered endpoints to extract
+        form fields and request body parameters (P1.2 Enhancement).
         """
         target = payload.get("url") or payload.get("target")
         if not target:
@@ -188,10 +218,24 @@ class ReconAgent(BaseAgent):
             return {"status": "error", "error": f"katana crawl failed: {e}"}
         urls = [u for u in (list(result.get("endpoints", [])) + list(result.get("js_files", [])))
                 if isinstance(u, str) and u]
+        
+        # Build form field map (sampling up to 50 endpoints to reduce latency)
+        form_field_map: Dict[str, List[str]] = {}
+        sample_urls = urls[:min(50, len(urls))]
+        for url in sample_urls:
+            try:
+                form_fields = await self._fetch_and_extract_form_fields(url)
+                if form_fields:
+                    form_field_map[url] = form_fields
+            except Exception as ex:
+                # Best-effort form extraction; don't fail the whole discovery
+                logger.debug("form_field_extraction_failed", url=url, error=str(ex))
+        
         added = 0
         for url in urls:
             try:
-                ep = self._mk_endpoint(url, engagement_id, source="katana")
+                form_fields = form_field_map.get(url, [])
+                ep = self._mk_endpoint(url, engagement_id, source="katana", form_fields=form_fields)
                 await self.ctx.graph_memory.add_endpoint(ep)
                 self.endpoint_inventory[ep.id] = ep
                 added += 1
