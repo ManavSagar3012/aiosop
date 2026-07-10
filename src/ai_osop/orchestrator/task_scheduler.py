@@ -593,7 +593,11 @@ class TaskScheduler:
                     logger.error("dlq_enqueue_fallback_failed", task_id=task.id, error=str(e))
 
     async def _trigger_downstream_tasks(self, parent: Task) -> None:
-        """Launch child tasks that depend on parent completion."""
+        """Launch child tasks that depend on parent completion.
+        
+        Propagates results from parent tasks to child tasks (e.g., payload generation
+        results flow into exploit validation tasks).
+        """
         # Use Neo4j as the ground-truth dependency graph so restart recovery and
         # concurrent scheduling have the same source of truth. We need the parent's
         # DEPENDENTS (tasks that list parent.id as a dependency), not the parent's
@@ -613,7 +617,44 @@ class TaskScheduler:
                     in ("completed", "failed")
                     for dep_id in all_deps
                 ):
+                    # Inject payload results from generate_payloads into exploit_validation
+                    if parent.type == "generate_payloads" and child.type == "exploit_validation":
+                        await self._inject_payload_to_child(parent, child)
+                    
                     await self._assign_task(child)
+
+    async def _inject_payload_to_child(self, parent: Task, child: Task) -> None:
+        """Inject payload results from generate_payloads task into exploit_validation child.
+        
+        Extracts top payload from parent result and populates child.payload["payload"]
+        before the child task is assigned to an agent.
+        """
+        try:
+            if not parent.result:
+                logger.debug("parent_task_no_result", parent_id=parent.id)
+                return
+            
+            # Extract payloads from parent result
+            payloads = parent.result.get("payloads", [])
+            if payloads:
+                # Use first (highest-fitness) payload
+                top_payload = payloads[0]
+                if isinstance(top_payload, dict):
+                    child.payload["payload"] = top_payload
+                else:
+                    # If it's a Payload object, convert to dict
+                    child.payload["payload"] = top_payload.model_dump() if hasattr(top_payload, "model_dump") else str(top_payload)
+                
+                logger.info(
+                    "payload_injected_to_child",
+                    parent_id=parent.id,
+                    child_id=child.id,
+                    payload_count=len(payloads)
+                )
+                # Persist the updated child task
+                await self._orch.graph_memory.upsert_task(child)
+        except Exception as e:
+            logger.error("payload_injection_failed", parent_id=parent.id, child_id=child.id, error=str(e))
 
     async def _chain_authenticated_surface(
         self, task: Task, result: Optional[Dict[str, Any]] = None

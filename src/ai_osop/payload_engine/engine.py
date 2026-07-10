@@ -280,7 +280,7 @@ class AdaptivePayloadEngine:
     - WAF profile learning
     """
 
-    def __init__(self, mcp_adapter: PayloadMCPAdapter, llm_client: Optional[Any] = None):
+    def __init__(self, mcp_adapter: Optional[PayloadMCPAdapter] = None, llm_client: Optional[Any] = None):
         self.mcp = mcp_adapter
         self.llm_client = llm_client
         self.template_library = PayloadTemplateLibrary()
@@ -560,3 +560,31 @@ class AdaptivePayloadEngine:
 
         self._waf_profiles[target_hash] = profile
         return profile
+
+    async def get_payloads(self, vuln_class: VulnClass, count: int = 5) -> List[Payload]:
+        """Get top payload templates for a vulnerability class.
+        
+        Returns pre-generated templates without requiring external MCP or LLM calls.
+        Used for quick payload sourcing during exploit validation setup.
+        
+        Args:
+            vuln_class: Type of vulnerability (SQLI, XSS, SSRF, etc.)
+            count: Number of payloads to return
+            
+        Returns:
+            List of Payload objects with template content
+        """
+        templates = self.template_library.get_templates(vuln_class)
+        payloads = []
+        
+        for i, template in enumerate(templates[:count]):
+            payload = Payload(
+                content=template,
+                vuln_class=vuln_class,
+                encoding_chain=[],
+                fitness_score=0.85 - (i * 0.05),  # Slight ranking preference
+                generated_at=datetime.utcnow(),
+            )
+            payloads.append(payload)
+        
+        return payloads
