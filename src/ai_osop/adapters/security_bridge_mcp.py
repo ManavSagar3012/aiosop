@@ -23,14 +23,17 @@ class SecurityBridgeAdapter:
         """Initialize the connection to the security-bridge server."""
         await self.registry.initialize_server(self.SERVER_ID, scope, {}, session_id)
 
-    async def run_nmap(self, target: str, fast: bool = False) -> List[Asset]:
+    async def run_nmap(
+        self, target: str, fast: bool = False, timeout_override: Optional[int] = None
+    ) -> List[Asset]:
         """Run Nmap scan against target."""
         params = {"target": target, "fast": fast}
-        response = await self.registry.execute_tool(self.SERVER_ID, "nmap", params)
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "nmap", params, timeout_override=timeout_override
+        )
 
         if response.status != "success":
             raise MCPException(f"Nmap execution failed: {response.error}")
-
         assets = []
         hosts = response.result.get("hosts", [])
         for host in hosts:
@@ -54,6 +57,7 @@ class SecurityBridgeAdapter:
         level: int = 1,
         risk: int = 1,
         dump: bool = False,
+        timeout_override: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Run SQLMap against a target URL and return a parsed injection verdict.
 
@@ -80,20 +84,24 @@ class SecurityBridgeAdapter:
         if dump:
             params["dump"] = True
 
-        response = await self.registry.execute_tool(self.SERVER_ID, "sqlmap", params)
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "sqlmap", params, timeout_override=timeout_override
+        )
 
         if response.status != "success":
             raise MCPException(f"SQLMap execution failed: {response.error}")
 
         return response.result.get("data", {}) or {}
 
-    async def run_ffuf(self, url: str) -> List[Endpoint]:
+    async def run_ffuf(self, url: str, timeout_override: Optional[int] = None) -> List[Endpoint]:
         """Run FFUF directory/file fuzzing."""
         if "FUZZ" not in url:
             url = url.rstrip("/") + "/FUZZ"
 
         params = {"url": url}
-        response = await self.registry.execute_tool(self.SERVER_ID, "ffuf", params)
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "ffuf", params, timeout_override=timeout_override
+        )
 
         if response.status != "success":
             raise MCPException(f"FFUF execution failed: {response.error}")
@@ -113,7 +121,9 @@ class SecurityBridgeAdapter:
             )
         return endpoints
 
-    async def run_katana(self, url: str, depth: int = 3) -> Dict[str, List[str]]:
+    async def run_katana(
+        self, url: str, depth: int = 3, timeout_override: Optional[int] = None
+    ) -> Dict[str, List[str]]:
         """Run Katana crawler and return discovered {endpoints, js_files}.
 
         The security-bridge server runs ``katana -j`` (JSONL) and returns katana's
@@ -123,11 +133,12 @@ class SecurityBridgeAdapter:
         discovery previously returned nothing even when katana found URLs.
         """
         params = {"url": url, "depth": depth, "js_crawl": True}
-        response = await self.registry.execute_tool(self.SERVER_ID, "katana_crawl", params)
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "katana_crawl", params, timeout_override=timeout_override
+        )
 
         if response.status != "success":
             raise MCPException(f"Katana crawl failed: {response.error}")
-
         res = response.result or {}
         endpoints = list(res.get("endpoints") or [])
         js_files = list(res.get("js_files") or [])

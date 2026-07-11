@@ -1,0 +1,23 @@
+{
+  "endpoint": "/system/readiness/trust-score",
+  "code": 200,
+  "data": {
+    "trust_score": 100,
+    "readiness": "ready",
+    "last_audited": "2026-07-10T16:48:20.820414Z",
+    "components": {
+      "critical_services": {
+        "healthy": 3,
+        "total": 3,
+        "redis": "healthy",
+        "neo4j": "healthy",
+        "postgres": "healthy"
+      },
+      "mcp_tooling": {
+        "healthy_servers": 10,
+        "total_servers": 10,
+        "status": "healthy"
+      }
+    }
+  }
+}

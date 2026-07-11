@@ -17,6 +17,13 @@ from ai_osop.core.config import AgentType, EngagementPhase, VulnClass
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
 from ai_osop.core.models import ApprovalRequest, AuditEvent, Task
+from ai_osop.core.execution_trace import (
+    ExecutionStage,
+    FailureCategory,
+    attach_trace,
+    record_failure,
+    record_stage,
+)
 from ai_osop.core.observability import record_task, update_task_counts
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
@@ -38,6 +45,9 @@ class TaskScheduler:
     async def schedule_task(self, task: Task) -> Task:
         """Schedule a task for execution."""
         from ai_osop.core.telemetry import inject_trace_context
+
+        # Attach an Execution Observatory trace to this task
+        attach_trace(task)
 
         if not task.trace_context:
             inject_trace_context(task.trace_context)
@@ -72,8 +82,16 @@ class TaskScheduler:
                 task.approval_required = True
             self._sanitize_external_payload(task)
             self._orch._tasks[task.id] = task
+
+            record_stage(task, ExecutionStage.TASK_PERSISTED, metadata={"store": "memory"})
             await self._orch.graph_memory.upsert_task(task)
             await self._orch.session_memory.store_task(task)
+
+            record_stage(task, ExecutionStage.REDIS_CONNECTED, metadata={"store": "session_memory", "operation": "store_task"})
+            record_stage(task, ExecutionStage.NEO4J_CONNECTED, metadata={"store": "graph_memory", "operation": "upsert_task"})
+            record_stage(task, ExecutionStage.POSTGRES_CONNECTED, metadata={"store": "session_memory", "operation": "store_task"})
+
+            record_stage(task, ExecutionStage.TASK_QUEUED, metadata={"store": "redis"})
             await self._orch.coordination_bus.publish(
                 "task.scheduled",
                 {
@@ -106,32 +124,36 @@ class TaskScheduler:
         self._orch._tasks[task.id] = task
         start_time = asyncio.get_event_loop().time()
         timeout = task.timeout_seconds or 300
+        record_stage(task, ExecutionStage.PERSISTENCE_COMPLETED, metadata={"store": "durable"})
 
         while True:
+            record_stage(task, ExecutionStage.WORKER_LEASE_REQUESTED, metadata={"agent_type": str(task.agent_type)})
             agent = await self._find_available_agent(task.agent_type, task.type)
             if agent:
+                record_stage(task, ExecutionStage.WORKER_LEASE_GRANTED, metadata={"agent_id": agent.ctx.agent_id})
                 task.assigned_agent_id = agent.ctx.agent_id
                 task.status = "running"
+                task.started_at = datetime.utcnow()
+                record_stage(task, ExecutionStage.WORKER_ASSIGNED, metadata={"agent_id": agent.ctx.agent_id})
                 try:
                     result = await agent.execute_task(task)
                     status = result.get("status") if isinstance(result, dict) else None
-                    if status in self._FAILURE_STATUSES:
+                    if result is None or not isinstance(result, dict) or status in self._FAILURE_STATUSES:
                         task.status = "failed"
-                        task.result = result
-                        task.error = result.get("error")
+                        task.result = result if isinstance(result, dict) else {"status": "failed", "error": "empty or invalid agent result"}
+                        task.error = task.result.get("error") or "empty or invalid agent result"
+                        record_failure(task, FailureCategory.SCANNER, str(task.error), component=agent.ctx.agent_id)
                     else:
                         task.status = "completed"
-                        task.result = (
-                            result
-                            if isinstance(result, dict)
-                            else {"status": "success", "raw": result}
-                        )
+                        task.result = result
+                        record_stage(task, ExecutionStage.TASK_COMPLETED, metadata={"status": "completed"})
                     await self._orch.session_memory.store_task(task)
                     return task.result
                 except Exception as e:
                     task.status = "failed"
                     task.result = {"status": "failed", "error": str(e)}
                     task.error = str(e)
+                    record_failure(task, FailureCategory.SCANNER, str(e), component=agent.ctx.agent_id)
                     await self._orch.session_memory.store_task(task)
                     return task.result
                 finally:
@@ -140,6 +162,7 @@ class TaskScheduler:
             if asyncio.get_event_loop().time() - start_time > timeout:
                 task.status = "failed"
                 task.result = {"status": "failed", "error": "Timeout waiting for agent"}
+                record_failure(task, FailureCategory.QUEUE, "Timeout waiting for agent", component="task_scheduler")
                 await self._orch.session_memory.store_task(task)
                 return task.result
 
@@ -171,6 +194,7 @@ class TaskScheduler:
                     self.state_machine.assert_task_allowed(task, EngagementPhase(session.phase))
                 except WorkflowException as e:
                     logger.warning("task_phase_violation", task_id=task.id, error=str(e))
+                    record_failure(task, FailureCategory.PLANNER, str(e), component="phase_monitor")
                     await self._on_task_failure(
                         task, {"error": str(e), "error_type": "PhaseViolation"}
                     )
@@ -189,6 +213,7 @@ class TaskScheduler:
                 _scope = getattr(_sess, "scope", None) if _sess is not None else None
                 if _scope is None or not getattr(_scope, "signature", None):
                     logger.error("scope_unsigned_or_missing", task_id=task.id)
+                    record_failure(task, FailureCategory.WORKER, "scope is unsigned or unavailable", component="scope_check")
                     await self._on_task_failure(
                         task,
                         {"error": "scope is unsigned or unavailable", "error_type": "ScopeTamper"},
@@ -198,6 +223,7 @@ class TaskScheduler:
 
                 if not _scope.verify_signature(scope_signing_key()):
                     logger.error("scope_signature_invalid", task_id=task.id)
+                    record_failure(task, FailureCategory.WORKER, "scope signature invalid", component="scope_check")
                     await self._on_task_failure(
                         task,
                         {"error": "scope signature invalid", "error_type": "ScopeTamper"},
@@ -266,16 +292,19 @@ class TaskScheduler:
                     task.payload["operator_approved"] = True
 
             # Find + atomically claim an available agent
+            record_stage(task, ExecutionStage.WORKER_LEASE_REQUESTED, metadata={"agent_type": str(task.agent_type)})
             agent = await self._find_available_agent(task.agent_type, task.type)
             if not agent:
                 logger.info("no_agent_found", task_id=task.id)
             if agent:
+                record_stage(task, ExecutionStage.WORKER_LEASE_GRANTED, metadata={"agent_id": agent.ctx.agent_id})
                 started_execution = False
                 try:
                     task.assigned_agent_id = agent.ctx.agent_id
                     task.status = "running"
                     task.started_at = datetime.utcnow()
                     task.lease_expires = datetime.utcnow() + timedelta(seconds=90)
+                    record_stage(task, ExecutionStage.WORKER_ASSIGNED, metadata={"agent_id": agent.ctx.agent_id})
                     await self._orch.graph_memory.upsert_task(task)
                     await self._orch.session_memory.store_task(task)
                     await self._orch.coordination_bus.publish(
@@ -302,6 +331,7 @@ class TaskScheduler:
                     )
                     task.status = "failed"
                     task.result = {"status": "failed", "error": str(e)}
+                    record_failure(task, FailureCategory.PERSISTENCE, str(e), component="assign_task")
                     await self._orch.graph_memory.upsert_task(task)
                     await self._orch.session_memory.store_task(task)
                 finally:
@@ -311,6 +341,7 @@ class TaskScheduler:
                         await self._release_agent(agent.ctx.agent_id)
             else:
                 task.status = "pending"
+                record_stage(task, ExecutionStage.WORKER_LEASE_REQUESTED, error="no_agent_found")
                 await self._orch.graph_memory.upsert_task(task)
                 await self._orch.session_memory.store_task(task)
 
@@ -465,6 +496,8 @@ class TaskScheduler:
 
         parent_span_context = extract_trace_context(task.trace_context)
 
+        record_stage(task, ExecutionStage.DEPENDENCY_INJECTION_COMPLETE, metadata={"agent_id": agent.ctx.agent_id})
+
         if parent_span_context.is_valid:
             span_ctx = trace_span_with_parent(
                 "orchestrator._execute_via_agent",
@@ -500,17 +533,16 @@ class TaskScheduler:
                 _timeout = getattr(task, "timeout_seconds", None) or 300
                 result = await asyncio.wait_for(agent.execute_task(task), timeout=_timeout)
                 status = result.get("status") if isinstance(result, dict) else None
-                if status in self._FAILURE_STATUSES:
-                    normalized = result if isinstance(result, dict) else {"status": "failed"}
+                if result is None or not isinstance(result, dict) or status in self._FAILURE_STATUSES:
+                    normalized = result if isinstance(result, dict) else {"status": "failed", "error": "empty or invalid agent result"}
                     if not await self._maybe_retry(task, normalized):
                         await self._on_task_failure(task, normalized)
                 else:
-                    normalized = (
-                        result if isinstance(result, dict) else {"status": "success", "raw": result}
-                    )
+                    normalized = result
                     await self._on_task_success(task, normalized)
 
             except asyncio.TimeoutError:
+                record_failure(task, FailureCategory.WORKER, f"agent execution exceeded {_timeout}s hard timeout", component=agent.ctx.agent_id)
                 err = {
                     "error": f"agent execution exceeded {_timeout}s hard timeout",
                     "error_type": "TaskTimeout",
@@ -519,6 +551,7 @@ class TaskScheduler:
                     await self._on_task_failure(task, err)
 
             except asyncio.CancelledError:
+                record_failure(task, FailureCategory.WORKER, "execution cancelled", component=agent.ctx.agent_id)
                 await self._on_task_failure(
                     task, {"error": "execution cancelled", "error_type": "CancelledError"}
                 )
@@ -547,8 +580,14 @@ class TaskScheduler:
             task.result = result
             task.status = "completed"
             task.completed_at = datetime.utcnow()
+            record_stage(task, ExecutionStage.PERSISTENCE_COMPLETED)
             await self._orch.graph_memory.upsert_task(task, result_summary=result)
             await self._orch.session_memory.store_task(task)
+            # Auto-persist the execution trace to Redis for querying after restart
+            from ai_osop.core.execution_trace import get_trace as _gt, store_trace_to_redis as _str
+            _trace = _gt(task)
+            if _trace is not None:
+                await _str(self._orch.session_memory, _trace)
             await self._orch.coordination_bus.publish(
                 "task.completed",
                 {
@@ -559,6 +598,8 @@ class TaskScheduler:
                 },
                 "orchestrator",
             )
+            record_stage(task, ExecutionStage.DASHBOARD_UPDATED, metadata={"via": "coordination_bus", "topic": "task.completed"})
+            record_stage(task, ExecutionStage.TASK_COMPLETED, metadata={"status": "completed"})
             record_task(
                 "completed",
                 task.agent_type.value,
@@ -666,6 +707,25 @@ class TaskScheduler:
                 "error": str(result.get("error", ""))[:120],
             },
         ):
+            # Classify the failure from the structured error_type field or error string
+            error_str = str(result.get("error", "") or "")
+            error_type = str(result.get("error_type", "") or "")
+            failure_category = FailureCategory.UNKNOWN
+            if error_type in ("TaskTimeout", "ScannerTimeout"):
+                failure_category = FailureCategory.WORKER
+            elif error_type in ("PhaseViolation",):
+                failure_category = FailureCategory.PLANNER
+            elif error_type in ("ScopeTamper",):
+                failure_category = FailureCategory.WORKER
+            elif error_type in ("CancelledError",):
+                failure_category = FailureCategory.WORKER
+            elif "timeout" in error_str.lower() or "timed out" in error_str.lower():
+                failure_category = FailureCategory.WORKER
+            elif "mcp" in error_str.lower() or "circuit" in error_str.lower():
+                failure_category = FailureCategory.MCP
+            elif "phase" in error_str.lower():
+                failure_category = FailureCategory.PLANNER
+            record_failure(task, failure_category, error_str[:200], component=task.assigned_agent_id)
             task.result = result
             task.status = "failed"
             task.completed_at = datetime.utcnow()
@@ -683,6 +743,7 @@ class TaskScheduler:
                 },
                 "orchestrator",
             )
+            record_stage(task, ExecutionStage.DASHBOARD_UPDATED, metadata={"via": "coordination_bus", "topic": "task.failed"})
             if task.retry_count >= task.max_retries:
                 try:
                     await self._orch.dlq.enqueue(
@@ -717,6 +778,16 @@ class TaskScheduler:
                     in ("completed", "failed")
                     for dep_id in all_deps
                 ):
+                    # Propagate dependency payloads to child payload
+                    for dep_id in all_deps:
+                        dep_task = self._orch._tasks.get(dep_id)
+                        if dep_task and dep_task.status == "completed" and dep_task.result:
+                            if "payloads" in dep_task.result:
+                                payloads = dep_task.result["payloads"]
+                                if isinstance(payloads, list) and payloads:
+                                    first_p = payloads[0]
+                                    p_str = first_p.get("content") if isinstance(first_p, dict) else str(first_p)
+                                    child.payload["payload"] = p_str
                     await self._assign_task(child)
 
     async def _chain_authenticated_surface(

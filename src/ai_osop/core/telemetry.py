@@ -34,6 +34,7 @@ ENGAGEMENT_ID_CTX_VAR = contextvars.ContextVar("engagement_id", default="")
 TASK_ID_CTX_VAR = contextvars.ContextVar("task_id", default="")
 USER_ID_CTX_VAR = contextvars.ContextVar("user_id", default="")
 TRACE_ID_CTX_VAR = contextvars.ContextVar("trace_id", default="")
+MCP_LATENCY_CTX_VAR = contextvars.ContextVar("mcp_latency", default=0.0)
 
 
 def _get_current_trace_id() -> str:
@@ -208,3 +209,16 @@ def extract_trace_id_from_traceparent(traceparent: Optional[str]) -> Optional[st
     except Exception:
         pass
     return None
+
+def reset_mcp_latency() -> None:
+    """Reset the cumulative MCP latency in the current context."""
+    MCP_LATENCY_CTX_VAR.set(0.0)
+
+def add_mcp_latency(duration_ms: float) -> None:
+    """Add duration in milliseconds to the cumulative MCP latency."""
+    current = MCP_LATENCY_CTX_VAR.get()
+    MCP_LATENCY_CTX_VAR.set(current + duration_ms)
+
+def get_mcp_latency() -> float:
+    """Return the cumulative MCP latency in the current context."""
+    return MCP_LATENCY_CTX_VAR.get()

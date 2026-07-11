@@ -4,13 +4,13 @@ Specialized agent for DNS enumeration, port scanning, service discovery,
 and asset inventory maintenance.
 """
 
+import asyncio
 import hashlib
 import re
 from datetime import datetime
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urljoin, urlparse
-
 import aiohttp
 import structlog
 
@@ -23,7 +23,7 @@ from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, make_asset_id
 from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
-from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params, mine_urls
+from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params, mine_urls, extract_form_fields
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)
@@ -217,7 +217,7 @@ class ReconAgent(BaseAgent):
         depth = int(payload.get("depth", 3))
         engagement_id = self.ctx.current_task.engagement_id if self.ctx.current_task else ""
         try:
-            result = await self.security_bridge.run_katana(target, depth=depth)
+            result = await self.security_bridge.run_katana(target, depth=depth, timeout_override=120)
         except Exception as e:
             logger.warning("content_discovery_katana_failed", error=str(e))
             return {"status": "error", "error": f"katana crawl failed: {e}"}
@@ -226,10 +226,23 @@ class ReconAgent(BaseAgent):
             for u in (list(result.get("endpoints", [])) + list(result.get("js_files", [])))
             if isinstance(u, str) and u
         ]
+
+        # 1. Fetch form fields from up to 50 crawled URLs
+        form_params_by_url = {}
+        try:
+            form_params_by_url = await self._fetch_and_extract_form_fields(urls)
+        except Exception as e:
+            logger.warning("fetch_form_fields_failed", error=str(e))
+
         added = 0
         for url in urls:
             try:
-                ep = self._mk_endpoint(url, engagement_id, source="katana")
+                # Merge query params with form fields
+                query_params = extract_params(url)
+                form_fields = form_params_by_url.get(url, [])
+                combined_params = sorted(list(set(query_params + form_fields)))
+
+                ep = self._mk_endpoint(url, engagement_id, source="katana", parameters=combined_params)
                 await self.ctx.graph_memory.add_endpoint(ep)
                 self.endpoint_inventory[ep.id] = ep
                 added += 1
@@ -249,6 +262,32 @@ class ReconAgent(BaseAgent):
             "js_files": len(result.get("js_files", [])),
             "parameter_intelligence": intel,
         }
+
+    async def _fetch_and_extract_form_fields(self, urls: List[str]) -> Dict[str, List[str]]:
+        form_params_by_url = {}
+        web_urls = [u for u in urls if not u.lower().endswith(".js")][:50]
+        if not web_urls:
+            return {}
+
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for url in web_urls:
+                tasks.append(self._fetch_single_url_forms(session, url))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for url, fields in zip(web_urls, results):
+                if isinstance(fields, list) and fields:
+                    form_params_by_url[url] = fields
+        return form_params_by_url
+
+    async def _fetch_single_url_forms(self, session: aiohttp.ClientSession, url: str) -> List[str]:
+        try:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    return extract_form_fields(html)
+        except Exception:
+            pass
+        return []
 
     async def _execute_openapi_ingest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Discover + ingest an exposed OpenAPI/Swagger spec (P1.3).

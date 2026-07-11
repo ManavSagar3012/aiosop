@@ -41,7 +41,7 @@ export const ApprovalQueue: React.FC = () => {
   const load = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/approvals/pending`, { headers: authHeaders() });
-      if (!res.ok) { setError(`pending ${res.status}`); return; }
+      if (!res.ok) { console.error(`pending ${res.status}`); setError(`pending ${res.status}`); return; }
       const all = await res.json();
       const list: ApprovalReq[] = Array.isArray(all) ? all : [];
       setApprovals(sessionId ? list.filter((a) => a.engagement_id === sessionId) : list);

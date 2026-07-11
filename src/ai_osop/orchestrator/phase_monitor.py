@@ -22,6 +22,13 @@ logger = structlog.get_logger("ai_osop.orchestrator.phase_monitor")
 class PhaseMonitor:
     """Monitor engagement phases and trigger automatic tasks on phase entry."""
 
+    # sqlmap itself is bounded to 90 seconds by VulnAnalysisAgent.  The phase
+    # scheduler must leave a little room for setup/cleanup, but it must not
+    # inherit the 15-minute Nuclei budget: a handful of stalled SQLi jobs would
+    # otherwise occupy every vuln-analysis worker and let unrelated scans age
+    # into the stuck-task reaper.
+    SQLI_TASK_TIMEOUT_SECONDS = 120
+
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
         self._tick = 0
@@ -60,6 +67,7 @@ class PhaseMonitor:
             targets.append(
                 {
                     "url": target_url,
+                    "method": r.get("method") or "GET",
                     "technologies": r.get("technologies") or [],
                 }
             )
@@ -256,7 +264,7 @@ class PhaseMonitor:
 
             for target in injection_targets:
                 target_url = target["url"]
-
+                target_method = target.get("method") or "GET"
                 # Retrieve technologies for this target from the mapping.
                 # Since _select_injection_targets might modify parameters,
                 # we match by parsed path and host, or fallback to direct lookups.
@@ -276,9 +284,9 @@ class PhaseMonitor:
                     type="sqli_scan",
                     priority=8,
                     agent_type=AgentType.VULN_ANALYSIS,
-                    payload={"url": target_url, "level": 2, "risk": 1},
+                    payload={"url": target_url, "method": target_method, "level": 2, "risk": 1},
                     engagement_id=session.session_id,
-                    timeout_seconds=settings.nuclei_mcp_timeout + 120,
+                    timeout_seconds=self.SQLI_TASK_TIMEOUT_SECONDS,
                 )
                 await self._orch.task_scheduler.schedule_task(sqli_task)
 
@@ -286,7 +294,7 @@ class PhaseMonitor:
                     type="xss_scan",
                     priority=8,
                     agent_type=AgentType.VULN_ANALYSIS,
-                    payload={"url": target_url},
+                    payload={"url": target_url, "method": target_method},
                     engagement_id=session.session_id,
                     timeout_seconds=300,
                 )
@@ -326,7 +334,7 @@ class PhaseMonitor:
                             type=f"{scanner_type.value.replace('_scanner', '').replace('_agent', '')}_scan",
                             priority=8,
                             agent_type=scanner_type,
-                            payload={"url": target_url},
+                            payload={"url": target_url, "method": target_method},
                             engagement_id=session.session_id,
                             timeout_seconds=300,
                         )
@@ -418,6 +426,7 @@ class PhaseMonitor:
             # 58 info findings -> 58 high-risk approvals) and produces spurious traffic to
             # the target. Gate on severity; carry severity into the payload so the approval
             # New functional scanners
+            target_url = self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
             for scanner_type in [
                 AgentType.SSTI_SCANNER,
                 AgentType.SSRF_SCANNER,
@@ -484,21 +493,45 @@ class PhaseMonitor:
             )
             for vid, sev in exploitable:
                 endpoint_url = await self._orch.graph_memory.get_endpoint_url_for_vulnerability(vid)
-                task = Task(
+                
+                # Retrieve the vulnerability node properties to get the vuln_type
+                vuln_node = await self._orch.graph_memory.get_node_details(vid)
+                vuln_type = vuln_node.get("vuln_type", "unknown") if vuln_node else "unknown"
+                
+                payload_task = Task(
+                    type="generate_payloads",
+                    priority=9,
+                    agent_type=AgentType.PAYLOAD_MUTATION,
+                    payload={
+                        "vuln_type": vuln_type,
+                        "context": {
+                            "target": endpoint_url,
+                            "vulnerability_id": vid,
+                            "engagement_id": session.session_id,
+                        },
+                        "count": 3,
+                    },
+                    engagement_id=session.session_id,
+                )
+                await self._orch.task_scheduler.schedule_task(payload_task)
+                
+                validation_task = Task(
                     type="exploit_validation",
                     priority=9,
                     agent_type=AgentType.EXPLOIT_VALIDATION,
                     approval_required=True,
+                    dependencies=[payload_task.id],
                     payload={
                         "target": endpoint_url,
                         "vulnerability_id": vid,
                         "severity": sev,
                         "operator_approved": False,
+                        "vuln_class": vuln_type,
                     },
                     engagement_id=session.session_id,
                 )
-                await self._orch.task_scheduler.schedule_task(task)
-
+                await self._orch.task_scheduler.schedule_task(validation_task)
+                await self._orch.task_scheduler._persist_task_dependency(payload_task, validation_task)
         elif phase == EngagementPhase.REPORTING:
             task = Task(
                 type="generate_report",

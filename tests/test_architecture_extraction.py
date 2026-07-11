@@ -217,8 +217,8 @@ class TestRecoveryService:
         orch.task_scheduler._maybe_retry = AsyncMock(return_value=True)
         return RecoveryService(orch)
 
-    async def test_reap_stuck_tasks_fails_expired_pending(self, service):
-        """_reap_stuck_tasks should fail tasks that have exceeded their timeout."""
+    async def test_reap_stuck_tasks_keeps_expired_pending_work_queued(self, service):
+        """Queue wait must not consume the task's execution timeout budget."""
         from datetime import datetime, timedelta
 
         task = Task(
@@ -233,5 +233,57 @@ class TestRecoveryService:
         service._orch.graph_memory.upsert_task = AsyncMock()
         service._orch._audit_log = AsyncMock()
         reaped = await service._reap_stuck_tasks()
+        assert reaped == 0
+        assert task.status == "pending"
+        service._orch.task_scheduler._maybe_retry.assert_not_awaited()
+
+    async def test_reap_stuck_tasks_retries_expired_running_task(self, service):
+        """The runtime guard remains active once a worker has started a task."""
+        from datetime import datetime, timedelta
+
+        task = Task(
+            type="test",
+            agent_type=AgentType.RECON,
+            engagement_id="eng-1",
+            status="running",
+            started_at=datetime.utcnow() - timedelta(seconds=400),
+            timeout_seconds=300,
+        )
+        service._orch._tasks[task.id] = task
+
+        reaped = await service._reap_stuck_tasks()
+
         assert reaped == 1
-        assert task.status == "failed"
+        service._orch.task_scheduler._maybe_retry.assert_awaited_once()
+
+    async def test_reap_stuck_tasks_cancels_execution_before_retrying(self, service):
+        """Retries replace the timed-out coroutine instead of duplicating it."""
+        from datetime import datetime, timedelta
+
+        cancelled = asyncio.Event()
+
+        async def running_execution():
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        task = Task(
+            type="test",
+            agent_type=AgentType.RECON,
+            engagement_id="eng-1",
+            status="running",
+            started_at=datetime.utcnow() - timedelta(seconds=400),
+            timeout_seconds=300,
+        )
+        handle = asyncio.create_task(running_execution())
+        await asyncio.sleep(0)
+        service._orch._tasks[task.id] = task
+        service._orch._task_handles = {task.id: handle}
+
+        reaped = await service._reap_stuck_tasks()
+
+        assert reaped == 1
+        assert cancelled.is_set()
+        assert task.id not in service._orch._task_handles

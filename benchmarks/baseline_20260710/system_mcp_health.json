@@ -1,0 +1,138 @@
+{
+  "endpoint": "/system/mcp/health",
+  "code": 200,
+  "data": {
+    "servers": [
+      {
+        "server_id": "recon-mcp",
+        "host": "127.0.0.1",
+        "port": 8082,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.480914",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "nuclei-mcp",
+        "host": "127.0.0.1",
+        "port": 8084,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.480914",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "shodan-mcp",
+        "host": "127.0.0.1",
+        "port": 8085,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.480914",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "security-bridge",
+        "host": "127.0.0.1",
+        "port": 8087,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.482949",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "burp-mcp",
+        "host": "127.0.0.1",
+        "port": 8081,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.485005",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "payload-mcp",
+        "host": "127.0.0.1",
+        "port": 8083,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.484302",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "browser-mcp",
+        "host": "127.0.0.1",
+        "port": 8091,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.484302",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "turbo-intruder-mcp",
+        "host": "127.0.0.1",
+        "port": 8098,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.484302",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "threat-intel-mcp",
+        "host": "127.0.0.1",
+        "port": 8086,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.485005",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      },
+      {
+        "server_id": "cloud-mcp",
+        "host": "127.0.0.1",
+        "port": 8097,
+        "circuit_state": "closed",
+        "failure_count": 0,
+        "success_count": 2,
+        "last_success_at": "2026-07-10T16:46:49.485005",
+        "last_failure_at": null,
+        "recovery_attempts": 0,
+        "consecutive_successes": 0,
+        "initialized": true
+      }
+    ]
+  }
+}

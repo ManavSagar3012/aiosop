@@ -36,6 +36,7 @@ def client():
         patch("ai_osop.api.main.register_optional_mcp_servers", new_callable=AsyncMock),
         patch("ai_osop.api.main.Orchestrator") as mock_orch,
         patch("ai_osop.api.deps.settings.api_token", "dev-test-token"),
+        patch("ai_osop.api.deps.settings.jwt_secret", None),
         # Hermetic startup: the lifespan's run_startup_self_test does real
         # dependency probes. With backends mocked those probes are meaningless,
         # and when live services happen to be up they add ~15-20s of latency and
@@ -120,7 +121,7 @@ def test_api_startup_registers_agents(client):
     # concurrency, stack_profiler, playwright (AIOSOP-AUDIT-2026-06-16).
     # main.py lifespan registers 11 core agents + 10 specialist agents + new vulnerability scanner agents (total 32).
     # Note: the "experimental" designation was removed post-migration.
-    assert client.orch.register_agent.call_count == 32
+    assert client.orch.register_agent.call_count == 49
 
 
 def test_root_not_found(client):

@@ -1,14 +1,17 @@
-import pytest
 import asyncio
 from datetime import datetime, timedelta
+
+import pytest
+
 from ai_osop.core.config import AgentState
 from ai_osop.core.models import Task
+
 
 @pytest.mark.asyncio
 async def test_agent_recovery_scenarios(orchestrator, session_memory):
     # 1. Create agent status
     await session_memory.store_hot("agent:recon-agent-001", {"status": "running"})
-    
+
     # 2. Create a task and assign to recon-agent-001
     task = Task(type="full_recon", agent_type="recon", engagement_id="eng-123")
     task.status = "running"
@@ -24,7 +27,7 @@ async def test_agent_recovery_scenarios(orchestrator, session_memory):
         "task_id": task.id,
         "engagement_id": "eng-123",
         "version": "8.0",
-        "last_seen": (datetime.utcnow() - timedelta(seconds=65)).isoformat()
+        "last_seen": (datetime.utcnow() - timedelta(seconds=65)).isoformat(),
     }
     await session_memory.update_agent_heartbeat("recon-agent-001", heartbeat_data)
 
@@ -40,5 +43,6 @@ async def test_agent_recovery_scenarios(orchestrator, session_memory):
     # Verify Agent status
     agent_status = await session_memory.retrieve_hot("agent:recon-agent-001")
     assert agent_status["status"] == AgentState.OFFLINE.value
+
 
 print("All tests passed.")

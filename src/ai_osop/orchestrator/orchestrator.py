@@ -835,7 +835,20 @@ class Orchestrator:
         # Map phase to corresponding AgentTypes
         phase_agent_mapping = {
             EngagementPhase.RECONNAISSANCE: {AgentType.RECON},
-            EngagementPhase.VULNERABILITY_DISCOVERY: {AgentType.VULN_ANALYSIS},
+            EngagementPhase.VULNERABILITY_DISCOVERY: {
+                AgentType.VULN_ANALYSIS,
+                AgentType.SSTI_SCANNER,
+                AgentType.SSRF_SCANNER,
+                AgentType.CSRF_SCANNER,
+                AgentType.JWT_SCANNER,
+                AgentType.SMUGGLING_SCANNER,
+                AgentType.RACE_SCANNER,
+                AgentType.UPLOAD_SCANNER,
+                AgentType.POLLUTION_SCANNER,
+                AgentType.WEBSOCKET_SCANNER,
+                AgentType.SAML_SCANNER,
+                AgentType.TAKEOVER_SCANNER,
+            },
             EngagementPhase.EXPLOITATION: {AgentType.EXPLOIT_VALIDATION, AgentType.ATTACK_CHAIN},
             EngagementPhase.POST_EXPLOITATION: {AgentType.WORKFLOW},
             EngagementPhase.REPORTING: {AgentType.REPORTING},

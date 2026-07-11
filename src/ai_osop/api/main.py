@@ -42,6 +42,7 @@ from ai_osop.api.routers import (
     engagements,
     findings,
     intelligence,
+    observatory,
     sessions,
     system,
     tasks,
@@ -72,7 +73,7 @@ from ai_osop.safety.scope import SandboxManager
 logger = logging.getLogger("ai_osop.api")
 
 
-from ai_osop.reliability.retry import retry_with_backoff
+from ai_osop.reliability.retry import retry_with_backoff  # noqa: E402
 
 logger = logging.getLogger("ai_osop.api")
 
@@ -376,17 +377,51 @@ async def lifespan(app: FastAPI):
             from ai_osop.core.config import AgentType
 
             bootstrap_session_id = "api-bootstrap"
+            # AIOSOP-CONCURRENCY-001 (2026-07-09): scale agent pool to prevent
+            # task queue bottlenecks. With only 2 vuln agents and 1 recon agent,
+            # 48 tasks took >180s — 97.9% remained pending. Each agent processes
+            # one task at a time, so more instances = more parallel slots.
+            # Platform-wide ceiling: settings.max_concurrent_agents (default 50).
+            _VULN_WORKERS = 5
+            _RECON_WORKERS = 3
+            _EXPLOIT_WORKERS = 2
+            _SSTI_WORKERS = 2
+            _SSRF_WORKERS = 2
+            _CSRF_WORKERS = 2
+            _JWT_WORKERS = 2
+            _SMUGGLING_WORKERS = 2
+            _RACE_WORKERS = 2
+            _UPLOAD_WORKERS = 2
+            _POLLUTION_WORKERS = 2
+            _WEBSOCKET_WORKERS = 2
+            _SAML_WORKERS = 2
+            _TAKEOVER_WORKERS = 2
+
             agents_to_register = [
                 (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
-                (ReconAgent, AgentType.RECON, "recon-agent-001"),
-                (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, "vuln-agent-001"),
-                (
-                    VulnAnalysisAgent,
-                    AgentType.VULN_ANALYSIS,
-                    "vuln-agent-002",
-                ),  # Second worker to prevent nuclei scan queueing
+            ]
+
+            # Recon workers (default 3)
+            for i in range(1, _RECON_WORKERS + 1):
+                agents_to_register.append(
+                    (ReconAgent, AgentType.RECON, f"recon-agent-{i:03d}")
+                )
+
+            # Vuln-analysis workers (default 5)
+            for i in range(1, _VULN_WORKERS + 1):
+                agents_to_register.append(
+                    (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, f"vuln-agent-{i:03d}")
+                )
+
+            # Exploit workers (default 2)
+            for i in range(1, _EXPLOIT_WORKERS + 1):
+                agents_to_register.append(
+                    (ExploitValidationAgent, AgentType.EXPLOIT_VALIDATION, f"exploit-agent-{i:03d}")
+                )
+
+            # Specialised single-instance agents
+            agents_to_register.extend([
                 (HumanOversightAgent, AgentType.HUMAN_OVERSIGHT, "human-oversight-agent-001"),
-                (ExploitValidationAgent, AgentType.EXPLOIT_VALIDATION, "exploit-agent-001"),
                 (PayloadMutationAgent, AgentType.PAYLOAD_MUTATION, "payload-agent-001"),
                 (ReportingAgent, AgentType.REPORTING, "reporting-agent-001"),
                 (ContextManagerAgent, AgentType.CONTEXT_MANAGER, "context-manager-agent-001"),
@@ -402,18 +437,31 @@ async def lifespan(app: FastAPI):
                 (ReactSpecialistAgent, AgentType.REACT_SPECIALIST, "react-agent-001"),
                 (StatefulLogicAgent, AgentType.STATEFUL_LOGIC, "stateful-logic-agent-001"),
                 (VisualContextAgent, AgentType.VISUAL_CONTEXT, "visual-agent-001"),
-                (SSTIAgent, AgentType.SSTI_SCANNER, "ssti-agent-001"),
-                (SSRFAgent, AgentType.SSRF_SCANNER, "ssrf-agent-001"),
-                (CSRFAgent, AgentType.CSRF_SCANNER, "csrf-agent-001"),
-                (JWTAgent, AgentType.JWT_SCANNER, "jwt-agent-001"),
-                (SmugglingScanner, AgentType.SMUGGLING_SCANNER, "smuggling-agent-001"),
-                (RaceScanner, AgentType.RACE_SCANNER, "race-agent-001"),
-                (UploadScanner, AgentType.UPLOAD_SCANNER, "upload-agent-001"),
-                (PollutionScanner, AgentType.POLLUTION_SCANNER, "pollution-agent-001"),
-                (WebSocketAgent, AgentType.WEBSOCKET_SCANNER, "websocket-agent-001"),
-                (SAMLAgent, AgentType.SAML_SCANNER, "saml-agent-001"),
-                (TakeoverAgent, AgentType.TAKEOVER_SCANNER, "takeover-agent-001"),
-            ]
+            ])
+
+            # Scanner workers: scale bottleneck scanners to 2 instances each
+            for i in range(1, _SSTI_WORKERS + 1):
+                agents_to_register.append((SSTIAgent, AgentType.SSTI_SCANNER, f"ssti-agent-{i:03d}"))
+            for i in range(1, _SSRF_WORKERS + 1):
+                agents_to_register.append((SSRFAgent, AgentType.SSRF_SCANNER, f"ssrf-agent-{i:03d}"))
+            for i in range(1, _CSRF_WORKERS + 1):
+                agents_to_register.append((CSRFAgent, AgentType.CSRF_SCANNER, f"csrf-agent-{i:03d}"))
+            for i in range(1, _JWT_WORKERS + 1):
+                agents_to_register.append((JWTAgent, AgentType.JWT_SCANNER, f"jwt-agent-{i:03d}"))
+            for i in range(1, _SMUGGLING_WORKERS + 1):
+                agents_to_register.append((SmugglingScanner, AgentType.SMUGGLING_SCANNER, f"smuggling-agent-{i:03d}"))
+            for i in range(1, _RACE_WORKERS + 1):
+                agents_to_register.append((RaceScanner, AgentType.RACE_SCANNER, f"race-agent-{i:03d}"))
+            for i in range(1, _UPLOAD_WORKERS + 1):
+                agents_to_register.append((UploadScanner, AgentType.UPLOAD_SCANNER, f"upload-agent-{i:03d}"))
+            for i in range(1, _POLLUTION_WORKERS + 1):
+                agents_to_register.append((PollutionScanner, AgentType.POLLUTION_SCANNER, f"pollution-agent-{i:03d}"))
+            for i in range(1, _WEBSOCKET_WORKERS + 1):
+                agents_to_register.append((WebSocketAgent, AgentType.WEBSOCKET_SCANNER, f"websocket-agent-{i:03d}"))
+            for i in range(1, _SAML_WORKERS + 1):
+                agents_to_register.append((SAMLAgent, AgentType.SAML_SCANNER, f"saml-agent-{i:03d}"))
+            for i in range(1, _TAKEOVER_WORKERS + 1):
+                agents_to_register.append((TakeoverAgent, AgentType.TAKEOVER_SCANNER, f"takeover-agent-{i:03d}"))
 
             for agent_cls, agent_type, agent_id in agents_to_register:
                 ctx = AgentContext(
@@ -701,6 +749,7 @@ app.include_router(sessions.router)
 app.include_router(findings.router)
 app.include_router(intelligence.router)
 app.include_router(system.router)
+app.include_router(observatory.router)
 
 
 # ============== Metrics (protected) ==============
@@ -719,36 +768,34 @@ async def metrics(operator: Dict[str, Any] = Depends(require_role("senior_operat
 from ai_osop.api.deps import assert_engagement_access, verify_token  # noqa: E402
 
 
-@app.websocket("/ws/engagements/{engagement_id}")
-async def websocket_engagement(websocket: WebSocket, engagement_id: str):
-    """WebSocket for real-time engagement updates."""
-    await websocket.accept()
-
-    # Auth via query parameter
+async def get_websocket_operator(websocket: WebSocket) -> Dict[str, Any]:
     token = websocket.query_params.get("token")
     if not token:
-        await websocket.close(code=1008, reason="Missing token")
-        return
+        auth_header = websocket.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1]
+    if not token:
+        raise HTTPException(status_code=403, detail="Missing token")
+    return await verify_token(token=token)
 
-    try:
-        operator = await verify_token(token=token)
-    except HTTPException:
-        await websocket.close(code=1008, reason="Invalid token")
-        return
 
-    # Ownership check: operator must own the engagement to receive real-time updates
-    try:
-        await assert_engagement_access(operator, engagement_id)
-    except HTTPException:
-        await websocket.close(code=1008, reason="Access denied")
-        return
+async def get_websocket_session(
+    engagement_id: str,
+    operator: Dict[str, Any] = Depends(get_websocket_operator),
+):
+    return await assert_engagement_access(operator, engagement_id)
 
+
+@app.websocket("/ws/engagements/{engagement_id}")
+async def websocket_engagement(
+    websocket: WebSocket,
+    engagement_id: str,
+    operator: Dict[str, Any] = Depends(get_websocket_operator),
+    session=Depends(get_websocket_session),
+):
+    """WebSocket for real-time engagement updates."""
+    await websocket.accept()
     orch = state["orchestrator"]
-    session = orch._sessions.get(engagement_id)
-    if not session:
-        await websocket.close(code=1008, reason="Engagement not found")
-        return
-
     # AIOSOP-WS-PUSH-001 (2026-07-03): the handler was request-response ONLY, so the
     # dashboard's heartbeat/telemetry (LATENCY / THROUGHPUT) and live phase updates
     # never fired — the client subscribes to pushed events, but the server never sent
@@ -867,7 +914,7 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
                     }
                 )
             elif action == "halt":
-                if not (await require_role("senior_operator")(operator)):
+                if operator.get("role") != "senior_operator":
                     await websocket.send_json(
                         {"type": "error", "message": "halt requires senior_operator role"}
                     )

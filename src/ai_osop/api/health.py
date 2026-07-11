@@ -62,11 +62,26 @@ async def health_metrics():
         TASK_THROUGHPUT,
     )
 
+    def _metric_value(metric) -> float:
+        """Read a prometheus metric's current value via the public collect()
+        API. Counter and Gauge expose values differently — a Counter has no
+        ``._value`` attribute — so reaching into private state crashes on
+        Counters. Skips the ``_created`` bookkeeping sample."""
+        try:
+            for family in metric.collect():
+                for sample in family.samples:
+                    if sample.name.endswith("_created"):
+                        continue
+                    return float(sample.value)
+        except Exception:
+            return 0.0
+        return 0.0
+
     return {
-        "active_engagements": ACTIVE_ENGAGEMENTS._value.get(),
-        "task_throughput": TASK_THROUGHPUT._value.get(),
-        "agent_success_rate": AGENT_SUCCESS_RATE._value.get(),
-        "overall_readiness": READY_STATUS._value.get(),
+        "active_engagements": _metric_value(ACTIVE_ENGAGEMENTS),
+        "task_throughput": _metric_value(TASK_THROUGHPUT),
+        "agent_success_rate": _metric_value(AGENT_SUCCESS_RATE),
+        "overall_readiness": _metric_value(READY_STATUS),
     }
 
 

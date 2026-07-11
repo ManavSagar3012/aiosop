@@ -125,6 +125,7 @@ async def verify_token(
         credentials = None
     if not credentials and not token:
         raise HTTPException(status_code=403, detail="Not authenticated")
+    print(f"[DEBUG] Received Authorization header: {credentials.credentials if credentials else 'NONE'}")
     presented = credentials.credentials if credentials else token
 
     if settings.jwt_secret:

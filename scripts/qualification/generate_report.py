@@ -26,7 +26,8 @@ SUITES = [
 async def run_suite(name: str, path: str) -> dict:
     print(f"\nRunning {name} suite...")
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, path,
+        sys.executable,
+        path,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -58,14 +59,16 @@ async def main():
             results.append(result)
         else:
             print(f"WARNING: {path} not found, skipping")
-            results.append({
-                "name": name,
-                "passed": 0,
-                "failed": 0,
-                "errors": 0,
-                "output": "Suite not found",
-                "exit_code": -1,
-            })
+            results.append(
+                {
+                    "name": name,
+                    "passed": 0,
+                    "failed": 0,
+                    "errors": 0,
+                    "output": "Suite not found",
+                    "exit_code": -1,
+                }
+            )
 
     total_passed = sum(r["passed"] for r in results)
     total_failed = sum(r["failed"] for r in results)

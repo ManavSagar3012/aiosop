@@ -17,9 +17,20 @@ import structlog
 
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import AgentException, AgentTaskFailed
+from ai_osop.core.execution_trace import (
+    ExecutionStage,
+    FailureCategory,
+    record_failure,
+    record_stage,
+)
 from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.observability import record_task
-from ai_osop.core.telemetry import RequestContext, extract_trace_context
+from ai_osop.core.telemetry import (
+    RequestContext,
+    extract_trace_context,
+    reset_mcp_latency,
+    get_mcp_latency,
+)
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
@@ -95,6 +106,8 @@ class BaseAgent(ABC):
         self._task_queue: asyncio.Queue = asyncio.Queue()
         self._max_concurrent_tasks = 3
         self._active_tasks: Dict[str, asyncio.Task] = {}
+        # Track agent start time for uptime calculation in heartbeats
+        self._started_at = datetime.utcnow()
         # AIOSOP-AUDIT-2026-06-16: track the background worker/heartbeat loop
         # handles so shutdown() can actually cancel them. Previously start()
         # discarded these handles, leaking tasks (the worker blocks forever on
@@ -240,8 +253,58 @@ class BaseAgent(ABC):
                 "engagement_id": task.engagement_id,
             },
         ):
+            # Agents are long-lived workers. Preserve their bootstrap/previous
+            # session so a completed task cannot make a later engagement halt
+            # permanently shut down this shared worker.
+            _previous_session_id = self.ctx.session_id
             self.ctx.current_task = task
             self.ctx.status = "running"
+
+            # Process-level profiling instrumentation (Sprint 9)
+            reset_mcp_latency()
+            import psutil
+
+            _proc = psutil.Process()
+            _start_cpu = _proc.cpu_times().user + _proc.cpu_times().system
+
+            # Record database connectivity validation
+            if (
+                self.ctx.session_memory
+                and getattr(self.ctx.session_memory, "_redis", None) is not None
+            ):
+                record_stage(task, ExecutionStage.REDIS_CONNECTED)
+            if (
+                self.ctx.session_memory
+                and getattr(self.ctx.session_memory, "_pg_engine", None) is not None
+            ):
+                record_stage(task, ExecutionStage.POSTGRES_CONNECTED)
+            if (
+                self.ctx.graph_memory
+                and getattr(self.ctx.graph_memory, "_driver", None) is not None
+            ):
+                record_stage(task, ExecutionStage.NEO4J_CONNECTED)
+
+            # Record MCP server connectivity validation
+            if self.ctx.mcp_registry:
+                if len(self.ctx.mcp_registry._servers) > 0:
+                    record_stage(
+                        task,
+                        ExecutionStage.MCP_CONNECTED,
+                        metadata={
+                            "active_mcp_servers": list(self.ctx.mcp_registry._servers.keys())
+                        },
+                    )
+                else:
+                    record_stage(
+                        task,
+                        ExecutionStage.MCP_CONNECT_FAILED,
+                        error="No active MCP servers in registry",
+                    )
+
+            # Record trace stage for agent-side execution start
+            record_stage(
+                task, ExecutionStage.PLANNER_STARTED, metadata={"agent_id": self.ctx.agent_id}
+            )
             # Carry the per-task engagement_id into the context so all downstream
             # graph + evidence writes use the correct scope (Issue 14 — evidence
             # was previously landing under the agent's static "global" session).
@@ -303,19 +366,49 @@ class BaseAgent(ABC):
                 # Execute agent-specific logic under a hard timeout. An unbounded
                 # _execute previously left agents permanently "running" (Issue 3).
                 try:
+                    record_stage(
+                        task,
+                        ExecutionStage.SCANNER_STARTED,
+                        metadata={"scanner": self.ctx.agent_type.value, "task_type": task.type},
+                    )
                     result = await asyncio.wait_for(self._execute(task), timeout=timeout_s)
+                    record_stage(
+                        task,
+                        ExecutionStage.VERIFICATION_STARTED,
+                        metadata={"scanner": self.ctx.agent_type.value},
+                    )
                 except asyncio.TimeoutError as te:
+                    record_stage(
+                        task,
+                        ExecutionStage.SCANNER_TIMED_OUT,
+                        error=f"timed out after {timeout_s}s",
+                        metadata={"timeout": timeout_s},
+                    )
+                    record_failure(
+                        task,
+                        FailureCategory.SCANNER,
+                        f"task timed out after {timeout_s}s",
+                        component=self.ctx.agent_id,
+                    )
                     task.status = "failed"
-                    # P0-2: retry_count is owned solely by the orchestrator's _maybe_retry.
-                    # The agent no longer increments it (avoids double-counting).
                     task.completed_at = datetime.utcnow()
-                    await self._log_task_failure(task, te)
-                    return {
+                    elapsed = (
+                        (task.completed_at - task.started_at).total_seconds()
+                        if task.started_at
+                        else 0.0
+                    )
+                    task.result = {
                         "status": "failed",
-                        "error": f"task timed out after {timeout_s}s",
-                        "error_type": "TimeoutError",
+                        "failure_type": "ScannerTimeout",
+                        "component": self.ctx.agent_id,
+                        "phase": task.status,
+                        "reason": f"task timed out after {timeout_s}s",
+                        "elapsed": elapsed,
+                        "retryable": True,
                     }
-
+                    task.result = self._inject_telemetry(task, task.result, _start_cpu, _proc)
+                    await self._log_task_failure(task, te)
+                    return task.result
                 end_time = time.monotonic()
                 if target:
                     self.ctx.rate_limiter.record_backpressure(target, end_time - start_time)
@@ -336,15 +429,16 @@ class BaseAgent(ABC):
                 ):
                     err_msg = (
                         validated_result.get("error")
+                        or validated_result.get("message")
                         or "agent returned failure status without error message"
                     )
                     raise AgentException(str(err_msg))
 
                 # Store results
+                task.completed_at = datetime.utcnow()
+                validated_result = self._inject_telemetry(task, validated_result, _start_cpu, _proc)
                 task.result = validated_result
                 task.status = "completed"
-                task.completed_at = datetime.utcnow()
-
                 # Update working memory
                 self.ctx.task_history.append(task.id)
                 await self._update_working_memory(task, validated_result)
@@ -360,27 +454,54 @@ class BaseAgent(ABC):
                         else 0.0
                     ),
                 )
-
                 return validated_result
 
             except asyncio.CancelledError:
                 task.status = "failed"
-                task.result = {"error": "task cancelled", "error_type": "CancelledError"}
-                task.completed_at = datetime.utcnow()
+                elapsed = (
+                    (datetime.utcnow() - task.started_at).total_seconds()
+                    if task.started_at
+                    else 0.0
+                )
+                task.result = {
+                    "status": "failed",
+                    "failure_type": "TaskCancelled",
+                    "component": self.ctx.agent_id,
+                    "phase": task.status,
+                    "reason": "task cancelled by the orchestrator",
+                    "elapsed": elapsed,
+                    "retryable": False,
+                }
+                task.result = self._inject_telemetry(task, task.result, _start_cpu, _proc)
                 raise
             except Exception as e:
+                record_failure(
+                    task,
+                    FailureCategory.SCANNER,
+                    str(e),
+                    component=self.ctx.agent_id,
+                    details={"error_type": type(e).__name__},
+                )
                 task.status = "failed"
-                # P0-2: retry_count owned solely by the orchestrator's _maybe_retry.
                 task.completed_at = datetime.utcnow()
-
+                elapsed = (
+                    (task.completed_at - task.started_at).total_seconds()
+                    if task.started_at
+                    else 0.0
+                )
+                task.result = {
+                    "status": "failed",
+                    "failure_type": "UncaughtException",
+                    "component": self.ctx.agent_id,
+                    "phase": "execution",
+                    "reason": str(e),
+                    "error_type": type(e).__name__,
+                    "elapsed": elapsed,
+                    "retryable": True,
+                }
+                task.result = self._inject_telemetry(task, task.result, _start_cpu, _proc)
                 await self._log_task_failure(task, e)
-
-                # P0-2 (single retry owner): the ORCHESTRATOR's _maybe_retry is the sole
-                # retry authority. The agent must NOT self-schedule a retry onto its
-                # internal _task_queue — doing so duplicated execution (e.g. an exploit
-                # ran twice) and double-counted retry_count. Return the failure dict so
-                # _execute_via_agent routes it through _maybe_retry exactly once.
-                return {"status": "failed", "error": str(e)}
+                return task.result
 
             finally:
                 # LIFECYCLE ROOT-CAUSE FIX (2026-07-05): persist the task's TERMINAL
@@ -417,6 +538,7 @@ class BaseAgent(ABC):
                 self.ctx.current_task = None
                 self.ctx.status = "idle"
                 self.ctx.last_heartbeat = datetime.utcnow()
+                self.ctx.session_id = _previous_session_id
                 RequestContext.clear()
 
     @abstractmethod
@@ -527,6 +649,13 @@ class BaseAgent(ABC):
                     self.ctx.current_task.lease_expires = datetime.utcnow() + timedelta(seconds=90)
                     await self.ctx.session_memory.store_task(self.ctx.current_task)
 
+                # Enrich heartbeat with worker telemetry (mission: Worker Telemetry)
+                _queue_wait = 0.0
+                if self.ctx.current_task and self.ctx.current_task.created_at:
+                    _queue_wait = (
+                        datetime.utcnow() - self.ctx.current_task.created_at
+                    ).total_seconds()
+
                 await self.ctx.session_memory.update_agent_heartbeat(
                     self.ctx.agent_id,
                     {
@@ -534,13 +663,14 @@ class BaseAgent(ABC):
                         "agent_type": str(self.ctx.agent_type),
                         "status": self.ctx.status,
                         "task_id": self.ctx.current_task.id if self.ctx.current_task else None,
+                        "task_type": self.ctx.current_task.type if self.ctx.current_task else None,
                         "engagement_id": self.ctx.session_id,
-                        "version": "8.0",
+                        "version": "8.1",
                         "pid": os.getpid(),
-                        # socket.gethostname() is cross-platform; os.uname() does
-                        # not exist on Windows and previously killed this loop on
-                        # the first iteration, freezing all heartbeats.
                         "hostname": socket.gethostname(),
+                        "uptime_seconds": (datetime.utcnow() - self._started_at).total_seconds(),
+                        "queue_wait_seconds": round(_queue_wait, 2),
+                        "task_queue_depth": self._task_queue.qsize(),
                     },
                 )
             except (asyncio.CancelledError, GeneratorExit):
@@ -832,3 +962,46 @@ class BaseAgent(ABC):
                     pass
 
         return selected
+
+    def _inject_telemetry(
+        self, task: Task, result: Dict[str, Any], start_cpu: float, proc: Any
+    ) -> Dict[str, Any]:
+        """Compute and inject task execution telemetry metrics (Sprint 9)."""
+        try:
+            import time
+            from datetime import datetime
+            from ai_osop.core.telemetry import get_mcp_latency
+
+            end_cpu = proc.cpu_times().user + proc.cpu_times().system
+            cpu_seconds = max(0.0, end_cpu - start_cpu)
+            memory_rss_bytes = proc.memory_info().rss
+            mcp_latency_ms = get_mcp_latency()
+
+            completed_at = task.completed_at or datetime.utcnow()
+            execution_time = (
+                (completed_at - task.started_at).total_seconds() if task.started_at else 0.0
+            )
+            network_wait = max(0.0, execution_time - cpu_seconds)
+
+            # Populate telemetry dictionary
+            result["telemetry"] = {
+                "queue_wait_time_s": (
+                    (task.started_at - task.created_at).total_seconds()
+                    if task.started_at and task.created_at
+                    else 0.0
+                ),
+                "worker_assignment_latency_s": (
+                    (task.started_at - task.created_at).total_seconds()
+                    if task.started_at and task.created_at
+                    else 0.0
+                ),
+                "execution_time_s": execution_time,
+                "cpu_user_system_seconds": round(cpu_seconds, 4),
+                "memory_rss_bytes": memory_rss_bytes,
+                "network_wait_s": round(network_wait, 4),
+                "mcp_latency_ms": round(mcp_latency_ms, 2),
+                "retry_count": task.retry_count,
+            }
+        except Exception as e:
+            self.logger.warning("failed_to_inject_telemetry", error=str(e))
+        return result

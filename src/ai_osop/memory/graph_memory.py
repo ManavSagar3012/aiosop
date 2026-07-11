@@ -1116,6 +1116,42 @@ class GraphMemory:
 
     # ---- Reliability sprint: durable task lifecycle + dedupe + recovery ----
 
+    async def log_skipped_scan(
+        self,
+        task_id: str,
+        vuln_class: str,
+        endpoint_url: str,
+        reason: str,
+        confidence: float,
+        evidence: list[str],
+        engagement_id: str,
+    ) -> bool:
+        """Log a skipped scan as a persistent graph node for capability audit trail."""
+        cypher = """
+        MERGE (s:SkippedScan {id: $id})
+        SET s.vuln_class=$vuln_class, s.endpoint_url=$endpoint_url,
+            s.reason=$reason, s.confidence=$confidence, s.evidence=$evidence,
+            s.engagement_id=$engagement_id, s.timestamp=$timestamp
+        RETURN s.id AS id
+        """
+        params = {
+            "id": f"skip-{task_id}",
+            "vuln_class": vuln_class,
+            "endpoint_url": endpoint_url,
+            "reason": reason,
+            "confidence": confidence,
+            "evidence": evidence,
+            "engagement_id": engagement_id,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        try:
+            async with self._driver.session() as s:
+                await (await s.run(cypher, params)).consume()
+            return True
+        except Exception as e:
+            logger.error("log_skipped_scan_failed", task_id=task_id, error=str(e))
+            return False
+
     async def upsert_task(self, task: Any, result_summary: Optional[Dict[str, Any]] = None) -> bool:
         """Persist a Task's lifecycle state to Neo4j. Ground truth for the stuck-task
         reaper, restart recovery, and graph-backed dedupe (replaces in-memory only state)."""

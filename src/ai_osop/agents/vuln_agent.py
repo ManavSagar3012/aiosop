@@ -542,16 +542,39 @@ class VulnAnalysisAgent(BaseAgent):
             level / risk   sqlmap detection depth (1-5) / risk (1-3); default 1/1
             engagement_id  injected by _execute
         """
-        url = payload.get("url") or payload.get("target_url") or payload.get("target")
-        if not url:
-            raise AgentException(
-                "sqli_scan task requires one of 'url', 'target_url', or 'target' in payload"
-            )
         engagement_id = payload.get("engagement_id") or (
             self.ctx.current_task.engagement_id if self.ctx.current_task else None
         )
         if not engagement_id:
             raise AgentException("sqli_scan: cannot determine engagement_id")
+
+        from ai_osop.core.applicability import ApplicabilityEngine
+
+        app_check = ApplicabilityEngine.is_applicable(VulnClass.SQLI, payload)
+        if not app_check["applicable"]:
+            logger.info("sqli_scan_skipped", reason=app_check["reason"], url=payload.get("url"))
+            await self.ctx.graph_memory.log_skipped_scan(
+                task_id=self.ctx.current_task.id if self.ctx.current_task else "unknown",
+                vuln_class="sqli",
+                endpoint_url=payload.get("url") or "unknown",
+                reason=app_check["reason"],
+                confidence=0.9,
+                evidence=[app_check["reason"]],
+                engagement_id=engagement_id or "unknown",
+            )
+            return {
+                "status": "success",
+                "tool": "sqlmap",
+                "target": payload.get("url"),
+                "confirmed": False,
+                "reason": app_check["reason"],
+                "findings_count": 0,
+            }
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException(
+                "sqli_scan task requires one of 'url', 'target_url', or 'target' in payload"
+            )
 
         data = payload.get("data")
         level = int(payload.get("level", 1))
@@ -563,7 +586,9 @@ class VulnAnalysisAgent(BaseAgent):
             await self.security_bridge.initialize(session.scope, session.session_id)
 
         try:
-            verdict = await self.security_bridge.run_sqlmap(url, data=data, level=level, risk=risk)
+            verdict = await self.security_bridge.run_sqlmap(
+                url, data=data, level=level, risk=risk, timeout_override=90
+            )
         except Exception as e:  # MCPException etc. — report, do not crash the agent
             logger.warning("sqli_scan_failed", url=url, error=str(e))
             return {"status": "error", "tool": "sqlmap", "target": url, "error": str(e)}
@@ -710,18 +735,40 @@ class VulnAnalysisAgent(BaseAgent):
             param          optional parameter name to inject into
             engagement_id  injected by _execute
         """
-        url = payload.get("url") or payload.get("target_url") or payload.get("target")
-        if not url:
-            raise AgentException(
-                "xss_scan task requires one of 'url', 'target_url', or 'target' in payload"
-            )
         engagement_id = payload.get("engagement_id") or (
             self.ctx.current_task.engagement_id if self.ctx.current_task else None
         )
         if not engagement_id:
             raise AgentException("xss_scan: cannot determine engagement_id")
-        param = payload.get("param")
 
+        from ai_osop.core.applicability import ApplicabilityEngine
+
+        app_check = ApplicabilityEngine.is_applicable(VulnClass.XSS, payload)
+        if not app_check["applicable"]:
+            logger.info("xss_scan_skipped", reason=app_check["reason"], url=payload.get("url"))
+            await self.ctx.graph_memory.log_skipped_scan(
+                task_id=self.ctx.current_task.id if self.ctx.current_task else "unknown",
+                vuln_class="xss",
+                endpoint_url=payload.get("url") or "unknown",
+                reason=app_check["reason"],
+                confidence=0.9,
+                evidence=[app_check["reason"]],
+                engagement_id=engagement_id or "unknown",
+            )
+            return {
+                "status": "success",
+                "tool": "xss_scan",
+                "target": payload.get("url"),
+                "confirmed": False,
+                "reason": app_check["reason"],
+                "findings_count": 0,
+            }
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException(
+                "xss_scan task requires one of 'url', 'target_url', or 'target' in payload"
+            )
+        param = payload.get("param")
         # Initialize the browser connection for this engagement (scope enforcement).
         session = await self.ctx.session_memory.get_session_state(engagement_id)
         if session:
@@ -1116,6 +1163,49 @@ class VulnAnalysisAgent(BaseAgent):
             raise AgentException("csrf_scan: cannot determine engagement_id")
 
         method = payload.get("method", "POST").upper()
+
+        # Heuristic 1: HTTP Method Check.
+        # CSRF only applies to state-changing methods (POST, PUT, PATCH, DELETE).
+        if method in ("GET", "HEAD", "OPTIONS", "TRACE"):
+            logger.info("csrf_skip_safe_method", url=url, method=method)
+            return {
+                "status": "success",
+                "tool": "csrf_scan",
+                "target": url,
+                "confirmed": False,
+                "reason": f"Read-only HTTP method ({method}); CSRF is not applicable.",
+                "findings_count": 0,
+            }
+
+        # Heuristic 2: State-Changing Endpoint Heuristic.
+        # Exclude common read-only/idempotent endpoints.
+        from urllib.parse import urlparse
+
+        path = urlparse(url).path.lower()
+        read_only_patterns = [
+            "/search",
+            "/find",
+            "/query",
+            "/filter",
+            "/view",
+            "/catalog",
+            "/get",
+            "/list",
+            "/details",
+            "/show",
+            "/index",
+            "/blog",
+        ]
+        if any(p in path for p in read_only_patterns):
+            logger.info("csrf_skip_readonly_endpoint", url=url, path=path)
+            return {
+                "status": "success",
+                "tool": "csrf_scan",
+                "target": url,
+                "confirmed": False,
+                "reason": "Read-only endpoint path; CSRF is not applicable.",
+                "findings_count": 0,
+            }
         body = payload.get("body")
         cookie = payload.get("cookie")  # ambient credential => CSRF-relevant
         token = payload.get("token")  # bearer => NOT CSRF-able

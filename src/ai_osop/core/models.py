@@ -186,7 +186,7 @@ class AttackPath(BaseModel):
 class Task(BaseModel):
     id: str = Field(default_factory=lambda: f"task-{uuid.uuid4().hex[:12]}")
     type: str
-    priority: int = Field(5, ge=1, le=10)
+    priority: int = Field(5, ge=1, le=100)
     agent_type: AgentType
     payload: Dict[str, Any] = Field(default_factory=dict)
     dependencies: List[str] = Field(default_factory=list)

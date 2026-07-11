@@ -271,7 +271,8 @@ export const KnowledgeGraphs: React.FC = () => {
       if (!selectedNode) return null;
       return {
           title: selectedNode.labels?.[0] || 'Node',
-          label: selectedNode.properties?.name || selectedNode.properties?.value || selectedNode.properties?.url || selectedNode.id,
+          label: selectedNode.properties?.title || selectedNode.properties?.name || selectedNode.properties?.value || selectedNode.properties?.url || selectedNode.id,
+          description: selectedNode.properties?.description || null,
           confidence: selectedNode.properties?.confidence || 0,
           status: selectedNode.properties?.status || 'DISCOVERED',
           isVuln: selectedNode.labels?.includes('Vulnerability')
@@ -362,6 +363,13 @@ export const KnowledgeGraphs: React.FC = () => {
                              <div className="text-on-surface-variant text-label-xs mb-2 uppercase tracking-widest border-b border-outline-variant/30 pb-1">{inspectorData.title}</div>
                              <div className="text-primary break-all leading-relaxed" title={inspectorData.label}>{inspectorData.label}</div>
                           </div>
+                          
+                          {inspectorData.description && (
+                             <div className="bg-black/40 p-3 border border-outline-variant">
+                                <div className="text-on-surface-variant text-label-xs mb-2 uppercase tracking-widest border-b border-outline-variant/30 pb-1">Description</div>
+                                <div className="text-on-surface leading-relaxed text-[10px] break-words">{inspectorData.description}</div>
+                             </div>
+                          )}
                           
                           {inspectorData.confidence > 0 && (
                               <div>

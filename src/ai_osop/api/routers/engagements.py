@@ -117,10 +117,20 @@ async def get_audit_log(
     """
     session = await assert_engagement_access(operator, session_id)
     engagement_id = session.scope.engagement_id
-    events = await state["orchestrator"].session_memory.query_audit_log(
+
+    # Fetch events under both IDs (scope engagement_id and session_id) to resolve split-brain logging.
+    events_by_scope = await state["orchestrator"].session_memory.query_audit_log(
         engagement_id=engagement_id, limit=limit
     )
-    return [e.model_dump(mode="json") for e in events]
+    events_by_session = await state["orchestrator"].session_memory.query_audit_log(
+        engagement_id=session_id, limit=limit
+    )
+
+    # Deduplicate by event_id and sort chronologically (earliest first, matching audit-trail UI expectation)
+    all_events = {e.event_id: e for e in (events_by_scope + events_by_session)}
+    sorted_events = sorted(all_events.values(), key=lambda e: e.timestamp)
+
+    return [e.model_dump(mode="json") for e in sorted_events[:limit]]
 
 
 @router.post("/{session_id}/transition")

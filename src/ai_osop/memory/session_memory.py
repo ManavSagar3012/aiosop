@@ -430,10 +430,54 @@ class SessionMemory:
         return pubsub
 
     async def push_task_queue(self, queue_name: str, task: Dict[str, Any]) -> None:
-        """Push task to priority queue."""
+        """Push task to priority queue with adaptive scheduling (Sprint 9)."""
         with trace_span("redis.zadd", attributes={"ai_osop.redis.queue": queue_name}):
             r = await self._ensure_redis()
-            priority = task.get("priority", 5)
+
+            task_type = task.get("type", "")
+            # 1. Prerequisite tasks (priority 100)
+            if task_type in (
+                "map_workflow",
+                "full_recon",
+                "dns_enumeration",
+                "capture_authenticated_surface",
+                "replay_for_diff_auth",
+            ):
+                priority = 100
+            # 2. Lightweight reconnaissance / API discovery (priority 80)
+            elif task_type in (
+                "extract_har_api_inventory",
+                "api_discovery",
+                "technology_detection",
+            ):
+                priority = 80
+            # 3. Fast validation probes / lightweight scans (priority 60)
+            elif task_type in (
+                "csrf_scan",
+                "jwt_scan",
+                "saml_scan",
+                "takeover_scan",
+                "smuggling_scan",
+                "pollution_scan",
+                "websocket_scan",
+                "ssti_scan",
+                "ssrf_scan",
+                "upload_scan",
+            ):
+                priority = 60
+            # 4. Heavyweight confirmation scans / slow scans (priority 40)
+            elif task_type in (
+                "sqli_scan",
+                "xss_scan",
+                "nuclei_scan",
+                "burp_scan",
+            ):
+                priority = 40
+            else:
+                priority = task.get("priority", 5) * 10
+
+            # Update task object's priority property to reflect the adaptive scheduling
+            task["priority"] = priority
             await r.zadd(f"queue:{queue_name}", {json.dumps(task, default=str): priority})
 
     async def pop_task_queue(self, queue_name: str) -> Optional[Dict[str, Any]]:
