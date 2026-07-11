@@ -168,10 +168,24 @@ class EngagementManager:
                 f"now {session.phase}; aborting transition to {new_phase.value}"
             )
         session.phase = new_phase.value
+
+        # AIOSOP-PHASE-ENTER-FIRST: run _on_phase_enter BEFORE persisting the
+        # phase change so that if task scheduling fails the phase is not left in a
+        # partially-applied state (the auto-transition will retry). On success,
+        # persist and audit-log. On failure, revert the in-memory phase (and do
+        # NOT update updated_at) so the monitor retries naturally.
+        try:
+            await self._orch.phase_monitor._on_phase_enter(session, new_phase)
+        except Exception:
+            logger.exception("on_phase_enter_failed", session_id=session_id, phase=new_phase.value)
+            session.phase = current.value
+            raise WorkflowException(
+                f"Phase entry hook failed for {new_phase.value}: see logs for details"
+            )
+
         session.updated_at = datetime.utcnow()
         await self._orch.session_memory.store_session_state(session)
         await self._orch.session_memory.persist_session_state(session)
-        await self._orch.phase_monitor._on_phase_enter(session, new_phase)
         await self._orch._audit_log(
             AuditEvent(
                 event_type="phase_transition",

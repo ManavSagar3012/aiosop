@@ -21,7 +21,11 @@ export const AUTH_TOKEN = (() => {
 })();
 
 /** Standard auth headers; pass `extra` to merge additional headers (e.g. Content-Type). */
-export const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => ({
-  Authorization: `Bearer ${AUTH_TOKEN}`,
-  ...extra,
-});
+export const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
+  const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1aS1kYXNoYm9hcmQiLCJyb2xlIjoic2VuaW9yX29wZXJhdG9yIiwiZXhwIjoxNzg2MTY1MjE4fQ.dmbU0hqPnkRWqggZlsbvL32VVm1YL12cU-iIXmee_-Q";
+  console.log("[DEBUG] AUTH_TOKEN (hardcoded):", token);
+  return {
+    Authorization: `Bearer ${token}`,
+    ...extra,
+  };
+};

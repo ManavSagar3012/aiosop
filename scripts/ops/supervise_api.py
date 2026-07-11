@@ -52,6 +52,7 @@ def main() -> int:
         return 3
 
     env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
     env["PYTHONPATH"] = os.path.join(os.getcwd(), "src") + os.pathsep + env.get("PYTHONPATH", "")
     cmd = [sys.executable, "-m", "uvicorn", "ai_osop.api.main:app",
            "--host", HOST, "--port", str(PORT)]

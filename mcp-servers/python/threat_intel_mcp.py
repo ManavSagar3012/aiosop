@@ -105,16 +105,23 @@ async def mcp_initialize(req: MCPInitializeRequest):
     return {
         "server_id": "threat-intel-mcp",
         "version": "1.0",
+        "capabilities": ["tool"],
         "tools": [
             {
                 "name": "cve_lookup",
                 "description": "Fetch CVE details and CVSS from NVD.",
-                "parameters": [{"name": "cve_id", "type": "string", "required": True}]
+                "parameters": [
+                    {"name": "cve_id", "type": "string", "description": "CVE ID to lookup", "required": True}
+                ],
+                "returns": {"cve_id": "string"}
             },
             {
                 "name": "search_exploits",
                 "description": "Search ExploitDB for public PoCs.",
-                "parameters": [{"name": "cve_id", "type": "string", "required": True}]
+                "parameters": [
+                    {"name": "cve_id", "type": "string", "description": "CVE ID to search exploits for", "required": True}
+                ],
+                "returns": {"exploits": "array"}
             }
         ]
     }

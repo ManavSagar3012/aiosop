@@ -30,7 +30,8 @@ async def main():
             continue
         print(f"\n--- Running {suite} ---")
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, suite,
+            sys.executable,
+            suite,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -49,7 +50,8 @@ async def main():
     # Generate report
     print("\nGenerating report...")
     report_proc = await asyncio.create_subprocess_exec(
-        sys.executable, "scripts/qualification/generate_report.py",
+        sys.executable,
+        "scripts/qualification/generate_report.py",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )

@@ -4,15 +4,21 @@ Verifies the Outcome Ledger and correlation with HackerOne/BugBounty statuses.
 """
 
 import asyncio
-import uuid
 import json
-from typing import List, Dict, Any
+import uuid
+from typing import Any, Dict, List
 
-from ai_osop.core.models import (
-    Observation, Workflow, OutcomeRecord, OutcomeStatus,
-    VerificationRecord, EvidenceProvenance, Task
-)
 from ai_osop.core.governance import SwarmGovernor
+from ai_osop.core.models import (
+    EvidenceProvenance,
+    Observation,
+    OutcomeRecord,
+    OutcomeStatus,
+    Task,
+    VerificationRecord,
+    Workflow,
+)
+
 
 class AcceptanceSimulator:
     def __init__(self, engagement_id: str):
@@ -21,12 +27,14 @@ class AcceptanceSimulator:
         self.ledger: List[OutcomeRecord] = []
 
     async def simulate_acceptance_lifecycle(self):
-        print(f"--- [Acceptance Board] Starting External Validation Lifecycle for: {self.engagement_id} ---")
-        
+        print(
+            f"--- [Acceptance Board] Starting External Validation Lifecycle for: {self.engagement_id} ---"
+        )
+
         # 1. Internal Verification (The precursor to submission)
         finding_id = f"f-vuln-{uuid.uuid4().hex[:6]}"
         print(f"[1] Internal Verification of Finding {finding_id} [LIVE]...")
-        
+
         # 2. Submission to Shopify (Simulated)
         print("[2] Submitting to Shopify Program (External ID: H1-SHOPIFY-2026-101)...")
         external_id = "H1-SHOPIFY-2026-101"
@@ -37,7 +45,7 @@ class AcceptanceSimulator:
             agent_id_responsible="identity-hunter-001",
             program_name="Shopify",
             external_report_id=external_id,
-            engagement_id=self.engagement_id
+            engagement_id=self.engagement_id,
         )
         self.ledger.append(outcome)
         print(f"  Ledger Updated: {outcome.status.value.upper()}")
@@ -67,7 +75,7 @@ class AcceptanceSimulator:
     def print_metrics(self):
         total_payout = sum(o.program_payout for o in self.ledger if o.program_payout)
         accepted_count = sum(1 for o in self.ledger if o.is_accepted)
-        
+
         print("\n--- External Acceptance Metrics (OQR-009) ---")
         print(f"Reports Submitted:    {len(self.ledger)}")
         print(f"Reports Accepted:     {accepted_count}")
@@ -75,10 +83,12 @@ class AcceptanceSimulator:
         print(f"Total Bounties Paid:  ${total_payout:,.2f}")
         print("---------------------------------------------")
 
+
 async def main():
     sim = AcceptanceSimulator(f"accept-qual-{uuid.uuid4().hex[:6]}")
     await sim.simulate_acceptance_lifecycle()
     sim.print_metrics()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

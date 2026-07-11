@@ -41,9 +41,39 @@ class CSRFAgent(BaseVulnerabilityAgent):
 
     async def _execute_csrf_scan(self, task: Task) -> Dict[str, Any]:
         """
-        Implement CSRF scanning logic.
+        Implement CSRF scanning logic delegated to the Applicability Engine.
         """
         target_url = task.payload.get("url")
+        from ai_osop.core.applicability import ApplicabilityEngine
+        from ai_osop.auth.session_store import SessionStore
+
+        store = SessionStore(self.ctx.session_memory)
+        sessions = await store.list_sessions(task.engagement_id)
+
+        app_check = ApplicabilityEngine.is_applicable(
+            VulnClass.CSRF, task.payload, user_sessions=sessions
+        )
+        if not app_check["applicable"]:
+            self.logger.info(
+                f"csrf_scan_skipped: reason={app_check['reason']} url={task.payload.get('url')}"
+            )
+            # Persist to graph skipped node
+            await self.ctx.graph_memory.log_skipped_scan(
+                task_id=task.id,
+                vuln_class="csrf",
+                endpoint_url=target_url,
+                reason=app_check["reason"],
+                confidence=0.99,
+                evidence=[app_check["reason"]],
+                engagement_id=task.engagement_id
+            )
+            return {
+                "status": "success",
+                "confirmed": False,
+                "reason": app_check["reason"],
+                "findings_count": 0,
+            }
+
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(target_url, timeout=10.0)

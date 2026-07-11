@@ -1,6 +1,6 @@
 # AI-OSOP Production Qualification Report
 
-**Generated:** 2026-06-21T16:04:35.616284Z
+**Generated:** 2026-07-10T16:34:23.094955Z
 **Git SHA:** (see RELEASE_CERTIFICATE.md)
 
 ---
@@ -53,10 +53,10 @@ AI-OSOP Reliability Qualification Suite
 ============================================================
 ------------------------------------------------------------
 [PASS] mcp_circuit_opens: Circuit breaker opened after 5 failures
-[PASS] mcp_circuit_recovers: Circuit breaker recovered after 31s
+[PASS] mcp_circuit_recovers: Circuit breaker recovered after 31s and successful probe
 [PASS] mcp_circuit_blocks: Execution blocked with circuit_open status
 [PASS] task_retry_fields: max_retries=3, retry_count=0
-[PASS] approval_timeout_field: requested_at set: 2026-06-21T16:04:31.293290
+[PASS] approval_timeout_field: requested_at set: 2026-07-10T16:34:17.950326
 [PASS] warm_storage_fallback: Loaded from warm storage successfully
 ------------------------------------------------------------
 Results: 6 passed, 0 failed
@@ -70,16 +70,16 @@ Results: 6 passed, 0 failed
 AI-OSOP Scale Qualification Suite
 ============================================================
 ------------------------------------------------------------
-[PASS] engage_creation_100: 100 engagements in 0.002s (65755/s)
-[PASS] task_creation_1000: 1000 tasks in 0.015s (67206/s)
-[PASS] vuln_creation_10k: 10k vulns in 0.168s (59547/s)
-[PASS] session_serialize_1000: 1000 serializations in 0.012s (avg 0.012ms)
+[PASS] engage_creation_100: 100 engagements in 0.002s (43197/s)
+[PASS] task_creation_1000: 1000 tasks in 0.022s (45305/s)
+[PASS] vuln_creation_10k: 10k vulns in 0.168s (59528/s)
+[PASS] session_serialize_1000: 1000 serializations in 0.016s (avg 0.016ms)
 ------------------------------------------------------------
 Results: 4 passed, 0 failed
 ============================================================
 
 --- STDERR ---
-C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\scripts\qualification\test_scale.py:121: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\scripts\qualification\test_scale.py:123: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
   _ = session.dict()
 
 ```

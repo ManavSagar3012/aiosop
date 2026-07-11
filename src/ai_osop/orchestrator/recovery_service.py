@@ -48,7 +48,14 @@ class RecoveryService:
                 logger.error("reaper_loop_error", error=str(e))
 
     async def _reap_stuck_tasks(self) -> int:
-        """Detect pending/running tasks older than their timeout and recover or fail them."""
+        """Recover executions that exceed their runtime budget.
+
+        A ``pending`` task has not begun execution, so its age is queue wait time,
+        not scanner runtime. Reaping it with ``timeout_seconds`` turns ordinary
+        worker backpressure into false failures and can exhaust retries before the
+        task ever receives an agent. Queue availability is handled by the scheduler;
+        this reaper owns only tasks that were actually started.
+        """
         now = datetime.utcnow()
         reaped = 0
         _TERMINAL = ("completed", "failed", "cancelled", "timeout", "error")
@@ -70,11 +77,9 @@ class RecoveryService:
                             "reaper_terminal_resync_failed", task_id=task.id, error=str(e)
                         )
                 continue
-            ref = (
-                task.started_at
-                if (task.status == "running" and task.started_at)
-                else task.created_at
-            )
+            if task.status == "pending":
+                continue
+            ref = task.started_at
             if not ref:
                 continue
             age = (now - ref).total_seconds()
@@ -82,6 +87,17 @@ class RecoveryService:
             if age <= timeout:
                 continue
             if task.status == "running" and task.retry_count < task.max_retries:
+                # A retry must replace the execution that timed out.  Re-queueing
+                # without cancelling its handle leaves the original coroutine alive
+                # and allows duplicate scans to accumulate against the same target.
+                handles = getattr(self._orch, "_task_handles", None)
+                handle = handles.pop(task.id, None) if handles is not None else None
+                if handle is not None and not handle.done():
+                    handle.cancel()
+                    try:
+                        await asyncio.wait_for(handle, timeout=5.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
                 await self._orch._audit_log(self._reaper_audit(task, age, "recovering"))
                 reaped += 1
                 await self._orch.task_scheduler._maybe_retry(
@@ -94,6 +110,7 @@ class RecoveryService:
             await self._orch.graph_memory.upsert_task(
                 task, result_summary={"reaped": True, "age_seconds": int(age)}
             )
+            await self._orch.session_memory.store_task(task)
             await self._orch._audit_log(self._reaper_audit(task, age, "failed"))
             reaped += 1
         if reaped:
@@ -202,6 +219,8 @@ class RecoveryService:
                         continue
                     task.assigned_agent_id = None
                     task.status = "pending"
+                    await self._orch.graph_memory.upsert_task(task)
+                    await self._orch.session_memory.store_task(task)
 
                 self._orch._tasks[task.id] = task
                 recovered["tasks"] += 1

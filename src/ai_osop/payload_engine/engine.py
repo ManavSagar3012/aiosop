@@ -280,7 +280,7 @@ class AdaptivePayloadEngine:
     - WAF profile learning
     """
 
-    def __init__(self, mcp_adapter: PayloadMCPAdapter, llm_client: Optional[Any] = None):
+    def __init__(self, mcp_adapter: Optional[PayloadMCPAdapter] = None, llm_client: Optional[Any] = None):
         self.mcp = mcp_adapter
         self.llm_client = llm_client
         self.template_library = PayloadTemplateLibrary()
@@ -290,6 +290,10 @@ class AdaptivePayloadEngine:
 
         self._waf_profiles: Dict[str, Dict[str, Any]] = {}
         self._population_history: Dict[str, List[Payload]] = {}
+
+    def get_payloads(self, vuln_type: VulnClass) -> List[str]:
+        """Get list of payload strings for the specified vulnerability class."""
+        return self.template_library.get_templates(vuln_type)
 
     async def generate_initial_population(
         self, vuln_type: VulnClass, context: Dict[str, Any], population_size: int = 20

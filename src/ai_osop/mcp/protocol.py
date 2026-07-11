@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import MCPConnectionError, MCPException, MCPTimeoutError
 from ai_osop.core.models import AuditEvent
-from ai_osop.core.telemetry import RequestContext
+from ai_osop.core.telemetry import RequestContext, add_mcp_latency
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
 
 
@@ -115,6 +115,12 @@ class MCPConnection:
     CIRCUIT_RECOVERY_SECONDS: int = field(default=30)
     CIRCUIT_HALF_OPEN_MAX_ATTEMPTS: int = field(default=3)
     CIRCUIT_HALF_OPEN_SUCCESS_REQUIRED: int = field(default=2)
+    # MCP Telemetry fields
+    started_at: Optional[datetime] = field(default=None)
+    reconnect_count: int = field(default=0)
+    handshake_latency_ms: Optional[float] = field(default=None)
+    _latency_samples: List[float] = field(default_factory=list)
+    _max_latency_samples: int = field(default=1000)
 
     def _circuit_breaker_check(self) -> None:
         """Check circuit state and transition OPEN -> HALF-OPEN if recovery time elapsed."""
@@ -203,6 +209,11 @@ class MCPConnection:
         startup ~31s; the connection is still stored for lazy reconnect on first
         real use, which uses the full retry budget.
         """
+        # Track reconnect attempts
+        if self.started_at is not None:
+            self.reconnect_count += 1
+        self.started_at = self.started_at or datetime.utcnow()
+
         self._circuit_breaker_check()
         if self._circuit_open and not self._half_open:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
@@ -239,12 +250,16 @@ class MCPConnection:
         if not self._session:
             await self.connect()
 
+        import time as _time
+        _t0 = _time.monotonic()
         try:
             async with self._session.post(
                 f"http://{self.host}:{self.port}/mcp/initialize",
                 json=request.model_dump(),
                 timeout=aiohttp.ClientTimeout(total=settings.mcp_initialize_timeout),
             ) as resp:
+                _elapsed = (_time.monotonic() - _t0) * 1000
+                self.handshake_latency_ms = _elapsed
                 data = await resp.json()
                 response = MCPInitializeResponse(**data)
                 self._capabilities = response.capabilities
@@ -294,6 +309,10 @@ class MCPConnection:
                 ) as resp:
                     data = await resp.json()
                     elapsed = int((datetime.utcnow() - start).total_seconds() * 1000)
+                    add_mcp_latency(float(elapsed))
+                    # Record latency sample for telemetry histogram
+                    if len(self._latency_samples) < self._max_latency_samples:
+                        self._latency_samples.append(float(elapsed))
                     response = MCPExecuteResponse(**data)
                     response.execution_time_ms = elapsed
                     self._record_success()
@@ -323,6 +342,51 @@ class MCPConnection:
     async def list_tools(self) -> List[MCPToolDefinition]:
         """List available tools."""
         return list(self._tools.values())
+
+    def get_telemetry(self) -> Dict[str, Any]:
+        """Return live telemetry snapshot for this MCP connection.
+
+        Includes startup time, reconnect count, handshake latency,
+        and latency histogram (p50, p95, p99).
+        """
+        now = datetime.utcnow()
+        uptime = (now - self.started_at).total_seconds() if self.started_at else 0.0
+
+        # Compute latency histogram
+        samples = self._latency_samples
+        hist: Dict[str, float] = {}
+        if samples:
+            sorted_s = sorted(samples)
+            n = len(sorted_s)
+            hist = {
+                "p50_ms": sorted_s[int(n * 0.50)],
+                "p95_ms": sorted_s[int(n * 0.95)],
+                "p99_ms": sorted_s[int(n * 0.99)],
+                "min_ms": sorted_s[0],
+                "max_ms": sorted_s[-1],
+                "mean_ms": round(sum(sorted_s) / n, 2),
+                "sample_count": n,
+            }
+
+        # Total calls and timeout count
+        total_calls = len(self._latency_samples) + self._failure_count
+        timeout_count = sum(1 for s in self._latency_samples if s > 5000)  # >5s is timeout territory
+
+        return {
+            "server_id": self.server_id,
+            "status": self.get_circuit_state(),
+            "initialized": self._initialized,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "uptime_seconds": round(uptime, 1),
+            "reconnect_count": self.reconnect_count,
+            "handshake_latency_ms": round(self.handshake_latency_ms, 2) if self.handshake_latency_ms else None,
+            "tool_count": len(self._tools),
+            "latency_histogram": hist,
+            "total_calls": total_calls,
+            "failure_count": self._failure_count,
+            "timeout_count": timeout_count,
+            "health_status": "healthy" if self._initialized and not self._circuit_open else "degraded" if self._half_open else "unhealthy",
+        }
 
     async def close(self) -> None:
         """Clean up connections."""
@@ -467,8 +531,84 @@ class MCPRegistry:
                 results[server_id] = False
         return results
 
+    # ── Continuous Health Publishing ────────────────────────────────────────
+
+    _health_task: Optional[asyncio.Task] = None
+    _last_telemetry_snapshot: Dict[str, Dict[str, Any]] = {}
+
+    def start_health_publisher(self, interval_seconds: int = 30) -> None:
+        """Start a background loop that collects and caches telemetry from
+        every registered MCP connection at a fixed interval.
+
+        The latest snapshot is accessible via :meth:`get_latest_telemetry` and
+        is also published through the coordination bus as ``mcp.health`` events
+        so the dashboard, observatory API, and alerting pipeline can consume it
+        without polling individual connections.
+
+        Only one publisher runs at a time (start is idempotent).
+        """
+        if self._health_task is not None and not self._health_task.done():
+            return  # already running
+
+        async def _publish_loop():
+            while True:
+                try:
+                    snapshot: Dict[str, Dict[str, Any]] = {}
+                    for server_id, conn in self._servers.items():
+                        try:
+                            snapshot[server_id] = conn.get_telemetry()
+                        except Exception:
+                            snapshot[server_id] = {
+                                "server_id": server_id,
+                                "status": "unknown",
+                                "error": "telemetry_collection_failed",
+                            }
+                    self._last_telemetry_snapshot = snapshot
+
+                    # Publish each server's telemetry as a coordination bus event
+                    # so the dashboard and alerting layer see live health.
+                    for sid, tel in snapshot.items():
+                        try:
+                            await self.coordination_bus.publish(
+                                "mcp.health",
+                                {
+                                    "server_id": sid,
+                                    "status": tel.get("status"),
+                                    "health_status": tel.get("health_status"),
+                                    "uptime_seconds": tel.get("uptime_seconds"),
+                                    "reconnect_count": tel.get("reconnect_count"),
+                                    "latency_p50_ms": tel.get("latency_histogram", {}).get("p50_ms"),
+                                },
+                                "mcp_registry",
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                await asyncio.sleep(interval_seconds)
+
+        self._health_task = asyncio.create_task(_publish_loop())
+
+    async def stop_health_publisher(self) -> None:
+        """Cancel the background health publishing loop."""
+        if self._health_task is not None and not self._health_task.done():
+            self._health_task.cancel()
+            try:
+                await self._health_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._health_task = None
+
+    def get_latest_telemetry(self) -> Dict[str, Dict[str, Any]]:
+        """Return the most recent telemetry snapshot for all MCP servers.
+
+        Returns an empty dict if the publisher has never run.
+        """
+        return self._last_telemetry_snapshot
+
     async def close_all(self) -> None:
         """Close all connections."""
+        await self.stop_health_publisher()
         await asyncio.gather(
             *[conn.close() for conn in self._servers.values()], return_exceptions=True
         )

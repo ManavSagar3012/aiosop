@@ -20,9 +20,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, "src")
 
 from ai_osop.api.deps import assert_engagement_access
-from ai_osop.mcp.protocol import MCPConnection, MCPExecuteRequest, MCPExecuteResponse
-from ai_osop.core.models import Task, ApprovalRequest
 from ai_osop.core.config import AgentType
+from ai_osop.core.models import ApprovalRequest, Task
+from ai_osop.mcp.protocol import MCPConnection, MCPExecuteRequest, MCPExecuteResponse
 
 
 class ReliabilityQualification:
@@ -50,7 +50,11 @@ class ReliabilityQualification:
         if conn._circuit_open:
             self._record("mcp_circuit_opens", True, "Circuit breaker opened after 5 failures")
         else:
-            self._record("mcp_circuit_opens", False, f"Circuit breaker NOT open after 5 failures (count={conn._failure_count})")
+            self._record(
+                "mcp_circuit_opens",
+                False,
+                f"Circuit breaker NOT open after 5 failures (count={conn._failure_count})",
+            )
 
     async def test_mcp_circuit_breaker_recovers(self) -> None:
         """Circuit breaker should recover after 30 seconds."""
@@ -60,10 +64,22 @@ class ReliabilityQualification:
         conn._failure_count = 5
 
         conn._circuit_breaker_check()
-        if not conn._circuit_open and conn._failure_count == 0:
-            self._record("mcp_circuit_recovers", True, "Circuit breaker recovered after 31s")
+        # Now record successes to transition HALF-OPEN -> CLOSED
+        for _ in range(conn.CIRCUIT_HALF_OPEN_SUCCESS_REQUIRED):
+            conn._record_success()
+
+        if not conn._circuit_open and not conn._half_open and conn._failure_count == 0:
+            self._record(
+                "mcp_circuit_recovers",
+                True,
+                "Circuit breaker recovered after 31s and successful probe",
+            )
         else:
-            self._record("mcp_circuit_recovers", False, f"Still open={conn._circuit_open}, count={conn._failure_count}")
+            self._record(
+                "mcp_circuit_recovers",
+                False,
+                f"Still open={conn._circuit_open}, half_open={conn._half_open}, count={conn._failure_count}",
+            )
 
     async def test_mcp_circuit_breaker_blocks_execution(self) -> None:
         """When circuit is open, execute must return 'circuit_open' status."""
@@ -93,9 +109,17 @@ class ReliabilityQualification:
             max_retries=3,
         )
         if task.max_retries == 3 and task.retry_count == 0:
-            self._record("task_retry_fields", True, f"max_retries={task.max_retries}, retry_count={task.retry_count}")
+            self._record(
+                "task_retry_fields",
+                True,
+                f"max_retries={task.max_retries}, retry_count={task.retry_count}",
+            )
         else:
-            self._record("task_retry_fields", False, f"Unexpected values: max_retries={task.max_retries}, retry_count={task.retry_count}")
+            self._record(
+                "task_retry_fields",
+                False,
+                f"Unexpected values: max_retries={task.max_retries}, retry_count={task.retry_count}",
+            )
 
     # -------------------- Approval Timeout --------------------
 
@@ -112,7 +136,9 @@ class ReliabilityQualification:
         )
         # Check that requested_at is set (used for timeout calculation)
         if req.requested_at is not None:
-            self._record("approval_timeout_field", True, f"requested_at set: {req.requested_at.isoformat()}")
+            self._record(
+                "approval_timeout_field", True, f"requested_at set: {req.requested_at.isoformat()}"
+            )
         else:
             self._record("approval_timeout_field", False, "requested_at is None")
 

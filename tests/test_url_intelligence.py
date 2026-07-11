@@ -62,3 +62,26 @@ def test_interesting_params_catalog_is_sane():
     # spot-check the catalog maps the classic high-impact params
     for p in ("redirect", "url", "file", "cmd", "id"):
         assert p in INTERESTING_PARAMS
+
+
+def test_extract_params_path_logic():
+    assert "id" in extract_params("https://t.com/catalog/product/123")
+    assert "productId" in extract_params("https://t.com/catalog/product/123")
+    assert "id" in extract_params("https://t.com/user/123")
+    assert "userId" in extract_params("https://t.com/user/123")
+    assert "productId" in extract_params("https://t.com/catalog/product")
+
+
+def test_extract_form_fields():
+    from ai_osop.core.url_intelligence import extract_form_fields
+    html = """
+    <form action="/submit" method="POST">
+        <input type="text" name="username" />
+        <input type="password" name="password" />
+        <textarea name="comments"></textarea>
+        <select name="country">
+            <option value="us">USA</option>
+        </select>
+    </form>
+    """
+    assert extract_form_fields(html) == ["comments", "country", "password", "username"]

@@ -142,6 +142,50 @@ async def test_phase_monitor_fallback_scanners(mock_orchestrator, dummy_scope):
 
 
 @pytest.mark.asyncio
+async def test_phase_monitor_bounds_sqli_tasks_independently_of_nuclei_timeout(
+    mock_orchestrator, dummy_scope
+):
+    """Slow Nuclei settings must not let SQLi scans monopolize vuln workers."""
+    session = SessionState(
+        session_id="test-session",
+        scope=dummy_scope,
+        roe={},
+        phase=EngagementPhase.RECONNAISSANCE.value,
+        agents={},
+        checkpoint_id=None,
+        audit_log_position="0",
+    )
+    mock_orchestrator.graph_memory.run_read_query.side_effect = lambda query, params: (
+        [
+            {
+                "url": "http://example.com/search?q=1",
+                "query_keys": ["q"],
+                "method": "GET",
+                "technologies": [],
+            }
+        ]
+        if "size(coalesce(e.query_keys" in query
+        else []
+    )
+
+    scheduled_tasks = []
+
+    async def capture_schedule(task):
+        scheduled_tasks.append(task)
+        return task
+
+    mock_orchestrator.task_scheduler.schedule_task = capture_schedule
+
+    await PhaseMonitor(mock_orchestrator)._on_phase_enter(
+        session, EngagementPhase.VULNERABILITY_DISCOVERY
+    )
+
+    sqli_task = next(task for task in scheduled_tasks if task.type == "sqli_scan")
+    assert sqli_task.timeout_seconds == PhaseMonitor.SQLI_TASK_TIMEOUT_SECONDS
+    assert sqli_task.timeout_seconds == 120
+
+
+@pytest.mark.asyncio
 async def test_task_scheduler_chains_next_steps(mock_orchestrator):
     """Verify TaskScheduler._on_task_success schedules next steps with priority 9."""
     task = Task(

@@ -65,17 +65,23 @@ def _logfile(name: str):
 
 def launch_stub(server_id: str, port: int) -> None:
     print(f"[supervisor] launching {server_id} on :{port}", flush=True)
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
     subprocess.Popen(
         [PY, STUB, "--port", str(port)],
         stdout=_logfile(server_id), stderr=subprocess.STDOUT, cwd=ROOT,
+        env=env,
     )
 
 
 def launch_api() -> None:
     print(f"[supervisor] launching API on :{API_PORT}", flush=True)
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
     subprocess.Popen(
         [PY, "-m", "uvicorn", "ai_osop.api.main:app", "--port", str(API_PORT)],
         stdout=_logfile("api"), stderr=subprocess.STDOUT, cwd=ROOT,
+        env=env,
     )
 
 
