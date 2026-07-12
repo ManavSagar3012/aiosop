@@ -349,6 +349,20 @@ def _extract_xss_token_from_url(url: str) -> str:
     return ""
 
 
+def _first_query_param(url: str) -> str:
+    """Return the first query-string parameter name in a URL, or "" if none.
+
+    Lets the mock sqlmap verdict name the parameter actually under test
+    (e.g. productId) instead of a hardcoded default, so the ground-truth
+    audit can match findings by parameter.
+    """
+    from urllib.parse import urlparse, parse_qs
+    qs = parse_qs(urlparse(url).query)
+    for k in qs:
+        return k
+    return ""
+
+
 def _mock_execute(server_id: str, tool_name: str,
                   params: Dict[str, Any]) -> Dict[str, Any]:
     """Return a plausible mock response for the given tool.
@@ -379,21 +393,28 @@ def _mock_execute(server_id: str, tool_name: str,
 
     elif server_id == "security-bridge" and tool_name == "run_sqlmap":
         target = params.get("url", "https://example.com/")
+        # SecurityBridgeMCP.run_sqlmap reads response.result["data"] — the verdict
+        # MUST be nested under "data" or it parses to {} -> injectable=False -> 0
+        # findings. Mirror the real bridge's contract. (mock/bridge shape parity)
+        param = _first_query_param(target) or "id"
         return {
             "status": "success",
             "result": {
-                "injectable": True,
-                "parameter": "id",
-                "dbms": "mysql",
-                "techniques": ["boolean-based blind", "error-based", "time-based blind"],
-                "payloads": [
-                    "1' AND 1=1--",
-                    "1' AND 1=2--",
-                    "1' AND SLEEP(5)--",
-                ],
+                "data": {
+                    "injectable": True,
+                    "parameter": param,
+                    "parameters": [param],
+                    "dbms": "mysql",
+                    "techniques": ["boolean-based blind", "error-based", "time-based blind"],
+                    "payloads": [
+                        f"{param}=1' AND 1=1--",
+                        f"{param}=1' AND 1=2--",
+                        f"{param}=1' AND SLEEP(5)--",
+                    ],
+                },
                 "log": [
                     f"[INFO] testing connection to {target}",
-                    "[INFO] parameter 'id' appears to be injectable (boolean-based blind)",
+                    f"[INFO] parameter '{param}' appears to be injectable (boolean-based blind)",
                     "[INFO] confirming injection with time-based payloads",
                     f"[INFO] back-end DBMS: MySQL (>= 5.0)",
                 ],
