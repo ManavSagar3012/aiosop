@@ -71,8 +71,24 @@ class PhaseMonitor:
         """
         from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+        # Param names classically worth injecting first. Generic (not app-specific)
+        # so the cap keeps the highest-value targets in any engagement rather than
+        # whichever ones happen to appear first in the recon records.
+        INJECTABLE_HINTS = (
+            "id", "product", "cat", "search", "term", "query", "q", "name",
+            "user", "file", "page", "sort", "order", "email", "url", "redirect",
+        )
+
+        def _score(param_names: tuple) -> int:
+            s = len(param_names)  # more params -> more surface
+            for p in param_names:
+                pl = p.lower()
+                if any(h in pl for h in INJECTABLE_HINTS):
+                    s += 5
+            return s
+
         seen: set = set()
-        targets: List[Dict[str, Any]] = []
+        scored: List[tuple] = []
         for r in records:
             url = r.get("url")
             if not url:
@@ -84,21 +100,27 @@ class PhaseMonitor:
                     q[k] = "test"
             if not q:
                 continue
-            key = (parsed.path, tuple(sorted(q.keys())))
+            param_names = tuple(sorted(q.keys()))
+            key = (parsed.path, param_names)
             if key in seen:
                 continue
             seen.add(key)
             target_url = urlunparse(parsed._replace(query=urlencode(q)))
-            targets.append(
-                {
-                    "url": target_url,
-                    "method": r.get("method") or "GET",
-                    "technologies": r.get("technologies") or [],
-                }
+            scored.append(
+                (
+                    _score(param_names),
+                    {
+                        "url": target_url,
+                        "method": r.get("method") or "GET",
+                        "technologies": r.get("technologies") or [],
+                    },
+                )
             )
-            if len(targets) >= max_targets:
-                break
-        return targets
+        # Highest injectability first (stable within equal scores), then cap so the
+        # active-scan phase converges: 25 targets x ~4 scanners x ~240s / ~13 agents
+        # drained >> the 1200s window; a smaller high-value set finishes in time.
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return [t[1] for t in scored[:max_targets]]
 
     async def _auto_advance_phase(self, session: SessionState) -> None:
         """Evaluate and advance the phase for a single session if tasks are complete."""
@@ -263,8 +285,12 @@ class PhaseMonitor:
                 if url:
                     url_to_techs[url] = r.get("technologies") or []
 
+            # Cap at 12 (was 25): 25 targets x ~4 scanners drained well past the
+            # 1200s window (last benchmark: 4/104 tasks completed). 12 high-value
+            # targets converge; ranking in _select_injection_targets keeps the most
+            # injectable endpoints. Grow the vuln-agent pool to raise this.
             injection_targets = self._select_injection_targets(
-                param_endpoint_records, max_targets=25
+                param_endpoint_records, max_targets=12
             )
 
             # AIOSOP-INJECTION-FALLBACK-001 (2026-07-12): When recon discovers
@@ -285,7 +311,7 @@ class PhaseMonitor:
                        WHERE e.status_code IS NOT NULL
                        RETURN e.url AS url, coalesce(e.method, 'GET') AS method,
                               e.technologies AS technologies
-                       LIMIT 25""",
+                       LIMIT 12""",
                     {"sid": session.session_id},
                 )
                 seen_fallback: set = set()
@@ -310,7 +336,7 @@ class PhaseMonitor:
                         }
                     )
                     url_to_techs[url] = r.get("technologies") or []
-                    if len(injection_targets) >= 25:
+                    if len(injection_targets) >= 12:
                         break
                 logger.info(
                     "active_injection_fallback_synthesized",
