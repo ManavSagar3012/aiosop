@@ -701,7 +701,7 @@ class Orchestrator:
                                 await self._assign_task(task)
 
                 # 2. Process new tasks from queues
-                for session_id, session in self._sessions.items():
+                for session_id, session in list(self._sessions.items()):
                     if session.phase == EngagementPhase.HALTED.value:
                         continue
 

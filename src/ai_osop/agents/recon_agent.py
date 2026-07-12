@@ -511,9 +511,7 @@ class ReconAgent(BaseAgent):
             # Parity with _execute_dns_enum: make a probe-tool outage VISIBLE rather
             # than silently yielding zero endpoints (the bug that hid the recon-mcp
             # "not initialized" failure for so long). AIOSOP-RECON-PERSIST-2026-06-24.
-            import logging
-
-            logging.getLogger("ai_osop.recon").error(
+            logger.error(
                 "service_probe_failed", error=str(e), target_count=len(targets), exc_info=True
             )
             logger.warning(f"Service probe failed ({len(targets)} targets): {e}")
@@ -571,11 +569,7 @@ class ReconAgent(BaseAgent):
             self.asset_inventory[root_asset.id] = root_asset
         except Exception as e:
             logger.debug(f"full_recon_failure: {str(e)}")
-            import logging
-
-            logging.getLogger("ai_osop.recon").error(
-                "full_recon_failure", error=str(e), exc_info=True
-            )
+            logger.error("full_recon_failure", error=str(e), exc_info=True)
             return {"status": "failed", "error": str(e)}
 
         # 2. Port Scan found subdomains
