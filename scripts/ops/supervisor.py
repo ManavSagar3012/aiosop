@@ -71,7 +71,11 @@ def _logfile(name: str):
     return open(os.path.join(LOGDIR, f"{name}.log"), "a", encoding="utf-8")
 
 
-def launch_stub(server_id: str, port: int) -> None:
+GOROOT = os.path.join(ROOT, "mcp-servers", "go")
+RECON_MCP_BIN = os.path.join(GOROOT, "recon-mcp.exe")
+
+
+def _launch_python_stub(server_id: str, port: int) -> None:
     print(f"[supervisor] launching {server_id} on :{port}", flush=True)
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
@@ -80,6 +84,24 @@ def launch_stub(server_id: str, port: int) -> None:
         stdout=_logfile(server_id), stderr=subprocess.STDOUT, cwd=ROOT,
         env=env,
     )
+
+
+def _launch_go_server(server_id: str, port: int, binary: str) -> None:
+    """Launch a compiled Go MCP server binary."""
+    print(f"[supervisor] launching {server_id} ({binary}) on :{port}", flush=True)
+    env = dict(os.environ)
+    subprocess.Popen(
+        [binary],
+        stdout=_logfile(server_id), stderr=subprocess.STDOUT, cwd=ROOT,
+        env=env,
+    )
+
+
+# Map of server_id -> (launcher_func, arg). Servers with a Go binary use
+# _launch_go_server; everything else uses the Python stub.
+_MCP_LAUNCHERS: dict[str, tuple] = {
+    "recon-mcp": (_launch_go_server, RECON_MCP_BIN),
+}
 
 
 def _redis_cli(args: list[str]) -> list[str]:
@@ -191,7 +213,11 @@ def ensure_all(with_api: bool) -> None:
 
     for server_id, port in MCP_PORTS.items():
         if not port_open(port):
-            launch_stub(server_id, port)
+            launcher, arg = _MCP_LAUNCHERS.get(server_id, (_launch_python_stub, STUB))
+            if launcher == _launch_go_server:
+                launcher(server_id, port, arg)
+            else:
+                launcher(server_id, port)
     if with_api and not port_open(API_PORT):
         now = time.monotonic()
         if now - _last_api_launch < _API_COOLDOWN:

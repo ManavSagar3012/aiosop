@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import aiohttp
+import structlog
 import websockets
 from pydantic import BaseModel, Field
 
@@ -247,7 +248,7 @@ class MCPConnection:
         self._circuit_breaker_check()
         if self._circuit_open and not self._half_open:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
-        if not self._session:
+        if not self._session or self._session.closed:
             await self.connect()
 
         import time as _time
@@ -282,7 +283,7 @@ class MCPConnection:
             )
         if not self._initialized:
             raise MCPException(f"MCP server {self.server_id} not initialized")
-        if self._session is None:
+        if self._session is None or self._session.closed:
             raise MCPConnectionError(f"MCP server {self.server_id} session is closed")
 
         tool = self._tools.get(request.tool_name)
