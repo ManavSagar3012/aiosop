@@ -396,7 +396,7 @@ class SessionMemory:
     async def store_session_state(self, state: SessionState) -> None:
         """Store active session state in Redis."""
         key = f"session:{state.session_id}"
-        await self.store_hot(key, state.model_dump(), ttl=86400)
+        await self.store_hot(key, state.model_dump(), ttl=settings.redis_session_ttl_hours * 3600)
 
     async def get_session_state(self, session_id: str) -> Optional[SessionState]:
         """Retrieve active session state from Redis."""
@@ -1147,9 +1147,16 @@ class SessionMemory:
         """Load all non-completed tasks from warm tier for recovery."""
         from ai_osop.core.config import AgentType
 
+        # AIOSOP-RECOVERY-AGE-001: bound resurrection to recent tasks. Without this,
+        # an abandoned engagement's non-terminal tasks are re-queued on EVERY restart
+        # and hijack the scanner-agent pool, starving live engagements.
+        cutoff = datetime.utcnow() - timedelta(hours=settings.recovery_max_age_hours)
         async with self._async_session() as session:
             result = await session.execute(
-                select(TaskORM).where(TaskORM.status.notin_(["completed", "failed", "cancelled"]))
+                select(TaskORM).where(
+                    TaskORM.status.notin_(["completed", "failed", "cancelled"]),
+                    TaskORM.created_at >= cutoff,
+                )
             )
             tasks = []
             for orm in result.scalars():

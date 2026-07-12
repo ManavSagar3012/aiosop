@@ -586,8 +586,12 @@ class VulnAnalysisAgent(BaseAgent):
             await self.security_bridge.initialize(session.scope, session.session_id)
 
         try:
+            # Raised from 90s → 180s: ginandjuice.shop requires ~97s network wait per
+            # request. At 90s sqlmap timed out before completing a single probe pass,
+            # causing 0/25 sqli completions. 180s gives sqlmap time for 1-2 full probe
+            # cycles while staying within the 600s task budget. (AIOSOP-SQLI-BUDGET-002)
             verdict = await self.security_bridge.run_sqlmap(
-                url, data=data, level=level, risk=risk, timeout_override=90
+                url, data=data, level=level, risk=risk, timeout_override=180
             )
         except Exception as e:  # MCPException etc. — report, do not crash the agent
             logger.warning("sqli_scan_failed", url=url, error=str(e))

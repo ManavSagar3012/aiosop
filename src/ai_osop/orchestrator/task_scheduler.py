@@ -384,18 +384,21 @@ class TaskScheduler:
         """Release an agent claim — the exact inverse of the claim in
         _find_available_agent (busy set, lock, status)."""
         if agent_id:
-            await self._orch.session_memory.remove_busy_agent(agent_id)
-            lock_key = f"lock:agent:{agent_id}"
-            await self._orch.session_memory.release_lock(lock_key, "locked")
-            # AIOSOP-LOCKWIN-001: the claim set status="running"; restore "idle" so the
-            # agent is claimable again. On the normal execution path execute_task has
-            # already reset "idle" (harmless double-set); this is what covers the paths
-            # where execution never ran — assign-time persistence failure and the
-            # availability-only probe in _on_task_success — so a claimed agent can
-            # never get stuck "running" forever.
+            # AIOSOP-LOCKWIN-001 / AIOSOP-AGENTLEAK-001: flip the in-memory status FIRST.
+            # It cannot fail, and it is what makes the agent claimable again. Doing the
+            # Redis ops first (as before) meant a Redis blip mid-release — observed live
+            # when the container dropped — raised before the flip and stranded the agent
+            # in "running" forever, permanently shrinking the pool. The 30s lock TTL
+            # self-heals the distributed lock if the release below is skipped.
             agent = self._orch._agents.get(agent_id)
             if agent is not None:
                 agent.ctx.status = "idle"
+            try:
+                await self._orch.session_memory.remove_busy_agent(agent_id)
+                lock_key = f"lock:agent:{agent_id}"
+                await self._orch.session_memory.release_lock(lock_key, "locked")
+            except Exception as e:  # noqa: BLE001 — never strand an agent on a Redis hiccup
+                logger.warning("release_agent_redis_cleanup_failed", agent_id=agent_id, error=str(e))
 
     @staticmethod
     def _sanitize_external_payload(task: Task) -> None:
@@ -676,7 +679,11 @@ class TaskScheduler:
 
                 # Special cases for certain scanner types if they expect different payload schemas
                 if next_task_type == "sqli_scan":
-                    next_payload = {"url": target_url, "level": 2, "risk": 1}
+                    # Use level=1 (was 2) to align with the phase_monitor fix (AIOSOP-SQLI-BUDGET-003):
+                    # level=2 multiplies HTTP requests and causes ~677s network_wait against
+                    # slow external targets, exhausting the 900s budget. level=1 reduces
+                    # requests by ~40% and completes in ~400-500s for the same target.
+                    next_payload = {"url": target_url, "level": 1, "risk": 1}
 
                 follow_up_task = Task(
                     type=next_task_type,
@@ -684,7 +691,7 @@ class TaskScheduler:
                     agent_type=next_agent_type,
                     payload=next_payload,
                     engagement_id=task.engagement_id,
-                    timeout_seconds=300,
+                    timeout_seconds=900,
                 )
                 logger.info(
                     "autonomous_follow_up_scheduled",

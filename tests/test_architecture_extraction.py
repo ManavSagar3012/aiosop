@@ -188,6 +188,35 @@ class TestEngagementManager:
         await manager.halt_engagement("eng-1", "test reason")
         assert task.status == "cancelled"
 
+    async def test_halt_engagement_preserves_shared_worker_agents(self, manager):
+        """halt_engagement must NOT shutdown shared worker agents.
+
+        Regression: the old code called agent.shutdown() which permanently
+        removed agents from the pool, causing cumulative worker depletion.
+        After halt, an agent that was running a task for the halted engagement
+        should be reset to 'idle' — NOT shut down.
+        """
+        mock_agent = MagicMock()
+        mock_agent.ctx.agent_id = "vuln-agent-1"
+        mock_agent.ctx.session_id = "eng-1"
+        mock_agent.ctx.status = "running"
+        mock_agent.ctx.current_task = MagicMock()
+        mock_agent.shutdown = AsyncMock()
+
+        manager._orch._agents["vuln-agent-1"] = mock_agent
+        manager._orch._sessions["eng-1"] = MagicMock()
+        manager._orch._sessions["eng-1"].scope.engagement_id = "eng-1"
+        manager._orch._sessions["eng-1"].phase = "initialized"
+        manager._orch.session_memory.store_session_state = AsyncMock()
+
+        await manager.halt_engagement("eng-1", "test lifecycle fix")
+
+        # Agent must NOT have been shut down
+        mock_agent.shutdown.assert_not_awaited()
+        # Agent should be reset to idle so it stays in the worker pool
+        assert mock_agent.ctx.status == "idle"
+        assert mock_agent.ctx.current_task is None
+
 
 class TestPhaseMonitor:
     @pytest.fixture

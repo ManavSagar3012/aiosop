@@ -382,20 +382,23 @@ async def lifespan(app: FastAPI):
             # 48 tasks took >180s — 97.9% remained pending. Each agent processes
             # one task at a time, so more instances = more parallel slots.
             # Platform-wide ceiling: settings.max_concurrent_agents (default 50).
-            _VULN_WORKERS = 5
-            _RECON_WORKERS = 3
-            _EXPLOIT_WORKERS = 2
-            _SSTI_WORKERS = 2
-            _SSRF_WORKERS = 2
-            _CSRF_WORKERS = 2
-            _JWT_WORKERS = 2
-            _SMUGGLING_WORKERS = 2
-            _RACE_WORKERS = 2
-            _UPLOAD_WORKERS = 2
-            _POLLUTION_WORKERS = 2
-            _WEBSOCKET_WORKERS = 2
-            _SAML_WORKERS = 2
-            _TAKEOVER_WORKERS = 2
+            # AIOSOP-CONCURRENCY-002 (2026-07-11): benchmark showed 96/103 tasks
+            # pending after 600s because 9 scanner agents were saturated. Doubling
+            # the pool sizes to handle the 25-target injection load.
+            _VULN_WORKERS = 10
+            _RECON_WORKERS = 4
+            _EXPLOIT_WORKERS = 3
+            _SSTI_WORKERS = 3
+            _SSRF_WORKERS = 3
+            _CSRF_WORKERS = 3
+            _JWT_WORKERS = 3
+            _SMUGGLING_WORKERS = 3
+            _RACE_WORKERS = 3
+            _UPLOAD_WORKERS = 3
+            _POLLUTION_WORKERS = 3
+            _WEBSOCKET_WORKERS = 3
+            _SAML_WORKERS = 3
+            _TAKEOVER_WORKERS = 3
 
             agents_to_register = [
                 (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),

@@ -22,12 +22,31 @@ logger = structlog.get_logger("ai_osop.orchestrator.phase_monitor")
 class PhaseMonitor:
     """Monitor engagement phases and trigger automatic tasks on phase entry."""
 
-    # sqlmap itself is bounded to 90 seconds by VulnAnalysisAgent.  The phase
-    # scheduler must leave a little room for setup/cleanup, but it must not
-    # inherit the 15-minute Nuclei budget: a handful of stalled SQLi jobs would
-    # otherwise occupy every vuln-analysis worker and let unrelated scans age
-    # into the stuck-task reaper.
-    SQLI_TASK_TIMEOUT_SECONDS = 120
+    # sqlmap itself is bounded to 180 seconds by VulnAnalysisAgent (timeout_override),
+    # but the task budget must cover the WHOLE agent turn: applicability check,
+    # session/scope init, multi-step LLM reasoning, outbound network wait (~97s
+    # observed against slow/remote targets), and potential multi-pass sqlmap probing.
+    #
+    # Empirical timeline on ginandjuice.shop (external target):
+    #   120s budget  → cancelled at 120s, 0/25 sqli completed (pre-fix baseline)
+    #   300s budget  → cancelled at 300s, 0/25 sqli completed (too short)
+    #   600s budget  → cancelled at ~690s*, 0/25 sqli completed (*actual runtime)
+    #   534s runtime → 1 sqli completed (eng-20260711025504, favorable run)
+    #   ~690s runtime → consistent actual need against slow external target
+    #
+    # The scan needs ~650-700s of wall-clock time (sqlmap 180s inner + LLM multi-step
+    # + ~97s network wait per request + session initialization). Setting 900s (the
+    # same ceiling as the Nuclei budget) gives a generous margin without allowing
+    # stalled SQLi jobs to occupy vuln-analysis workers indefinitely.
+    # (AIOSOP-SQLI-BUDGET-003)
+    SQLI_TASK_TIMEOUT_SECONDS = 900
+
+    # AIOSOP-ACTIVE-INJECTION-TIMEOUT-001 (2026-07-11): XSS, CSRF, JWT, and other
+    # active scanners were hardcoded at 300s which caused them to be reaped before
+    # completion against slow external targets (observed: xss task retry_count=1 at
+    # 300s ceiling). Raising to 600s matches the burp_scan budget and gives scanners
+    # adequate wall-clock time against remote targets.
+    ACTIVE_SCAN_TIMEOUT_SECONDS = 600
 
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
@@ -242,6 +261,57 @@ class PhaseMonitor:
                 param_endpoint_records, max_targets=25
             )
 
+            # AIOSOP-INJECTION-FALLBACK-001 (2026-07-12): When recon discovers
+            # NO parametrized endpoints (empty query string, no query_keys),
+            # every active injection scanner (sqli_scan, xss_scan, csrf_scan,
+            # jwt_scan, ...) is silently NOT dispatched, leaving the entire
+            # attack surface untested. Fall back to discovered endpoints,
+            # synthesising a probe parameter (q=test) so scanners have
+            # something injectable. Without this, a full_recon that returns
+            # 38 endpoints (all root pages, no params) dispatches zero
+            # injection tasks and the platform reports 0 findings against
+            # a deliberately-vulnerable app.
+            if not injection_targets:
+                from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+                fallback_records = await self._orch.graph_memory.run_read_query(
+                    """MATCH (e:Endpoint {engagement_id: $sid})
+                       WHERE e.status_code IS NOT NULL
+                       RETURN e.url AS url, coalesce(e.method, 'GET') AS method,
+                              e.technologies AS technologies
+                       LIMIT 25""",
+                    {"sid": session.session_id},
+                )
+                seen_fallback: set = set()
+                for r in fallback_records:
+                    url = r.get("url")
+                    if not url:
+                        continue
+                    parsed = urlparse(url)
+                    q = dict(parse_qsl(parsed.query, keep_blank_values=True))
+                    if not q:
+                        q["q"] = "test"
+                    key = (parsed.path, tuple(sorted(q.keys())))
+                    if key in seen_fallback:
+                        continue
+                    seen_fallback.add(key)
+                    target_url = urlunparse(parsed._replace(query=urlencode(q)))
+                    injection_targets.append(
+                        {
+                            "url": target_url,
+                            "method": r.get("method") or "GET",
+                            "technologies": r.get("technologies") or [],
+                        }
+                    )
+                    url_to_techs[url] = r.get("technologies") or []
+                    if len(injection_targets) >= 25:
+                        break
+                logger.info(
+                    "active_injection_fallback_synthesized",
+                    session_id=session.session_id,
+                    targets=len(injection_targets),
+                )
+
             knowledge_engine = SecurityKnowledgeEngine()
 
             vuln_to_scanners = {
@@ -284,7 +354,13 @@ class PhaseMonitor:
                     type="sqli_scan",
                     priority=8,
                     agent_type=AgentType.VULN_ANALYSIS,
-                    payload={"url": target_url, "method": target_method, "level": 2, "risk": 1},
+                    # level=1 (was 2): level=2 multiplies requests per parameter, which
+                    # causes ~677s network_wait against slow external targets like
+                    # ginandjuice.shop and exhausts the 900s task budget. level=1 uses
+                    # the minimal set of payloads and completes in ~400-500s for the same
+                    # target. level=2+ can be re-enabled for local/fast targets.
+                    # (AIOSOP-SQLI-BUDGET-003)
+                    payload={"url": target_url, "method": target_method, "level": 1, "risk": 1},
                     engagement_id=session.session_id,
                     timeout_seconds=self.SQLI_TASK_TIMEOUT_SECONDS,
                 )
@@ -296,7 +372,7 @@ class PhaseMonitor:
                     agent_type=AgentType.VULN_ANALYSIS,
                     payload={"url": target_url, "method": target_method},
                     engagement_id=session.session_id,
-                    timeout_seconds=300,
+                    timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
                 )
                 await self._orch.task_scheduler.schedule_task(xss_task)
 
@@ -336,7 +412,7 @@ class PhaseMonitor:
                             agent_type=scanner_type,
                             payload={"url": target_url, "method": target_method},
                             engagement_id=session.session_id,
-                            timeout_seconds=300,
+                            timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
                         )
                         await self._orch.task_scheduler.schedule_task(task)
             if injection_targets:
@@ -446,7 +522,7 @@ class PhaseMonitor:
                     agent_type=scanner_type,
                     payload={"url": target_url},
                     engagement_id=session.session_id,
-                    timeout_seconds=300,
+                    timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
                 )
                 await self._orch.task_scheduler.schedule_task(task)
             # risk is derived (not hardcoded) downstream.

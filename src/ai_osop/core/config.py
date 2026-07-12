@@ -239,6 +239,14 @@ class Settings(BaseSettings):
     # Bound each call so a hang degrades instead of stalling the pipeline. Primary +
     # fallback are each bounded, so worst case is 2x this value.
     llm_completion_timeout: int = Field(default=60, validation_alias="OSOP_LLM_COMPLETION_TIMEOUT")
+    # AIOSOP-LLM-CONCURRENCY-001: cap simultaneous LLM completions. The cloud-proxied
+    # Ollama models serve a handful of concurrent requests fine (~6 in ~12s, verified),
+    # but a 100-task scanner fan-out fires 30+ agent reasoning calls at once, oversubscribing
+    # the shared proxy so EVERY call slows/queues and no LLM-driven scan (sqli/xss/csrf/jwt)
+    # completes within its budget — while single-shot burp/recon still finish. A global
+    # semaphore keeps the backend in its healthy-parallelism band: excess calls wait a beat
+    # instead of thrashing the proxy, so scans complete and free their slots. Tune per backend.
+    llm_max_concurrency: int = Field(default=8, validation_alias="OSOP_LLM_MAX_CONCURRENCY")
     # AIOSOP-LLM-WARM-001 (2026-07-03): the timeouts we saw were NOT "Ollama down" —
     # Ollama is up and the models are pulled. They were COLD-LOAD latency: loading a
     # 2-5GB model into memory takes ~60s, and with a different primary/fallback model
@@ -307,7 +315,7 @@ class Settings(BaseSettings):
     sandbox_memory_limit: str = "4Gi"
 
     # Orchestration
-    max_concurrent_agents: int = 50
+    max_concurrent_agents: int = 80  # Sprint 0: increased from 50 to accommodate doubled agent pool (67 agents)
     max_tasks_per_second: int = 100
     task_default_timeout: int = 300
     approval_timeout_seconds: int = 1800  # 30 minutes
@@ -410,7 +418,18 @@ class Settings(BaseSettings):
     postgres_session_retention_days: int = 30
     postgres_approval_retention_days: int = 90
     redis_hot_ttl_hours: int = 168  # 7 days
-    redis_session_ttl_hours: int = 24
+    redis_session_ttl_hours: int = 2  # Sprint 0: reduced from 24h to 2h to prevent stale engagement accumulation; 2h is enough for most engagements
+    # AIOSOP-RECOVERY-AGE-001 (2026-07-12): restart recovery (load_all_active_tasks)
+    # re-queues EVERY non-terminal task in Postgres regardless of age. An abandoned
+    # engagement (observed live: a 2-day-old eng- whose sqli_scan tasks kept getting
+    # resurrected across restarts) then hijacks the whole scanner-agent pool on every
+    # boot, starving live engagements. The per-task _recovery_attempts cap (=3) does not
+    # help here because the engagement keeps regenerating fresh work. Bound recovery to
+    # tasks created within this window; older tasks are left non-terminal in the DB but
+    # never resurrected. Default 24h comfortably covers a real multi-hour pentest.
+    # ponytail: age proxy for "engagement still active"; switch to a phase check
+    # (skip HALTED/COMPLETED/ABORTED engagements) if long idle-then-resume is needed.
+    recovery_max_age_hours: int = Field(default=24, validation_alias="OSOP_RECOVERY_MAX_AGE_HOURS")
 
     # Session encryption (Fernet) for cookies, bearer tokens, CSRF tokens at rest
     session_encryption_key: Optional[str] = Field(

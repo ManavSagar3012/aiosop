@@ -54,12 +54,12 @@ async def main():
         print(
             f"SUCCESS: Engagement created. Session ID: {session_id} | Phase: {engagement_data.get('phase')}"
         )
-        print("Polling status and task execution (will run for 600 seconds or until completed)...")
+        print("Polling status and task execution (will run for 1200 seconds or until completed)...")
         print("-" * 60)
 
         start_time = time.time()
         completed = False
-        duration = 600
+        duration = 1200
         status = "unknown"
 
         while time.time() - start_time < duration:

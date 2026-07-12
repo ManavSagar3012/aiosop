@@ -117,20 +117,26 @@ class EngagementManager:
             except Exception as e:
                 logger.warning("halt_queue_drain_failed", session_id=session_id, error=str(e))
 
-            # Shut agents down under a hard deadline so a wedged agent (blocking
-            # I/O / mid-LLM-call) cannot make halt hang forever.
+            # LIFECYCLE FIX (2026-07-11): agents are SHARED long-lived workers.
+            # The old code called agent.shutdown() which permanently killed them,
+            # and the orchestrator main loop (line 727-728) then unregistered them
+            # from the pool — causing cumulative worker depletion.  Task handles
+            # are already cancelled above (lines 101-108) which interrupts the
+            # agent's _execute() via CancelledError.  Here we just reset any
+            # agent that was mid-task for this engagement back to idle so it can
+            # accept work from the next engagement.
             for agent in self._orch._agents.values():
-                if agent.ctx.session_id == session_id:
-                    try:
-                        await asyncio.wait_for(agent.shutdown(), timeout=self.HALT_DEADLINE_SECONDS)
-                    except asyncio.TimeoutError:
-                        logger.error(
-                            "agent_shutdown_timeout",
-                            agent_id=agent.ctx.agent_id,
-                            session_id=session_id,
-                        )
-                    except Exception as e:
-                        logger.warning("agent_shutdown_failed", error=str(e))
+                if (
+                    agent.ctx.session_id == session_id
+                    and agent.ctx.status == "running"
+                ):
+                    agent.ctx.current_task = None
+                    agent.ctx.status = "idle"
+                    logger.info(
+                        "agent_released_from_halted_engagement",
+                        agent_id=agent.ctx.agent_id,
+                        session_id=session_id,
+                    )
             await self._orch._audit_log(
                 AuditEvent(
                     event_type="engagement_halted",

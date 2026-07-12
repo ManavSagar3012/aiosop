@@ -182,7 +182,11 @@ async def test_phase_monitor_bounds_sqli_tasks_independently_of_nuclei_timeout(
 
     sqli_task = next(task for task in scheduled_tasks if task.type == "sqli_scan")
     assert sqli_task.timeout_seconds == PhaseMonitor.SQLI_TASK_TIMEOUT_SECONDS
-    assert sqli_task.timeout_seconds == 120
+    # Updated from 120→300→600→900: empirical data on ginandjuice.shop showed
+    # tasks need ~690s to complete (sqlmap level=1, network wait ~97s per pass).
+    assert sqli_task.timeout_seconds == 900
+    # level=1 (was 2) reduces HTTP request count and enables completion within budget.
+    assert sqli_task.payload.get("level") == 1
 
 
 @pytest.mark.asyncio

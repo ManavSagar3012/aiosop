@@ -3,6 +3,7 @@ LiteLLM Client
 Standardized interface for LLM completions and embeddings with fallback routing.
 """
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 import litellm
@@ -14,6 +15,18 @@ from ai_osop.safety.prompt_defense import sanitize_messages
 llm_logger = structlog.get_logger("ai_osop.llm")
 
 _EMBED_DIMS = 1536  # default; overridden by settings.llm_embedding_dim
+
+# AIOSOP-LLM-CONCURRENCY-001: one process-wide gate over ALL completions so a scanner
+# fan-out cannot oversubscribe the shared cloud-proxied Ollama backend. Created lazily
+# because an asyncio.Semaphore binds to the running loop (module import has no loop).
+_llm_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _completion_gate() -> asyncio.Semaphore:
+    global _llm_semaphore
+    if _llm_semaphore is None:
+        _llm_semaphore = asyncio.Semaphore(max(1, settings.llm_max_concurrency))
+    return _llm_semaphore
 
 
 def _mock_embedding(text: str, dims: Optional[int] = None) -> List[float]:
@@ -85,32 +98,35 @@ class LiteLLMClient:
                 return {"keep_alive": settings.llm_keep_alive}
             return {}
 
-        try:
-            response = await litellm.acompletion(
-                model=selected_model,
-                messages=safe_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout,
-                **_extra(selected_model),
-                **kwargs,
-            )
-        except Exception as primary_err:
-            llm_logger.warning(
-                "primary_llm_failed_falling_back",
-                primary_model=selected_model,
-                fallback_model=self.fallback_model,
-                error=str(primary_err),
-            )
-            response = await litellm.acompletion(
-                model=self.fallback_model,
-                messages=safe_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout,
-                **_extra(self.fallback_model),
-                **kwargs,
-            )
+        # AIOSOP-LLM-CONCURRENCY-001: hold one slot for the whole logical call (primary
+        # + fallback are one attempt, so the fallback does not need a second slot).
+        async with _completion_gate():
+            try:
+                response = await litellm.acompletion(
+                    model=selected_model,
+                    messages=safe_messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=timeout,
+                    **_extra(selected_model),
+                    **kwargs,
+                )
+            except Exception as primary_err:
+                llm_logger.warning(
+                    "primary_llm_failed_falling_back",
+                    primary_model=selected_model,
+                    fallback_model=self.fallback_model,
+                    error=str(primary_err),
+                )
+                response = await litellm.acompletion(
+                    model=self.fallback_model,
+                    messages=safe_messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=timeout,
+                    **_extra(self.fallback_model),
+                    **kwargs,
+                )
 
         return response.choices[0].message.content or ""
 

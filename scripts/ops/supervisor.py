@@ -80,7 +80,7 @@ def _launch_python_stub(server_id: str, port: int) -> None:
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
     subprocess.Popen(
-        [PY, STUB, "--port", str(port)],
+        [PY, STUB, "--port", str(port), "--server-id", server_id],
         stdout=_logfile(server_id), stderr=subprocess.STDOUT, cwd=ROOT,
         env=env,
     )
