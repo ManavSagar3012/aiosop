@@ -685,11 +685,39 @@ class Orchestrator:
             try:
                 # AIOSOP-LOGHYGIENE-002: per-tick scheduler heartbeat removed (unwired
                 # log level meant this DEBUG line still emitted every tick).
+
+                # AIOSOP-SCALE-001 (2026-07-12): per-engagement inflight cap.
+                # Count only RUNNING tasks per engagement (tasks actively occupying
+                # an agent slot). Pending tasks are queue depth, not agent utilization
+                # — including them would cap at 0 the moment >40 tasks exist and
+                # deadlock the engagement (all tasks skipped, none ever assigned).
+                inflight_counts: Dict[str, int] = {}
+                for t in self.state.get_all_tasks().values():
+                    if t.status == "running":
+                        eid = t.engagement_id or "_"
+                        inflight_counts[eid] = inflight_counts.get(eid, 0) + 1
+
                 # 1. Process pending tasks already in memory (Issue 15: task leakage)
+                # SCHEDULER-YIELD-001 (2026-07-12): yield to the event loop after
+                # every batch of processed tasks so background _execute_via_agent
+                # coroutines (dispatched via asyncio.create_task) actually get CPU
+                # time. Without this, the scheduler loop monopolises the event loop
+                # when there are thousands of recovered pending tasks, starving the
+                # background tasks and stranding agents in "running" forever.
+                _tasks_processed_this_tick = 0
+                _max_per_tick = 200  # cap to prevent event loop starvation
                 for task in list(self.state.get_all_tasks().values()):
+                    if _tasks_processed_this_tick >= _max_per_tick:
+                        break
                     if task.status == "pending":
+                        # Admission control: skip if engagement hit inflight cap
+                        eid = task.engagement_id or "_"
+                        current = inflight_counts.get(eid, 0)
+                        if current >= settings.max_inflight_tasks_per_engagement:
+                            continue
                         # Check dependencies
                         if not task.dependencies:
+                            inflight_counts[eid] = current + 1
                             await self._assign_task(task)
                         else:
                             all_deps_complete = all(
@@ -698,7 +726,13 @@ class Orchestrator:
                                 for dep_id in task.dependencies
                             )
                             if all_deps_complete:
+                                inflight_counts[eid] = current + 1
                                 await self._assign_task(task)
+                        # SCHEDULER-YIELD-001: every 5 tasks, yield so background
+                        # _execute_via_agent tasks are not starved by a long loop.
+                        _tasks_processed_this_tick += 1
+                        if _tasks_processed_this_tick % 5 == 0:
+                            await asyncio.sleep(0)
 
                 # 2. Process new tasks from queues
                 for session_id, session in list(self._sessions.items()):
@@ -727,7 +761,7 @@ class Orchestrator:
                     if status["status"] == "shutdown":
                         self.state.unregister_agent(agent_id)
 
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
 
             except Exception as e:
                 # Log but don't crash scheduler

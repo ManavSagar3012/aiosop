@@ -494,6 +494,7 @@ class TaskScheduler:
 
     async def _execute_via_agent(self, agent: Any, task: Task) -> None:
         """Execute task through assigned agent."""
+        logger.info("_execute_via_agent_started", task_id=task.id, agent_id=agent.ctx.agent_id, task_type=task.type)
         from ai_osop.core.telemetry import extract_trace_context
         from ai_osop.core.tracing import trace_span_with_parent
 
@@ -525,24 +526,22 @@ class TaskScheduler:
                 },
             )
 
+        _POST_EXECUTION_TIMEOUT = 30
+
         with span_ctx:
             try:
-                # HANG GUARD (2026-07-05): bound every agent execution. An agent whose
-                # external call (LLM / MCP / browser) never returns would otherwise pin
-                # the task at 'running' FOREVER and never release the agent slot — the
-                # root cause of 0/372 tasks ever completing and of stalled autonomous
-                # runs. wait_for cancels the hung coroutine and we fail/retry the task,
-                # so every task is guaranteed to reach a terminal state.
                 _timeout = getattr(task, "timeout_seconds", None) or 300
                 result = await asyncio.wait_for(agent.execute_task(task), timeout=_timeout)
                 status = result.get("status") if isinstance(result, dict) else None
                 if result is None or not isinstance(result, dict) or status in self._FAILURE_STATUSES:
                     normalized = result if isinstance(result, dict) else {"status": "failed", "error": "empty or invalid agent result"}
-                    if not await self._maybe_retry(task, normalized):
-                        await self._on_task_failure(task, normalized)
+                    await self._handle_failure_with_timeout(
+                        task, normalized, _POST_EXECUTION_TIMEOUT, "_maybe_retry/_on_task_failure"
+                    )
                 else:
-                    normalized = result
-                    await self._on_task_success(task, normalized)
+                    await self._handle_success_with_timeout(
+                        task, result, _POST_EXECUTION_TIMEOUT
+                    )
 
             except asyncio.TimeoutError:
                 record_failure(task, FailureCategory.WORKER, f"agent execution exceeded {_timeout}s hard timeout", component=agent.ctx.agent_id)
@@ -550,24 +549,89 @@ class TaskScheduler:
                     "error": f"agent execution exceeded {_timeout}s hard timeout",
                     "error_type": "TaskTimeout",
                 }
-                if not await self._maybe_retry(task, err):
-                    await self._on_task_failure(task, err)
+                await self._handle_failure_with_timeout(
+                    task, err, _POST_EXECUTION_TIMEOUT, "_maybe_retry/_on_task_failure (timeout path)"
+                )
 
             except asyncio.CancelledError:
                 record_failure(task, FailureCategory.WORKER, "execution cancelled", component=agent.ctx.agent_id)
-                await self._on_task_failure(
-                    task, {"error": "execution cancelled", "error_type": "CancelledError"}
-                )
+                try:
+                    await asyncio.wait_for(
+                        self._on_task_failure(
+                            task, {"error": "execution cancelled", "error_type": "CancelledError"}
+                        ),
+                        timeout=_POST_EXECUTION_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "post_execution_handler_timeout",
+                        task_id=task.id,
+                        handler="_on_task_failure (cancelled path)",
+                        timeout=_POST_EXECUTION_TIMEOUT,
+                    )
                 raise
             except Exception as e:
                 err = {"error": str(e)}
-                if not await self._maybe_retry(task, err):
-                    await self._on_task_failure(task, err)
+                await self._handle_failure_with_timeout(
+                    task, err, _POST_EXECUTION_TIMEOUT, "_maybe_retry/_on_task_failure (exception path)"
+                )
             finally:
                 await self._release_agent(agent.ctx.agent_id)
                 handles = getattr(self._orch, "_task_handles", None)
                 if handles is not None:
                     handles.pop(task.id, None)
+
+    async def _handle_failure_with_timeout(
+        self,
+        task: Task,
+        result: Dict[str, Any],
+        timeout: float,
+        handler_label: str,
+    ) -> None:
+        """Run _maybe_retry then _on_task_failure both bounded by a timeout.
+
+        Extracted to DRY up the 3 identical post-execution handler blocks
+        in _execute_via_agent (normal, TimeoutError, and generic Exception
+        paths). The CancelledError path is intentionally omitted — cancelled
+        tasks should not be retried.
+        """
+        try:
+            _retried = await asyncio.wait_for(
+                self._maybe_retry(task, result),
+                timeout=timeout,
+            )
+            if not _retried:
+                await asyncio.wait_for(
+                    self._on_task_failure(task, result),
+                    timeout=timeout,
+                )
+        except asyncio.TimeoutError:
+            logger.error(
+                "post_execution_handler_timeout",
+                task_id=task.id,
+                handler=handler_label,
+                timeout=timeout,
+            )
+
+    async def _handle_success_with_timeout(
+        self,
+        task: Task,
+        result: Dict[str, Any],
+        timeout: float,
+    ) -> None:
+        """Run _on_task_success bounded by a timeout."""
+        try:
+            await asyncio.wait_for(
+                self._on_task_success(task, result),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "post_execution_handler_timeout",
+                task_id=task.id,
+                handler="_on_task_success",
+                timeout=timeout,
+            )
 
     async def _on_task_success(self, task: Task, result: Dict[str, Any]) -> None:
         """Handle task completion."""

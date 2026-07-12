@@ -39,14 +39,20 @@ class PhaseMonitor:
     # same ceiling as the Nuclei budget) gives a generous margin without allowing
     # stalled SQLi jobs to occupy vuln-analysis workers indefinitely.
     # (AIOSOP-SQLI-BUDGET-003)
-    SQLI_TASK_TIMEOUT_SECONDS = 900
+    # DEV-OVERRIDE-001 (2026-07-12): Drastically reduced from 900s → 240s and 600s →
+    # 120s for development iteration speed. The sqlmap inner timeout_override is 180s,
+    # so the task ceiling is 180s plus margin for LLM reasoning (45s ceiling) and
+    # session init. 240s provides ~15s of headroom. With MCP stubs responding in
+    # <30ms, even this is generous. Restore to 900/600 for production or slow
+    # external targets.
+    SQLI_TASK_TIMEOUT_SECONDS = 240
 
     # AIOSOP-ACTIVE-INJECTION-TIMEOUT-001 (2026-07-11): XSS, CSRF, JWT, and other
     # active scanners were hardcoded at 300s which caused them to be reaped before
     # completion against slow external targets (observed: xss task retry_count=1 at
     # 300s ceiling). Raising to 600s matches the burp_scan budget and gives scanners
     # adequate wall-clock time against remote targets.
-    ACTIVE_SCAN_TIMEOUT_SECONDS = 600
+    ACTIVE_SCAN_TIMEOUT_SECONDS = 120
 
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
@@ -619,10 +625,17 @@ class PhaseMonitor:
             await self._orch.task_scheduler.schedule_task(task)
 
     async def _phase_monitor(self) -> None:
-        """Background phase monitor: periodically check for phase advancement conditions."""
+        """Background phase monitor: periodically check for phase advancement conditions.
+
+        AIOSOP-SCALE-001 (2026-07-12): reduced sleep from 10s to 5s so the monitor
+        detects completed phases faster and advances the engagement. With the inflight
+        admission cap in the scheduler loop, tasks should complete more rapidly, so a
+        quicker phase-detection loop prevents sessions from stalling on a completed
+        phase while waiting for the next tick.
+        """
         while self._orch._running:
             try:
-                await asyncio.sleep(10)
+                await asyncio.sleep(5)
                 self._tick += 1
                 for session in list(self._orch._sessions.values()):
                     await self._auto_advance_phase(session)

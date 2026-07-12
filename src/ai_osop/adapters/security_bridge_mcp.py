@@ -85,7 +85,7 @@ class SecurityBridgeAdapter:
             params["dump"] = True
 
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "sqlmap", params, timeout_override=timeout_override
+            self.SERVER_ID, "run_sqlmap", params, timeout_override=timeout_override
         )
 
         if response.status != "success":

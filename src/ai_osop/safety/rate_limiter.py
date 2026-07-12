@@ -59,7 +59,12 @@ class RateLimiter:
         target_capacity: int = 20,
         tool_rate: float = 5.0,
         tool_capacity: int = 10,
-        acquire_timeout_seconds: Optional[float] = None,
+        # P0-012: Hard timeout so agent.execute_task can NEVER block forever on the
+        # rate limiter. Previously None (no timeout) meant an empty token bucket could
+        # strand an agent in "running" indefinitely — the root cause of permanently
+        # stuck agents that never release their execution slot. 60s is generous:
+        # at the default 5 req/s tool_rate, 10 backlogged agents clear in ~2s.
+        acquire_timeout_seconds: Optional[float] = 60.0,
     ):
         self.global_bucket = TokenBucket(global_capacity, global_rate)
         self.target_buckets: Dict[str, TokenBucket] = {}

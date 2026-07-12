@@ -77,7 +77,15 @@ class LiteLLMClient:
         model: Optional[str] = None,
         **kwargs: Any,
     ) -> str:
-        """Return assistant text, retrying with the fallback model on failure."""
+        """Return assistant text, retrying with the fallback model on failure.
+
+        In mock mode (settings.mock_llm) returns an empty string immediately
+        without contacting any LLM provider, so agents complete instantly
+        during testing/benchmarking instead of hanging on LLM timeouts.
+        """
+
+        if settings.mock_llm:
+            return ""
 
         safe_messages = sanitize_messages(messages)
 

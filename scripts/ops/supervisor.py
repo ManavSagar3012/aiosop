@@ -46,6 +46,7 @@ MCP_PORTS = {
     "source-map-mcp": 8096,
     "cloud-mcp": 8097,
     "turbo-intruder-mcp": 8098,
+    "oast-mcp": 8099,
 }
 API_PORT = 8200
 CHECK_INTERVAL = 10  # seconds

@@ -146,61 +146,296 @@ def _get_tools(server_id: str) -> List[Dict[str, Any]]:
 
 # ── Mock execution responses ────────────────────────────────────────────────
 
+# Track the last navigate URL so browser-mcp's execute_action can echo back
+# dynamically-generated XSS tokens embedded in the URL by the vuln agent.
+_last_navigate_url: str = ""
+
+
+def _mock_nuclei_scan(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Return sample positive nuclei findings as JSONL strings.
+
+    The findings match the JSONL format that vuln_agent._normalize_nuclei_finding
+    parses (nuclei -jsonl hyphenated keys + nested info block).
+    """
+    targets = params.get("targets", [])
+    target = targets[0] if targets else "https://example.com/"
+    findings = [
+        json.dumps({
+            "template-id": "http-sqli-detection",
+            "type": "http",
+            "info": {
+                "name": "SQL Injection Detection",
+                "severity": "high",
+                "description": "Potential SQL injection vulnerability detected via boolean-based and time-based payload probes.",
+                "classification": {"cwe-id": ["CWE-89"]},
+            },
+            "matched-at": f"{target}?id=1",
+            "host": target,
+            "url": f"{target}?id=1",
+            "matcher-name": "sql-boolean",
+            "extracted-results": [],
+            "request": "GET /?id=1 HTTP/1.1\r\nHost: example.com",
+            "response": "HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n...",
+        }),
+        json.dumps({
+            "template-id": "xss-reflected-detection",
+            "type": "http",
+            "info": {
+                "name": "Reflected Cross-Site Scripting",
+                "severity": "medium",
+                "description": "Reflected XSS detected — un-encoded user input echoed in the HTTP response body.",
+                "classification": {"cwe-id": ["CWE-79"]},
+            },
+            "matched-at": f"{target}?q=<script>alert(1)</script>",
+            "host": target,
+            "url": f"{target}?q=test",
+            "matcher-name": "xss-reflect-word",
+            "extracted-results": ["<script>alert(1)</script>"],
+            "request": "GET /?q=test HTTP/1.1",
+            "response": "HTTP/1.1 200 OK\r\nContent-Length: 567\r\n\r\n...",
+        }),
+        json.dumps({
+            "template-id": "exposed-panel",
+            "type": "http",
+            "info": {
+                "name": "Exposed Admin Panel",
+                "severity": "medium",
+                "description": "An administrative panel was discovered at a common path, potentially accessible without authentication.",
+                "classification": {"cwe-id": ["CWE-306"]},
+            },
+            "matched-at": f"{target}/admin/",
+            "host": target,
+            "url": f"{target}/admin/",
+            "matcher-name": "admin-panel-word",
+            "extracted-results": [],
+        }),
+    ]
+    return {
+        "status": "success",
+        "result": {
+            "findings": findings,
+            "scan_id": f"mock-nuclei-{uuid.uuid4().hex[:8]}",
+            "targets_scanned": targets,
+            "findings_count": len(findings),
+        },
+    }
+
+
+def _mock_burp_scan_issues(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Return sample Burp scan issues matching the format
+    burp_mcp._normalize_scan_issue expects."""
+    target = params.get("target", "https://example.com/")
+    issues = [
+        {
+            "type": "SQL injection",
+            "severity": "High",
+            "name": "SQL Injection in id parameter",
+            "issue_detail": "The id parameter appears to be vulnerable to SQL injection attacks. The application constructed a SQL query using unvalidated user input.",
+            "confidence": "Certain",
+            "path": "/api/items",
+            "endpoint_id": "",
+            "entry_point": True,
+            "request_response": {
+                "request": "GET /api/items?id=1' OR '1'='1 HTTP/1.1",
+                "response": "HTTP/1.1 200 OK\r\n\r\n{\"error\":\"SQL syntax error near '1'='1'\"}",
+            },
+        },
+        {
+            "type": "Cross-site scripting",
+            "severity": "Medium",
+            "name": "Reflected XSS in search parameter",
+            "issue_detail": "The search parameter is reflected in the response without HTML encoding, allowing cross-site scripting.",
+            "confidence": "Firm",
+            "path": "/search",
+            "endpoint_id": "",
+            "entry_point": True,
+            "request_response": {
+                "request": "GET /search?q=<script>alert(1)</script> HTTP/1.1",
+                "response": "HTTP/1.1 200 OK\r\n\r\n<div>Results for <script>alert(1)</script></div>",
+            },
+        },
+    ]
+    return {
+        "status": "success",
+        "result": {
+            "issues": issues,
+            "count": len(issues),
+        },
+    }
+
+
+def _mock_burp_sitemap(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Return sample sitemap entries."""
+    prefix = params.get("url_prefix", "")
+    base = f"https://{prefix}/" if prefix else "https://example.com/"
+    entries = [
+        {
+            "url": f"{base}",
+            "method": "GET",
+            "status_code": 200,
+            "title": "Home Page",
+            "technologies": ["React", "Node.js"],
+            "parameters": [],
+            "auth_required": False,
+        },
+        {
+            "url": f"{base}api/items",
+            "method": "GET",
+            "status_code": 200,
+            "title": "Items API",
+            "technologies": ["Express", "MongoDB"],
+            "parameters": ["id"],
+            "auth_required": True,
+        },
+        {
+            "url": f"{base}search",
+            "method": "GET",
+            "status_code": 200,
+            "title": "Search",
+            "technologies": [],
+            "parameters": ["q"],
+            "auth_required": False,
+        },
+        {
+            "url": f"{base}login",
+            "method": "POST",
+            "status_code": 200,
+            "title": "Login",
+            "technologies": [],
+            "parameters": ["username", "password"],
+            "auth_required": False,
+        },
+    ]
+    return {
+        "status": "success",
+        "result": {
+            "entries": entries,
+            "count": len(entries),
+        },
+    }
+
+
+def _mock_burp_proxy_history(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Return sample proxy history entries."""
+    _ = params
+    entries = [
+        {"url": "https://example.com/", "method": "GET", "status_code": 200, "host": "example.com"},
+        {"url": "https://example.com/api/items", "method": "GET", "status_code": 200, "host": "example.com"},
+        {"url": "https://example.com/search?q=test", "method": "GET", "status_code": 200, "host": "example.com"},
+        {"url": "https://example.com/login", "method": "POST", "status_code": 200, "host": "example.com"},
+    ]
+    return {
+        "status": "success",
+        "result": {
+            "entries": entries,
+            "count": len(entries),
+        },
+    }
+
+
+def _extract_xss_token_from_url(url: str) -> str:
+    """Scan a URL for the XSS token pattern that vuln_agent embeds.
+
+    The vuln agent embeds the token as:
+      <img src=x onerror="window.__osopxss='OSOPXSS...'">
+    then URL-encodes the entire payload via quote() and urlencode()
+    before placing it in the URL query string. The `'` becomes `%27`
+    and `=` becomes `%3D`, so we match the URL-encoded variant.
+    """
+    import re
+    m = re.search(r"__osopxss%3D%27([^%]+)%27", url)
+    if m:
+        return m.group(1)
+    return ""
+
+
 def _mock_execute(server_id: str, tool_name: str,
                   params: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a plausible mock response for the given tool."""
-    _ = params  # unused in mock, accepted for schema compatibility
+    """Return a plausible mock response for the given tool.
+
+    Returns POSITIVE results (realistic findings, injectable=True, etc.) so the
+    full detection->Vulnerability node->API->audit pipeline is exercised even
+    without real scanners attached. Tool_sources like "sqlmap", "nuclei",
+    "burp_scanner", "xss_scan" do NOT trigger is_simulated(), so the OSOP-P0-02
+    guard lets findings through.
+    """
+    global _last_navigate_url
 
     # Default mock — return a generic success
     if server_id == "nuclei-mcp" and tool_name == "scan":
-        return {
-            "status": "success",
-            "result": {
-                "findings": [],
-                "scan_id": f"mock-nuclei-{uuid.uuid4().hex[:8]}",
-                "targets_scanned": params.get("targets", []),
-                "findings_count": 0,
-            },
-        }
+        return _mock_nuclei_scan(params)
+
     elif server_id == "burp-mcp":
         if tool_name == "scan_target":
             return {"status": "success", "result": {"scan_id": f"mock-{uuid.uuid4().hex[:8]}"}}
-        elif tool_name in ("get_scan_issues", "get_sitemap", "get_proxy_history"):
-            return {"status": "success", "result": {"items": [], "count": 0}}
+        elif tool_name == "get_scan_issues":
+            return _mock_burp_scan_issues(params)
+        elif tool_name == "get_sitemap":
+            return _mock_burp_sitemap(params)
+        elif tool_name == "get_proxy_history":
+            return _mock_burp_proxy_history(params)
         elif tool_name == "intruder_attack":
             return {"status": "success", "result": {"attack_id": f"mock-{uuid.uuid4().hex[:8]}"}}
+
     elif server_id == "security-bridge" and tool_name == "run_sqlmap":
+        target = params.get("url", "https://example.com/")
         return {
             "status": "success",
             "result": {
-                "injectable": False,
-                "parameter": "",
-                "dbms": "",
-                "techniques": [],
-                "payloads": [],
-                "log": [],
+                "injectable": True,
+                "parameter": "id",
+                "dbms": "mysql",
+                "techniques": ["boolean-based blind", "error-based", "time-based blind"],
+                "payloads": [
+                    "1' AND 1=1--",
+                    "1' AND 1=2--",
+                    "1' AND SLEEP(5)--",
+                ],
+                "log": [
+                    f"[INFO] testing connection to {target}",
+                    "[INFO] parameter 'id' appears to be injectable (boolean-based blind)",
+                    "[INFO] confirming injection with time-based payloads",
+                    f"[INFO] back-end DBMS: MySQL (>= 5.0)",
+                ],
             },
         }
+
     elif server_id == "browser-mcp":
         if tool_name == "navigate":
-            return {"status": "success", "result": {"url": params.get("url", ""), "title": ""}}
+            nav_url = params.get("url", "")
+            _last_navigate_url = nav_url
+            return {"status": "success", "result": {"url": nav_url, "title": "Mock Page"}}
         elif tool_name == "execute_action":
-            return {"status": "success", "result": {"result": None}}
+            action = params.get("action", "")
+            expr = str(params.get("params", {}).get("expression", ""))
+            # XSS execution confirmation: vuln_agent navigates to a URL with
+            # the token embedded, then executes "window.__osopxss || null" to
+            # read it back. Extract the token from the stored navigate URL so
+            # the mock returns the exact value the agent expects.
+            if "__osopxss" in expr:
+                token = _extract_xss_token_from_url(_last_navigate_url)
+                return {"status": "success", "result": {"result": token or None}}
+            # Default eval returns an empty object
+            return {"status": "success", "result": {"result": "{}"}}
+
     elif server_id == "turbo-intruder-mcp" and tool_name == "execute_single_packet_attack":
+        # Race condition: return 15 successes out of 20 requests, exceeding
+        # the expected_max=1, so the race_limit_scan mints a finding.
         return {
             "status": "success",
             "result": {
-                "status_distribution": {"200": 0, "429": 20},
-                "success_count": 0,
-                "release_window_ms": 50,
+                "status_distribution": {"200": 15, "429": 5},
+                "success_count": 15,
+                "release_window_ms": 5,
             },
         }
+
     elif server_id == "payload-mcp" and tool_name == "generate_payload":
         return {
             "status": "success",
             "result": {
-                "payloads": [],
-                "count": 0,
+                "payloads": ["<script>alert(1)</script>", "' OR '1'='1"],
+                "count": 2,
             },
         }
 

@@ -182,8 +182,12 @@ class Settings(BaseSettings):
     neo4j_user: str = Field(default="neo4j", validation_alias="OSOP_NEO4J_USER")
     neo4j_password: str = Field(default="change-me-local", validation_alias="OSOP_NEO4J_PASSWORD")
 
+    # AIOSOP-POSTGRES-PORT-001 (2026-07-12): default port changed from 5432 to
+    # 15432 to match docker-compose.yml, which remaps to avoid conflict with
+    # wslrelay.exe (or local PostgreSQL) on dev hosts running WSL2. The env var
+    # OSOP_POSTGRES_URI overrides this when set.
     postgres_uri: str = Field(
-        default="postgresql+asyncpg://osop:osop@localhost:5432/osop",
+        default="postgresql+asyncpg://osop:osop@localhost:15432/osop",
         validation_alias="OSOP_POSTGRES_URI",
     )
 
@@ -318,6 +322,14 @@ class Settings(BaseSettings):
     max_concurrent_agents: int = 80  # Sprint 0: increased from 50 to accommodate doubled agent pool (67 agents)
     max_tasks_per_second: int = 100
     task_default_timeout: int = 300
+    # AIOSOP-SCALE-001 (2026-07-12): admission control. Without this cap, the
+    # phase monitor creates 100+ tasks in a single VULNERABILITY_DISCOVERY entry,
+    # all of them flood the pending queue and compete for ~80 agent slots. Tasks
+    # beyond the cap stay pending in Redis until in-flight slots free up, keeping
+    # the agent pool responsive instead of saturated by lock-contention misses.
+    max_inflight_tasks_per_engagement: int = Field(
+        default=40, validation_alias="OSOP_MAX_INFLIGHT_TASKS"
+    )
     approval_timeout_seconds: int = 1800  # 30 minutes
     temporal_enabled: bool = Field(default=False, validation_alias="OSOP_TEMPORAL_ENABLED")
     temporal_address: str = Field(
