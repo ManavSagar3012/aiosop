@@ -18,6 +18,31 @@ from ai_osop.core.value_engine import batch_endpoints_for_scan
 
 logger = structlog.get_logger("ai_osop.orchestrator.phase_monitor")
 
+import re
+
+# Recon's JS/URL extractors sometimes harvest minified-token noise as query keys
+# (e.g. /graphql?A=&92=&-2=&null=), which made sqlmap waste its whole 180s budget
+# probing params that don't exist -> real params never tested (false negatives).
+# A real HTTP query key is an identifier-ish token, never purely numeric / "null".
+# ponytail: filtered at this single chokepoint (feeds every injection target);
+# the deeper cleanup is in recon_agent's query-key extraction.
+_PARAM_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]*$")
+_PARAM_KEY_STOP = {"null", "undefined", "true", "false", "nan"}
+# Real single-char query params are essentially always these; a bare uppercase
+# letter (A, M, o) is minified-JS noise, so single chars need an allow-list.
+_PARAM_KEY_SINGLE_OK = {"q", "s", "p", "n", "k", "v"}
+
+
+def _is_probable_param_key(key: str) -> bool:
+    """True for a plausible real HTTP query-parameter name (drops extractor noise)."""
+    if not key or key.lower() in _PARAM_KEY_STOP:
+        return False
+    if not _PARAM_KEY_RE.match(key):
+        return False
+    if len(key) == 1:
+        return key.lower() in _PARAM_KEY_SINGLE_OK
+    return True
+
 
 class PhaseMonitor:
     """Monitor engagement phases and trigger automatic tasks on phase entry."""
@@ -94,9 +119,13 @@ class PhaseMonitor:
             if not url:
                 continue
             parsed = urlparse(url)
-            q = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            q = {
+                k: v
+                for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+                if _is_probable_param_key(k)
+            }
             for k in r.get("query_keys") or []:
-                if k and k not in q:
+                if k and k not in q and _is_probable_param_key(k):
                     q[k] = "test"
             if not q:
                 continue
