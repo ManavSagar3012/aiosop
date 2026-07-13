@@ -17,7 +17,8 @@ answer a number that anyone can reproduce.
 ## What it proves (and what it does NOT)
 
 - **PROVES:** the deterministic capability core — SQLi (auth-bypass + error),
-  JWT forgery (`alg:none`), and broken-access-control (IDOR) surfacing — works
+  JWT forgery (`alg:none`), broken-access-control (IDOR), and role mass-assignment
+  surfacing — works
   against a live target with deterministic oracles, zero false positives on the
   negative controls, and zero hangs across repeated runs.
 - **DOES NOT prove:** the full autonomous pipeline (API + Neo4j + agents + LLM
@@ -56,6 +57,8 @@ Machine-readable evidence is written to `benchmarks/juiceshop/results/bench-<ts>
 | `idor_basket` | CWE-639 | real `DifferentialAuthEngine`: attacker 2xx on victim basket, anon 401 | ✓ |
 | `idor_public_negative` | control | public homepage must NOT be flagged IDOR (FP-suppression) | ✓ (neg) |
 | `jwt_forgery` | CWE-347 | real `JWTTester`: forged-identity sentinel echoed back | ✓ |
+| `admin_registration` | CWE-915 | role field produces an `admin` account and authenticated read-back confirms it | ✓ |
+| `admin_registration_negative` | control | normal registration must persist the `customer` role | ✓ (neg) |
 | `secrets_in_js` | CWE-798 | real `SECRET_RULES` + placeholder/entropy filter | informational |
 | `nuclei_scan` | multi | scoped `nuclei` breadth pass | informational |
 

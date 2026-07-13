@@ -1,0 +1,18 @@
+{
+  "benchmarks": 2,
+  "total_expected": 5,
+  "micro_precision": 1.0,
+  "micro_recall": 1.0,
+  "macro_precision": 1.0,
+  "macro_recall": 1.0,
+  "average_evidence_confidence": 73.1,
+  "generalization_ready": false,
+  "generalization_blockers": [
+    "requires at least 10 expected findings"
+  ],
+  "inputs": {
+    "ginandjuice_engagement_id": "eng-m3-real-sqlmap",
+    "juiceshop_result": "benchmarks\\juiceshop\\results\\bench-20260713-070020.json",
+    "juiceshop_stable": false
+  }
+}

@@ -84,8 +84,12 @@ class SecurityBridgeAdapter:
         if dump:
             params["dump"] = True
 
+        # Tool name "sqlmap" is canonical: it matches the REAL security-bridge Go
+        # server (cmd/security-bridge/main.go registers "sqlmap"). The mock stub
+        # accepts both "sqlmap" and the legacy "run_sqlmap" alias, so this one call
+        # site works against real and mock backends alike.
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "run_sqlmap", params, timeout_override=timeout_override
+            self.SERVER_ID, "sqlmap", params, timeout_override=timeout_override
         )
 
         if response.status != "success":
