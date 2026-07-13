@@ -239,6 +239,21 @@ async def _check_tool_reality() -> Dict[str, Any]:
                 entry["tool_count"] = len(tools)
                 entry["verdict"] = "tools_registered" if tools else "stub"
 
+                # Stub self-identification: mcp_stub advertises is_stub on /health.
+                # A stub registers tools, so tool_count alone reads as "real" — this
+                # closes that false-green-board gap. A stub in synthetic-findings
+                # mode is the worst case (fabricates), so flag it suspect_mock.
+                try:
+                    hr = await client.get(f"{base}/health")
+                    hj = hr.json() if hr.status_code == 200 else {}
+                    if hj.get("is_stub"):
+                        entry["is_stub"] = True
+                        entry["verdict"] = (
+                            "suspect_mock" if hj.get("synthetic_findings") else "stub"
+                        )
+                except Exception:
+                    pass
+
                 # Execution-level reality check for recon-mcp.
                 if name == "recon-mcp" and tools:
                     try:

@@ -165,6 +165,44 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
 # ============== Lifespan ==============
 
 
+# Adapter tool-name → server contract. If a server no longer registers a tool an
+# adapter calls, every task using it fails silently at runtime (the sqli path once
+# called "run_sqlmap" while the bridge registered "sqlmap" → 0 findings, no error
+# surfaced). Assert these at boot so a rename/stale-deploy is caught immediately.
+_CRITICAL_TOOL_CONTRACTS = {
+    "security-bridge": ["sqlmap"],
+}
+
+
+async def _verify_critical_tool_names(logger) -> None:
+    """Warn LOUDLY if a critical adapter tool name is missing from its live server."""
+    import httpx
+
+    from ai_osop.core.config import settings
+
+    hosts = {
+        "security-bridge": (settings.security_bridge_host, settings.security_bridge_port),
+    }
+    for server_id, required in _CRITICAL_TOOL_CONTRACTS.items():
+        host, port = hosts.get(server_id, (None, None))
+        if not host:
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.post(f"http://{host}:{port}/mcp/initialize", json={})
+                names = {t.get("name") for t in (r.json() or {}).get("tools", [])}
+            missing = [t for t in required if t not in names]
+            if missing:
+                logger.critical(
+                    "AIOSOP-TOOLGUARD: server %s is missing required tool(s) %s "
+                    "(registered: %s). Tasks using it will fail silently — check for a "
+                    "tool rename or a stale process.",
+                    server_id, missing, sorted(n for n in names if n),
+                )
+        except Exception as e:  # noqa: BLE001 - guard is advisory, never fatal
+            logger.warning("AIOSOP-TOOLGUARD probe of %s failed (non-fatal): %s", server_id, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
@@ -254,6 +292,9 @@ async def lifespan(app: FastAPI):
 
         # 4. MCP Servers
         await register_optional_mcp_servers(mcp_registry)
+
+        # 4a. Guard: critical adapter tool names must resolve on their live servers.
+        await _verify_critical_tool_names(logger)
 
         # 5. Build Orchestrator
         llm_client = LiteLLMClient()

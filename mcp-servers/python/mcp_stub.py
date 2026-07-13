@@ -9,14 +9,21 @@ Usage:
 
 import argparse
 import json
+import os
 import time
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import uvicorn
 from fastapi import FastAPI
 
 app = FastAPI()
+
+# When off (the default), this stub NEVER fabricates a finding: every
+# finding-producing tool returns a real-shaped but EMPTY result, so a stub can
+# never inject a false-positive Vulnerability into a live engagement. Benchmarks
+# that need synthetic ground-truth findings opt in with OSOP_STUB_SYNTHETIC=1.
+SYNTHETIC = os.getenv("OSOP_STUB_SYNTHETIC", "0").lower() in ("1", "true", "yes")
 
 # ── Tool definitions per MCP server ─────────────────────────────────────────
 
@@ -363,17 +370,46 @@ def _first_query_param(url: str) -> str:
     return ""
 
 
+def _honest_empty(server_id: str, tool_name: str) -> Optional[Dict[str, Any]]:
+    """Real-shaped but EMPTY result for finding-producing tools.
+
+    Returned when OSOP_STUB_SYNTHETIC is off so a stub can never fabricate a
+    finding. Returns None for non-finding tools so the caller falls through to
+    normal (harmless) mock behavior like navigate/generate_payload.
+    """
+    if server_id == "nuclei-mcp" and tool_name == "scan":
+        return {"status": "success", "result": {"findings": [], "findings_count": 0}}
+    if server_id == "burp-mcp" and tool_name == "get_scan_issues":
+        return {"status": "success", "result": {"issues": [], "count": 0}}
+    if server_id == "burp-mcp" and tool_name in ("get_sitemap", "get_proxy_history"):
+        return {"status": "success", "result": {"entries": [], "count": 0}}
+    if server_id == "security-bridge" and tool_name in ("sqlmap", "run_sqlmap"):
+        return {"status": "success", "result": {"data": {"injectable": False}, "log": []}}
+    if server_id == "turbo-intruder-mcp" and tool_name == "execute_single_packet_attack":
+        return {"status": "success",
+                "result": {"status_distribution": {"200": 1}, "success_count": 1,
+                           "release_window_ms": 5}}
+    if server_id == "browser-mcp" and tool_name == "execute_action":
+        # No XSS confirmation token → vuln_agent records no finding.
+        return {"status": "success", "result": {"result": None}}
+    return None
+
+
 def _mock_execute(server_id: str, tool_name: str,
                   params: Dict[str, Any]) -> Dict[str, Any]:
     """Return a plausible mock response for the given tool.
 
-    Returns POSITIVE results (realistic findings, injectable=True, etc.) so the
-    full detection->Vulnerability node->API->audit pipeline is exercised even
-    without real scanners attached. Tool_sources like "sqlmap", "nuclei",
-    "burp_scanner", "xss_scan" do NOT trigger is_simulated(), so the OSOP-P0-02
-    guard lets findings through.
+    With OSOP_STUB_SYNTHETIC on, returns POSITIVE results (findings,
+    injectable=True) to exercise the full pipeline for benchmarks. With it OFF
+    (default), finding-producing tools are honest-empty so this stub can never
+    inject a false positive into a live engagement.
     """
     global _last_navigate_url
+
+    if not SYNTHETIC:
+        empty = _honest_empty(server_id, tool_name)
+        if empty is not None:
+            return empty
 
     # Default mock — return a generic success
     if server_id == "nuclei-mcp" and tool_name == "scan":
@@ -471,7 +507,10 @@ _server_id_global: str = "unknown"
 
 @app.get("/health")
 async def health():
-    return {"server_id": _server_id_global, "status": "ready"}
+    # is_stub lets /health/tooling tell the operator this is NOT a real tool
+    # server, closing the "false green board" gap.
+    return {"server_id": _server_id_global, "status": "ready",
+            "is_stub": True, "synthetic_findings": SYNTHETIC}
 
 
 @app.post("/mcp/initialize")
@@ -508,9 +547,26 @@ async def execute(request: dict):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--server-id", type=str, default="",
                         help="MCP server identity for tool definitions")
+    parser.add_argument("--selfcheck", action="store_true",
+                        help="Assert honest-empty default behavior and exit")
     args = parser.parse_args()
+
+    if args.selfcheck:
+        # Default (SYNTHETIC off): no finding-producing tool may return a finding.
+        assert not SYNTHETIC, "run selfcheck without OSOP_STUB_SYNTHETIC"
+        assert _mock_execute("nuclei-mcp", "scan", {})["result"]["findings"] == []
+        assert _mock_execute("burp-mcp", "get_scan_issues", {})["result"]["issues"] == []
+        assert _mock_execute("burp-mcp", "get_sitemap", {})["result"]["entries"] == []
+        assert _mock_execute("security-bridge", "sqlmap", {})["result"]["data"]["injectable"] is False
+        # Non-finding tools still work.
+        assert _mock_execute("browser-mcp", "navigate", {"url": "http://x"})["status"] == "success"
+        print("mcp_stub selfcheck OK: honest-empty by default")
+        raise SystemExit(0)
+
+    if not args.port:
+        parser.error("--port is required unless --selfcheck")
     _server_id_global = args.server_id or f"stub-{args.port}"
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
