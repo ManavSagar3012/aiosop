@@ -43,9 +43,14 @@ class JWTAgent(BaseVulnerabilityAgent):
         """
         Implement JWT scanning logic.
         """
+        # The generic active-scan dispatch schedules jwt_scan with only {url, method}
+        # (no token). A JWT scan without a token has nothing to test — that is a clean
+        # skip, not a failure. Returning "error" here marked every such task as
+        # task_failed. Authenticated flows that DO supply a token still scan below.
         token = task.payload.get("token")
         if not token:
-            return {"status": "error", "message": "No token provided"}
+            self.logger.info("jwt_scan_skipped: no token in scope for %s", task.payload.get("url"))
+            return {"status": "success", "message": "skipped: no JWT token in scope", "findings_count": 0}
 
         try:
             # 1. Analyze header for 'alg: none'
