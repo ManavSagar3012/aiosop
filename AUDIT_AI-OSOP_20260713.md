@@ -389,10 +389,25 @@ guard. That single fixture was the source of all 5 fabricated findings.
   `stub_servers: [burp, payload, shodan, nuclei, source-map, threat-intel, cloud,
   turbo-intruder]` (was `[]`).
 
-### Still open (not addressed this pass)
-- Injection-target param generator fabricates param names (`?A=test&92=test…`);
-  sqlmap runs but against synthetic params — real params should come from recon.
-- Uncapped retry on deterministic tool errors (mitigated by the guard, not removed).
-- Recon scope-bleed (7) + malformed endpoints (3); broken `elapsed_seconds`.
-- To get real nuclei/browser/Burp coverage, run the actual engines (via
-  `launch_real.ps1` + a live Burp), not the honest-empty stubs.
+### Second remediation pass (2026-07-13, committed)
+6. **Injection-target junk-param filter** (`phase_monitor._is_probable_param_key`,
+   commit `2064d6b`). Recon's JS/URL extractors harvested minified-token noise as
+   query keys (`/graphql?A=&92=&-2=&null=`), so sqlmap burned its whole 180s budget
+   on params that don't exist and never reached real ones. Now rejects purely-numeric,
+   leading-`-`, `null`/bool, non-identifier, and bare single-char (outside `{q,s,p,n,k,v}`)
+   keys. **Verified live** (`eng-20260713105605-verify2-syfe-162604`): 12 sqli targets,
+   **0 junk keys** (was garbage), real params surfaced instead — e.g.
+   `/post?utm_campaign,subject,domain,itemSlug,collectionId`, `/_next/image?url,q`.
+   Unit test added.
+7. **Deterministic errors skip the retry loop** (`task_scheduler._is_non_retryable`,
+   commit `ac22b4e`). "Tool not available / not registered / unknown tool / invalid
+   argument" now go straight to the DLQ instead of retrying (was 66 retries across
+   12 tasks). Transient errors (timeout, conn-refused, 5xx, ServiceUnavailable) still
+   retry. Unit test covers both sides.
+
+### Still open (not addressed)
+- Recon scope-bleed (7 off-scope) + malformed endpoints (3 chart.js href-join);
+  the deeper cleanup belongs in `recon_agent` query-key extraction.
+- Broken `elapsed_seconds` (monotonic-clock epoch bug, ~25× overreport).
+- To get real nuclei/browser/Burp *coverage* (vs honest-empty), run the actual
+  engines (`launch_real.ps1` + a live Burp), not the stubs.
