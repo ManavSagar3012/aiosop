@@ -48,12 +48,25 @@ class SSRFAgent(BaseVulnerabilityAgent):
         """
         target_url = task.payload.get("url")
         oast_adapter = OASTAdapter(self.ctx.mcp_registry)
-        probe = await oast_adapter.generate_probe()
+        # OASTAdapter exposes register() -> (token, callback_url) and poll(token);
+        # there is no generate_probe()/poll_callbacks(). Blind SSRF needs a live OAST
+        # server — if it is unavailable, skip cleanly instead of crashing the task.
+        try:
+            token, callback_url = await oast_adapter.register(
+                label="ssrf",
+                context={"engagement_id": task.engagement_id, "url": target_url},
+            )
+        except Exception as e:  # OAST server down / not initialized
+            self.logger.info("ssrf_scan_skipped: OAST unavailable (%s)", e)
+            return {"status": "success", "message": "skipped: OAST unavailable", "findings_count": 0}
+        if not callback_url:
+            return {"status": "success", "message": "skipped: no OAST callback URL", "findings_count": 0}
+
         templates = PayloadTemplateLibrary.get_templates(VulnClass.SSRF)
 
         async with httpx.AsyncClient() as client:
             for template in templates:
-                payload = template.replace("{{OAST_CALLBACK}}", probe.url)
+                payload = template.replace("{{OAST_CALLBACK}}", callback_url)
                 try:
                     # Simplistic injection: assuming SSRF via a 'url' param
                     params = {"url": payload}
@@ -63,7 +76,7 @@ class SSRFAgent(BaseVulnerabilityAgent):
 
         # Wait for callbacks
         await asyncio.sleep(5)  # Simple wait
-        callbacks = await oast_adapter.poll_callbacks(probe.id)
+        callbacks = await oast_adapter.poll(token)
 
         if callbacks:
             vuln = Vulnerability(

@@ -57,12 +57,12 @@ class WebSocketAgent(BaseVulnerabilityAgent):
         # Run CSWSH test as an example
         finding = await tester.test_cswsh()
 
-        if finding.is_vulnerable:
+        if finding.confirmed:
             vuln = Vulnerability(
                 vuln_type=VulnClass.VULN_SCAN,
                 severity=Severity.CRITICAL,
                 title=f"WebSocket CSWSH on {target_url}",
-                description=finding.description,
+                description=finding.detail,
                 evidence=[
                     {
                         "type": "websocket_cswsh",
