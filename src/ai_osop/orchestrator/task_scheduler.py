@@ -435,8 +435,47 @@ class TaskScheduler:
             task.payload.pop("operator_approved", None)
             task.payload.pop("approval_id", None)
 
+    # Deterministic contract/config errors that will fail identically on every
+    # retry — retrying them just burns the budget (the live audit saw 66 retries
+    # across 12 tasks on "Tool run_sqlmap not available"). Transient failures
+    # (timeouts, connection refused, 5xx, ServiceUnavailable) are NOT listed here
+    # and still retry normally.
+    _NON_RETRYABLE_MARKERS = (
+        "not available on server",
+        "not registered",
+        "unknown tool",
+        "no such tool",
+        "tool not found",
+        "unsupported tool",
+        "invalid argument",
+        "invalid parameter",
+    )
+
+    @classmethod
+    def _is_non_retryable(cls, result: Dict[str, Any]) -> bool:
+        err = str(result.get("error") or result.get("status") or "").lower()
+        return any(m in err for m in cls._NON_RETRYABLE_MARKERS)
+
     async def _maybe_retry(self, task: Task, result: Dict[str, Any]) -> bool:
         """Requeue a failed task if retry budget remains."""
+        # Short-circuit deterministic errors straight to the DLQ — no backoff loop.
+        if self._is_non_retryable(result):
+            logger.warning(
+                "task_non_retryable",
+                task_id=task.id,
+                task_type=task.type,
+                error=str(result.get("error") or result.get("status") or "")[:300],
+            )
+            try:
+                await self._orch.dlq.enqueue(
+                    task,
+                    reason="non_retryable_error",
+                    final_error=str(result.get("error") or result.get("status") or ""),
+                )
+            except Exception as e:
+                logger.error("dlq_enqueue_failed", task_id=task.id, error=str(e))
+            return False
+
         if task.retry_count >= task.max_retries:
             try:
                 await self._orch.dlq.enqueue(
