@@ -405,9 +405,30 @@ guard. That single fixture was the source of all 5 fabricated findings.
    12 tasks). Transient errors (timeout, conn-refused, 5xx, ServiceUnavailable) still
    retry. Unit test covers both sides.
 
-### Still open (not addressed)
-- Recon scope-bleed (7 off-scope) + malformed endpoints (3 chart.js href-join);
-  the deeper cleanup belongs in `recon_agent` query-key extraction.
-- Broken `elapsed_seconds` (monotonic-clock epoch bug, ~25× overreport).
-- To get real nuclei/browser/Burp *coverage* (vs honest-empty), run the actual
-  engines (`launch_real.ps1` + a live Burp), not the stubs.
+### Third remediation pass — Phase 1 recon cleanup (2026-07-14, committed + verified live)
+8. **Recon scope-gate + URL normalization** (`ReconAgent._persist_endpoint`,
+   `ScopeEnforcer.host_in_scope`, commit `1c0a0f3`). All 5 endpoint-write sites
+   route through one guard that drops malformed URLs and off-scope hosts. While
+   fixing this, found + fixed a **RecursionError**: `validate_target(url)` recurses
+   url→host and, in the deep async crawl stack, tipped the recursion limit and
+   silently dropped *every* in-scope endpoint. `host_in_scope` is a flat check.
+9. **elapsed_seconds freeze** (`execution_trace.py`, commit `6bae283`).
+
+   **Verified live** (`eng-20260714034700-verify4-syfe-091700`, full real MCP
+   stack + real sqlmap):
+
+   | metric | broken | fixed |
+   |---|---|---|
+   | endpoints discovered | 1 | **260** |
+   | off-scope stored | 7 | **0** |
+   | malformed stored | 3 | **0** |
+   | `elapsed_seconds` | ~950s drift | real (87s / 57s / 5s) |
+   | recursion errors | many | **0** |
+
+### Still open
+- Broken metric is fixed; deeper recon query-key extraction cleanup (root of the
+  original junk keys) still lives upstream but is now masked by the persist guard.
+- **Phase 2**: a full engagement on the real engine stack (real nuclei/browser/Burp,
+  not honest-empty stubs) to measure true end-to-end detection.
+- **Phase 3**: benchmark suite (Juice Shop, Gin&Juice, DVWA, WebGoat, crAPI) for
+  precision/recall/FP/FN/coverage before opening the PR (Phase 4).
