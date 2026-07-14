@@ -122,7 +122,11 @@ class TaskExecutionTrace:
 
     @property
     def elapsed_seconds(self) -> float:
-        return time.monotonic() - self._start_time
+        # Once terminal, freeze at the final stage's timestamp — otherwise this
+        # kept counting wall-clock since start and reported a completed 37s task
+        # as 900s+ minutes later (dashboards/benchmarks/SLA all wrong).
+        end = self._stages[-1].timestamp if (self._stages and self.is_complete) else time.monotonic()
+        return end - self._start_time
 
     @property
     def is_complete(self) -> bool:
