@@ -108,6 +108,36 @@ class ScopeEnforcer:
 
         raise OutOfScopeError(f"Domain {domain} not in scope. Allowed: {self._allowed_domains}")
 
+    def host_in_scope(self, host: str) -> bool:
+        """Non-recursive, non-raising in-scope check for a bare host or IP.
+
+        validate_target(url) recurses url -> host -> validate_target, which adds
+        stack frames on every call. In a deep async crawl loop that tipped the
+        recursion limit and silently dropped every in-scope endpoint. Callers in
+        hot loops should parse the host once and use this flat check instead.
+
+        Supports both domain-scoped and IP-range-scoped engagements.
+        """
+        h = (host or "").lower().strip()
+        if not h:
+            return False
+        for exclusion in self._blocked_targets:
+            if h == exclusion or h.endswith(f".{exclusion}"):
+                return False
+        # IP-based scope check (e.g. 10.0.0.0/24)
+        try:
+            ip = ipaddress.ip_address(h)
+            for network in self._allowed_ips:
+                if ip in network:
+                    return True
+            return False  # IP not in any allowed network
+        except ValueError:
+            pass  # not an IP, fall through to domain check
+        for allowed in self._allowed_domains:
+            if h == allowed or h.endswith(f".{allowed}"):
+                return True
+        return False
+
     def _validate_ip(self, ip: ipaddress.ip_address) -> bool:
         """Validate IP against scope."""
         for network in self._allowed_ips:

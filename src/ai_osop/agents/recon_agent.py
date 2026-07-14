@@ -21,12 +21,37 @@ from ai_osop.agents.retrieval_agent import RetrievalAgent
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
-from ai_osop.core.models import Asset, Endpoint, Task, make_asset_id
+from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, Task, make_asset_id
 from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
 from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params, mine_urls, extract_form_fields
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)
+
+
+def normalize_endpoint_url(url: Any) -> "str | None":
+    """Return a clean single http(s) URL, or None if it's malformed extractor noise.
+
+    Recon's href/src join (urljoin on a relative path + a stray absolute URL) can
+    emit junk like ``https://host/core/    https:/cdn.jsdelivr.net/chart.js`` —
+    whitespace and a second scheme fused into the PATH. Query strings are exempt
+    (``?url=https://…`` and ``?redirect=…`` are legitimate params worth testing).
+    """
+    if not url or not isinstance(url, str):
+        return None
+    u = url.strip()
+    try:
+        parsed = urlparse(u)
+    except Exception:
+        return None
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    # Malformed extraction shows up in the netloc/path, never the query.
+    if any(ch.isspace() for ch in parsed.netloc) or any(ch.isspace() for ch in parsed.path):
+        return None
+    if "http" in parsed.path.lower():  # a second URL fused into the path
+        return None
+    return u
 
 
 class SimpleHTMLParser(HTMLParser):
@@ -145,10 +170,47 @@ class ReconAgent(BaseAgent):
             logger.warning("recon_think_degraded", error=str(e))
             return ""
 
+    @staticmethod
+    def _build_scope_enforcer(payload: Dict[str, Any]):
+        """ScopeEnforcer from the task payload's scope, or None if unavailable."""
+        raw = payload.get("scope") if isinstance(payload, dict) else None
+        if not raw:
+            return None
+        try:
+            scope = raw if isinstance(raw, ScopeDefinition) else ScopeDefinition(**raw)
+            return ScopeEnforcer(scope)
+        except Exception as e:  # noqa: BLE001 - scope gating is best-effort
+            logger.warning("recon_scope_enforcer_init_failed", error=str(e))
+            return None
+
+    async def _persist_endpoint(self, ep: Endpoint) -> bool:
+        """Normalize + scope-gate an endpoint, then persist. Returns True if stored.
+
+        Single chokepoint for every recon endpoint write: drops malformed URLs and
+        off-scope hosts so downstream (graph, planning, scans, reports) stays clean.
+        """
+        norm = normalize_endpoint_url(getattr(ep, "url", None))
+        if norm is None:
+            logger.debug("recon_endpoint_rejected_malformed", url=getattr(ep, "url", None))
+            return False
+        ep.url = norm
+        enforcer = getattr(self, "_ep_scope_enforcer", None)
+        if enforcer is not None:
+            host = urlparse(norm).hostname
+            if not enforcer.host_in_scope(host):
+                logger.info("recon_endpoint_out_of_scope", url=norm)
+                return False
+        await self.ctx.graph_memory.add_endpoint(ep)
+        return True
+
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute reconnaissance task."""
         task_type = task.type
         payload = task.payload
+
+        # Per-task scope gate for endpoint persistence (fixes scope bleed: recon was
+        # storing off-scope hosts like www.syfe.com / third-party CDNs as endpoints).
+        self._ep_scope_enforcer = self._build_scope_enforcer(payload)
 
         # Initialize adapter if scope is provided in payload (Issue 12)
         if "scope" in payload:
@@ -243,7 +305,7 @@ class ReconAgent(BaseAgent):
                 combined_params = sorted(list(set(query_params + form_fields)))
 
                 ep = self._mk_endpoint(url, engagement_id, source="katana", parameters=combined_params)
-                await self.ctx.graph_memory.add_endpoint(ep)
+                await self._persist_endpoint(ep)
                 self.endpoint_inventory[ep.id] = ep
                 added += 1
             except Exception as ex:
@@ -345,7 +407,7 @@ class ReconAgent(BaseAgent):
                     body_schema_keys=d.get("body_keys", []),
                     metadata={"operation_id": d.get("operation_id", ""), "spec_url": found_url},
                 )
-                await self.ctx.graph_memory.add_endpoint(ep)
+                await self._persist_endpoint(ep)
                 self.endpoint_inventory[ep.id] = ep
                 added += 1
             except Exception as ex:
@@ -520,7 +582,7 @@ class ReconAgent(BaseAgent):
         for endpoint in endpoints:
             try:
                 endpoint.engagement_id = self.ctx.current_task.engagement_id
-                await self.ctx.graph_memory.add_endpoint(endpoint)
+                await self._persist_endpoint(endpoint)
                 self.endpoint_inventory[endpoint.id] = endpoint
             except Exception as e:
                 logger.error(f"Failed to add endpoint {endpoint.url} to graph: {e}")
@@ -609,7 +671,7 @@ class ReconAgent(BaseAgent):
             active_endpoints = await self._active_crawl_target(domain)
             for ep in active_endpoints:
                 try:
-                    await self.ctx.graph_memory.add_endpoint(ep)
+                    await self._persist_endpoint(ep)
                     self.endpoint_inventory[ep.id] = ep
                 except Exception as ex:
                     logger.error(f"Failed to add active crawled endpoint {ep.url} to graph: {ex}")
@@ -624,7 +686,7 @@ class ReconAgent(BaseAgent):
             for ep in hist_endpoints:
                 try:
                     ep.engagement_id = self.ctx.current_task.engagement_id
-                    await self.ctx.graph_memory.add_endpoint(ep)
+                    await self._persist_endpoint(ep)
                     self.endpoint_inventory[ep.id] = ep
                     historical_count += 1
                 except Exception as ex:
