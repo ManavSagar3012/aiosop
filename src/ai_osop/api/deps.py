@@ -194,6 +194,17 @@ async def assert_engagement_access(operator: Dict[str, Any], session_id: str) ->
             session = None
 
     if not session:
+        # Fallback: the caller may have passed the user-provided engagement_id
+        # rather than the generated session_id (e.g. task scheduling uses the
+        # same engagement_id the operator specified at creation time, but the
+        # orchestrator stores sessions under a unique session_id with a timestamp
+        # prefix like ``eng-20260713165205-{engagement_id}``).
+        for s in orch._sessions.values():
+            if getattr(s.scope, "engagement_id", None) == session_id:
+                session = s
+                break
+
+    if not session:
         raise HTTPException(status_code=404, detail="Engagement not found")
 
     role = operator.get("role", "")
