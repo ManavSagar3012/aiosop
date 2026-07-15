@@ -136,12 +136,17 @@ MANIFEST = [
     ),  # honest: stock Juice Shop bundles vary; informational
     ManifestEntry(
         "nuclei_scan",
-        "nuclei scoped scan (informational breadth)",
+        "nuclei scoped scan (informationdth)",
         "multi",
         "multi",
         False,
         scored=False,
     ),
+    ManifestEntry("xss_reflected", "Reflected XSS via search parameter", "A03 Injection", "CWE-79", True),
+    ManifestEntry("ftp_directory_listing", "FTP directory listing exposed at /ftp", "A05 Security Misconfiguration", "CWE-548", True),
+    ManifestEntry("unauth_user_list", "Unauthenticated user enumeration via /api/Users", "A01 Broken Access Control", "CWE-306", True),
+    ManifestEntry("weak_password_policy", "Weak password policy: single-char password accepted", "A07 Identification and Authentication Failures", "CWE-521", True),
+    ManifestEntry("open_redirect", "Open redirect via /redirect endpoint", "A01 Broken Access Control", "CWE-601", True),
 ]
 
 
@@ -661,6 +666,84 @@ async def check_nuclei_scan(t: Target) -> CheckResult:
     )
 
 
+
+
+async def check_xss_reflected(t: Target) -> CheckResult:
+    probe = chr(60) + chr(115) + chr(99) + chr(114) + chr(105) + chr(112) + chr(116) + chr(62) + chr(97) + chr(108) + chr(101) + chr(114) + chr(116) + chr(40) + chr(49) + chr(41) + chr(60) + chr(47) + chr(115) + chr(99) + chr(114) + chr(105) + chr(112) + chr(116) + chr(62)
+    r = await t.c.get(f'{t.base}/rest/products/search', params={'q': probe})
+    body = r.text if r.status_code == 200 else ''
+    confirmed = probe in body
+    return CheckResult(
+        'xss_reflected', confirmed,
+        'VALIDATED' if confirmed else 'NOT_FOUND',
+        confidence=1.0 if confirmed else 0.0,
+        evidence={'status': r.status_code, 'probe_reflected': confirmed},
+    )
+
+
+async def check_ftp_directory_listing(t: Target) -> CheckResult:
+    r = await t.c.get(f'{t.base}/ftp')
+    body = r.text if r.status_code == 200 else ''
+    confirmed = r.status_code == 200 and any(
+        k in body.lower() for k in ('acquisitions', '.md', '.bak')
+    )
+    return CheckResult(
+        'ftp_directory_listing', confirmed,
+        'VALIDATED' if confirmed else 'NOT_FOUND',
+        confidence=1.0 if confirmed else 0.0,
+        evidence={'status': r.status_code, 'listing_found': confirmed},
+    )
+
+
+async def check_unauth_user_list(t: Target) -> CheckResult:
+    r = await t.c.get(f'{t.base}/api/Users')
+    try:
+        data = r.json().get('data', [])
+    except Exception:
+        data = []
+    confirmed = r.status_code == 200 and isinstance(data, list) and len(data) > 0
+    return CheckResult(
+        'unauth_user_list', confirmed,
+        'VALIDATED' if confirmed else 'NOT_FOUND',
+        confidence=1.0 if confirmed else 0.0,
+        evidence={'status': r.status_code, 'user_count': len(data)},
+    )
+
+
+async def check_weak_password_policy(t: Target) -> CheckResult:
+    import uuid as _uuid
+    email = 'bench-weak-' + _uuid.uuid4().hex[:8] + '@example.com'
+    body = {
+        'email': email,
+        'password': 'a',
+        'passwordRepeat': 'a',
+        'securityQuestion': {'id': 1},
+        'securityAnswer': 'bench',
+    }
+    r = await t.c.post(f'{t.base}/api/Users', json=body)
+    confirmed = r.status_code in (200, 201)
+    return CheckResult(
+        'weak_password_policy', confirmed,
+        'VALIDATED' if confirmed else 'NOT_FOUND',
+        confidence=1.0 if confirmed else 0.0,
+        evidence={'status': r.status_code, 'weak_pw_accepted': confirmed},
+    )
+
+
+async def check_open_redirect(t: Target) -> CheckResult:
+    import httpx as _hx
+    async with _hx.AsyncClient(timeout=10.0, verify=False, follow_redirects=False) as c:
+        r = await c.get(f'{t.base}/redirect', params={'to': 'https://google.com'})
+    loc = r.headers.get('location', '')
+    confirmed = r.status_code in (301, 302, 303, 307, 308) and 'google.com' in loc
+    return CheckResult(
+        'open_redirect', confirmed,
+        'VALIDATED' if confirmed else 'NOT_FOUND',
+        confidence=1.0 if confirmed else 0.0,
+        evidence={'status': r.status_code, 'location': loc},
+    )
+
+
 CHECKS: dict[str, Callable[[Target], Any]] = {
     "sqli_login_bypass": check_sqli_login_bypass,
     "sqli_search_error": check_sqli_search_error,
@@ -672,6 +755,12 @@ CHECKS: dict[str, Callable[[Target], Any]] = {
     "admin_registration_negative": check_admin_registration_negative,
     "secrets_in_js": check_secrets_in_js,
     "nuclei_scan": check_nuclei_scan,
+    # Sprint 2 additions — 5 new expected=True entries
+    "xss_reflected": check_xss_reflected,
+    "ftp_directory_listing": check_ftp_directory_listing,
+    "unauth_user_list": check_unauth_user_list,
+    "weak_password_policy": check_weak_password_policy,
+    "open_redirect": check_open_redirect,
 }
 
 
@@ -728,10 +817,13 @@ async def run_suite(target: str, timeout: float) -> list[CheckResult]:
 # =============================================================================
 def score(all_runs: list[list[CheckResult]]) -> dict:
     manifest = {m.check_id: m for m in MANIFEST}
-    # stability: a run is "clean" if no check ended TIMEOUT/ERROR unexpectedly
+    # stability: a run is "clean" if no *scored* check ended in TIMEOUT.
+    # Unscored/informational checks (scored=False) are excluded — a nuclei timeout
+    # when nuclei is not installed should not mark the whole run unstable.
+    scored_ids = {m.check_id for m in MANIFEST if m.scored}
     stability_clean = 0
     for run in all_runs:
-        if all(r.status not in ("TIMEOUT",) for r in run):
+        if all(r.status not in ("TIMEOUT",) for r in run if r.check_id in scored_ids):
             stability_clean += 1
 
     # use the LAST run for per-check verdicts; aggregate timing across runs
