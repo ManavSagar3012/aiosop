@@ -8,9 +8,28 @@ import random
 # Add src to path so we can import ai_osop modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Header, Depends, HTTPException
+from typing import Optional
 from pydantic import BaseModel
 import uvicorn
+
+from ai_osop.core.config import settings
+
+async def verify_mcp_token(authorization: Optional[str] = Header(None)):
+    """Enforce strict bearer token verification."""
+    expected = settings.api_token or os.getenv("OSOP_API_TOKEN")
+    if not expected:
+        if settings.environment in ("production", "prod"):
+            raise HTTPException(status_code=401, detail="Authentication is not configured")
+        return
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    token = authorization.split(" ", 1)[1]
+    import hmac
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 # Import real payload engine classes
 try:
@@ -171,12 +190,12 @@ def _evaluate_fitness(payload: str, vuln_type: str, context: dict) -> float:
 
 
 @app.get("/health")
-async def health():
+async def health(authenticated: None = Depends(verify_mcp_token)):
     return {"server": "payload-mcp", "status": "ready", "engine_available": ENGINE_AVAILABLE}
 
 
 @app.post("/mcp/initialize")
-async def initialize():
+async def initialize(authenticated: None = Depends(verify_mcp_token)):
     return {
         "server_id": "payload-mcp",
         "status": "ready",
@@ -216,7 +235,7 @@ async def initialize():
 
 
 @app.post("/mcp/execute")
-async def execute(req: ExecuteRequest):
+async def execute(req: ExecuteRequest, authenticated: None = Depends(verify_mcp_token)):
     params = req.parameters
     
     if req.tool_name == "generate_payload":

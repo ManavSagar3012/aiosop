@@ -20,11 +20,19 @@ from ai_osop.core.tracing import trace_span
 logger = structlog.get_logger("ai_osop.orchestrator.approval_coordinator")
 
 
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
+
+
 class ApprovalCoordinator:
     """Manage approval requests and operator decisions."""
 
-    def __init__(self, orchestrator: Any) -> None:
+    def __init__(
+        self, orchestrator: Any, state_machine: Optional[EngagementStateMachine] = None
+    ) -> None:
         self._orch = orchestrator
+        self.state_machine = state_machine or getattr(
+            orchestrator, "engagement_state_machine", None
+        )
 
     async def request_approval(self, request: ApprovalRequest) -> ApprovalRequest:
         """Submit approval request and BLOCK until the operator decides (or timeout)."""

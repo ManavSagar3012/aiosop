@@ -16,6 +16,7 @@ from ai_osop.core.exceptions import WorkflowException, WorkflowTransitionError
 from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.observability import record_engagement_halted, record_engagement_started
 from ai_osop.core.tracing import trace_span
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
 
 logger = structlog.get_logger("ai_osop.orchestrator.engagement_manager")
 
@@ -26,8 +27,13 @@ class EngagementManager:
     # GAP-2-6: hard ceiling on how long a single agent shutdown may block during halt.
     HALT_DEADLINE_SECONDS = 10
 
-    def __init__(self, orchestrator: Any) -> None:
+    def __init__(
+        self, orchestrator: Any, state_machine: Optional[EngagementStateMachine] = None
+    ) -> None:
         self._orch = orchestrator
+        self.state_machine = state_machine or getattr(
+            orchestrator, "engagement_state_machine", None
+        )
 
     async def create_engagement(
         self, scope: ScopeDefinition, roe: Dict[str, Any], created_by: Optional[str] = None
@@ -126,10 +132,7 @@ class EngagementManager:
             # agent that was mid-task for this engagement back to idle so it can
             # accept work from the next engagement.
             for agent in self._orch._agents.values():
-                if (
-                    agent.ctx.session_id == session_id
-                    and agent.ctx.status == "running"
-                ):
+                if agent.ctx.session_id == session_id and agent.ctx.status == "running":
                     agent.ctx.current_task = None
                     agent.ctx.status = "idle"
                     logger.info(

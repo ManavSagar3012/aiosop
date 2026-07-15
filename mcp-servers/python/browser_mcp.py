@@ -12,10 +12,30 @@ import uuid
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket, Header, Depends
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from pydantic import BaseModel
 
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src")))
+
+from ai_osop.core.config import settings
+
+async def verify_mcp_token(authorization: Optional[str] = Header(None)):
+    """Enforce strict bearer token verification."""
+    expected = settings.api_token or os.getenv("OSOP_API_TOKEN")
+    if not expected:
+        if settings.environment in ("production", "prod"):
+            raise HTTPException(status_code=401, detail="Authentication is not configured")
+        return
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    token = authorization.split(" ", 1)[1]
+    import hmac
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 app = FastAPI(title="Browser MCP Server")
 
 # Evidence is written here so the workflow_agent and the API can find it.
@@ -301,9 +321,18 @@ class MCPExecuteRequest(BaseModel):
     request_id: Optional[str] = None
 
 @app.post("/mcp/initialize")
-async def mcp_initialize(req: MCPInitializeRequest):
+async def mcp_initialize(req: MCPInitializeRequest, authenticated: None = Depends(verify_mcp_token)):
     if req.session_id:
         print(f"Initializing session: {req.session_id}")
+    if req.scope:
+        from ai_osop.safety.scope import ScopeEnforcer
+        from ai_osop.core.models import ScopeDefinition
+        try:
+            scope_def = ScopeDefinition(**req.scope)
+            app.state.scope_enforcer = ScopeEnforcer(scope_def)
+            app.state.session_id = req.session_id
+        except Exception as e:  # noqa: BLE001
+            print(f"Failed to initialize scope: {e}")
 
     return {
         "server_id": "browser-mcp",
@@ -322,9 +351,8 @@ async def mcp_initialize(req: MCPInitializeRequest):
             }
         ],
     }
-
 @app.post("/mcp/execute")
-async def mcp_execute(req: MCPExecuteRequest):
+async def mcp_execute(req: MCPExecuteRequest, authenticated: None = Depends(verify_mcp_token)):
     request_id = req.request_id or "req-" + str(uuid.uuid4())
     params = req.parameters or {}
     if req.tool_name != "execute":
@@ -346,6 +374,16 @@ async def mcp_execute(req: MCPExecuteRequest):
 
         if action == "navigate":
             url = params.get("url", "")
+            # Enforce scope check
+            if getattr(app.state, "scope_enforcer", None) and getattr(app.state, "session_id", "") != "api-bootstrap":
+                try:
+                    app.state.scope_enforcer.validate_target(url)
+                except Exception as e:  # noqa: BLE001
+                    return {
+                        "request_id": request_id,
+                        "status": "error",
+                        "error": f"Out of scope target: {e}",
+                    }
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             # SPA settle: domcontentloaded fires before client-side XHR/fetch
             # (e.g. Angular /rest, /api calls) land. The HAR records the whole
@@ -439,4 +477,4 @@ if __name__ == "__main__":
         default=int(os.environ.get("OSOP_BROWSER_MCP_PORT", "8091")),
     )
     args = parser.parse_args()
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    uvicorn.run(app, host="127.0.0.1", port=args.port)

@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+import logging
+logging.getLogger("neo4j").setLevel(logging.ERROR)
+
+
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 from neo4j.graph import Node, Path, Relationship
@@ -1754,3 +1758,19 @@ class GraphMemory:
     async def close(self) -> None:
         if self._driver:
             await self._driver.close()
+
+    async def find_vulnerability_chains(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Find multi-hop vulnerability chains."""
+        query = """
+        MATCH path = (v1:Vulnerability)-[:LEADS_TO*1..5]->(v2:Vulnerability)
+        WHERE v1.engagement_id = $eid
+        RETURN [n in nodes(path) | n.id] AS chain,
+               [n in nodes(path) | n.title] AS titles
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(
+                lambda tx: tx.run(query, eid=engagement_id)
+            )
+            records = await result.data()
+            return records
+

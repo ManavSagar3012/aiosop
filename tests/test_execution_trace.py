@@ -35,17 +35,28 @@ class TestExecutionStage:
     def test_all_stages_present(self):
         stages = {s.value for s in ExecutionStage}
         expected = {
-            "task_created", "task_persisted", "task_queued",
-            "worker_lease_requested", "worker_lease_granted", "worker_assigned",
+            "task_created",
+            "task_persisted",
+            "task_queued",
+            "worker_lease_requested",
+            "worker_lease_granted",
+            "worker_assigned",
             "dependency_injection_complete",
-            "redis_connected", "neo4j_connected", "postgres_connected",
-            "mcp_connected", "mcp_connect_failed",
+            "redis_connected",
+            "neo4j_connected",
+            "postgres_connected",
+            "mcp_connected",
+            "mcp_connect_failed",
             "planner_started",
-            "scanner_started", "scanner_skipped", "scanner_timed_out", "scanner_failed",
+            "scanner_started",
+            "scanner_skipped",
+            "scanner_timed_out",
+            "scanner_failed",
             "verification_started",
             "persistence_completed",
             "dashboard_updated",
-            "task_completed", "task_failed",
+            "task_completed",
+            "task_failed",
         }
         assert stages == expected, f"Missing: {expected - stages} Extra: {stages - expected}"
 
@@ -60,9 +71,19 @@ class TestFailureCategory:
     def test_all_categories_present(self):
         cats = {c.value for c in FailureCategory}
         expected = {
-            "infrastructure", "queue", "worker", "dependency", "mcp",
-            "planner", "recon", "parser", "scanner", "verification",
-            "persistence", "dashboard", "unknown",
+            "infrastructure",
+            "queue",
+            "worker",
+            "dependency",
+            "mcp",
+            "planner",
+            "recon",
+            "parser",
+            "scanner",
+            "verification",
+            "persistence",
+            "dashboard",
+            "unknown",
         }
         assert cats == expected, f"Missing: {expected - cats} Extra: {cats - expected}"
 
@@ -170,9 +191,7 @@ class TestTraceFailureRecording:
     def test_record_mcp_failure(self):
         trace = TaskExecutionTrace("task-001", "eng-001")
         trace.record("task_created")
-        trace.record_failure(
-            FailureCategory.MCP, "MCP timeout", component="nuclei-mcp"
-        )
+        trace.record_failure(FailureCategory.MCP, "MCP timeout", component="nuclei-mcp")
         assert trace._failure["category"] == "mcp"
         assert trace._failure["component"] == "nuclei-mcp"
         assert trace.is_complete
@@ -180,9 +199,7 @@ class TestTraceFailureRecording:
 
     def test_record_failure_with_details(self):
         trace = TaskExecutionTrace("task-001", "eng-001")
-        trace.record_failure(
-            FailureCategory.WORKER, "timeout", details={"timeout_seconds": 300}
-        )
+        trace.record_failure(FailureCategory.WORKER, "timeout", details={"timeout_seconds": 300})
         assert trace._failure["details"]["timeout_seconds"] == 300
 
     def test_failure_appears_in_to_dict(self):
@@ -209,14 +226,19 @@ class TestTraceFailureRecording:
 
 class FakeTask:
     """Minimal task-like object."""
+
     def __init__(self, task_id="task-001", engagement_id="eng-001"):
         self.id = task_id
         self.engagement_id = engagement_id
         self.type = "sqli_scan"
-        self.agent_type = type("AT", (), {
-            "value": "vuln_analysis",
-            "__str__": lambda s: "vuln_analysis",
-        })()
+        self.agent_type = type(
+            "AT",
+            (),
+            {
+                "value": "vuln_analysis",
+                "__str__": lambda s: "vuln_analysis",
+            },
+        )()
 
 
 class TestTraceHelpers:
@@ -327,9 +349,7 @@ class TestComplexLifecycle:
         trace = TaskExecutionTrace("task-xss-001", "eng-gin-001")
         trace.record("task_created")
         trace.record("scanner_started")
-        trace.record_failure(
-            FailureCategory.MCP, "MCP timed out", component="nuclei-mcp"
-        )
+        trace.record_failure(FailureCategory.MCP, "MCP timed out", component="nuclei-mcp")
         assert trace.is_complete
         assert trace._failure["category"] == "mcp"
         assert trace._failure["component"] == "nuclei-mcp"

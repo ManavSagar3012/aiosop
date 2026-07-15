@@ -210,14 +210,17 @@ def extract_trace_id_from_traceparent(traceparent: Optional[str]) -> Optional[st
         pass
     return None
 
+
 def reset_mcp_latency() -> None:
     """Reset the cumulative MCP latency in the current context."""
     MCP_LATENCY_CTX_VAR.set(0.0)
+
 
 def add_mcp_latency(duration_ms: float) -> None:
     """Add duration in milliseconds to the cumulative MCP latency."""
     current = MCP_LATENCY_CTX_VAR.get()
     MCP_LATENCY_CTX_VAR.set(current + duration_ms)
+
 
 def get_mcp_latency() -> float:
     """Return the cumulative MCP latency in the current context."""

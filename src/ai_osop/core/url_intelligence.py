@@ -24,9 +24,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from typing import Dict, Iterable, List, Set, Tuple
 from urllib.parse import parse_qsl, urlsplit
-from html.parser import HTMLParser
 
 # Parameter name -> the bug class it most commonly enables. Used to prioritise
 # which discovered parameters the vuln/exploit agents should probe first.
@@ -180,29 +180,54 @@ def extract_form_fields(html: str) -> List[str]:
     return sorted(parser.fields)
 
 
+_PARAM_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]*$")
+_PARAM_KEY_STOP = {"null", "undefined", "true", "false", "nan"}
+_PARAM_KEY_SINGLE_OK = {"q", "s", "p", "n", "k", "v"}
+
+def _is_probable_param_key(key: str) -> bool:
+    """True for a plausible real HTTP query-parameter name (drops extractor noise)."""
+    if not key or key.lower() in _PARAM_KEY_STOP:
+        return False
+    if not _PARAM_KEY_RE.match(key):
+        return False
+    if len(key) == 1:
+        return key.lower() in _PARAM_KEY_SINGLE_OK
+    return True
+
 def extract_params(url: str) -> List[str]:
     """Return the sorted unique query-parameter names present in *url*."""
     params = set()
-    
+
     # 1. Query parameters
     try:
         qs = urlsplit(url).query
-        params.update(k for k, _ in parse_qsl(qs, keep_blank_values=True))
+        params.update(k for k, _ in parse_qsl(qs, keep_blank_values=True) if _is_probable_param_key(k))
     except (ValueError, AttributeError):
         pass
-        
+
     # 2. Path parameters & inferred resources
     try:
         path = urlsplit(url).path
         segs = [s for s in path.split("/") if s]
-        
-        RESOURCE_KEYWORDS = {"product", "user", "account", "order", "post", "item", "doc", "catalog", "category", "login"}
-        
+
+        RESOURCE_KEYWORDS = {
+            "product",
+            "user",
+            "account",
+            "order",
+            "post",
+            "item",
+            "doc",
+            "catalog",
+            "category",
+            "login",
+        }
+
         for i, seg in enumerate(segs):
             if _ID_SEG.match(seg):
                 params.add("id")
                 if i > 0:
-                    prev = segs[i-1].lower()
+                    prev = segs[i - 1].lower()
                     if prev.endswith("s") and prev[:-1] in RESOURCE_KEYWORDS:
                         prev = prev[:-1]
                     params.add(f"{prev}Id")
@@ -214,7 +239,7 @@ def extract_params(url: str) -> List[str]:
                     params.add(f"{seg_lower[:-1]}Id")
     except (ValueError, AttributeError):
         pass
-        
+
     return sorted(params)
 
 

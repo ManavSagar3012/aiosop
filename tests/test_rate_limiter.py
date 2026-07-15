@@ -45,14 +45,14 @@ def test_rate_limiter_backpressure():
     initial_fill_rate = limiter.target_buckets["slow.com"].fill_rate
 
     # Simulate slow response
-    limiter.record_backpressure("slow.com", 3.0)
+    limiter.record_backpressure("slow.com", response_time=3.0)
 
     assert limiter.metrics["backpressure_events"] == 1
     new_fill_rate = limiter.target_buckets["slow.com"].fill_rate
     assert new_fill_rate < initial_fill_rate
 
     # Simulate fast response (recovery)
-    limiter.record_backpressure("slow.com", 0.1)
+    limiter.record_backpressure("slow.com", response_time=0.1)
     recovered_fill_rate = limiter.target_buckets["slow.com"].fill_rate
     assert recovered_fill_rate > new_fill_rate
 

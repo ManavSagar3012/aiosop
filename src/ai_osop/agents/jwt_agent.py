@@ -50,7 +50,11 @@ class JWTAgent(BaseVulnerabilityAgent):
         token = task.payload.get("token")
         if not token:
             self.logger.info("jwt_scan_skipped: no token in scope for %s", task.payload.get("url"))
-            return {"status": "success", "message": "skipped: no JWT token in scope", "findings_count": 0}
+            return {
+                "status": "success",
+                "message": "skipped: no JWT token in scope",
+                "findings_count": 0,
+            }
 
         try:
             # 1. Analyze header for 'alg: none'

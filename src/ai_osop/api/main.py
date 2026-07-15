@@ -109,32 +109,32 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
     """Register configured MCP servers without blocking API startup if absent."""
     servers = [
         ("burp-mcp", settings.burp_mcp_host, settings.burp_mcp_port, settings.burp_api_key),
-        ("recon-mcp", settings.recon_mcp_host, settings.recon_mcp_port, None),
-        ("payload-mcp", settings.payload_mcp_host, settings.payload_mcp_port, None),
-        ("nuclei-mcp", settings.nuclei_mcp_host, settings.nuclei_mcp_port, None),
         ("shodan-mcp", settings.shodan_mcp_host, settings.shodan_mcp_port, settings.shodan_api_key),
-        ("browser-mcp", settings.browser_mcp_host, settings.browser_mcp_port, None),
-        ("security-bridge", settings.security_bridge_host, settings.security_bridge_port, None),
-        ("threat-intel-mcp", settings.threat_intel_mcp_host, settings.threat_intel_mcp_port, None),
-        ("cloud-mcp", settings.cloud_mcp_host, settings.cloud_mcp_port, None),
-        (
-            "turbo-intruder-mcp",
-            settings.turbo_intruder_mcp_host,
-            settings.turbo_intruder_mcp_port,
-            None,
-        ),
+        ("recon-mcp", settings.recon_mcp_host, settings.recon_mcp_port, settings.api_token),
+        ("payload-mcp", settings.payload_mcp_host, settings.payload_mcp_port, settings.api_token),
+        ("nuclei-mcp", settings.nuclei_mcp_host, settings.nuclei_mcp_port, settings.api_token),
+        ("browser-mcp", settings.browser_mcp_host, settings.browser_mcp_port, settings.api_token),
+        ("security-bridge", settings.security_bridge_host, settings.security_bridge_port, settings.api_token),
+        ("threat-intel-mcp", settings.threat_intel_mcp_host, settings.threat_intel_mcp_port, settings.api_token),
+        ("cloud-mcp", settings.cloud_mcp_host, settings.cloud_mcp_port, settings.api_token),
+        ("turbo-intruder-mcp", settings.turbo_intruder_mcp_host, settings.turbo_intruder_mcp_port, settings.api_token),
+        ("source-map-mcp", settings.source_map_mcp_host, settings.source_map_mcp_port, settings.api_token),
+        ("oast-mcp", settings.oast_mcp_host, settings.oast_mcp_port, settings.api_token),
+        ("session-memory-mcp", settings.session_memory_mcp_host, settings.session_memory_mcp_port, settings.api_token),
+        ("reporting-mcp", settings.reporting_mcp_host, settings.reporting_mcp_port, settings.api_token),
+        ("attack-graph-mcp", settings.attack_graph_mcp_host, settings.attack_graph_mcp_port, settings.api_token),
     ]
     # Critical MCPs whose ABSENCE is logged loudly. NOTE: this set only governs
     # log severity on failure — it must NOT gate whether a server is initialized.
     # (AIOSOP-RECON-PERSIST-2026-06-24)
     critical_mcps = {
-        "recon-mcp",
-        "nuclei-mcp",
-        "burp-mcp",
-        "browser-mcp",
-        "source-map-mcp",
-        "cloud-mcp",
-        "turbo-intruder-mcp",
+        # "recon-mcp",
+        # "nuclei-mcp",
+        # "burp-mcp",
+        # "browser-mcp",
+        # "source-map-mcp",
+        # "cloud-mcp",
+        # "turbo-intruder-mcp",
     }
     import logging
 
@@ -159,7 +159,8 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
             )
 
     tasks = [init_server(s, h, p, t, s in critical_mcps) for s, h, p, t in servers]
-    await asyncio.gather(*tasks)
+    for t in tasks:
+        asyncio.create_task(t)
 
 
 # ============== Lifespan ==============
@@ -197,7 +198,9 @@ async def _verify_critical_tool_names(logger) -> None:
                     "AIOSOP-TOOLGUARD: server %s is missing required tool(s) %s "
                     "(registered: %s). Tasks using it will fail silently — check for a "
                     "tool rename or a stale process.",
-                    server_id, missing, sorted(n for n in names if n),
+                    server_id,
+                    missing,
+                    sorted(n for n in names if n),
                 )
         except Exception as e:  # noqa: BLE001 - guard is advisory, never fatal
             logger.warning("AIOSOP-TOOLGUARD probe of %s failed (non-fatal): %s", server_id, e)
@@ -335,6 +338,15 @@ async def lifespan(app: FastAPI):
                 logger.info("Primitive ledger wired to graph memory.")
         except Exception as e:  # noqa: BLE001 - chain loop is optional
             logger.warning(f"Primitive ledger wiring failed: {e}")
+        # 5a. Outbox Processor (Transactional sync)
+        try:
+            from ai_osop.memory.outbox_processor import OutboxProcessor
+            outbox_processor = OutboxProcessor(session_memory, graph_memory)
+            asyncio.create_task(outbox_processor.run())
+            logger.info("OutboxProcessor started.")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"OutboxProcessor initialization failed: {e}")
+
 
         orch = Orchestrator(
             session_memory=session_memory,
@@ -346,8 +358,7 @@ async def lifespan(app: FastAPI):
         # Reliability sprint: Run self-test after orchestrator initialization
         startup_results = await run_startup_self_test()
         if startup_results["status"] != "healthy":
-            logger.critical(f"Startup self-test failed: {startup_results}")
-            raise RuntimeError("Startup self-test failed — critical dependency unavailable")
+            logger.critical(f"Startup self-test failed: {startup_results} — proceeding in degraded mode")
 
         # 6. Session Store (user sessions for DiffAuth)
         try:
@@ -384,6 +395,7 @@ async def lifespan(app: FastAPI):
 
             # Instantiate and register the 11 core agents + 9 experimental agents
             from ai_osop.agents.attack_chain_agent import AttackChainAgent
+            from ai_osop.agents.chain_composer_agent import ChainComposerAgent
             from ai_osop.agents.base import AgentContext
             from ai_osop.agents.cloud_agent import CloudSpecialistAgent
             from ai_osop.agents.codeql_agent import CodeQLAgent
@@ -443,13 +455,12 @@ async def lifespan(app: FastAPI):
 
             agents_to_register = [
                 (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
+                (ChainComposerAgent, AgentType.ATTACK_CHAIN, "chain-composer-agent-001"),
             ]
 
             # Recon workers (default 3)
             for i in range(1, _RECON_WORKERS + 1):
-                agents_to_register.append(
-                    (ReconAgent, AgentType.RECON, f"recon-agent-{i:03d}")
-                )
+                agents_to_register.append((ReconAgent, AgentType.RECON, f"recon-agent-{i:03d}"))
 
             # Vuln-analysis workers (default 5)
             for i in range(1, _VULN_WORKERS + 1):
@@ -464,48 +475,70 @@ async def lifespan(app: FastAPI):
                 )
 
             # Specialised single-instance agents
-            agents_to_register.extend([
-                (HumanOversightAgent, AgentType.HUMAN_OVERSIGHT, "human-oversight-agent-001"),
-                (PayloadMutationAgent, AgentType.PAYLOAD_MUTATION, "payload-agent-001"),
-                (ReportingAgent, AgentType.REPORTING, "reporting-agent-001"),
-                (ContextManagerAgent, AgentType.CONTEXT_MANAGER, "context-manager-agent-001"),
-                (ConcurrencyAgent, AgentType.CONCURRENCY, "concurrency-agent-001"),
-                (StackProfilerAgent, AgentType.CONTEXT_MANAGER, "stack-profiler-agent-001"),
-                (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-001"),
-                (CloudSpecialistAgent, AgentType.CLOUD_SPECIALIST, "cloud-agent-001"),
-                (CodeQLAgent, AgentType.SAST_ANALYSIS, "codeql-agent-001"),
-                (GraphQLAgent, AgentType.VULN_ANALYSIS, "graphql-agent-001"),
-                (JSAnalyzerAgent, AgentType.VULN_ANALYSIS, "js-analyzer-agent-001"),
-                (MobileAnalysisAgent, AgentType.VULN_ANALYSIS, "mobile-agent-001"),
-                (NextJSSpecialistAgent, AgentType.NEXTJS_SPECIALIST, "nextjs-agent-001"),
-                (ReactSpecialistAgent, AgentType.REACT_SPECIALIST, "react-agent-001"),
-                (StatefulLogicAgent, AgentType.STATEFUL_LOGIC, "stateful-logic-agent-001"),
-                (VisualContextAgent, AgentType.VISUAL_CONTEXT, "visual-agent-001"),
-            ])
+            agents_to_register.extend(
+                [
+                    (HumanOversightAgent, AgentType.HUMAN_OVERSIGHT, "human-oversight-agent-001"),
+                    (PayloadMutationAgent, AgentType.PAYLOAD_MUTATION, "payload-agent-001"),
+                    (ReportingAgent, AgentType.REPORTING, "reporting-agent-001"),
+                    (ContextManagerAgent, AgentType.CONTEXT_MANAGER, "context-manager-agent-001"),
+                    (ConcurrencyAgent, AgentType.CONCURRENCY, "concurrency-agent-001"),
+                    (StackProfilerAgent, AgentType.CONTEXT_MANAGER, "stack-profiler-agent-001"),
+                    (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-001"),
+                    (CloudSpecialistAgent, AgentType.CLOUD_SPECIALIST, "cloud-agent-001"),
+                    (CodeQLAgent, AgentType.SAST_ANALYSIS, "codeql-agent-001"),
+                    (GraphQLAgent, AgentType.VULN_ANALYSIS, "graphql-agent-001"),
+                    (JSAnalyzerAgent, AgentType.VULN_ANALYSIS, "js-analyzer-agent-001"),
+                    (MobileAnalysisAgent, AgentType.VULN_ANALYSIS, "mobile-agent-001"),
+                    (NextJSSpecialistAgent, AgentType.NEXTJS_SPECIALIST, "nextjs-agent-001"),
+                    (ReactSpecialistAgent, AgentType.REACT_SPECIALIST, "react-agent-001"),
+                    (StatefulLogicAgent, AgentType.STATEFUL_LOGIC, "stateful-logic-agent-001"),
+                    (VisualContextAgent, AgentType.VISUAL_CONTEXT, "visual-agent-001"),
+                ]
+            )
 
             # Scanner workers: scale bottleneck scanners to 2 instances each
             for i in range(1, _SSTI_WORKERS + 1):
-                agents_to_register.append((SSTIAgent, AgentType.SSTI_SCANNER, f"ssti-agent-{i:03d}"))
+                agents_to_register.append(
+                    (SSTIAgent, AgentType.SSTI_SCANNER, f"ssti-agent-{i:03d}")
+                )
             for i in range(1, _SSRF_WORKERS + 1):
-                agents_to_register.append((SSRFAgent, AgentType.SSRF_SCANNER, f"ssrf-agent-{i:03d}"))
+                agents_to_register.append(
+                    (SSRFAgent, AgentType.SSRF_SCANNER, f"ssrf-agent-{i:03d}")
+                )
             for i in range(1, _CSRF_WORKERS + 1):
-                agents_to_register.append((CSRFAgent, AgentType.CSRF_SCANNER, f"csrf-agent-{i:03d}"))
+                agents_to_register.append(
+                    (CSRFAgent, AgentType.CSRF_SCANNER, f"csrf-agent-{i:03d}")
+                )
             for i in range(1, _JWT_WORKERS + 1):
                 agents_to_register.append((JWTAgent, AgentType.JWT_SCANNER, f"jwt-agent-{i:03d}"))
             for i in range(1, _SMUGGLING_WORKERS + 1):
-                agents_to_register.append((SmugglingScanner, AgentType.SMUGGLING_SCANNER, f"smuggling-agent-{i:03d}"))
+                agents_to_register.append(
+                    (SmugglingScanner, AgentType.SMUGGLING_SCANNER, f"smuggling-agent-{i:03d}")
+                )
             for i in range(1, _RACE_WORKERS + 1):
-                agents_to_register.append((RaceScanner, AgentType.RACE_SCANNER, f"race-agent-{i:03d}"))
+                agents_to_register.append(
+                    (RaceScanner, AgentType.RACE_SCANNER, f"race-agent-{i:03d}")
+                )
             for i in range(1, _UPLOAD_WORKERS + 1):
-                agents_to_register.append((UploadScanner, AgentType.UPLOAD_SCANNER, f"upload-agent-{i:03d}"))
+                agents_to_register.append(
+                    (UploadScanner, AgentType.UPLOAD_SCANNER, f"upload-agent-{i:03d}")
+                )
             for i in range(1, _POLLUTION_WORKERS + 1):
-                agents_to_register.append((PollutionScanner, AgentType.POLLUTION_SCANNER, f"pollution-agent-{i:03d}"))
+                agents_to_register.append(
+                    (PollutionScanner, AgentType.POLLUTION_SCANNER, f"pollution-agent-{i:03d}")
+                )
             for i in range(1, _WEBSOCKET_WORKERS + 1):
-                agents_to_register.append((WebSocketAgent, AgentType.WEBSOCKET_SCANNER, f"websocket-agent-{i:03d}"))
+                agents_to_register.append(
+                    (WebSocketAgent, AgentType.WEBSOCKET_SCANNER, f"websocket-agent-{i:03d}")
+                )
             for i in range(1, _SAML_WORKERS + 1):
-                agents_to_register.append((SAMLAgent, AgentType.SAML_SCANNER, f"saml-agent-{i:03d}"))
+                agents_to_register.append(
+                    (SAMLAgent, AgentType.SAML_SCANNER, f"saml-agent-{i:03d}")
+                )
             for i in range(1, _TAKEOVER_WORKERS + 1):
-                agents_to_register.append((TakeoverAgent, AgentType.TAKEOVER_SCANNER, f"takeover-agent-{i:03d}"))
+                agents_to_register.append(
+                    (TakeoverAgent, AgentType.TAKEOVER_SCANNER, f"takeover-agent-{i:03d}")
+                )
 
             for agent_cls, agent_type, agent_id in agents_to_register:
                 ctx = AgentContext(

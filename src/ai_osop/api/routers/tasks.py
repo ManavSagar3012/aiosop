@@ -1,9 +1,9 @@
 """AI-OSOP Task Router
 
-Task creation and status retrieval.
+Task creation, listing, and status retrieval.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -18,6 +18,21 @@ from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+
+@router.get("", response_model=List[Task])
+async def list_tasks(
+    engagement_id: Optional[str] = None,
+    operator: Dict[str, Any] = Depends(verify_token),
+):
+    """List tasks, optionally filtered by engagement_id."""
+    all_tasks = state["orchestrator"]._tasks
+    if engagement_id:
+        await assert_engagement_access(operator, engagement_id)
+        tasks = [t for t in all_tasks.values() if t.engagement_id == engagement_id]
+    else:
+        tasks = list(all_tasks.values())
+    return tasks
 
 
 @router.post("", response_model=Task)
@@ -45,6 +60,8 @@ async def create_task(
     )
 
     await state["orchestrator"].schedule_task(task)
+    from ai_osop.celery_app import execute_task_celery
+    execute_task_celery.delay(task.model_dump())
     return task
 
 

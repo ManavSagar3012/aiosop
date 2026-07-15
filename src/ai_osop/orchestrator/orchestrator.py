@@ -9,6 +9,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+import redis.exceptions
+import sqlalchemy.exc
 import structlog
 
 from ai_osop.auth.session_store import SessionStore
@@ -133,20 +135,12 @@ class Orchestrator:
 
         # Sprint 9: Extracted sub-components for Architecture Excellence
         self.engagement_state_machine = EngagementStateMachine(session_memory)
-        self.task_scheduler = TaskScheduler(self)
-        self.approval_coordinator = ApprovalCoordinator(self)
-        self.phase_monitor = PhaseMonitor(self)
-        self.engagement_manager = EngagementManager(self)
-        self.recovery_service = RecoveryService(self)
-        self.agent_reaper = AgentReaper(self)
-
-        # Inject state machine into child components.
-        self.task_scheduler.state_machine = self.engagement_state_machine
-        self.approval_coordinator.state_machine = self.engagement_state_machine
-        self.phase_monitor.state_machine = self.engagement_state_machine
-        self.engagement_manager.state_machine = self.engagement_state_machine
-        self.recovery_service.state_machine = self.engagement_state_machine
-        self.agent_reaper.state_machine = self.engagement_state_machine
+        self.task_scheduler = TaskScheduler(self, self.engagement_state_machine)
+        self.approval_coordinator = ApprovalCoordinator(self, self.engagement_state_machine)
+        self.phase_monitor = PhaseMonitor(self, self.engagement_state_machine)
+        self.engagement_manager = EngagementManager(self, self.engagement_state_machine)
+        self.recovery_service = RecoveryService(self, self.engagement_state_machine)
+        self.agent_reaper = AgentReaper(self, self.engagement_state_machine)
 
         self._running = False
         self._scheduler_task: Optional[asyncio.Task] = None
@@ -400,7 +394,7 @@ class Orchestrator:
         """
         try:
             sessions = await self.session_store.list_sessions(engagement_id)
-        except Exception as e:
+        except (sqlalchemy.exc.SQLAlchemyError, redis.exceptions.RedisError) as e:
             logger.debug("engagement_is_authenticated_lookup_failed", error=str(e))
             return False
         return any(not s.is_expired() for s in sessions)
@@ -409,7 +403,7 @@ class Orchestrator:
         """Return the label of the first non-expired imported session, if any."""
         try:
             sessions = await self.session_store.list_sessions(engagement_id)
-        except Exception:
+        except (sqlalchemy.exc.SQLAlchemyError, redis.exceptions.RedisError):
             return None
         for s in sessions:
             if not s.is_expired():

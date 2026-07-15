@@ -37,7 +37,11 @@ def test_normalize_keeps_valid_including_url_query_param():
 
 def test_scope_enforcer_gates_offscope_hosts():
     enf = ReconAgent._build_scope_enforcer(
-        {"scope": ScopeDefinition(engagement_id="e", domains=["uat-bugbounty.nonprod.syfe.com"]).model_dump()}
+        {
+            "scope": ScopeDefinition(
+                engagement_id="e", domains=["uat-bugbounty.nonprod.syfe.com"]
+            ).model_dump()
+        }
     )
     assert enf is not None
     assert enf.validate_target("https://uat-bugbounty.nonprod.syfe.com/core") is True
@@ -52,7 +56,11 @@ def test_host_in_scope_is_flat_and_non_raising():
     # _persist_endpoint uses host_in_scope (not the recursive validate_target),
     # which must never raise and must reject off-scope + accept in-scope hosts.
     enf = ReconAgent._build_scope_enforcer(
-        {"scope": ScopeDefinition(engagement_id="e", domains=["uat-bugbounty.nonprod.syfe.com"]).model_dump()}
+        {
+            "scope": ScopeDefinition(
+                engagement_id="e", domains=["uat-bugbounty.nonprod.syfe.com"]
+            ).model_dump()
+        }
     )
     assert enf.host_in_scope("uat-bugbounty.nonprod.syfe.com") is True
     assert enf.host_in_scope("api.uat-bugbounty.nonprod.syfe.com") is True  # subdomain

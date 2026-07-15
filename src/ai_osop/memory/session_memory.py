@@ -75,6 +75,18 @@ class TaskORM(Base):
     assigned_agent_id = Column(String(64), nullable=True)
 
 
+
+class OutboxORM(Base):
+    __tablename__ = "outbox"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_type = Column(String(64), index=True)
+    entity_id = Column(String(64), index=True)
+    action = Column(String(32))
+    payload = Column(JSON)
+    processed = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class SessionStateORM(Base):
     __tablename__ = "session_states"
 
@@ -1108,6 +1120,15 @@ class SessionMemory:
                     )
                 )
                 await session.execute(stmt)
+                # Transactional Outbox
+                outbox_entry = OutboxORM(
+                    entity_type="task",
+                    entity_id=task.id,
+                    action="upsert",
+                    payload=task.model_dump(mode="json"),
+                )
+                session.add(outbox_entry)
+
                 await session.commit()
 
     async def load_task(self, task_id: str) -> Optional[Task]:

@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.ops.supervisor import PID_FILE, _check_pidfile, _write_pidfile, _remove_pidfile
+from scripts.ops.supervisor import PID_FILE, _check_pidfile, _remove_pidfile, _write_pidfile
 
 
 def test_check_pidfile_raises_on_live_pid():

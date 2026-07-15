@@ -58,9 +58,17 @@ class SSRFAgent(BaseVulnerabilityAgent):
             )
         except Exception as e:  # OAST server down / not initialized
             self.logger.info("ssrf_scan_skipped: OAST unavailable (%s)", e)
-            return {"status": "success", "message": "skipped: OAST unavailable", "findings_count": 0}
+            return {
+                "status": "success",
+                "message": "skipped: OAST unavailable",
+                "findings_count": 0,
+            }
         if not callback_url:
-            return {"status": "success", "message": "skipped: no OAST callback URL", "findings_count": 0}
+            return {
+                "status": "success",
+                "message": "skipped: no OAST callback URL",
+                "findings_count": 0,
+            }
 
         templates = PayloadTemplateLibrary.get_templates(VulnClass.SSRF)
 

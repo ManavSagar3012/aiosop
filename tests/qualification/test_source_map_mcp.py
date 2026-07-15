@@ -24,7 +24,7 @@ def test_fetch_js_bundle_extracts_secret(js_target):
     res = mcp_execute(base, "fetch_and_parse_sourcemap", {"url": f"http://{host}:{port}/raw"})
     secrets = res.get("secrets", [])
     assert any(
-        "sk-test-1234-deadbeef" in str(s.get("value", "")) for s in secrets
+        "sk-t...beef" in str(s.get("value", "")) for s in secrets
     ), f"expected fake apiKey not found in secrets: {secrets}"
     assert res.get("msg", "").startswith("Parsed raw bundle directly"), res.get("msg")
 
@@ -40,6 +40,6 @@ def test_fetch_sourcemap_parsed_and_secrets_extracted(js_target):
     sources = res.get("sources", [])
     assert "app.js" in sources, f"expected source file not found: {sources}"
     assert any(
-        "aws_secret_key_abcdef123456" in str(s.get("value", "")) for s in secrets
+        "aws_...3456" in str(s.get("value", "")) for s in secrets
     ), f"expected fake secret not found in secrets: {secrets}"
     assert res.get("msg", "").startswith("Successfully parsed sourcemap"), res.get("msg")

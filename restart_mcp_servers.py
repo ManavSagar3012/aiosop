@@ -1,6 +1,9 @@
 import subprocess
 import sys
 import os
+
+sys.path.insert(0, os.path.join(r"C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop", "src"))
+from ai_osop.core.config import settings
 import time
 import urllib.request
 
@@ -35,11 +38,12 @@ def main():
         ([VENV_PY, os.path.join("mcp-servers", "python", "browser_mcp.py"), "--port", "8091"], "browser-mcp", 8091),
         ([VENV_PY, os.path.join("mcp-servers", "python", "source_map_mcp.py"), "--port", "8096"], "source-map-mcp", 8096),
         ([VENV_PY, os.path.join("mcp-servers", "python", "turbo_intruder_mcp.py"), "--port", "8098"], "turbo-intruder-mcp", 8098),
-        ([VENV_PY, os.path.join("mcp-servers", "python", "mcp_stub.py"), "--port", "8083"], "payload-mcp (stub)", 8083),
-        ([VENV_PY, os.path.join("mcp-servers", "python", "mcp_stub.py"), "--port", "8090"], "session-memory-mcp (stub)", 8090),
-        ([VENV_PY, os.path.join("mcp-servers", "python", "mcp_stub.py"), "--port", "8092"], "reporting-mcp (stub)", 8092),
-        ([VENV_PY, os.path.join("mcp-servers", "python", "mcp_stub.py"), "--port", "8093"], "attack-graph-mcp (stub)", 8093),
-        ([VENV_PY, os.path.join("mcp-servers", "python", "mcp_stub.py"), "--port", "8097"], "cloud-mcp (stub)", 8097),
+        ([VENV_PY, os.path.join("mcp-servers", "python", "payload_mcp_server.py"), "--port", "8083"], "payload-mcp", 8083),
+        ([VENV_PY, os.path.join("mcp-servers", "python", "session_memory_mcp.py"), "--port", "8090"], "session-memory-mcp", 8090),
+        ([VENV_PY, os.path.join("mcp-servers", "python", "reporting_mcp.py"), "--port", "8092"], "reporting-mcp", 8092),
+        ([VENV_PY, os.path.join("mcp-servers", "python", "attack_graph_mcp.py"), "--port", "8093"], "attack-graph-mcp", 8093),
+        ([VENV_PY, os.path.join("mcp-servers", "python", "cloud_mcp.py"), "--port", "8097"], "cloud-mcp", 8097),
+        ([VENV_PY, os.path.join("mcp-servers", "python", "oast_mcp.py"), "--port", "8099"], "oast-mcp", 8099),
     ]
 
     started = 0
@@ -54,7 +58,10 @@ def main():
     results = {}
     for cmd, name, port in servers:
         try:
-            with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=5) as r:
+            req = urllib.request.Request(f'http://127.0.0.1:{port}/health')
+            if settings.api_token:
+                req.add_header("Authorization", f"Bearer {settings.api_token}")
+            with urllib.request.urlopen(req, timeout=5) as r:
                 data = r.read().decode()
                 print(f"  {name} ({port}): {data[:80]}")
                 results[name] = {"port": port, "status": "up", "health": data[:80]}

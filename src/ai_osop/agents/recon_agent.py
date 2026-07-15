@@ -11,6 +11,7 @@ from datetime import datetime
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urljoin, urlparse
+
 import aiohttp
 import structlog
 
@@ -23,7 +24,13 @@ from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, Task, make_asset_id
 from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
-from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params, mine_urls, extract_form_fields
+from ai_osop.core.url_intelligence import (
+    classify_url,
+    endpoint_template,
+    extract_form_fields,
+    extract_params,
+    mine_urls,
+)
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)
@@ -111,6 +118,7 @@ class ReconAgent(BaseAgent):
         self.security_bridge = SecurityBridgeAdapter(self.ctx.mcp_registry)
         self.asset_inventory: Dict[str, Asset] = {}
         self.endpoint_inventory: Dict[str, Endpoint] = {}
+        self._rejected_scope_urls: set = set()  # Dedup scope-rejection log spam
 
     async def think(self, context: str, skill_names: List[str]) -> str:
         """Reason about the current context using specialized skills.
@@ -198,7 +206,14 @@ class ReconAgent(BaseAgent):
         if enforcer is not None:
             host = urlparse(norm).hostname
             if not enforcer.host_in_scope(host):
-                logger.info("recon_endpoint_out_of_scope", url=norm)
+                # Log only on first rejection per URL to avoid spam (was 102 repeats)
+                _rejected = getattr(self, "_rejected_scope_urls", None)
+                if _rejected is not None:
+                    if norm not in _rejected:
+                        _rejected.add(norm)
+                        logger.info("recon_endpoint_out_of_scope", url=norm)
+                else:
+                    logger.info("recon_endpoint_out_of_scope", url=norm)
                 return False
         await self.ctx.graph_memory.add_endpoint(ep)
         return True
@@ -279,7 +294,9 @@ class ReconAgent(BaseAgent):
         depth = int(payload.get("depth", 3))
         engagement_id = self.ctx.current_task.engagement_id if self.ctx.current_task else ""
         try:
-            result = await self.security_bridge.run_katana(target, depth=depth, timeout_override=120)
+            result = await self.security_bridge.run_katana(
+                target, depth=depth, timeout_override=120
+            )
         except Exception as e:
             logger.warning("content_discovery_katana_failed", error=str(e))
             return {"status": "error", "error": f"katana crawl failed: {e}"}
@@ -304,7 +321,9 @@ class ReconAgent(BaseAgent):
                 form_fields = form_params_by_url.get(url, [])
                 combined_params = sorted(list(set(query_params + form_fields)))
 
-                ep = self._mk_endpoint(url, engagement_id, source="katana", parameters=combined_params)
+                ep = self._mk_endpoint(
+                    url, engagement_id, source="katana", parameters=combined_params
+                )
                 await self._persist_endpoint(ep)
                 self.endpoint_inventory[ep.id] = ep
                 added += 1

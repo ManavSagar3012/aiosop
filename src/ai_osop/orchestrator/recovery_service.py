@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import structlog
 
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import AuditEvent, Task
 from ai_osop.core.tracing import trace_span
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
 
 logger = structlog.get_logger("ai_osop.orchestrator.recovery_service")
 
@@ -23,8 +24,13 @@ class RecoveryService:
 
     REAPER_INTERVAL_SECONDS = 30
 
-    def __init__(self, orchestrator: Any) -> None:
+    def __init__(
+        self, orchestrator: Any, state_machine: Optional[EngagementStateMachine] = None
+    ) -> None:
         self._orch = orchestrator
+        self.state_machine = state_machine or getattr(
+            orchestrator, "engagement_state_machine", None
+        )
         # Task ids whose TERMINAL status has been reconciled to the graph. Several
         # execution paths (agent.execute_task, _execute_task_durable) advance the
         # in-memory task to 'completed'/'failed' WITHOUT persisting that terminal
@@ -86,10 +92,13 @@ class RecoveryService:
             timeout = task.timeout_seconds or 300
             if age <= timeout:
                 continue
+            
+            # reaper: ensure task is actually terminated if it exceeds budget
+            await self._orch._audit_log(self._reaper_audit(task, age, "recovering"))
+            reaped += 1
+            
             if task.status == "running" and task.retry_count < task.max_retries:
-                # A retry must replace the execution that timed out.  Re-queueing
-                # without cancelling its handle leaves the original coroutine alive
-                # and allows duplicate scans to accumulate against the same target.
+                # A retry must replace the execution that timed out.
                 handles = getattr(self._orch, "_task_handles", None)
                 handle = handles.pop(task.id, None) if handles is not None else None
                 if handle is not None and not handle.done():
@@ -98,8 +107,7 @@ class RecoveryService:
                         await asyncio.wait_for(handle, timeout=5.0)
                     except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass
-                await self._orch._audit_log(self._reaper_audit(task, age, "recovering"))
-                reaped += 1
+                
                 await self._orch.task_scheduler._maybe_retry(
                     task, {"error": f"reaper: stuck {int(age)}s > {timeout}s timeout"}
                 )

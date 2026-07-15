@@ -210,15 +210,20 @@ async def _check_tool_reality() -> Dict[str, Any]:
 
     servers = {
         "burp-mcp": (settings.burp_mcp_host, settings.burp_mcp_port),
+        "shodan-mcp": (settings.shodan_mcp_host, settings.shodan_mcp_port),
         "recon-mcp": (settings.recon_mcp_host, settings.recon_mcp_port),
         "payload-mcp": (settings.payload_mcp_host, settings.payload_mcp_port),
         "nuclei-mcp": (settings.nuclei_mcp_host, settings.nuclei_mcp_port),
-        "shodan-mcp": (settings.shodan_mcp_host, settings.shodan_mcp_port),
-        "threat-intel-mcp": (settings.threat_intel_mcp_host, settings.threat_intel_mcp_port),
+        "browser-mcp": (settings.browser_mcp_host, settings.browser_mcp_port),
         "security-bridge": (settings.security_bridge_host, settings.security_bridge_port),
+        "threat-intel-mcp": (settings.threat_intel_mcp_host, settings.threat_intel_mcp_port),
         "source-map-mcp": (settings.source_map_mcp_host, settings.source_map_mcp_port),
         "cloud-mcp": (settings.cloud_mcp_host, settings.cloud_mcp_port),
         "turbo-intruder-mcp": (settings.turbo_intruder_mcp_host, settings.turbo_intruder_mcp_port),
+        "oast-mcp": (settings.oast_mcp_host, settings.oast_mcp_port),
+        "session-memory-mcp": (settings.session_memory_mcp_host, settings.session_memory_mcp_port),
+        "reporting-mcp": (settings.reporting_mcp_host, settings.reporting_mcp_port),
+        "attack-graph-mcp": (settings.attack_graph_mcp_host, settings.attack_graph_mcp_port),
     }
 
     per_server: Dict[str, Any] = {}
@@ -226,32 +231,43 @@ async def _check_tool_reality() -> Dict[str, Any]:
     async def probe(name: str, host: str, port: int) -> None:
         base = f"http://{host}:{port}"
         entry: Dict[str, Any] = {"endpoint": f"{host}:{port}"}
+        
+        headers = {}
+        if name == "burp-mcp":
+            if settings.burp_api_key:
+                headers["Authorization"] = f"Bearer {settings.burp_api_key}"
+        elif name == "shodan-mcp":
+            if settings.shodan_api_key:
+                headers["Authorization"] = f"Bearer {settings.shodan_api_key}"
+        else:
+            if settings.api_token:
+                headers["Authorization"] = f"Bearer {settings.api_token}"
+
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 # Tool registration (POST first, GET fallback for stub variants).
                 tools = []
                 try:
-                    r = await client.post(f"{base}/mcp/initialize", json={})
+                    r = await client.post(f"{base}/mcp/initialize", json={}, headers=headers)
                     tools = (r.json() or {}).get("tools", []) if r.status_code == 200 else []
-                except Exception:
-                    r = await client.get(f"{base}/mcp/initialize")
+                except Exception:  # noqa: BLE001
+                    r = await client.get(f"{base}/mcp/initialize", headers=headers)
                     tools = (r.json() or {}).get("tools", []) if r.status_code == 200 else []
                 entry["tool_count"] = len(tools)
                 entry["verdict"] = "tools_registered" if tools else "stub"
-
                 # Stub self-identification: mcp_stub advertises is_stub on /health.
                 # A stub registers tools, so tool_count alone reads as "real" — this
                 # closes that false-green-board gap. A stub in synthetic-findings
                 # mode is the worst case (fabricates), so flag it suspect_mock.
                 try:
-                    hr = await client.get(f"{base}/health")
+                    hr = await client.get(f"{base}/health", headers=headers)
                     hj = hr.json() if hr.status_code == 200 else {}
                     if hj.get("is_stub"):
                         entry["is_stub"] = True
                         entry["verdict"] = (
                             "suspect_mock" if hj.get("synthetic_findings") else "stub"
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
                 # Execution-level reality check for recon-mcp.
@@ -264,6 +280,7 @@ async def _check_tool_reality() -> Dict[str, Any]:
                                 "parameters": {"targets": ["127.0.0.1"], "ports": "8200"},
                                 "request_id": "reality-probe",
                             },
+                            headers=headers,
                         )
                         result = (rr.json() or {}).get("result", {})
                         hosts = result.get("hosts", [])

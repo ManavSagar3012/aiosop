@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Optional
 
 from ai_osop.core.config import AgentState
 from ai_osop.core.metrics import (
@@ -13,13 +13,17 @@ from ai_osop.core.metrics import (
 from ai_osop.core.models import AuditEvent
 from ai_osop.core.tracing import trace_span
 from ai_osop.memory.session_memory import SessionMemory
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
 
 logger = logging.getLogger("ai_osop.reliability.agent_reaper")
 
 
 class AgentReaper:
-    def __init__(self, orchestrator: Any):
+    def __init__(self, orchestrator: Any, state_machine: Optional[EngagementStateMachine] = None):
         self.orch = orchestrator
+        self.state_machine = state_machine or getattr(
+            orchestrator, "engagement_state_machine", None
+        )
         self.interval = 15
         self.heartbeat_timeout = 60
 

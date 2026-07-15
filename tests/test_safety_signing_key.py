@@ -16,11 +16,15 @@ from ai_osop.core.models import ScopeDefinition
 
 @pytest.fixture
 def restore_settings():
-    key = config.settings.audit_secret_key
-    env = config.settings.environment
+    orig_key = config.settings.audit_secret_key
+    orig_env = config.settings.environment
+    orig_pass = config.settings.neo4j_password
+    orig_jwt = config.settings.jwt_secret
     yield
-    config.settings.audit_secret_key = key
-    config.settings.environment = env
+    config.settings.audit_secret_key = orig_key
+    config.settings.environment = orig_env
+    config.settings.neo4j_password = orig_pass
+    config.settings.jwt_secret = orig_jwt
 
 
 def test_prod_unset_key_fails_closed(restore_settings):
@@ -48,7 +52,8 @@ def test_configured_key_returned_as_bytes_any_env(restore_settings):
 
 def test_assert_production_secrets_blocks_weak_neo4j(restore_settings):
     config.settings.environment = "production"
-    config.settings.audit_secret_key = "real"
+    config.settings.audit_secret_key = "real-secret-key"
+    config.settings.jwt_secret = "a-strong-jwt-secret"
     config.settings.neo4j_password = "change-me-local"
     with pytest.raises(RuntimeError, match="NEO4J"):
         config.assert_production_secrets()
@@ -57,10 +62,10 @@ def test_assert_production_secrets_blocks_weak_neo4j(restore_settings):
 def test_assert_production_secrets_blocks_unset_audit_key(restore_settings):
     config.settings.environment = "production"
     config.settings.neo4j_password = "a-strong-password"
+    config.settings.jwt_secret = "a-strong-jwt-secret"
     config.settings.audit_secret_key = None
     with pytest.raises(RuntimeError, match="AUDIT_SECRET_KEY"):
         config.assert_production_secrets()
-
 
 def test_assert_production_secrets_noop_in_dev(restore_settings):
     config.settings.environment = "development"
@@ -73,8 +78,8 @@ def test_assert_production_secrets_passes_when_configured(restore_settings):
     config.settings.environment = "production"
     config.settings.neo4j_password = "a-strong-password"
     config.settings.audit_secret_key = "a-real-audit-key"
+    config.settings.jwt_secret = "a-strong-jwt-secret"
     config.assert_production_secrets()  # must not raise
-
 
 def test_sign_then_verify_roundtrip_with_one_key(restore_settings):
     """A scope signed with scope_signing_key() verifies with the same key — proving the

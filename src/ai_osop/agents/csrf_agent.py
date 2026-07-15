@@ -44,8 +44,8 @@ class CSRFAgent(BaseVulnerabilityAgent):
         Implement CSRF scanning logic delegated to the Applicability Engine.
         """
         target_url = task.payload.get("url")
-        from ai_osop.core.applicability import ApplicabilityEngine
         from ai_osop.auth.session_store import SessionStore
+        from ai_osop.core.applicability import ApplicabilityEngine
 
         store = SessionStore(self.ctx.session_memory)
         sessions = await store.list_sessions(task.engagement_id)
@@ -65,7 +65,7 @@ class CSRFAgent(BaseVulnerabilityAgent):
                 reason=app_check["reason"],
                 confidence=0.99,
                 evidence=[app_check["reason"]],
-                engagement_id=task.engagement_id
+                engagement_id=task.engagement_id,
             )
             return {
                 "status": "success",

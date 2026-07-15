@@ -221,6 +221,8 @@ class MCPConnection:
         from ai_osop.reliability.retry import retry_with_backoff
 
         async def _do_connect():
+            if self._session and not self._session.closed:
+                await self._session.close()
             self._session = aiohttp.ClientSession(
                 headers={"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
             )
@@ -252,6 +254,7 @@ class MCPConnection:
             await self.connect()
 
         import time as _time
+
         _t0 = _time.monotonic()
         try:
             async with self._session.post(
@@ -270,6 +273,7 @@ class MCPConnection:
                 return response
         except Exception as e:
             self._record_failure()
+            await self.close()
             raise MCPConnectionError(f"MCP server {self.server_id} initialize failed: {e}")
 
     async def execute(self, request: MCPExecuteRequest) -> MCPExecuteResponse:
@@ -371,7 +375,9 @@ class MCPConnection:
 
         # Total calls and timeout count
         total_calls = len(self._latency_samples) + self._failure_count
-        timeout_count = sum(1 for s in self._latency_samples if s > 5000)  # >5s is timeout territory
+        timeout_count = sum(
+            1 for s in self._latency_samples if s > 5000
+        )  # >5s is timeout territory
 
         return {
             "server_id": self.server_id,
@@ -380,13 +386,19 @@ class MCPConnection:
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "uptime_seconds": round(uptime, 1),
             "reconnect_count": self.reconnect_count,
-            "handshake_latency_ms": round(self.handshake_latency_ms, 2) if self.handshake_latency_ms else None,
+            "handshake_latency_ms": (
+                round(self.handshake_latency_ms, 2) if self.handshake_latency_ms else None
+            ),
             "tool_count": len(self._tools),
             "latency_histogram": hist,
             "total_calls": total_calls,
             "failure_count": self._failure_count,
             "timeout_count": timeout_count,
-            "health_status": "healthy" if self._initialized and not self._circuit_open else "degraded" if self._half_open else "unhealthy",
+            "health_status": (
+                "healthy"
+                if self._initialized and not self._circuit_open
+                else "degraded" if self._half_open else "unhealthy"
+            ),
         }
 
     async def close(self) -> None:
@@ -578,7 +590,9 @@ class MCPRegistry:
                                     "health_status": tel.get("health_status"),
                                     "uptime_seconds": tel.get("uptime_seconds"),
                                     "reconnect_count": tel.get("reconnect_count"),
-                                    "latency_p50_ms": tel.get("latency_histogram", {}).get("p50_ms"),
+                                    "latency_p50_ms": tel.get("latency_histogram", {}).get(
+                                        "p50_ms"
+                                    ),
                                 },
                                 "mcp_registry",
                             )

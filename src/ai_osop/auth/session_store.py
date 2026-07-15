@@ -64,6 +64,8 @@ class SessionEncryption:
     so development environments continue to work without a key.
     """
 
+    _warned_missing_key = False
+
     SENSITIVE_FIELDS = {
         "cookies",
         "bearer_token",
@@ -74,6 +76,7 @@ class SessionEncryption:
     }
 
     def __init__(self, key: Optional[str] = None):
+
         self._fernet = None
         raw = key or settings.session_encryption_key
         if raw:
@@ -95,7 +98,9 @@ class SessionEncryption:
                     "OSOP_SESSION_ENCRYPTION_KEY is required in production. "
                     "Set it in your environment or .env file."
                 )
-            logger.warning("session_encryption_key_missing: plaintext storage in dev mode")
+            if not SessionEncryption._warned_missing_key:
+                logger.warning("session_encryption_key_missing: plaintext storage in dev mode")
+                SessionEncryption._warned_missing_key = True
 
     def encrypt(self, plaintext: str) -> str:
         if self._fernet is None:

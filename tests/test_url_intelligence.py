@@ -74,6 +74,7 @@ def test_extract_params_path_logic():
 
 def test_extract_form_fields():
     from ai_osop.core.url_intelligence import extract_form_fields
+
     html = """
     <form action="/submit" method="POST">
         <input type="text" name="username" />

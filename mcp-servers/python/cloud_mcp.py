@@ -11,11 +11,34 @@ role trust policies; WITHOUT them it returns an honest error in the result paylo
 it never synthesizes findings. boto3 is imported lazily so the server still starts
 (and reports honestly) on hosts where boto3 or credentials are absent.
 """
+import sys
+import os
 import argparse
+from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Depends, HTTPException
 from pydantic import BaseModel
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src")))
+
+from ai_osop.core.config import settings
+
+async def verify_mcp_token(authorization: Optional[str] = Header(None)):
+    """Enforce strict bearer token verification."""
+    expected = settings.api_token or os.getenv("OSOP_API_TOKEN")
+    if not expected:
+        if settings.environment in ("production", "prod"):
+            raise HTTPException(status_code=401, detail="Authentication is not configured")
+        return
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    token = authorization.split(" ", 1)[1]
+    import hmac
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 app = FastAPI(title="Cloud Security MCP Server")
 
@@ -65,12 +88,12 @@ TOOLS = [
 
 
 @app.get("/health")
-async def health():
+async def health(authenticated: None = Depends(verify_mcp_token)):
     return {"status": "ready", "server": "cloud-mcp"}
 
 
 @app.post("/mcp/initialize")
-async def initialize():
+async def initialize(authenticated: None = Depends(verify_mcp_token)):
     return {"server_id": "cloud-mcp", "capabilities": ["tool"], "status": "ready", "tools": TOOLS}
 
 
@@ -81,7 +104,7 @@ class ExecuteRequest(BaseModel):
 
 
 @app.post("/mcp/execute")
-async def execute(req: ExecuteRequest):
+async def execute(req: ExecuteRequest, authenticated: None = Depends(verify_mcp_token)):
     if req.tool_name == "analyze_iam_trust_policies":
         provider = (req.parameters.get("provider") or "aws").lower()
         if provider == "aws":

@@ -6,11 +6,7 @@ elapsed used time.monotonic() - start instead of last_stage - start.
 
 import time
 
-from ai_osop.core.execution_trace import (
-    ExecutionStage,
-    StageRecord,
-    TaskExecutionTrace,
-)
+from ai_osop.core.execution_trace import ExecutionStage, StageRecord, TaskExecutionTrace
 
 
 def test_completed_trace_freezes_elapsed():

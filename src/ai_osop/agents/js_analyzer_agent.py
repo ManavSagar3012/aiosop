@@ -14,6 +14,7 @@ import math
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Pattern, Tuple
+from pydantic import BaseModel
 
 import httpx
 import structlog
@@ -187,6 +188,16 @@ def _mask(secret: str) -> str:
     return f"{secret[:6]}...{secret[-2:]}"
 
 
+class JSAnalysisResult(BaseModel):
+    status: str
+    sources_analyzed: int
+    endpoints_found: int
+    endpoints: List[str]
+    vulnerabilities_created: int
+    finding_ids: List[str]
+    secrets: List[Dict[str, Any]]
+    note: Optional[str] = None
+
 class JSAnalyzerAgent(BaseAgent):
     """
     JS Analysis Agent
@@ -233,11 +244,14 @@ class JSAnalyzerAgent(BaseAgent):
         payload = task.payload or {}
 
         if task_type == "analyze_js":
-            return await self._analyze_js(payload, do_endpoints=True, do_secrets=True)
+            res = await self._analyze_js(payload, do_endpoints=True, do_secrets=True)
+            return res.model_dump()
         if task_type == "extract_endpoints_from_js":
-            return await self._analyze_js(payload, do_endpoints=True, do_secrets=False)
+            res = await self._analyze_js(payload, do_endpoints=True, do_secrets=False)
+            return res.model_dump()
         if task_type == "detect_secrets_in_js":
-            return await self._analyze_js(payload, do_endpoints=False, do_secrets=True)
+            res = await self._analyze_js(payload, do_endpoints=False, do_secrets=True)
+            return res.model_dump()
         return {"status": "error", "message": f"Unknown task type {task_type}"}
 
     # ------------------------------------------------------------------ fetching
@@ -446,7 +460,7 @@ class JSAnalyzerAgent(BaseAgent):
 
     async def _analyze_js(
         self, payload: Dict[str, Any], do_endpoints: bool, do_secrets: bool
-    ) -> Dict[str, Any]:
+    ) -> JSAnalysisResult:
         """Fetch and analyze JS bundle(s) for endpoints and/or secrets."""
         engagement_id = payload.get("engagement_id") or self.ctx.session_id
 
@@ -454,15 +468,16 @@ class JSAnalyzerAgent(BaseAgent):
         if not sources:
             # Honest empty result — no content fetched, nothing fabricated.
             logger.info("js_analyzer_no_sources", payload_keys=list(payload.keys()))
-            return {
-                "status": "success",
-                "sources_analyzed": 0,
-                "endpoints_found": 0,
-                "endpoints": [],
-                "vulnerabilities_created": 0,
-                "finding_ids": [],
-                "note": "No reachable JS URL or inline content provided; nothing analyzed.",
-            }
+            return JSAnalysisResult(
+                status="success",
+                sources_analyzed=0,
+                endpoints_found=0,
+                endpoints=[],
+                vulnerabilities_created=0,
+                finding_ids=[],
+                secrets=[],
+                note="No reachable JS URL or inline content provided; nothing analyzed.",
+            )
 
         all_endpoints: set = set()
         finding_ids: List[str] = []
@@ -504,15 +519,16 @@ class JSAnalyzerAgent(BaseAgent):
             logger.debug("js_analyzer_reasoning_skipped", error=str(e))
 
         self.discovered_endpoints = sorted(all_endpoints)
-        return {
-            "status": "success",
-            "sources_analyzed": len(sources),
-            "endpoints_found": len(all_endpoints),
-            "endpoints": sorted(all_endpoints),
-            "vulnerabilities_created": len(finding_ids),
-            "finding_ids": finding_ids,
-            "secrets": secret_summary,
-        }
+        return JSAnalysisResult(
+            status="success",
+            sources_analyzed=len(sources),
+            endpoints_found=len(all_endpoints),
+            endpoints=sorted(all_endpoints),
+            vulnerabilities_created=len(finding_ids),
+            finding_ids=finding_ids,
+            secrets=secret_summary,
+        )
+
 
     async def _cleanup_resources(self) -> None:
         self.discovered_endpoints = []

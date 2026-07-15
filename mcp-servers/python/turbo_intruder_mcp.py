@@ -13,9 +13,29 @@ from urllib.parse import urlsplit
 # Add src to path so we can import ai_osop modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Depends, HTTPException
 from pydantic import BaseModel
 import uvicorn
+
+from ai_osop.core.config import settings
+from ai_osop.safety.scope import ScopeEnforcer
+from ai_osop.core.models import ScopeDefinition
+
+async def verify_mcp_token(authorization: Optional[str] = Header(None)):
+    """Enforce strict bearer token verification."""
+    expected = settings.api_token or os.getenv("OSOP_API_TOKEN")
+    if not expected:
+        if settings.environment in ("production", "prod"):
+            raise HTTPException(status_code=401, detail="Authentication is not configured")
+        return
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    token = authorization.split(" ", 1)[1]
+    import hmac
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 app = FastAPI(title="Turbo Intruder MCP Server")
 
@@ -167,12 +187,28 @@ async def execute_spa(target_url: str, method: str, headers: dict, body: str, co
 
 
 @app.get("/health")
-async def health():
+async def health(authenticated: None = Depends(verify_mcp_token)):
     return {"status": "ready", "server": "turbo-intruder-mcp"}
 
 
+class MCPInitializeRequest(BaseModel):
+    server_id: Optional[str] = None
+    scope: Optional[Dict[str, Any]] = None
+    config: Optional[Dict[str, Any]] = None
+    session_id: Optional[str] = None
+
+
 @app.post("/mcp/initialize")
-async def initialize():
+async def initialize(req: MCPInitializeRequest, authenticated: None = Depends(verify_mcp_token)):
+    if req.scope:
+        try:
+            scope_def = ScopeDefinition(**req.scope)
+            app.state.scope_enforcer = ScopeEnforcer(scope_def)
+            app.state.session_id = req.session_id
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger("turbo-intruder-mcp").warning(f"Failed to initialize scope: {e}")
+
     return {
         "server_id": "turbo-intruder-mcp",
         "capabilities": ["tool"],
@@ -201,24 +237,40 @@ class ExecuteRequest(BaseModel):
 
 
 @app.post("/mcp/execute")
-async def execute(req: ExecuteRequest):
+async def execute(req: ExecuteRequest, authenticated: None = Depends(verify_mcp_token)):
     if req.tool_name == "execute_single_packet_attack":
         params = req.parameters
+        target_url = params.get("target_url")
+        if not target_url:
+            return {"request_id": req.request_id, "status": "error", "error": "target_url is required"}
+
+        # Strict URL parsing
+        try:
+            parts = urlsplit(target_url)
+            if parts.scheme not in ("http", "https") or not parts.netloc:
+                raise ValueError("Invalid target scheme (must be http/https) or missing host")
+        except Exception as e:  # noqa: BLE001
+            return {"request_id": req.request_id, "status": "error", "error": f"Invalid URL: {e}"}
+
+        # Enforce scope check
+        if getattr(app.state, "scope_enforcer", None) and getattr(app.state, "session_id", "") != "api-bootstrap":
+            try:
+                app.state.scope_enforcer.validate_target(target_url)
+            except Exception as e:  # noqa: BLE001
+                return {"request_id": req.request_id, "status": "error", "error": f"Out of scope target: {e}"}
+
         try:
             result = await execute_spa(
-                params["target_url"],
+                target_url,
                 params.get("method", "GET"),
                 params.get("headers", {}),
                 params.get("body", ""),
                 params.get("concurrent_requests", 10),
             )
-            # Standard MCP envelope (matches the Go SDK servers and what the
-            # MCPConnection / qualification harness expect: top-level status+result).
             return {"request_id": req.request_id, "status": "success", "result": result}
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             return {"request_id": req.request_id, "status": "error", "error": str(e)}
     return {"request_id": req.request_id, "status": "error", "error": f"unknown tool: {req.tool_name}"}
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

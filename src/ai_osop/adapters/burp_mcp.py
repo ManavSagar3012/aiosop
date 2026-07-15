@@ -47,7 +47,12 @@ class BurpMCPAdapter:
         """
         if response.error:
             return response.error
-        result = response.result or {}
+        
+        # Burp Montoya MCP can return null result on failure
+        result = response.result
+        if result is None:
+            return "Burp Montoya MCP returned null result"
+            
         if isinstance(result, dict):
             for key in ("error", "error_message", "message", "detail", "reason"):
                 val = result.get(key)
@@ -74,7 +79,7 @@ class BurpMCPAdapter:
 
     async def initialize(self, scope: ScopeDefinition, session_id: str) -> None:
         """Initialize Burp MCP with scope and auth."""
-        credentials = {}
+        credentials: Dict[str, Any] = {}
         await self.registry.initialize_server(
             self.SERVER_ID,
             scope=scope.model_dump(),
@@ -102,15 +107,13 @@ class BurpMCPAdapter:
         self._check_response(response, "scan_target")
         return response
 
-    async def get_proxy_history(
-        self, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+    async def get_proxy_history(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Retrieve captured proxy traffic with optional filtering."""
         params = {"filters": filters or {}, "limit": 1000, "offset": 0}
         response = await self.registry.execute_tool(self.SERVER_ID, "get_proxy_history", params)
 
         if response.status == "success" and response.result:
-            entries = response.result.get("entries", [])
+            entries: List[Dict[str, Any]] = response.result.get("entries", [])
             self._update_history_buffer(entries)
             return entries
         return []
@@ -246,6 +249,7 @@ class BurpMCPAdapter:
             requires_auth=issue.get("requires_auth", False),
             exploitability="high" if burp_severity == "High" else "medium",
             engagement_id=issue.get("engagement_id", ""),
+            cvss_score=None
         )
 
     def _map_burp_issue_type(self, issue_type: str) -> VulnClass:

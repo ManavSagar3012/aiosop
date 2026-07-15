@@ -37,14 +37,55 @@ ENDPOINTS = {
     "burp": os.environ.get("OSOP_BURP_MCP_URL", "http://127.0.0.1:8081"),
     "source_map": os.environ.get("OSOP_SOURCE_MAP_MCP_URL", "http://127.0.0.1:8096"),
     "turbo_intruder": os.environ.get("OSOP_TURBO_INTRUDER_MCP_URL", "http://127.0.0.1:8098"),
+    "session_memory": os.environ.get("OSOP_SESSION_MEMORY_MCP_URL", "http://127.0.0.1:8090"),
+    "reporting": os.environ.get("OSOP_REPORTING_MCP_URL", "http://127.0.0.1:8092"),
+    "attack_graph": os.environ.get("OSOP_ATTACK_GRAPH_MCP_URL", "http://127.0.0.1:8093"),
 }
+
+
+def get_auth_headers() -> Dict[str, str]:
+    import os
+    token = None
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    env_path = os.path.join(root, ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("#") or not line:
+                        continue
+                    parts = line.split("=", 1)
+                    if len(parts) == 2:
+                        k, v = parts[0].strip(), parts[1].strip()
+                        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                            v = v[1:-1]
+                        if k == "OSOP_API_TOKEN":
+                            token = v
+                            break
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not token:
+        token = os.environ.get("OSOP_API_TOKEN")
+
+    if not token:
+        try:
+            from ai_osop.core.config import settings
+            token = settings.api_token
+        except Exception:  # noqa: BLE001
+            pass
+
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}
 
 
 def require_server(name: str) -> str:
     """Return the base URL if the server is reachable; else skip (or fail if STRICT)."""
     base = ENDPOINTS[name]
     try:
-        r = httpx.get(f"{base}/health", timeout=4.0)
+        r = httpx.get(f"{base}/health", headers=get_auth_headers(), timeout=4.0)
         if r.status_code == 200:
             return base
         msg = f"{name}-mcp at {base} returned HTTP {r.status_code} on /health"
@@ -56,11 +97,20 @@ def require_server(name: str) -> str:
 
 
 def mcp_initialize(base: str) -> Dict[str, Any]:
+    body = {
+        "scope": {
+            "engagement_id": "api-bootstrap",
+            "domains": ["example.com", "target.local", "127.0.0.1", "10.255.255.1"],
+            "ips": ["127.0.0.1", "10.255.255.1"],
+            "exclusions": []
+        },
+        "session_id": "api-bootstrap"
+    }
     try:
-        r = httpx.post(f"{base}/mcp/initialize", json={}, timeout=6.0)
+        r = httpx.post(f"{base}/mcp/initialize", json=body, headers=get_auth_headers(), timeout=6.0)
         return r.json() if r.status_code == 200 else {}
     except Exception:
-        r = httpx.get(f"{base}/mcp/initialize", timeout=6.0)
+        r = httpx.get(f"{base}/mcp/initialize", headers=get_auth_headers(), timeout=6.0)
         return r.json() if r.status_code == 200 else {}
 
 
@@ -71,6 +121,7 @@ def mcp_execute(
     r = httpx.post(
         f"{base}/mcp/execute",
         json={"tool_name": tool, "parameters": params, "request_id": f"qual-{tool}"},
+        headers=get_auth_headers(),
         timeout=timeout,
     )
     r.raise_for_status()
@@ -79,7 +130,6 @@ def mcp_execute(
         body.get("status") == "success"
     ), f"{tool} execute status={body.get('status')} body={body}"
     return body.get("result", {})
-
 
 class _FixtureHandler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802

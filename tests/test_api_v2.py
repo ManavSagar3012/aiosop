@@ -121,9 +121,9 @@ def test_api_startup_registers_agents(client):
     # concurrency, stack_profiler, playwright (AIOSOP-AUDIT-2026-06-16).
     # main.py lifespan registers 11 core agents + 10 specialist agents + new vulnerability scanner agents (total 32).
     # Note: the "experimental" designation was removed post-migration.
-    # AIOSOP-CONCURRENCY-002 (2026-07-11): pool increased to 67 agents
-    # (1 attack-chain + 4 recon + 10 vuln + 3 exploit + 16 specialized + 33 scanner)
-    assert client.orch.register_agent.call_count == 67
+    # AIOSOP-CONCURRENCY-002 (2026-07-11): pool increased to 68 agents
+    # (2 attack-chain + 4 recon + 10 vuln + 3 exploit + 16 specialized + 33 scanner)
+    assert client.orch.register_agent.call_count == 68
 
 
 def test_root_not_found(client):

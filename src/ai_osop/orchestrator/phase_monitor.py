@@ -6,7 +6,7 @@ Handles phase monitoring and automatic task dispatch on phase entry.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -15,34 +15,11 @@ from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
 from ai_osop.core.models import SessionState, Task
 from ai_osop.core.tracing import trace_span
 from ai_osop.core.value_engine import batch_endpoints_for_scan
+from ai_osop.orchestrator.state_machine import EngagementStateMachine
 
 logger = structlog.get_logger("ai_osop.orchestrator.phase_monitor")
 
-import re
-
-# Recon's JS/URL extractors sometimes harvest minified-token noise as query keys
-# (e.g. /graphql?A=&92=&-2=&null=), which made sqlmap waste its whole 180s budget
-# probing params that don't exist -> real params never tested (false negatives).
-# A real HTTP query key is an identifier-ish token, never purely numeric / "null".
-# ponytail: filtered at this single chokepoint (feeds every injection target);
-# the deeper cleanup is in recon_agent's query-key extraction.
-_PARAM_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]*$")
-_PARAM_KEY_STOP = {"null", "undefined", "true", "false", "nan"}
-# Real single-char query params are essentially always these; a bare uppercase
-# letter (A, M, o) is minified-JS noise, so single chars need an allow-list.
-_PARAM_KEY_SINGLE_OK = {"q", "s", "p", "n", "k", "v"}
-
-
-def _is_probable_param_key(key: str) -> bool:
-    """True for a plausible real HTTP query-parameter name (drops extractor noise)."""
-    if not key or key.lower() in _PARAM_KEY_STOP:
-        return False
-    if not _PARAM_KEY_RE.match(key):
-        return False
-    if len(key) == 1:
-        return key.lower() in _PARAM_KEY_SINGLE_OK
-    return True
-
+from ai_osop.core.url_intelligence import _is_probable_param_key
 
 class PhaseMonitor:
     """Monitor engagement phases and trigger automatic tasks on phase entry."""
@@ -70,17 +47,22 @@ class PhaseMonitor:
     # session init. 240s provides ~15s of headroom. With MCP stubs responding in
     # <30ms, even this is generous. Restore to 900/600 for production or slow
     # external targets.
-    SQLI_TASK_TIMEOUT_SECONDS = 240
+    SQLI_TASK_TIMEOUT_SECONDS = 900
 
     # AIOSOP-ACTIVE-INJECTION-TIMEOUT-001 (2026-07-11): XSS, CSRF, JWT, and other
     # active scanners were hardcoded at 300s which caused them to be reaped before
     # completion against slow external targets (observed: xss task retry_count=1 at
     # 300s ceiling). Raising to 600s matches the burp_scan budget and gives scanners
     # adequate wall-clock time against remote targets.
-    ACTIVE_SCAN_TIMEOUT_SECONDS = 120
+    ACTIVE_SCAN_TIMEOUT_SECONDS = 600
 
-    def __init__(self, orchestrator: Any) -> None:
+    def __init__(
+        self, orchestrator: Any, state_machine: Optional[EngagementStateMachine] = None
+    ) -> None:
         self._orch = orchestrator
+        self.state_machine = state_machine or getattr(
+            orchestrator, "engagement_state_machine", None
+        )
         self._tick = 0
 
     @staticmethod
@@ -100,8 +82,22 @@ class PhaseMonitor:
         # so the cap keeps the highest-value targets in any engagement rather than
         # whichever ones happen to appear first in the recon records.
         INJECTABLE_HINTS = (
-            "id", "product", "cat", "search", "term", "query", "q", "name",
-            "user", "file", "page", "sort", "order", "email", "url", "redirect",
+            "id",
+            "product",
+            "cat",
+            "search",
+            "term",
+            "query",
+            "q",
+            "name",
+            "user",
+            "file",
+            "page",
+            "sort",
+            "order",
+            "email",
+            "url",
+            "redirect",
         )
 
         def _score(param_names: tuple) -> int:
@@ -630,11 +626,11 @@ class PhaseMonitor:
             )
             for vid, sev in exploitable:
                 endpoint_url = await self._orch.graph_memory.get_endpoint_url_for_vulnerability(vid)
-                
+
                 # Retrieve the vulnerability node properties to get the vuln_type
                 vuln_node = await self._orch.graph_memory.get_node_details(vid)
                 vuln_type = vuln_node.get("vuln_type", "unknown") if vuln_node else "unknown"
-                
+
                 payload_task = Task(
                     type="generate_payloads",
                     priority=9,
@@ -651,7 +647,7 @@ class PhaseMonitor:
                     engagement_id=session.session_id,
                 )
                 await self._orch.task_scheduler.schedule_task(payload_task)
-                
+
                 validation_task = Task(
                     type="exploit_validation",
                     priority=9,
@@ -668,7 +664,9 @@ class PhaseMonitor:
                     engagement_id=session.session_id,
                 )
                 await self._orch.task_scheduler.schedule_task(validation_task)
-                await self._orch.task_scheduler._persist_task_dependency(payload_task, validation_task)
+                await self._orch.task_scheduler._persist_task_dependency(
+                    payload_task, validation_task
+                )
         elif phase == EngagementPhase.REPORTING:
             task = Task(
                 type="generate_report",

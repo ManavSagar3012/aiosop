@@ -5,10 +5,10 @@ determines if the vulnerability class is even possible/meaningful.
 This reduces false positives, eliminates wasted compute, and keeps the attack graph clean.
 """
 
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
 import logging
 import re
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from ai_osop.core.config import VulnClass
 
@@ -120,7 +120,10 @@ class ApplicabilityEngine:
                 has_fragment_query = True
 
             has_params = (
-                bool(parsed.query) or has_fragment_query or bool(payload.get("body")) or bool(payload.get("query_keys"))
+                bool(parsed.query)
+                or has_fragment_query
+                or bool(payload.get("body"))
+                or bool(payload.get("query_keys"))
             )
             if not has_params and method == "GET":
                 return {

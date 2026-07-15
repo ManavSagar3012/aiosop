@@ -28,8 +28,8 @@ from ai_osop.core.observability import record_task
 from ai_osop.core.telemetry import (
     RequestContext,
     extract_trace_context,
-    reset_mcp_latency,
     get_mcp_latency,
+    reset_mcp_latency,
 )
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.memory.graph_memory import GraphMemory
@@ -117,6 +117,26 @@ class BaseAgent(ABC):
         # recorded, so coverage can be extended to every agent without double-counting
         # for agents (recon/vuln) that also resolve skills inside _execute.
         self._activated_tasks: set = set()
+    def safe_path(self, path: str) -> str:
+        """Enforce file access within the agent's sandbox directory."""
+        # Agent workspace directory
+        sandbox_dir = os.path.abspath(f"/tmp/agent-{self.ctx.agent_id}")
+        os.makedirs(sandbox_dir, exist_ok=True)
+        
+        # Join and check if the resulting path is still inside the sandbox
+        # Use abspath to normalize and prevent traversal
+        safe_path = os.path.abspath(os.path.join(sandbox_dir, path))
+        if not safe_path.startswith(sandbox_dir):
+            raise AgentException(f"Path traversal attempted: {path}")
+        return safe_path
+
+    def safe_open(self, path: str, *args, **kwargs):
+        """Open a file safely within the sandbox."""
+        resolved = self.safe_path(path)
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if "w" in mode or "a" in mode or "x" in mode:
+            os.makedirs(os.path.dirname(resolved), exist_ok=True)
+        return open(resolved, *args, **kwargs)
 
     @property
     @abstractmethod
@@ -411,7 +431,11 @@ class BaseAgent(ABC):
                     return task.result
                 end_time = time.monotonic()
                 if target:
-                    self.ctx.rate_limiter.record_backpressure(target, end_time - start_time)
+                    self.ctx.rate_limiter.record_backpressure(
+                        target, 
+                        status_code=result.get("status_code"), 
+                        response_time=end_time - start_time
+                    )
 
                 # Post-execution validation
                 validated_result = await self._validate_output(result)
@@ -641,6 +665,8 @@ class BaseAgent(ABC):
 
     async def _heartbeat_loop(self) -> None:
         """Periodic heartbeat for health monitoring."""
+        _consecutive_failures = 0
+        _MAX_BACKOFF = 60  # Cap at 60s to avoid silent disappearance
         while self._running:
             try:
                 self.ctx.last_heartbeat = datetime.utcnow()
@@ -673,23 +699,42 @@ class BaseAgent(ABC):
                         "task_queue_depth": self._task_queue.qsize(),
                     },
                 )
+                _consecutive_failures = 0  # Reset on success
             except (asyncio.CancelledError, GeneratorExit):
                 break
             except RuntimeError as e:
                 # AIOSOP-LIFECYCLE-001: expected during interpreter/event-loop teardown
-                # (agent started without a matching shutdown()); exit quietly.
                 if "Event loop is closed" in str(e) or "no running event loop" in str(e):
                     break
-                agent_logger.warning(
-                    "heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e)
-                )
+                _consecutive_failures += 1
+                if _consecutive_failures <= 3:
+                    agent_logger.warning(
+                        "heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e)
+                    )
+                elif _consecutive_failures == 4:
+                    agent_logger.warning(
+                        "heartbeat_loop_backoff",
+                        agent_id=self.ctx.agent_id,
+                        error=str(e),
+                        msg="suppressing further heartbeat errors until recovery",
+                    )
             except Exception as e:
-                # One bad iteration must never permanently stop heartbeats.
-                agent_logger.warning(
-                    "heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e)
-                )
+                _consecutive_failures += 1
+                if _consecutive_failures <= 3:
+                    agent_logger.warning(
+                        "heartbeat_loop_error", agent_id=self.ctx.agent_id, error=str(e)
+                    )
+                elif _consecutive_failures == 4:
+                    agent_logger.warning(
+                        "heartbeat_loop_backoff",
+                        agent_id=self.ctx.agent_id,
+                        error=str(e),
+                        msg="suppressing further heartbeat errors until recovery",
+                    )
+            # Exponential backoff: 5s → 10s → 20s → 40s → 60s cap
+            _sleep = min(5 * (2 ** _consecutive_failures), _MAX_BACKOFF) if _consecutive_failures else 5
             try:
-                await asyncio.sleep(5)
+                await asyncio.sleep(_sleep)
             except (asyncio.CancelledError, RuntimeError):
                 break
 
@@ -970,6 +1015,7 @@ class BaseAgent(ABC):
         try:
             import time
             from datetime import datetime
+
             from ai_osop.core.telemetry import get_mcp_latency
 
             end_cpu = proc.cpu_times().user + proc.cpu_times().system

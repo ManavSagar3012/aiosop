@@ -319,7 +319,9 @@ class Settings(BaseSettings):
     sandbox_memory_limit: str = "4Gi"
 
     # Orchestration
-    max_concurrent_agents: int = 80  # Sprint 0: increased from 50 to accommodate doubled agent pool (67 agents)
+    max_concurrent_agents: int = (
+        80  # Sprint 0: increased from 50 to accommodate doubled agent pool (67 agents)
+    )
     max_tasks_per_second: int = 100
     task_default_timeout: int = 300
     # AIOSOP-SCALE-001 (2026-07-12): admission control. Without this cap, the
@@ -406,7 +408,30 @@ class Settings(BaseSettings):
     turbo_intruder_mcp_port: int = Field(
         default=8098, validation_alias="OSOP_TURBO_INTRUDER_MCP_PORT"
     )
-
+    session_memory_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_SESSION_MEMORY_MCP_HOST"
+    )
+    session_memory_mcp_port: int = Field(
+        default=8090, validation_alias="OSOP_SESSION_MEMORY_MCP_PORT"
+    )
+    reporting_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_REPORTING_MCP_HOST"
+    )
+    reporting_mcp_port: int = Field(
+        default=8092, validation_alias="OSOP_REPORTING_MCP_PORT"
+    )
+    attack_graph_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_ATTACK_GRAPH_MCP_HOST"
+    )
+    attack_graph_mcp_port: int = Field(
+        default=8093, validation_alias="OSOP_ATTACK_GRAPH_MCP_PORT"
+    )
+    oast_mcp_host: str = Field(
+        default="localhost", validation_alias="OSOP_OAST_MCP_HOST"
+    )
+    oast_mcp_port: int = Field(
+        default=8099, validation_alias="OSOP_OAST_MCP_PORT"
+    )
     # Recon
     recon_max_subdomains: int = 10000
     recon_nmap_top_ports: int = 1000
@@ -430,7 +455,9 @@ class Settings(BaseSettings):
     postgres_session_retention_days: int = 30
     postgres_approval_retention_days: int = 90
     redis_hot_ttl_hours: int = 168  # 7 days
-    redis_session_ttl_hours: int = 2  # Sprint 0: reduced from 24h to 2h to prevent stale engagement accumulation; 2h is enough for most engagements
+    redis_session_ttl_hours: int = (
+        2  # Sprint 0: reduced from 24h to 2h to prevent stale engagement accumulation; 2h is enough for most engagements
+    )
     # AIOSOP-RECOVERY-AGE-001 (2026-07-12): restart recovery (load_all_active_tasks)
     # re-queues EVERY non-terminal task in Postgres regardless of age. An abandoned
     # engagement (observed live: a 2-day-old eng- whose sqli_scan tasks kept getting
@@ -569,8 +596,10 @@ def assert_production_secrets() -> None:
     problems = []
     if (getattr(settings, "neo4j_password", "") or "") in _WEAK_SECRET_VALUES:
         problems.append("OSOP_NEO4J_PASSWORD is a weak/default value")
-    if not getattr(settings, "audit_secret_key", None):
-        problems.append("OSOP_AUDIT_SECRET_KEY is not set")
+    if not getattr(settings, "audit_secret_key", None) or getattr(settings, "audit_secret_key", "") in _WEAK_SECRET_VALUES:
+        problems.append("OSOP_AUDIT_SECRET_KEY is missing or weak/default value")
+    if not getattr(settings, "jwt_secret", None) or getattr(settings, "jwt_secret", "") in _WEAK_SECRET_VALUES:
+        problems.append("OSOP_JWT_SECRET is missing or weak/default value")
     if problems:
         raise RuntimeError(
             "Refusing to start in a production environment with insecure secrets: "

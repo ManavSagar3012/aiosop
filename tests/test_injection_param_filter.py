@@ -5,10 +5,7 @@ Regression for the live-audit finding where sqlmap was fed junk keys
 exist, so real params were never tested.
 """
 
-from ai_osop.orchestrator.phase_monitor import (
-    PhaseMonitor,
-    _is_probable_param_key,
-)
+from ai_osop.orchestrator.phase_monitor import PhaseMonitor, _is_probable_param_key
 
 
 def test_key_classifier():
@@ -24,10 +21,16 @@ def test_graphql_junk_params_dropped():
     # The exact shape observed against the live target: a real path but only
     # junk query keys -> no injectable params -> target correctly skipped.
     records = [
-        {"url": "https://t/graphql", "method": "GET",
-         "query_keys": ["A", "92", "10", "-2", "null", "M"]},
-        {"url": "https://t/core/equity100", "method": "GET",
-         "query_keys": ["id", "site", "92", "null", "key"]},
+        {
+            "url": "https://t/graphql",
+            "method": "GET",
+            "query_keys": ["A", "92", "10", "-2", "null", "M"],
+        },
+        {
+            "url": "https://t/core/equity100",
+            "method": "GET",
+            "query_keys": ["id", "site", "92", "null", "key"],
+        },
     ]
     from urllib.parse import urlparse
 

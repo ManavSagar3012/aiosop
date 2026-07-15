@@ -4,13 +4,33 @@ import os
 import threading
 import time
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src")))
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Header, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from ai_osop.core.config import settings
+
+async def verify_mcp_token(authorization: Optional[str] = Header(None)):
+    """Enforce strict bearer token verification."""
+    expected = settings.api_token or os.getenv("OSOP_API_TOKEN")
+    if not expected:
+        if settings.environment in ("production", "prod"):
+            raise HTTPException(status_code=401, detail="Authentication is not configured")
+        return
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    token = authorization.split(" ", 1)[1]
+    import hmac
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 app = FastAPI(title="OAST Interaction MCP Server")
 
 # In-memory, lock-guarded correlation state.
@@ -43,12 +63,10 @@ def _prune_locked() -> None:
 
 
 @app.get("/health")
-async def health():
+async def health(authenticated: None = Depends(verify_mcp_token)):
     return {"status": "ready", "server": "oast-mcp"}
-
-
 @app.post("/mcp/initialize")
-async def initialize():
+async def initialize(authenticated: None = Depends(verify_mcp_token)):
     return {
         "server_id": "oast-mcp",
         "capabilities": ["tool"],
@@ -91,7 +109,7 @@ class ExecuteRequest(BaseModel):
 
 
 @app.post("/mcp/execute")
-async def execute(req: ExecuteRequest):
+async def execute(req: ExecuteRequest, authenticated: None = Depends(verify_mcp_token)):
     p = req.parameters
     if req.tool_name == "oast_register":
         context = p.get("context") or {}
@@ -180,7 +198,7 @@ if __name__ == "__main__":
     # the target should use (e.g. host.docker.internal, or a public domain).
     parser.add_argument("--public-host", default=PUBLIC_HOST)
     parser.add_argument("--scheme", default=SCHEME)
-    parser.add_argument("--bind", default=os.environ.get("OAST_BIND", "0.0.0.0"))
+    parser.add_argument("--bind", default=os.environ.get("OAST_BIND", "127.0.0.1"))
     args = parser.parse_args()
     PORT = args.port
     PUBLIC_HOST = args.public_host

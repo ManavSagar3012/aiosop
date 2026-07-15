@@ -13,23 +13,39 @@ PY = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 STUB = os.path.join(ROOT, "mcp-servers", "python", "mcp_stub.py")
 GO = os.path.join(ROOT, "mcp-servers", "go")
 
+# Real engines get PATH access to their backing binaries (nuclei shells out).
+env = dict(os.environ)
+env["PATH"] = os.path.join(os.path.expanduser("~"), "go", "bin") + os.pathsep + env.get("PATH", "")
+
+# Real servers (bind their own hardcoded ports).
 real = [
-    [os.path.join(GO, "recon-mcp.exe")],
-    [os.path.join(GO, "security-bridge.exe")],
+    [os.path.join(GO, "recon-mcp.exe")],          # :8082 real Go recon
+    [os.path.join(ROOT, "security-bridge.exe")],  # :8087 real sqlmap/ffuf bridge
+    [os.path.join(GO, "nuclei-mcp.exe")],         # :8084 real nuclei engine
+    [os.path.join(ROOT, "shodan-mcp.exe")],       # :8085 real Shodan
+    [os.path.join(ROOT, "threat-intel-mcp.exe")], # :8086 real Threat Intel
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "browser_mcp.py"), "--port", "8091"],
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "source_map_mcp.py"), "--port", "8096"],
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "turbo_intruder_mcp.py"), "--port", "8098"],
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "oast_mcp.py"), "--port", "8099"],
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "session_memory_mcp.py"), "--port", "8090"],
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "reporting_mcp.py"), "--port", "8092"],
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "attack_graph_mcp.py"), "--port", "8093"],
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "payload_mcp_server.py"), "--port", "8083"],
+    [PY, os.path.join(ROOT, "mcp-servers", "python", "cloud_mcp.py"), "--port", "8097"],
 ]
+# Honest-empty stubs ONLY where no real engine is wired (Burp needs the GUI app).
 stubs = {
-    8081: "burp-mcp", 8083: "payload-mcp", 8084: "nuclei-mcp", 8085: "shodan-mcp",
-    8086: "threat-intel-mcp", 8091: "browser-mcp", 8096: "source-map-mcp",
-    8097: "cloud-mcp", 8098: "turbo-intruder-mcp", 8099: "oast-mcp",
+    8081: "burp-mcp",
 }
 
 procs = []
 for cmd in real:
-    procs.append(subprocess.Popen(cmd, cwd=ROOT,
+    procs.append(subprocess.Popen(cmd, cwd=ROOT, env=env,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 for port, sid in stubs.items():
     procs.append(subprocess.Popen(
-        [PY, STUB, "--port", str(port), "--server-id", sid], cwd=ROOT,
+        [PY, STUB, "--port", str(port), "--server-id", sid], cwd=ROOT, env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
 
 print(f"launched {len(procs)} MCP servers", flush=True)

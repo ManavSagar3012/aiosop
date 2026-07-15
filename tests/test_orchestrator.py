@@ -258,7 +258,9 @@ async def test_scheduler_tick_tolerates_sessions_mutation(mock_orchestrator):
             checkpoint_id=None,
             audit_log_position="0",
         )
-        mock_orchestrator._sessions["eng-mut-test-2"] = s2        # The list() snapshot prevented the crash. Only the pre-existing session
+        mock_orchestrator._sessions["eng-mut-test-2"] = (
+            s2  # The list() snapshot prevented the crash. Only the pre-existing session
+        )
         # was in the snapshot; the mid-iteration addition is harmless but not
         # visited this tick (it will be picked up on the next tick).
         assert "eng-mut-test-1" in collected
@@ -292,9 +294,7 @@ async def test_load_all_active_tasks_age_guard(mock_orchestrator):
     assert recent_task.created_at >= cutoff, "recent task should be after cutoff"
 
     # Wire session_memory.load_all_active_tasks to return only the recent task
-    mock_orchestrator.session_memory.load_all_active_tasks = AsyncMock(
-        return_value=[recent_task]
-    )
+    mock_orchestrator.session_memory.load_all_active_tasks = AsyncMock(return_value=[recent_task])
 
     tasks = await mock_orchestrator.session_memory.load_all_active_tasks()
     task_ids = {t.id for t in tasks}

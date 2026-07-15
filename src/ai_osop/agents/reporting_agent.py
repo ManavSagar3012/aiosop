@@ -273,7 +273,7 @@ class ReportingAgent(BaseAgent):
             ("json", json_blob),
         ):
             path = os.path.join(reports_dir, f"{report_id}.{ext}")
-            with open(path, "w", encoding="utf-8") as fh:
+            with self.safe_open(path, "w", encoding="utf-8") as fh:
                 fh.write(content)
             artifacts[ext] = os.path.abspath(path)
 
@@ -345,7 +345,7 @@ class ReportingAgent(BaseAgent):
         reports_dir = os.path.join("reports", engagement_id)
         os.makedirs(reports_dir, exist_ok=True)
         report_path = os.path.join(reports_dir, "FINDING_YIELD_REPORT.md")
-        with open(report_path, "w", encoding="utf-8") as fh:
+        with self.safe_open(report_path, "w", encoding="utf-8") as fh:
             fh.write(md_content)
 
         return {"status": "success", "report_path": os.path.abspath(report_path)}

@@ -9,8 +9,8 @@ from an engagement to generate an automated engineering critique of AI-OSOP itse
 """
 
 import asyncio
-from typing import Any, Dict, List, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 
 class PostEngagementCriticAgent:
@@ -29,6 +29,7 @@ class PostEngagementCriticAgent:
         # 1. Query all tasks for execution stats
         # We query the SQL tasks directly
         from sqlalchemy import select
+
         from ai_osop.memory.session_memory import TaskORM
 
         async with self.session_memory._async_session() as db:

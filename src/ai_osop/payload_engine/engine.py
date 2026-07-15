@@ -280,7 +280,9 @@ class AdaptivePayloadEngine:
     - WAF profile learning
     """
 
-    def __init__(self, mcp_adapter: Optional[PayloadMCPAdapter] = None, llm_client: Optional[Any] = None):
+    def __init__(
+        self, mcp_adapter: Optional[PayloadMCPAdapter] = None, llm_client: Optional[Any] = None
+    ):
         self.mcp = mcp_adapter
         self.llm_client = llm_client
         self.template_library = PayloadTemplateLibrary()

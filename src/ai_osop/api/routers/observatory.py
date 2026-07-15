@@ -88,8 +88,13 @@ async def get_scanner_audit(
             scanners[task_type] = {
                 "task_type": task_type,
                 "agent_type": str(task_obj.agent_type),
-                "scheduled": 0, "running": 0, "completed": 0, "failed": 0,
-                "pending": 0, "avg_duration_ms": 0.0, "failure_categories": {},
+                "scheduled": 0,
+                "running": 0,
+                "completed": 0,
+                "failed": 0,
+                "pending": 0,
+                "avg_duration_ms": 0.0,
+                "failure_categories": {},
             }
         s = scanners[task_type]
         s["scheduled"] += 1
@@ -101,7 +106,9 @@ async def get_scanner_audit(
             s["failure_categories"][cat] = s["failure_categories"].get(cat, 0) + 1
         if task_obj.started_at and task_obj.completed_at:
             dur = (task_obj.completed_at - task_obj.started_at).total_seconds() * 1000
-            s["avg_duration_ms"] = (s["avg_duration_ms"] * (s["scheduled"] - 1) + dur) / s["scheduled"]
+            s["avg_duration_ms"] = (s["avg_duration_ms"] * (s["scheduled"] - 1) + dur) / s[
+                "scheduled"
+            ]
     return {"scanner_count": len(scanners), "scanners": list(scanners.values())}
 
 
@@ -117,11 +124,13 @@ async def get_worker_telemetry(
     for agent_id, agent in orch._agents.items():
         status = await agent.get_status()
         hb = await orch.session_memory.get_agent_heartbeat(agent_id)
-        workers.append({
-            "agent_id": agent_id,
-            "agent_type": str(agent.ctx.agent_type),
-            "status": status.get("status"),
-            "task_queue_depth": status.get("task_queue_depth", 0),
-            "last_heartbeat": hb,
-        })
+        workers.append(
+            {
+                "agent_id": agent_id,
+                "agent_type": str(agent.ctx.agent_type),
+                "status": status.get("status"),
+                "task_queue_depth": status.get("task_queue_depth", 0),
+                "last_heartbeat": hb,
+            }
+        )
     return {"worker_count": len(workers), "workers": workers}

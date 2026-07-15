@@ -5,9 +5,9 @@ expected vulnerability manifest to calculate security engineering metrics and
 produce evidence-backed execution traces for missed findings.
 """
 
-from datetime import datetime
 import json
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qsl, urlparse
 

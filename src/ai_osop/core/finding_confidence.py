@@ -8,7 +8,6 @@ that it was independently reproduced.
 
 from typing import Any, Dict, List, Mapping
 
-
 SIGNAL_WEIGHTS: Dict[str, int] = {
     "tool_validation": 20,
     "payload_reproduced": 20,
