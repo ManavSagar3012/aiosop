@@ -45,7 +45,6 @@ from ai_osop.core.config import settings
 from ai_osop.memory.session_memory import Base, SessionMemory
 
 if TYPE_CHECKING:  # avoid circular import at runtime
-    from ai_osop.auth.session_client import SessionClient
     from ai_osop.memory.graph_memory import GraphMemory
 
 

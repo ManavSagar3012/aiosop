@@ -4,9 +4,6 @@ Task scheduling, state management, agent coordination, and workflow enforcement.
 """
 
 import asyncio
-import json
-from datetime import datetime
-from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 import redis.exceptions
@@ -15,32 +12,7 @@ import structlog
 
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType, settings
-from ai_osop.core.exceptions import ScopeException, WorkflowException, WorkflowTransitionError
-from ai_osop.core.metrics import (
-    ACTIVE_AGENT_COUNT,
-    ACTIVE_ENGAGEMENTS,
-    AGENT_EXECUTION_DURATION,
-    GRAPH_QUERY_DURATION,
-    LLM_CALL_DURATION,
-    MCP_CALL_DURATION,
-    MCP_CIRCUIT_BREAKER_STATE,
-    MCP_ERRORS_TOTAL,
-    PENDING_APPROVALS,
-    TASK_SCHEDULE_DURATION,
-    TASKS_BY_STATUS,
-)
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
-from ai_osop.core.observability import (
-    record_approval_requested,
-    record_approval_resolved,
-    record_engagement_completed,
-    record_engagement_halted,
-    record_engagement_started,
-    update_active_agents,
-    update_task_counts,
-)
-from ai_osop.core.telemetry import RequestContext, inject_trace_context
-from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
@@ -62,7 +34,7 @@ from ai_osop.safety.rate_limiter import RateLimiter
 
 logger = structlog.get_logger("ai_osop.orchestrator")
 from ai_osop.core.config import VALID_TRANSITIONS as _CONFIG_VALID_TRANSITIONS
-from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.config import EngagementPhase
 from ai_osop.orchestrator.state import OrchestrationState
 
 

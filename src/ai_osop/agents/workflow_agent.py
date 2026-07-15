@@ -3,20 +3,18 @@ Playwright Intelligence Agent
 Orchestrates real browser journeys, handles authentication, and maps workflows.
 """
 
-import hashlib
-import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.adapters.browser_mcp import BrowserMCPAdapter
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.auth.api_inventory import HARExtractor, persist_endpoints
 from ai_osop.auth.session_store import SessionStore
-from ai_osop.core.config import AgentType, settings
+from ai_osop.core.config import AgentType
 from ai_osop.core.diff_auth_analyzer import DiffAuthAnalyzer
 from ai_osop.core.diff_auth_engine import DifferentialAuthEngine
-from ai_osop.core.models import Observation, Task, Workflow, WorkflowStep, WorkflowTransition
+from ai_osop.core.models import Task, Workflow, WorkflowStep, WorkflowTransition
 
 logger = logging.getLogger(__name__)
 
@@ -347,7 +345,7 @@ class PlaywrightAgent(BaseAgent):
         semantics = []
 
         if payload.get("capture_semantics"):
-            sem_result = await self._execute_semantic_extraction(
+            await self._execute_semantic_extraction(
                 {"url": url, "user_label": user_label}
             )
             semantics = ["button:delete", "link:settings"]
@@ -675,7 +673,7 @@ class PlaywrightAgent(BaseAgent):
 
         for attempt, user in [(1, user_label_a), (2, user_label_b)]:
             try:
-                result = await self.browser_adapter.navigate(
+                await self.browser_adapter.navigate(
                     invite_url, user, engagement_id=engagement_id
                 )
                 state = await self.browser_adapter.capture_state(user, engagement_id=engagement_id)

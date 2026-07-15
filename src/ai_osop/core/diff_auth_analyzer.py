@@ -15,7 +15,6 @@ replaying POST/PUT/PATCH/DELETE as another identity could mutate/destroy the tar
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 

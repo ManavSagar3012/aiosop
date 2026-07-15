@@ -24,7 +24,7 @@ from ai_osop.agents.smuggling_scanner import SmugglingScanner
 from ai_osop.agents.ssrf_agent import SSRFAgent
 from ai_osop.agents.ssti_agent import SSTIAgent
 from ai_osop.agents.stack_profiler_agent import StackProfilerAgent
-from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
+from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent  # noqa: F401
 from ai_osop.agents.takeover_agent import TakeoverAgent
 from ai_osop.agents.upload_scanner import UploadScanner
 from ai_osop.agents.visual_agent import VisualContextAgent

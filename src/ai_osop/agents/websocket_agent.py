@@ -3,7 +3,6 @@ WebSocket Scanner Agent
 Specialized agent for WebSocket vulnerability detection.
 """
 
-import uuid
 from typing import Any, Dict
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent

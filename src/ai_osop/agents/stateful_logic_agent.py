@@ -8,11 +8,11 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import OutOfScopeError, ScopeValidationError
 from ai_osop.core.governance import BusinessLogicEngine
-from ai_osop.core.models import AuditEvent, BusinessInvariant, ProcessState, Task, Vulnerability
+from ai_osop.core.models import ProcessState, Task, Vulnerability
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = logging.getLogger(__name__)

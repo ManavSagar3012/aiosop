@@ -20,11 +20,10 @@ from collections import deque
 from datetime import datetime
 from typing import Any, Deque, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
 from ai_osop.api.deps import state
 from ai_osop.core.metrics import READY_STATUS
-from ai_osop.core.telemetry import RequestContext
 
 router = APIRouter(tags=["health"])
 

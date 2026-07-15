@@ -8,7 +8,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +18,8 @@ logging.getLogger("neo4j").setLevel(logging.ERROR)
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
-from neo4j.graph import Node, Path, Relationship
 
 from ai_osop.core.config import settings
-from ai_osop.core.exceptions import GraphQueryError, MemoryException
 from ai_osop.core.models import (
     Asset,
     AttackPath,
@@ -30,7 +28,6 @@ from ai_osop.core.models import (
     Endpoint,
     Exploit,
     Hypothesis,
-    Payload,
     Vulnerability,
     Workflow,
     WorkflowStep,
@@ -68,6 +65,9 @@ class GraphMemory:
         # engine can chain co-located signals. Left None so GraphMemory stays
         # decoupled from the ledger in minimal setups/tests.
         self.primitive_ledger: Optional[Any] = None
+        # Optional P2b calibration engine. When wired, validate_vulnerability()
+        # records accepted findings into the Beta-Binomial feedback loop.
+        self.calibration_engine: Optional[Any] = None
 
     async def connect(self) -> None:
         """Initialize Neo4j connection with exponential backoff retry.
@@ -418,17 +418,221 @@ class GraphMemory:
 
         return record["v.id"]
 
+    async def add_endpoints_batch(self, endpoints: List[Endpoint]) -> List[str]:
+        """Persist a list of Endpoints in one UNWIND Cypher transaction (N endpoints = 1
+        round-trip, not N). Mirrors add_endpoint semantics exactly. Returns list of
+        persisted IDs in input order."""
+        if not endpoints:
+            return []
+
+        rows = [
+            {
+                "id": ep.id,
+                "url": ep.url,
+                "method": ep.method,
+                "type": ep.type,
+                "status_code": ep.status_code,
+                "title": ep.title,
+                "technologies": ep.technologies,
+                "parameters": ep.parameters,
+                "auth_required": ep.auth_required,
+                "source": ep.source,
+                "confidence": ep.confidence,
+                "engagement_id": ep.engagement_id,
+                "screenshot_path": ep.screenshot_path,
+                "host": ep.host,
+                "path": ep.path,
+                "query_keys": ep.query_keys,
+                "has_body": ep.has_body,
+                "content_type": ep.content_type,
+                "body_schema_keys": ep.body_schema_keys,
+                "auth_class": ep.auth_class,
+                "request_headers_sample": json.dumps(ep.request_headers_sample),
+                "status_codes_seen": ep.status_codes_seen,
+                "response_size_avg": ep.response_size_avg,
+                "response_content_type": ep.response_content_type,
+                "user_label": ep.user_label,
+                "workflow_id": ep.workflow_id,
+                "first_seen": ep.first_seen.isoformat(),
+                "last_seen": ep.last_seen.isoformat(),
+                "observations": ep.observations,
+                "asset_id": ep.asset_id,
+            }
+            for ep in endpoints
+        ]
+
+        cypher = """
+        UNWIND $rows AS ep
+        MERGE (e:Endpoint {id: ep.id})
+        SET e.url = ep.url, e.method = ep.method, e.type = ep.type,
+            e.status_code = ep.status_code, e.title = ep.title,
+            e.technologies = ep.technologies, e.parameters = ep.parameters,
+            e.auth_required = ep.auth_required, e.source = ep.source,
+            e.confidence = ep.confidence, e.engagement_id = ep.engagement_id,
+            e.screenshot_path = ep.screenshot_path, e.host = ep.host,
+            e.path = ep.path, e.query_keys = ep.query_keys,
+            e.has_body = ep.has_body, e.content_type = ep.content_type,
+            e.body_schema_keys = ep.body_schema_keys, e.auth_class = ep.auth_class,
+            e.request_headers_sample = ep.request_headers_sample,
+            e.status_codes_seen = ep.status_codes_seen,
+            e.response_size_avg = ep.response_size_avg,
+            e.response_content_type = ep.response_content_type,
+            e.user_label = ep.user_label, e.workflow_id = ep.workflow_id,
+            e.first_seen = CASE WHEN e.first_seen IS NULL THEN ep.first_seen ELSE e.first_seen END,
+            e.last_seen = ep.last_seen, e.observations = ep.observations
+        WITH e, ep
+        OPTIONAL MATCH (a:Asset {id: ep.asset_id})
+        FOREACH (x IN CASE WHEN a IS NOT NULL THEN [a] ELSE [] END |
+            MERGE (a)-[:HAS_ENDPOINT]->(e)
+        )
+        RETURN e.id AS id
+        """
+
+        async with self._driver.session() as session:
+            result = await session.run(cypher, {"rows": rows})
+            ids = [rec["id"] async for rec in result]
+            return ids
+
+    async def add_vulnerabilities_batch(self, vulns: List[Vulnerability]) -> List[str]:
+        """Persist a list of Vulnerabilities in one UNWIND Cypher transaction. Skips
+        simulated findings using the same guard as add_vulnerability. Returns list of
+        persisted IDs for accepted (non-simulated) entries."""
+        from ai_osop.core.config import settings as _settings
+
+        real_vulns = [
+            v for v in vulns
+            if not v.is_simulated() or getattr(_settings, "allow_simulated_findings", False)
+        ]
+
+        for v in vulns:
+            if v not in real_vulns:
+                logger.warning(
+                    "rejected_simulated_vulnerability id=%s tool_source=%s title=%s engagement=%s",
+                    v.id, v.tool_source, v.title, v.engagement_id,
+                )
+
+        if not real_vulns:
+            return []
+
+        from urllib.parse import urlsplit
+
+        rows = []
+        for vuln in real_vulns:
+            vuln_host = ""
+            try:
+                for ev in vuln.evidence or []:
+                    if not isinstance(ev, dict):
+                        continue
+                    candidate = ev.get("matched_at") or ev.get("url") or ev.get("host")
+                    if candidate:
+                        raw = str(candidate)
+                        netloc = urlsplit(raw if "://" in raw else "http://" + raw).netloc
+                        if netloc:
+                            vuln_host = netloc.split("@")[-1].split(":")[0].lower()
+                            break
+            except Exception:  # noqa: BLE001
+                vuln_host = ""
+
+            rows.append({
+                "id": vuln.id,
+                "host": vuln_host,
+                "cwe": vuln.cwe,
+                "vuln_type": vuln.vuln_type.value,
+                "severity": vuln.severity.value,
+                "cvss_score": vuln.cvss_score,
+                "title": vuln.title,
+                "description": vuln.description,
+                "evidence": json.dumps(vuln.evidence, default=str),
+                "tool_source": vuln.tool_source,
+                "confidence": vuln.confidence,
+                "entry_point": vuln.entry_point,
+                "requires_auth": vuln.requires_auth,
+                "validated": vuln.validated,
+                "exploitability": vuln.exploitability,
+                "impact": vuln.impact,
+                "engagement_id": vuln.engagement_id,
+                "created_at": vuln.created_at.isoformat(),
+                "endpoint_id": vuln.endpoint_id,
+            })
+
+        cypher = """
+        UNWIND $rows AS v
+        MERGE (vn:Vulnerability {id: v.id})
+        SET vn.cwe = v.cwe, vn.vuln_type = v.vuln_type, vn.severity = v.severity,
+            vn.cvss_score = v.cvss_score, vn.title = v.title,
+            vn.description = v.description, vn.evidence = v.evidence,
+            vn.tool_source = v.tool_source, vn.confidence = v.confidence,
+            vn.entry_point = v.entry_point, vn.requires_auth = v.requires_auth,
+            vn.validated = v.validated, vn.exploitability = v.exploitability,
+            vn.impact = v.impact, vn.engagement_id = v.engagement_id,
+            vn.created_at = v.created_at
+        WITH vn, v
+        OPTIONAL MATCH (e:Endpoint {id: v.endpoint_id})
+        OPTIONAL MATCH (eh:Endpoint {engagement_id: v.engagement_id})
+            WHERE e IS NULL AND v.host <> '' AND (eh.host = v.host OR eh.url CONTAINS v.host)
+        WITH vn, v, e, collect(eh)[0] AS ehost
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (e)-[:HAS_VULNERABILITY]->(vn)
+        )
+        FOREACH (x IN CASE WHEN e IS NULL AND ehost IS NOT NULL THEN [ehost] ELSE [] END |
+            MERGE (ehost)-[:HAS_VULNERABILITY]->(vn)
+        )
+        RETURN vn.id AS id
+        """
+
+        async with self._driver.session() as session:
+            result = await session.run(cypher, {"rows": rows})
+            ids = [rec["id"] async for rec in result]
+
+        for vuln in real_vulns:
+            if self.findings_knowledge is not None:
+                try:
+                    await self.findings_knowledge.record_finding(vuln)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("findings_knowledge_record_failed id=%s error=%s", vuln.id, e)
+            if self.primitive_ledger is not None:
+                try:
+                    from ai_osop.core.chain_analysis import vuln_to_primitive
+                    await self.primitive_ledger.upsert_primitive(vuln_to_primitive(vuln))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("primitive_ledger_record_failed id=%s error=%s", vuln.id, e)
+
+        return ids
+
     async def validate_vulnerability(self, vuln_id: str) -> None:
-        """Mark a vulnerability as validated in the graph."""
+        """Mark a vulnerability as validated in the graph.
+
+        Also feeds the confirmed finding into the calibration brain so future
+        engagements benefit from the real accept signal (P2b feedback loop).
+        Wire ``graph_memory.calibration_engine`` at startup (same pattern as
+        ``findings_knowledge``) to enable cross-engagement learning.
+        """
         cypher = """
         MATCH (v:Vulnerability {id: $vid})
         SET v.validated = true,
             v.last_validated = $ts,
             v.confidence = 1.0
-        RETURN v.id
+        RETURN v.id, v.vuln_type AS vuln_type, v.engagement_id AS engagement_id
         """
         async with self._driver.session() as session:
-            await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
+            result = await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
+            record = await result.single()
+
+        # P2b calibration feedback: record this validated finding as a real
+        # accept-outcome so the Beta-Binomial shrinkage engine learns from it.
+        # Best-effort -- never breaks the validation itself.
+        if record is not None and self.calibration_engine is not None:
+            try:
+                await self.calibration_engine.record_outcome(
+                    finding_data={
+                        "id": vuln_id,
+                        "category": record.get("vuln_type", "unknown"),
+                        "engagement_id": record.get("engagement_id"),
+                    },
+                    outcome="accepted",
+                )
+            except Exception as _e:  # noqa: BLE001 - calibration is advisory
+                logger.debug("calibration_record_skipped vuln_id=%s reason=%s", vuln_id, _e)
 
     async def add_exploit(self, exploit: Exploit) -> str:
         """Add an Exploit and link to Vulnerability and Payload."""
@@ -1523,9 +1727,9 @@ class GraphMemory:
 
     async def import_knowledge_base(self) -> None:
         """Import the static security taxonomy from SecurityKnowledgeEngine into Neo4j."""
-        from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
+        from ai_osop.core.knowledge_engine import get_knowledge_engine
 
-        engine = SecurityKnowledgeEngine()
+        engine = get_knowledge_engine()
         vulnerabilities_data = engine._data.get("vulnerabilities", {})
 
         # 1. Create VulnClass nodes
@@ -1774,3 +1978,141 @@ class GraphMemory:
             records = await result.data()
             return records
 
+    async def scan_next_targets(
+        self,
+        engagement_id: str,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Return endpoints that should be scanned next for this engagement.
+
+        Prioritizes by:
+        1. Endpoints with no vulnerability scan history (never scanned)
+        2. Endpoints whose technology stack has associated vuln classes in the
+           knowledge base but no matching Vulnerability node yet
+        3. Endpoints reachable from a known vulnerable endpoint via graph traversal
+
+        Returns a list of dicts with: endpoint_id, url, method, priority_score, reason
+        """
+        cypher = """
+        MATCH (e:Endpoint {engagement_id: $engagement_id})
+        OPTIONAL MATCH (e)-[:HAS_VULNERABILITY]->(v:Vulnerability)
+        WITH e, count(v) AS vuln_count
+        OPTIONAL MATCH (e)<-[:HAS_ENDPOINT]-(:Asset)-[:HAS_ENDPOINT]->(peer:Endpoint)-[:HAS_VULNERABILITY]->(pv:Vulnerability)
+        WITH e, vuln_count, count(DISTINCT pv) AS neighbor_vuln_count
+        RETURN
+            e.id AS endpoint_id,
+            e.url AS url,
+            e.method AS method,
+            e.technologies AS technologies,
+            vuln_count,
+            neighbor_vuln_count,
+            CASE
+                WHEN vuln_count = 0 AND neighbor_vuln_count > 0 THEN 10
+                WHEN vuln_count = 0 THEN 5
+                ELSE 1
+            END AS priority_score,
+            CASE
+                WHEN vuln_count = 0 AND neighbor_vuln_count > 0 THEN 'unscanned_near_vulnerable'
+                WHEN vuln_count = 0 THEN 'unscanned'
+                ELSE 'scanned'
+            END AS reason
+        ORDER BY priority_score DESC, e.url ASC
+        LIMIT $limit
+        """
+        async with self._driver.session() as session:
+            result = await session.run(cypher, {"engagement_id": engagement_id, "limit": limit})
+            return [dict(rec) async for rec in result]
+
+    async def get_related_endpoints(
+        self,
+        endpoint_id: str,
+        max_hops: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Return endpoints related to the given endpoint via graph traversal.
+
+        Traverses LEADS_TO relationships up to max_hops (default 2).
+        Useful for expanding the attack surface from a known vulnerable endpoint.
+        Returns list of dicts with: endpoint_id, url, method, distance.
+        """
+        # ponytail: Neo4j variable-length range bounds must be literals; max 3 hops is
+        # sufficient for attack-surface expansion without exploding traversal cost.
+        cypher = """
+        MATCH path = (start:Endpoint {id: $endpoint_id})
+                     -[:LEADS_TO*1..3]-(related:Endpoint)
+        WHERE related.id <> $endpoint_id
+        RETURN DISTINCT
+            related.id AS endpoint_id,
+            related.url AS url,
+            related.method AS method,
+            length(path) AS distance
+        ORDER BY distance ASC
+        LIMIT 50
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher, {"endpoint_id": endpoint_id}
+            )
+            return [dict(rec) async for rec in result]
+
+    async def get_co_occurring_vuln_classes(
+        self,
+        vuln_type: str,
+        engagement_id: Optional[str] = None,
+        min_co_occurrences: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """Return vulnerability classes that co-occur with the given vuln_type.
+
+        Looks across all engagements (or a specific one) for endpoints that have
+        both the given vuln_type AND another vuln_type. Returns the co-occurring
+        classes ranked by frequency. Useful for attack-chain planning.
+        """
+        params: Dict[str, Any] = {"vuln_type": vuln_type, "min_co": min_co_occurrences}
+        where_parts = ["v2.vuln_type <> $vuln_type"]
+        if engagement_id:
+            where_parts.append("v1.engagement_id = $engagement_id")
+            params["engagement_id"] = engagement_id
+        where_clause = " AND ".join(where_parts)
+        cypher = f"""
+        MATCH (e:Endpoint)-[:HAS_VULNERABILITY]->(v1:Vulnerability {{vuln_type: $vuln_type}}),
+              (e)-[:HAS_VULNERABILITY]->(v2:Vulnerability)
+        WHERE {where_clause}
+        WITH v2.vuln_type AS co_vuln_type, count(*) AS frequency
+        WHERE frequency >= $min_co
+        RETURN co_vuln_type, frequency
+        ORDER BY frequency DESC
+        LIMIT 20
+        """
+        async with self._driver.session() as session:
+            result = await session.run(cypher, params)
+            return [dict(rec) async for rec in result]
+
+    async def get_reusable_auth_contexts(
+        self,
+        engagement_id: str,
+        target_endpoint_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Return user session contexts that can be reused for the target endpoint.
+
+        Finds UserSession nodes in the same engagement whose auth scope matches
+        the target endpoint's host. Returns sessions ranked by recency.
+        """
+        cypher = """
+        MATCH (us:UserSession {engagement_id: $engagement_id})
+        MATCH (e:Endpoint {id: $endpoint_id})
+        WHERE us.domain = e.host
+           OR e.url CONTAINS us.domain
+        RETURN
+            us.user_label AS user_label,
+            us.domain AS domain,
+            us.captured_at AS captured_at,
+            us.has_bearer AS has_bearer,
+            us.cookie_count AS cookie_count
+        ORDER BY us.captured_at DESC
+        LIMIT 10
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {"engagement_id": engagement_id, "endpoint_id": target_endpoint_id},
+            )
+            return [dict(rec) async for rec in result]

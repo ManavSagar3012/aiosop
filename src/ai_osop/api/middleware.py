@@ -9,14 +9,11 @@ Middleware stack (applied in order, bottom = closest to request):
 
 from __future__ import annotations
 
-import time
-import uuid
 from typing import Optional
 
 import structlog
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import JSONResponse
 
 from ai_osop.core.telemetry import (
     RequestContext,

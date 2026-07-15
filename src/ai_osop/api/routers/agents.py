@@ -12,7 +12,6 @@ from ai_osop.api.deps import (
     require_role,
     state,
     update_active_agents,
-    verify_token,
 )
 
 router = APIRouter(prefix="/agents", tags=["agents"])

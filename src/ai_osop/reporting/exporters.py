@@ -5,7 +5,6 @@ Generates structured and styled reports from template data.
 
 import hashlib
 import json
-import os
 from typing import Any, Dict
 
 import markdown

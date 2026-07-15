@@ -387,7 +387,7 @@ class FindingCertificationEngine:
           2. RECON — technology / infrastructure / framework detection.
           3. POTENTIAL — anything else (needs manual validation before report).
         """
-        vuln_type = (getattr(vuln, "vuln_type", None) or "").lower()
+        (getattr(vuln, "vuln_type", None) or "").lower()
         title = (getattr(vuln, "title", None) or "").lower()
         severity = (getattr(vuln, "severity", None) or "INFO").upper()
         validated = bool(getattr(vuln, "validated", False))
@@ -655,7 +655,7 @@ class AttackSurfaceCertifier:
         """
         # Fetch stats from Neo4j
         graph_stats = await graph_memory.get_graph_stats(engagement_id)
-        assets_count = graph_stats.get("assets", 0)
+        graph_stats.get("assets", 0)
         endpoints_count = graph_stats.get("endpoints", 0)
 
         # Fetch raw crawled count from the full_recon task result (Sprint 12)
@@ -984,7 +984,7 @@ class FindingConversionEngine:
 
         # 1. Update/Persist Outcome
         status_enum = OutcomeStatus(status.lower())
-        outcome = OutcomeRecord(
+        OutcomeRecord(
             finding_id=finding_id,
             finding_type="unknown",  # Simplified
             status=status_enum,

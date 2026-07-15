@@ -3,7 +3,6 @@ SAML Scanner Agent
 Specialized agent for SAML vulnerability detection.
 """
 
-import uuid
 from typing import Any, Dict
 
 import httpx

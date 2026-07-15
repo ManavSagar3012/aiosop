@@ -3,12 +3,10 @@ V4.2A Differential Authorization Engine
 Compares evidence across different identities to detect IDOR and privilege escalation.
 """
 
-import asyncio
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from ai_osop.core.models import BrowserSession, DiffAuthFinding, PermissionMatrix, Resource, Task
+from ai_osop.core.models import DiffAuthFinding, Resource, Task
 from ai_osop.memory.session_memory import SessionMemory
 
 
@@ -68,7 +66,6 @@ class DifferentialAuthEngine:
                 anonymous_evidence.get("body", {}),
             )
 
-        finding = None
         category = "unknown"
         confidence = 0.0
         needs_manual = False
@@ -375,7 +372,7 @@ class DifferentialAuthEngine:
         RETURN s ORDER BY s.order ASC
         """
         baseline_steps = []
-        async with self.session_memory._pg_engine.connect() as conn:  # Error: Cypher is for Neo4j
+        async with self.session_memory._pg_engine.connect():  # Error: Cypher is for Neo4j
             # Correcting: need graph_memory for Cypher
             pass
 
@@ -421,7 +418,6 @@ class DifferentialAuthEngine:
         # 2. For each test identity (e.g., 'user_b', 'guest')
         for identity in test_identities:
             # Identity-specific journey state
-            identity_journey_evidence = []
 
             for step in baseline_steps:
                 # Read-only safety (AIOSOP-AUDIT-2026-06-16): never replay a

@@ -1,6 +1,6 @@
 """Source Map MCP Adapter — frontend javascript and sourcemap analyzer integration."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from ai_osop.core.exceptions import MCPException
 from ai_osop.mcp.protocol import MCPRegistry

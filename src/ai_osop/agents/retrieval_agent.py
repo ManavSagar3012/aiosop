@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.findings_knowledge import FindingsKnowledge, VectorMemoryFindingsStore
 from ai_osop.core.models import Task

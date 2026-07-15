@@ -1,7 +1,6 @@
 from datetime import datetime
-from typing import Any
 
-from ai_osop.core.config import PHASE_POLICY, VALID_TRANSITIONS, AgentType, EngagementPhase
+from ai_osop.core.config import VALID_TRANSITIONS, AgentType, EngagementPhase
 from ai_osop.core.engagement_state import EngagementState
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.models import Task

@@ -22,9 +22,9 @@ from ai_osop.core.execution_trace import (
     record_failure,
     record_stage,
 )
-from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
+from ai_osop.core.knowledge_engine import get_knowledge_engine
 from ai_osop.core.models import ApprovalRequest, AuditEvent, Task
-from ai_osop.core.observability import record_task, update_task_counts
+from ai_osop.core.observability import record_task
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
 from ai_osop.orchestrator.state_machine import EngagementStateMachine
@@ -865,7 +865,7 @@ class TaskScheduler:
         if not current_vuln_class:
             return
 
-        knowledge_engine = SecurityKnowledgeEngine()
+        knowledge_engine = get_knowledge_engine()
         next_vuln_classes = knowledge_engine.get_next_steps(current_vuln_class)
 
         vuln_class_to_task_details = {

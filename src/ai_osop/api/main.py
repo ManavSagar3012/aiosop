@@ -18,10 +18,9 @@ import json
 import logging
 import os
 import time
-import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,7 +50,7 @@ from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import settings
 from ai_osop.core.llm_client import LiteLLMClient
 from ai_osop.core.metrics import BUILD_INFO, ERRORS_TOTAL, REQUEST_DURATION, REQUESTS_TOTAL
-from ai_osop.core.observability import render_prometheus, update_active_agents
+from ai_osop.core.observability import render_prometheus
 from ai_osop.core.tracing import init_tracing, trace_span
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
@@ -324,6 +323,17 @@ async def lifespan(app: FastAPI):
             logger.info("Findings knowledge base wired to graph memory.")
         except Exception as e:  # noqa: BLE001 - learning brain is optional
             logger.warning(f"Findings knowledge wiring failed: {e}")
+
+        # P2b calibration engine: wire to graph_memory so validate_vulnerability()
+        # feeds accepted findings into the Beta-Binomial feedback loop.
+        try:
+            from ai_osop.core.calibration_engine import ConfidenceCalibrationEngine
+            graph_memory.calibration_engine = ConfidenceCalibrationEngine(
+                session_memory=session_memory,
+            )
+            logger.info("Calibration engine wired to graph memory.")
+        except Exception as e:  # noqa: BLE001 - learning is optional
+            logger.warning(f"Calibration engine wiring failed: {e}")
 
         # Chain-first loop: wire the primitive ledger so every confirmed finding is
         # also recorded as a typed primitive for the escalation/chain engine.
@@ -842,7 +852,7 @@ async def metrics(operator: Dict[str, Any] = Depends(require_role("senior_operat
 # ============== WebSocket (kept inline; needs auth via query param) ==============
 
 
-from ai_osop.api.deps import assert_engagement_access, verify_token  # noqa: E402
+from ai_osop.api.deps import assert_engagement_access  # noqa: E402
 
 
 async def get_websocket_operator(websocket: WebSocket) -> Dict[str, Any]:

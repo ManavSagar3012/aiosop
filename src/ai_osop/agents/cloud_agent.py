@@ -4,11 +4,11 @@ Specializes in identifying cloud-specific vulnerabilities, IAM trust relationshi
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
-from ai_osop.core.models import Observation, Task
+from ai_osop.core.models import Task
 
 logger = logging.getLogger(__name__)
 

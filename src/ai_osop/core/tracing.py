@@ -33,7 +33,7 @@ from opentelemetry.sdk.resources import (
 )
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.trace import SpanContext, TraceFlags
+from opentelemetry.trace import SpanContext
 
 from ai_osop.core.config import settings
 from ai_osop.core.telemetry import RequestContext

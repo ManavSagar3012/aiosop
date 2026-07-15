@@ -6,7 +6,6 @@ Manages session state, agent working memory, and checkpoints.
 
 import hashlib
 import json
-import pickle
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -22,7 +21,6 @@ from ai_osop.core.config import settings
 from ai_osop.core.exceptions import MemoryException
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.observability import record_postgres_latency, record_redis_latency
-from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
 from ai_osop.reliability.retry import retry_with_backoff
 
@@ -781,7 +779,6 @@ class SessionMemory:
 
     async def store_dlq_entry(self, entry: Any) -> None:
         """Persist DLQ entry to hot (Redis) + warm (Postgres) tier."""
-        from ai_osop.reliability.dlq import DLQEntry
 
         with trace_span(
             "postgres.store_dlq_entry",
@@ -1256,16 +1253,6 @@ class SessionMemory:
             await self._redis.close()
         if self._pg_engine:
             await self._pg_engine.dispose()
-
-    async def update_agent_heartbeat(self, agent_id: str, data: Dict[str, Any]) -> None:
-        """Update agent heartbeat with ownership and state."""
-        if "last_seen" not in data:
-            data["last_seen"] = datetime.utcnow().isoformat()
-        await self.store_hot(f"agent:heartbeat:{agent_id}", data, ttl=60)
-
-    async def get_agent_heartbeat(self, agent_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve agent heartbeat."""
-        return await self.retrieve_hot(f"agent:heartbeat:{agent_id}")
 
     async def update_agent_heartbeat(self, agent_id: str, data: Dict[str, Any]) -> None:
         """Update agent heartbeat with ownership and state."""

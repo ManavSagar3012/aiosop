@@ -3,9 +3,7 @@ V4.1 Event Correlation Engine
 Correlates observations across agents and building higher-level evidence chains.
 """
 
-import asyncio
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from ai_osop.core.models import Observation
 from ai_osop.memory.session_memory import SessionMemory

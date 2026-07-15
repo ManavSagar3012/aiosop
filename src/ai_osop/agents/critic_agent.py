@@ -8,9 +8,8 @@ from an engagement to generate an automated engineering critique of AI-OSOP itse
   - Underutilized MCP servers
 """
 
-import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class PostEngagementCriticAgent:

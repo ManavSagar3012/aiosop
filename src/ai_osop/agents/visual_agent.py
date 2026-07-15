@@ -4,16 +4,14 @@ Performs multi-layer context fusion (Screenshot + DOM + Semantics + Workflow) to
 """
 
 import base64
-import hashlib
 import json
 import logging
 import os
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from ai_osop.agents.base import AgentContext, BaseAgent
-from ai_osop.core.config import AgentType, settings
-from ai_osop.core.models import CriticalOperation, Observation, Task, VisualAnalysis
+from ai_osop.agents.base import BaseAgent
+from ai_osop.core.config import AgentType
+from ai_osop.core.models import CriticalOperation, Task, VisualAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +55,7 @@ class VisualContextAgent(BaseAgent):
     async def _execute_visual_analysis(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Combine screenshot and metadata to identify critical operations."""
         screenshot_path = payload["screenshot_path"]
-        dom_snapshot = payload.get("dom_snapshot", {})
+        payload.get("dom_snapshot", {})
         workflow_state = payload.get("workflow_state", "unknown")
         user_role = payload.get("user_role", "guest")
 

@@ -16,22 +16,21 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from ai_osop.core.config import AgentType, settings
-from ai_osop.core.exceptions import AgentException, AgentTaskFailed
+from ai_osop.core.exceptions import AgentException
 from ai_osop.core.execution_trace import (
     ExecutionStage,
     FailureCategory,
     record_failure,
     record_stage,
 )
-from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.models import AuditEvent, ScopeDefinition, Task
 from ai_osop.core.observability import record_task
 from ai_osop.core.telemetry import (
     RequestContext,
     extract_trace_context,
-    get_mcp_latency,
     reset_mcp_latency,
 )
-from ai_osop.core.tracing import trace_span, trace_span_with_parent
+from ai_osop.core.tracing import trace_span_with_parent
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
 from ai_osop.memory.vector_memory import VectorMemory
@@ -806,7 +805,6 @@ class BaseAgent(ABC):
         except Exception:
             pass
 
-        from ai_osop.core.config import settings
 
         try:
             await asyncio.wait_for(
@@ -1013,7 +1011,6 @@ class BaseAgent(ABC):
     ) -> Dict[str, Any]:
         """Compute and inject task execution telemetry metrics (Sprint 9)."""
         try:
-            import time
             from datetime import datetime
 
             from ai_osop.core.telemetry import get_mcp_latency

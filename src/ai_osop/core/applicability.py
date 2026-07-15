@@ -6,7 +6,6 @@ This reduces false positives, eliminates wasted compute, and keeps the attack gr
 """
 
 import logging
-import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 

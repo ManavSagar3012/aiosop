@@ -17,8 +17,7 @@ recoverable; false positives (fabricated bugs) destroy program trust.
 """
 
 import hashlib
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import structlog
 

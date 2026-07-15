@@ -6,14 +6,14 @@ assessment results into structured deliverables.
 
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import structlog
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import AgentException
-from ai_osop.core.models import Task, Vulnerability
+from ai_osop.core.models import Task
 from ai_osop.reporting.exporters import ReportExporter
 
 logger = structlog.get_logger(__name__)

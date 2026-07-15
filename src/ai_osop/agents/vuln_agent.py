@@ -20,7 +20,7 @@ from ai_osop.adapters.burp_mcp import BurpMCPAdapter
 from ai_osop.adapters.oast_mcp import OASTAdapter
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.adapters.turbo_intruder_mcp import TurboIntruderMCPAdapter
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import NUCLEI_SCAN_PROFILES, AgentType, Severity, VulnClass, settings
 from ai_osop.core.exceptions import AgentException
@@ -225,7 +225,6 @@ class VulnAnalysisAgent(BaseAgent):
         await self.ctx.graph_memory.add_asset(asset)
 
         # Ensure default Endpoint node exists for f"endpoint-{domain}"
-        from ai_osop.core.models import Endpoint
 
         default_ep = Endpoint(
             id=f"endpoint-{engagement_id}-{domain}",
@@ -1212,7 +1211,7 @@ class VulnAnalysisAgent(BaseAgent):
             }
         body = payload.get("body")
         cookie = payload.get("cookie")  # ambient credential => CSRF-relevant
-        token = payload.get("token")  # bearer => NOT CSRF-able
+        payload.get("token")  # bearer => NOT CSRF-able
         ok_statuses = set(payload.get("success_status", [200, 201, 204]))
 
         if not cookie:

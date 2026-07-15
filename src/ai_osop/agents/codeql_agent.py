@@ -4,9 +4,9 @@ Integrates static analysis findings (SARIF) into the Attack Graph.
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Severity, Task, Vulnerability
 
@@ -98,17 +98,11 @@ class CodeQLAgent(BaseAgent):
         mapped_count = 0
         import uuid
 
-        from ai_osop.core.models import Severity, Vulnerability
 
         for finding in self.findings_cache:
             file_path = finding["file_path"]
 
             # Search for endpoints matching the source file/route
-            cypher = """
-            MATCH (e:Endpoint)
-            WHERE e.url CONTAINS $path OR e.metadata CONTAINS $path
-            RETURN e.id as id
-            """
 
             records = await self.ctx.graph_memory.run_read_query(
                 """

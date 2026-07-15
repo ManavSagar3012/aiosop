@@ -3,7 +3,6 @@ Security Bridge MCP Adapter
 Standardized interface for high-performance offensive tools (sqlmap, nmap, ffuf).
 """
 
-import logging
 from typing import Any, Dict, List, Optional
 
 from ai_osop.core.exceptions import MCPException

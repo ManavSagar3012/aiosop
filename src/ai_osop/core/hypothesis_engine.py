@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 import structlog
@@ -45,8 +44,8 @@ class HypothesisEngine:
     async def generate_hypotheses(
         self, engagement_id: str, focus: str = "", limit: int = 8
     ) -> List[Hypothesis]:
-        nodes = await self.graph_memory.get_all_nodes_for_engagement(engagement_id)
-        edges = await self.graph_memory.get_all_edges_for_engagement(engagement_id)
+        await self.graph_memory.get_all_nodes_for_engagement(engagement_id)
+        await self.graph_memory.get_all_edges_for_engagement(engagement_id)
         endpoints = await self.graph_memory.run_read_query(
             """
             MATCH (e:Endpoint {engagement_id: $engagement_id})

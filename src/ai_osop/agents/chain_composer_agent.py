@@ -3,7 +3,7 @@ ChainComposer Agent
 Reason over findings and suggest multi-hop exploit chains.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 import structlog
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType

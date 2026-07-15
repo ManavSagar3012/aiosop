@@ -11,9 +11,8 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from ai_osop.core.config import AgentType, EngagementPhase, VulnClass, settings
-from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
+from ai_osop.core.knowledge_engine import get_knowledge_engine
 from ai_osop.core.models import SessionState, Task
-from ai_osop.core.tracing import trace_span
 from ai_osop.core.value_engine import batch_endpoints_for_scan
 from ai_osop.orchestrator.state_machine import EngagementStateMachine
 
@@ -369,7 +368,7 @@ class PhaseMonitor:
                     targets=len(injection_targets),
                 )
 
-            knowledge_engine = SecurityKnowledgeEngine()
+            knowledge_engine = get_knowledge_engine()
 
             vuln_to_scanners = {
                 VulnClass.SSTI: [AgentType.SSTI_SCANNER],

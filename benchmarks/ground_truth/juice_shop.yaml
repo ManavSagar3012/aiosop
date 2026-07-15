@@ -1,0 +1,94 @@
+- id: JS-001
+  type: SQLi
+  endpoint: /rest/user/login
+  parameter: email
+  severity: High
+  expected_tool:
+    - sqlmap
+  expected_agent:
+    - vuln-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - payload
+  expected_report:
+    - CWE-89
+    - SQL Injection
+
+- id: JS-002
+  type: SQLi
+  endpoint: /rest/products/search
+  parameter: q
+  severity: High
+  expected_tool:
+    - sqlmap
+  expected_agent:
+    - vuln-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - payload
+  expected_report:
+    - CWE-89
+    - SQL Injection
+
+- id: JS-003
+  type: IDOR
+  endpoint: /rest/basket/
+  parameter: id
+  severity: High
+  expected_tool:
+    - browser-mcp
+  expected_agent:
+    - vuln-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - diff
+  expected_report:
+    - CWE-639
+    - Broken Access Control
+
+- id: JS-004
+  type: JWT
+  endpoint: /rest/user/login
+  parameter: token
+  severity: High
+  expected_tool:
+    - payload-mcp
+  expected_agent:
+    - jwt-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - token
+  expected_report:
+    - CWE-347
+    - Cryptographic Failures
+
+- id: JS-005
+  type: MassAssignment
+  endpoint: /api/Users
+  parameter: role
+  severity: High
+  expected_tool:
+    - payload-mcp
+  expected_agent:
+    - vuln-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - payload
+  expected_report:
+    - CWE-915
+    - Broken Access Control

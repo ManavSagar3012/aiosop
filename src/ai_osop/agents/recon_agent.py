@@ -7,7 +7,6 @@ and asset inventory maintenance.
 import asyncio
 import hashlib
 import re
-from datetime import datetime
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -17,12 +16,12 @@ import structlog
 
 from ai_osop.adapters.recon_mcp import ReconMCPAdapter
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.agents.retrieval_agent import RetrievalAgent
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
-from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, Task, make_asset_id
+from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, Task
 from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
 from ai_osop.core.url_intelligence import (
     classify_url,
@@ -217,6 +216,36 @@ class ReconAgent(BaseAgent):
                 return False
         await self.ctx.graph_memory.add_endpoint(ep)
         return True
+
+    async def _persist_endpoints_batch(self, endpoints: "List[Endpoint]") -> int:
+        """Scope-gate + normalize a list of endpoints, then batch-persist the valid ones.
+
+        Returns the count of endpoints that passed scope/normalization and were persisted.
+        Uses a single UNWIND Neo4j transaction instead of N round-trips.
+        """
+        valid: List[Endpoint] = []
+        for ep in endpoints:
+            norm = normalize_endpoint_url(getattr(ep, "url", None))
+            if norm is None:
+                logger.debug("recon_endpoint_rejected_malformed", url=getattr(ep, "url", None))
+                continue
+            ep.url = norm
+            enforcer = getattr(self, "_ep_scope_enforcer", None)
+            if enforcer is not None:
+                host = urlparse(norm).hostname
+                if not enforcer.host_in_scope(host):
+                    _rejected = getattr(self, "_rejected_scope_urls", None)
+                    if _rejected is not None:
+                        if norm not in _rejected:
+                            _rejected.add(norm)
+                            logger.info("recon_endpoint_out_of_scope", url=norm)
+                    else:
+                        logger.info("recon_endpoint_out_of_scope", url=norm)
+                    continue
+            valid.append(ep)
+        if valid:
+            await self.ctx.graph_memory.add_endpoints_batch(valid)
+        return len(valid)
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute reconnaissance task."""
@@ -599,12 +628,13 @@ class ReconAgent(BaseAgent):
             endpoints = []
 
         for endpoint in endpoints:
-            try:
-                endpoint.engagement_id = self.ctx.current_task.engagement_id
-                await self._persist_endpoint(endpoint)
+            endpoint.engagement_id = self.ctx.current_task.engagement_id
+        try:
+            await self._persist_endpoints_batch(endpoints)
+            for endpoint in endpoints:
                 self.endpoint_inventory[endpoint.id] = endpoint
-            except Exception as e:
-                logger.error(f"Failed to add endpoint {endpoint.url} to graph: {e}")
+        except Exception as e:
+            logger.error(f"Failed to batch-persist endpoints to graph: {e}")
 
         return {"status": "success", "endpoints_discovered": len(endpoints)}
 

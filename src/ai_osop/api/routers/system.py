@@ -3,15 +3,13 @@
 System health, configuration, sandbox status, and skill stats.
 """
 
-import asyncio
 from datetime import datetime
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
 
-from ai_osop.api.deps import require_role, state, verify_token
+from ai_osop.api.deps import require_role, state
 from ai_osop.core.config import settings
-from ai_osop.core.observability import render_prometheus, update_active_agents
 
 router = APIRouter(prefix="/system", tags=["system"])
 

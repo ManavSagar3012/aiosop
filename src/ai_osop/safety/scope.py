@@ -13,7 +13,6 @@ import structlog
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import (
-    ApprovalDeniedError,
     OutOfScopeError,
     SandboxException,
     ScopeValidationError,
@@ -441,7 +440,7 @@ class SandboxManager:
             raise SandboxException(f"Sandbox network not found for container {container.id}")
 
         # Get bridge interface name from network ID
-        network_id = sandbox_network.get("NetworkID", "")
+        sandbox_network.get("NetworkID", "")
         bridge_name = f"br-{sandbox_id[:12]}"
 
         # 1. Resolve allowed domains to IPs

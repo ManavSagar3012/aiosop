@@ -4,7 +4,6 @@ Exposes task execution traces and telemetry for live debugging."""
 
 from __future__ import annotations
 
-from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException

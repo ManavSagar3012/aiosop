@@ -589,10 +589,13 @@ def assert_production_secrets() -> None:
     """Fail closed at startup if insecure default secrets are present in a production
     environment (OSOP-P2-11 / OSOP-P0-03). Called from the API lifespan so a misconfigured
     production deployment refuses to boot rather than silently running with a public Neo4j
-    password or a forgeable audit/scope key. No-op in development/test."""
+    password or a forgeable audit/scope key.
+
+    In *any* environment, a WARNING is emitted when weak/default secrets are detected so
+    operators running a dev stack are never silently exposed.
+    """
+    _log = logging.getLogger(__name__)
     env = (getattr(settings, "environment", "") or "").lower()
-    if env not in _PROD_ENVIRONMENTS:
-        return
     problems = []
     if (getattr(settings, "neo4j_password", "") or "") in _WEAK_SECRET_VALUES:
         problems.append("OSOP_NEO4J_PASSWORD is a weak/default value")
@@ -600,11 +603,16 @@ def assert_production_secrets() -> None:
         problems.append("OSOP_AUDIT_SECRET_KEY is missing or weak/default value")
     if not getattr(settings, "jwt_secret", None) or getattr(settings, "jwt_secret", "") in _WEAK_SECRET_VALUES:
         problems.append("OSOP_JWT_SECRET is missing or weak/default value")
-    if problems:
+    if not problems:
+        return
+    if env in _PROD_ENVIRONMENTS:
         raise RuntimeError(
             "Refusing to start in a production environment with insecure secrets: "
             + "; ".join(problems)
         )
+    # Non-production: warn loudly but allow startup (dev/test environments may rely on defaults)
+    for p in problems:
+        _log.warning("AIOSOP-SEC-WEAK-SECRET [%s env]: %s", env or "unknown", p)
 
 
 class EngagementPhase(str, Enum):

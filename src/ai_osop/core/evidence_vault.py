@@ -1,12 +1,12 @@
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import structlog
 
 from ai_osop.core.config import settings
-from ai_osop.core.models import EvidencePackage, EvidenceProvenance, VerificationRecord
+from ai_osop.core.models import EvidencePackage
 
 logger = structlog.get_logger("ai_osop.evidence_vault")
 

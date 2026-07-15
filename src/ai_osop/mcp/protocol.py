@@ -5,10 +5,9 @@ Implements the core MCP spec with async support and structured I/O.
 """
 
 import asyncio
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import structlog
@@ -16,10 +15,9 @@ import websockets
 from pydantic import BaseModel, Field
 
 from ai_osop.core.config import settings
-from ai_osop.core.exceptions import MCPConnectionError, MCPException, MCPTimeoutError
-from ai_osop.core.models import AuditEvent
-from ai_osop.core.telemetry import RequestContext, add_mcp_latency
-from ai_osop.core.tracing import trace_span, trace_span_with_parent
+from ai_osop.core.exceptions import MCPConnectionError, MCPException
+from ai_osop.core.telemetry import add_mcp_latency
+from ai_osop.core.tracing import trace_span
 
 
 class MCPToolParameter(BaseModel):

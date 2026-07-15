@@ -3,7 +3,6 @@ Takeover Scanner Agent
 Specialized agent for Subdomain Takeover detection.
 """
 
-import uuid
 from typing import Any, Dict
 
 import httpx

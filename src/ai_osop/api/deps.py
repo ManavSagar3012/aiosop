@@ -12,7 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from ai_osop.core.config import settings
-from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.models import SessionState
 
 # ============== Pydantic Models for API ==============
 
@@ -125,14 +125,9 @@ async def verify_token(
         credentials = None
     if not credentials and not token:
         raise HTTPException(status_code=403, detail="Not authenticated")
-    print(
-        f"[DEBUG] Received Authorization header: {credentials.credentials if credentials else 'NONE'}"
-    )
     presented = credentials.credentials if credentials else token
 
-    # Force bypass JWT for debugging
-    jwt_secret = False
-    if jwt_secret and settings.jwt_secret:
+    if settings.jwt_secret:
         from jose import ExpiredSignatureError, JWTError, jwt
         decode_kwargs: Dict[str, Any] = {
             "key": settings.jwt_secret,

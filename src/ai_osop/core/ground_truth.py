@@ -8,8 +8,8 @@ produce evidence-backed execution traces for missed findings.
 import json
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
-from urllib.parse import parse_qsl, urlparse
+from typing import Any, Dict, List, Set
+from urllib.parse import urlparse
 
 from ai_osop.core.finding_confidence import score_finding
 

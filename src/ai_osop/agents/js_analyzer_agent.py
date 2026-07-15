@@ -19,7 +19,7 @@ from pydantic import BaseModel
 import httpx
 import structlog
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import OutOfScopeError, ScopeValidationError
 from ai_osop.core.models import Task, Vulnerability

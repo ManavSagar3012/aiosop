@@ -4,14 +4,13 @@ Production-grade adapter for Burp Suite MCP with request/response normalization,
 scanner issue correlation, and proxy history management.
 """
 
-import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.core.config import Severity, VulnClass
 from ai_osop.core.exceptions import MCPException
-from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, Vulnerability
-from ai_osop.mcp.protocol import MCPExecuteRequest, MCPExecuteResponse, MCPRegistry
+from ai_osop.core.models import Endpoint, ScopeDefinition, Vulnerability
+from ai_osop.mcp.protocol import MCPExecuteResponse, MCPRegistry
 
 
 class BurpMCPAdapter:
@@ -65,7 +64,7 @@ class BurpMCPAdapter:
         distinguish 'no data' from 'operation failed' (FINDING-011 / FINDING-012)."""
         if response.status == "success":
             return
-        from ai_osop.core.exceptions import MCPException, MCPTimeoutError
+        from ai_osop.core.exceptions import MCPTimeoutError
 
         if response.status == "timeout":
             raise MCPTimeoutError(f"Burp MCP operation '{operation}' timed out")

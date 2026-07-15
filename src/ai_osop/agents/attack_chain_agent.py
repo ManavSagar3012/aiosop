@@ -5,20 +5,18 @@ and attack graph path discovery.
 """
 
 import uuid
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.chain_composer import ChainComposer
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import AgentException, OutOfScopeError, ScopeValidationError
 from ai_osop.core.goal_planner import GoalAction, GoalPlanner, GoalState
-from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
+from ai_osop.core.knowledge_engine import get_knowledge_engine
 from ai_osop.core.models import (
     AttackPath,
-    Exploit,
     PrimitiveLedger,
     PrimitiveType,
     Task,
@@ -259,12 +257,12 @@ class AttackChainAgent(BaseAgent):
                 "findings_count": 0,
             }
 
-        # Persist the enabling primitives, then the chained ATO outcome.
-        for pv in primitive_vulns:
+        # Persist the enabling primitives in one batch transaction, then the chained ATO outcome.
+        if primitive_vulns:
             try:
-                await self.ctx.graph_memory.add_vulnerability(pv)
+                await self.ctx.graph_memory.add_vulnerabilities_batch(primitive_vulns)
             except Exception as e:
-                logger.error("ato_primitive_persist_failed", error=str(e))
+                logger.error("ato_primitives_batch_persist_failed", error=str(e))
 
         ato = Vulnerability(
             cwe="CWE-287",  # Improper Authentication
@@ -336,7 +334,7 @@ class AttackChainAgent(BaseAgent):
         engagement_id = payload["engagement_id"]
         entry_node_id = payload.get("entry_node_id")
         goal_types = payload.get("goal_types", ["rce", "admin_access", "data_exfiltration"])
-        max_depth = payload.get("max_depth", 5)
+        payload.get("max_depth", 5)
 
         # If no entry node specified, find all entry points
         if not entry_node_id:
@@ -345,7 +343,7 @@ class AttackChainAgent(BaseAgent):
             entry_nodes = [entry_node_id]
 
         # Use SecurityKnowledgeEngine & GoalPlanner
-        ske = SecurityKnowledgeEngine()
+        ske = get_knowledge_engine()
         planner = GoalPlanner()
 
         # Query session information from Neo4j for the initial state
@@ -714,10 +712,6 @@ class AttackChainAgent(BaseAgent):
 
     async def _find_entry_points(self, engagement_id: str) -> List[str]:
         """Find all entry point nodes in the graph."""
-        cypher = """
-        MATCH (a:Asset {engagement_id: $sid})
-        RETURN a.id as id
-        """
         if not self.ctx.graph_memory:
             return []
         ids: List[str] = []

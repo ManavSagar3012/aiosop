@@ -12,6 +12,23 @@ from ai_osop.core.config import VulnClass
 
 logger = logging.getLogger(__name__)
 
+# Module-level singleton — the knowledge base JSON is static at runtime.
+# All callers share one parsed instance; no per-call file I/O.
+# ponytail: not thread-safe across processes, fine for a single-process async server
+_INSTANCE: "SecurityKnowledgeEngine | None" = None
+
+
+def get_knowledge_engine(filepath: "Path | None" = None) -> "SecurityKnowledgeEngine":
+    """Return the process-wide SecurityKnowledgeEngine singleton.
+
+    The first call parses knowledge_base.json from disk; subsequent calls are free.
+    Pass ``filepath`` only in tests that need a custom knowledge base path.
+    """
+    global _INSTANCE
+    if _INSTANCE is None or filepath is not None:
+        _INSTANCE = SecurityKnowledgeEngine(filepath=filepath)
+    return _INSTANCE
+
 
 class SecurityKnowledgeEngine:
     """

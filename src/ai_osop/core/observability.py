@@ -4,18 +4,16 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_client import generate_latest
 
 from ai_osop.core.metrics import (
     ACTIVE_AGENTS,
     ACTIVE_ENGAGEMENTS,
-    AGENT_SUCCESS_RATE,
     AGENT_THROUGHPUT,
     AGENT_UTILIZATION,
     APPROVAL_WAIT_TIME,
     APPROVALS_TOTAL,
     BROWSER_RUNTIME_SECONDS,
-    DENIED_ACTIONS_TOTAL,
     ENGAGEMENT_COMPLETION_TIME,
     ENGAGEMENT_COST_USD,
     FAILED_TASKS,
@@ -23,7 +21,6 @@ from ai_osop.core.metrics import (
     LLM_CALLS_TOTAL,
     LLM_COST_USD,
     LLM_TOKENS_TOTAL,
-    MCP_ERRORS_TOTAL,
     MCP_LATENCY_SECONDS,
     MCP_SUCCESS_RATE,
     OWNERSHIP_VIOLATIONS_TOTAL,
@@ -37,7 +34,6 @@ from ai_osop.core.metrics import (
     SANDBOX_BLOCKS_TOTAL,
     SANDBOX_RUNTIME_SECONDS,
     SCOPE_VIOLATIONS_TOTAL,
-    TASK_COMPLETION_TIME,
     TASK_DURATION_SECONDS,
     TASK_THROUGHPUT,
     TASKS_BY_STATUS,
