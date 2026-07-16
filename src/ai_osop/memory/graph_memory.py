@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -1024,6 +1025,49 @@ class GraphMemory:
                 result = await session.run(cypher, {"engagement_id": engagement_id})
                 records = await result.data()
                 return [record["v"] for record in records]
+
+    async def export_findings_json(
+        self, engagement_id: str, path: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Export an engagement's persisted Vulnerability findings as scorer-ready JSON.
+
+        This is the seam between a real engagement and benchmarks/score_engagement.py.
+        The Vulnerability nodes are persisted (see add_vulnerability) with exactly the
+        keys the scorer duck-types on — vuln_type, endpoint_id, confidence, evidence,
+        tool_source, severity, title, id — so the raw node dicts are already the right
+        shape; we only sort for stable output and optionally write to disk.
+
+        Args:
+            engagement_id: engagement whose findings to export.
+            path: if given, the JSON array is written here (UTF-8). The list is
+                always returned regardless.
+
+        Returns:
+            A JSON-serialisable list of finding dicts, ready to pass to
+            score_engagement.score_findings(...) or the CLI's --findings flag.
+        """
+        findings = await self.get_vulnerabilities_by_engagement(engagement_id)
+        # Stable ordering: highest confidence first, then id, so diffs between runs
+        # are meaningful and not reshuffled by Neo4j's return order.
+        findings = sorted(
+            findings,
+            key=lambda f: (-float(f.get("confidence") or 0.0), str(f.get("id") or "")),
+        )
+        if path:
+            with trace_span(
+                "graph_memory.export_findings_json",
+                attributes={"engagement_id": engagement_id, "count": len(findings)},
+            ):
+                Path(path).write_text(
+                    json.dumps(findings, indent=2, default=str), encoding="utf-8"
+                )
+            logger.info(
+                "exported %d findings for engagement=%s -> %s",
+                len(findings),
+                engagement_id,
+                path,
+            )
+        return findings
 
     async def get_all_nodes_for_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
         """Fetch all nodes for a given engagement (for attack graph viz).
