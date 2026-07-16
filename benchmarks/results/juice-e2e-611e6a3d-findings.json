@@ -1,0 +1,23 @@
+[
+  {
+    "severity": "medium",
+    "duplicate_count": 0,
+    "dedup_key": "f19aabd1a3f9142fbaf2c7113b49ab439e0af274d25f0ae8c9a58a4747021d19",
+    "evidence": "[{\"type\": \"mass_assignment\", \"provenance\": \"reflected\", \"url\": \"http://localhost:3000/api/Users\", \"method\": \"POST\", \"accepted_fields\": {\"role\": \"admin\"}, \"injected\": {\"role\": \"admin\", \"isAdmin\": true, \"isDeluxe\": true}, \"baseline_suppressed\": true, \"independent_readback\": false, \"manual_confirm_required\": true}]",
+    "last_seen": "2026-07-16T14:40:12.930982",
+    "vuln_type": "mass_assignment",
+    "tool_source": "mass_assignment_scan",
+    "confidence": 0.5,
+    "impact": "high",
+    "description": "The endpoint http://localhost:3000/api/Users accepted attacker-supplied privileged field(s) {'role': 'admin'} that a normal user should not control, and a control request without those fields did not exhibit them (reflected in the create response only \u2014 provide readback_url to confirm persistence). This enables privilege escalation.",
+    "created_at": "2026-07-16T14:40:12.930982",
+    "title": "Mass assignment via role",
+    "cwe": "CWE-915",
+    "validated": false,
+    "engagement_id": "juice-e2e-611e6a3d",
+    "id": "vuln-d3ae58a32ce0",
+    "requires_auth": false,
+    "exploitability": "high",
+    "entry_point": false
+  }
+]

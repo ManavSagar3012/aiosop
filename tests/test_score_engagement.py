@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from pathlib import Path
-
-import pytest
 
 # Import the scorer module by path — benchmarks/ is not a package.
 import sys as _sys
+from pathlib import Path
+
+import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
     "score_engagement",
@@ -158,7 +158,9 @@ def test_simulated_by_evidence_provenance_dropped():
     manifest = [_gt("JS-001", "SQLi", "/rest/user/login")]
     findings = [
         _finding(
-            "f1", "sqli", "/rest/user/login",
+            "f1",
+            "sqli",
+            "/rest/user/login",
             evidence=[{"type": "request", "provenance": "simulated"}],
         )
     ]
@@ -196,11 +198,20 @@ def test_wrong_type_does_not_match():
 # Evidence completeness
 # --------------------------------------------------------------------------- #
 def test_evidence_completeness_scored():
-    manifest = [_gt("JS-001", "SQLi", "/rest/user/login",
-                    expected_evidence=["request", "response", "payload"])]
+    manifest = [
+        _gt(
+            "JS-001",
+            "SQLi",
+            "/rest/user/login",
+            expected_evidence=["request", "response", "payload"],
+        )
+    ]
     # finding only carries request+response, missing payload
-    findings = [_finding("f1", "sqli", "/rest/user/login",
-                         evidence=[{"type": "request"}, {"type": "response"}])]
+    findings = [
+        _finding(
+            "f1", "sqli", "/rest/user/login", evidence=[{"type": "request"}, {"type": "response"}]
+        )
+    ]
     card = score_findings(findings, manifest)
     s = card["summary"]
     assert s["true_positives"] == 1
@@ -209,10 +220,14 @@ def test_evidence_completeness_scored():
 
 
 def test_evidence_complete_when_all_present():
-    manifest = [_gt("JS-001", "SQLi", "/rest/user/login",
-                    expected_evidence=["request", "response"])]
-    findings = [_finding("f1", "sqli", "/rest/user/login",
-                         evidence=[{"type": "request"}, {"type": "response"}])]
+    manifest = [
+        _gt("JS-001", "SQLi", "/rest/user/login", expected_evidence=["request", "response"])
+    ]
+    findings = [
+        _finding(
+            "f1", "sqli", "/rest/user/login", evidence=[{"type": "request"}, {"type": "response"}]
+        )
+    ]
     card = score_findings(findings, manifest)
     assert card["summary"]["evidence_completeness"] == 1.0
 
@@ -240,8 +255,7 @@ def test_two_findings_one_positive_best_confidence_wins_rest_are_extras():
 # --------------------------------------------------------------------------- #
 def test_real_juice_shop_manifest_loads_and_scores():
     manifest_path = (
-        Path(__file__).resolve().parents[1]
-        / "benchmarks" / "ground_truth" / "juice_shop.yaml"
+        Path(__file__).resolve().parents[1] / "benchmarks" / "ground_truth" / "juice_shop.yaml"
     )
     manifest = load_manifest(manifest_path)
     assert len(manifest) >= 5
@@ -260,3 +274,88 @@ def test_empty_manifest_yields_none_metrics_not_crash():
     assert s["recall"] is None
     assert s["coverage"] is None
     assert s["extras_for_triage"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Regression: persisted findings store `evidence` as a JSON STRING and carry NO
+# top-level endpoint field — the real Vulnerability export shape. Before the fix
+# the scorer read a non-existent top-level endpoint (=> "" => type-only match,
+# mis-attributing JS-002's SQLi to JS-001) and iterated the evidence string as
+# characters (=> evidence_kinds always []). These lock both behaviours.
+# --------------------------------------------------------------------------- #
+_SQLMAP_EV = [
+    {
+        "type": "sqlmap_injection",
+        "provenance": "sqlmap",
+        "url": "http://localhost:3000/rest/products/search?q=test",
+        "parameter": "q (GET)",
+        "dbms": "SQLite",
+        "techniques": ["boolean-based blind", "time-based blind"],
+        "payloads": ["q=test%' AND 9942=9942 AND 'XBfi%'='XBfi"],
+    }
+]
+
+
+def _persisted_finding(id, vuln_type, evidence_dicts, confidence=0.9, tool_source="sqlmap"):
+    """Finding shaped like the real JSON export: evidence is a JSON-encoded
+    string and there is NO top-level endpoint/url field."""
+    return {
+        "id": id,
+        "vuln_type": vuln_type,
+        "confidence": confidence,
+        "evidence": json.dumps(evidence_dicts),
+        "tool_source": tool_source,
+        "title": f"{vuln_type} finding",
+    }
+
+
+def test_stringified_evidence_recovers_endpoint_for_correct_attribution():
+    """The products/search SQLi must be credited to JS-002 — not greedily
+    claimed by the first SQLi in manifest order (JS-001/login)."""
+    manifest = [
+        _gt("JS-001", "SQLi", "/rest/user/login"),
+        _gt("JS-002", "SQLi", "/rest/products/search"),
+    ]
+    findings = [_persisted_finding("vuln-sqli", "sqli", _SQLMAP_EV, confidence=0.98)]
+    card = score_findings(findings, manifest)
+    s = card["summary"]
+    assert s["true_positives"] == 1
+    assert card["matched"][0]["gt_id"] == "JS-002"  # correct attribution
+    assert card["matched"][0]["endpoint"]  # endpoint recovered from evidence, not ""
+    assert card["false_negatives"][0]["gt_id"] == "JS-001"  # login SQLi genuinely missed
+
+
+def test_stringified_evidence_registers_evidence_kinds():
+    """evidence_completeness must reflect real artifacts: url->request and
+    payloads->payload are present; response is honestly absent."""
+    manifest = [
+        _gt(
+            "JS-002",
+            "SQLi",
+            "/rest/products/search",
+            expected_evidence=["request", "response", "payload"],
+        )
+    ]
+    findings = [_persisted_finding("vuln-sqli", "sqli", _SQLMAP_EV, confidence=0.98)]
+    card = score_findings(findings, manifest)
+    m = card["matched"][0]
+    assert "request" in m["evidence_kinds"]  # aliased from url
+    assert "payload" in m["evidence_kinds"]  # aliased from payloads
+    assert "response" in m["missing_evidence"]  # genuinely not captured -> honest gap
+    assert m["evidence_complete"] is False
+
+
+def test_stringified_simulated_provenance_still_dropped():
+    """The honest-stub guard must see through the stringified evidence too."""
+    manifest = [_gt("JS-002", "SQLi", "/rest/products/search")]
+    sim_ev = [
+        {
+            "type": "sqlmap_injection",
+            "provenance": "simulated",
+            "url": "http://localhost:3000/rest/products/search?q=test",
+        }
+    ]
+    findings = [_persisted_finding("vuln-sim", "sqli", sim_ev)]
+    card = score_findings(findings, manifest)
+    assert card["summary"]["findings_simulated_dropped"] == 1
+    assert card["summary"]["true_positives"] == 0

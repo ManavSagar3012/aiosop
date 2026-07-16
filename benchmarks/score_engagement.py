@@ -89,6 +89,39 @@ _TYPE_ALIASES: Dict[str, set] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Evidence vocabulary -> canonical manifest token.
+#
+# Manifest ``expected_evidence`` uses request/response/payload/token/diff.
+# Real findings embed evidence dicts whose keys/values speak a richer, tool-
+# specific vocabulary (a sqlmap dict has ``url``/``payloads``, a mass-assignment
+# dict has ``injected``). We alias those onto the manifest tokens so a finding
+# that genuinely captured a request URL registers the 'request' kind. Kept
+# conservative on purpose: we never invent a 'response' from a request artifact,
+# so a finding that never captured a response is honestly reported incomplete.
+# --------------------------------------------------------------------------- #
+_EVIDENCE_ALIASES: Dict[str, str] = {
+    "request": "request",
+    "req": "request",
+    "http_request": "request",
+    "url": "request",
+    "curl": "request",
+    "response": "response",
+    "resp": "response",
+    "http_response": "response",
+    "response_body": "response",
+    "payload": "payload",
+    "payloads": "payload",
+    "injected": "payload",
+    "injection": "payload",
+    "token": "token",
+    "jwt": "token",
+    "jwt_token": "token",
+    "diff": "diff",
+    "baseline_diff": "diff",
+}
+
+
 def _norm_type(raw: str) -> str:
     """Collapse a type string to its canonical alias-group key."""
     key = (raw or "").strip().lower().replace("-", "_").replace(" ", "")
@@ -205,6 +238,53 @@ def _finding_field(f: Any, *names: str, default: Any = None) -> Any:
     return default
 
 
+def _finding_evidence_list(f: Any) -> List[Dict[str, Any]]:
+    """Return the finding's evidence as a list of dicts.
+
+    Persisted ``Vulnerability.evidence`` round-trips through JSON as a *string*
+    (e.g. ``'[{"type": "sqlmap_injection", ...}]'``), while model instances and
+    some exports carry it as an already-parsed list. Iterating the raw string
+    yields characters, not dicts, silently zeroing every evidence check — so we
+    normalise to a dict list here and every caller goes through it.
+    """
+    ev = _finding_field(f, "evidence", default=None)
+    if ev is None:
+        return []
+    if isinstance(ev, str):
+        ev = ev.strip()
+        if not ev:
+            return []
+        try:
+            ev = json.loads(ev)
+        except (ValueError, TypeError):
+            return []
+    if isinstance(ev, dict):
+        ev = [ev]
+    if not isinstance(ev, list):
+        return []
+    return [e for e in ev if isinstance(e, dict)]
+
+
+def _finding_endpoint(f: Any) -> str:
+    """Best-effort endpoint/path for a finding.
+
+    Prefer explicit top-level fields, then fall back to the URL/endpoint carried
+    inside the evidence payload (where recon/tool findings actually record it).
+    Without this fallback the scorer sees an empty endpoint for every finding
+    and silently degrades to type-only matching, mis-attributing a finding to
+    the wrong ground-truth entry when two share a vuln type.
+    """
+    top = _finding_field(f, "endpoint_id", "endpoint", "url", "target", default="")
+    if top:
+        return str(top)
+    for ev in _finding_evidence_list(f):
+        for key in ("url", "endpoint", "request_url", "target", "uri"):
+            val = ev.get(key)
+            if val:
+                return str(val)
+    return ""
+
+
 def _finding_type_str(f: Any) -> str:
     vt = _finding_field(f, "vuln_type", "type", "vuln_class", default="")
     # enum -> its .value; str stays as-is
@@ -224,8 +304,8 @@ def _finding_is_simulated(f: Any) -> bool:
     title = str(_finding_field(f, "title", default="")).lower()
     if "(simulated)" in title:
         return True
-    for ev in _finding_field(f, "evidence", default=[]) or []:
-        if isinstance(ev, dict) and str(ev.get("provenance", "")).lower() == "simulated":
+    for ev in _finding_evidence_list(f):
+        if str(ev.get("provenance", "")).lower() in {"simulated", "mock", "stub"}:
             return True
     return False
 
@@ -239,14 +319,20 @@ def _evidence_kinds(f: Any) -> List[str]:
     register the 'request' kind.
     """
     kinds: set = set()
-    for ev in _finding_field(f, "evidence", default=[]) or []:
-        if not isinstance(ev, dict):
-            continue
-        t = str(ev.get("type", "")).lower()
-        if t:
-            kinds.add(t)
+
+    def _register(raw: str) -> None:
+        tok = str(raw).strip().lower()
+        if not tok:
+            return
+        kinds.add(tok)
+        canon = _EVIDENCE_ALIASES.get(tok)
+        if canon:
+            kinds.add(canon)
+
+    for ev in _finding_evidence_list(f):
+        _register(ev.get("type", ""))
         for k in ev.keys():
-            kinds.add(str(k).lower())
+            _register(k)
     return sorted(kinds)
 
 
@@ -295,9 +381,7 @@ def score_findings(
             ftype = _finding_type_str(f)
             if not _type_matches(g.type, ftype):
                 continue
-            fendpoint = str(
-                _finding_field(f, "endpoint_id", "endpoint", "url", default="")
-            )
+            fendpoint = _finding_endpoint(f)
             if not _endpoint_matches(g.endpoint, fendpoint):
                 continue
             conf = float(_finding_field(f, "confidence", default=0.0) or 0.0)
@@ -334,7 +418,7 @@ def score_findings(
                 continue
             if not _type_matches(g.type, _finding_type_str(f)):
                 continue
-            fendpoint = str(_finding_field(f, "endpoint_id", "endpoint", "url", default=""))
+            fendpoint = _finding_endpoint(f)
             if _endpoint_matches(g.endpoint, fendpoint):
                 false_positives.append(
                     {"gt_id": g.id, "finding_id": fid, "type": g.type, "endpoint": fendpoint}
@@ -352,7 +436,7 @@ def score_findings(
             {
                 "finding_id": fid,
                 "type": _finding_type_str(f),
-                "endpoint": str(_finding_field(f, "endpoint_id", "endpoint", "url", default="")),
+                "endpoint": _finding_endpoint(f),
                 "confidence": float(_finding_field(f, "confidence", default=0.0) or 0.0),
                 "severity": str(
                     getattr(_finding_field(f, "severity", default=""), "value", "")
@@ -428,9 +512,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="ground-truth YAML manifest",
     )
     ap.add_argument("--out", default=None, help="write scorecard JSON here (else stdout)")
-    ap.add_argument(
-        "--min-recall", type=float, default=None, help="exit 1 if recall below this"
-    )
+    ap.add_argument("--min-recall", type=float, default=None, help="exit 1 if recall below this")
     ap.add_argument(
         "--max-fp", type=int, default=None, help="exit 1 if false positives exceed this"
     )

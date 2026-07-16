@@ -2,45 +2,22 @@
   "summary": {
     "manifest_positives": 5,
     "manifest_negative_controls": 4,
-    "findings_total": 2,
-    "findings_real": 2,
+    "findings_total": 1,
+    "findings_real": 1,
     "findings_simulated_dropped": 0,
-    "true_positives": 2,
-    "false_negatives": 3,
+    "true_positives": 1,
+    "false_negatives": 4,
     "false_positives": 0,
     "extras_for_triage": 0,
     "precision": 1.0,
-    "recall": 0.4,
-    "coverage": 0.4,
+    "recall": 0.2,
+    "coverage": 0.2,
     "evidence_completeness": 0.0
   },
   "matched": [
     {
-      "gt_id": "JS-002",
-      "finding_id": "vuln-840f74283f15",
-      "finding_type": "sqli",
-      "endpoint": "http://localhost:3000/rest/products/search?q=test",
-      "confidence": 0.98,
-      "evidence_kinds": [
-        "dbms",
-        "parameter",
-        "payload",
-        "payloads",
-        "provenance",
-        "request",
-        "sqlmap_injection",
-        "techniques",
-        "type",
-        "url"
-      ],
-      "evidence_complete": false,
-      "missing_evidence": [
-        "response"
-      ]
-    },
-    {
       "gt_id": "JS-005",
-      "finding_id": "vuln-91265b1aeb33",
+      "finding_id": "vuln-d3ae58a32ce0",
       "finding_type": "mass_assignment",
       "endpoint": "http://localhost:3000/api/Users",
       "confidence": 0.5,
@@ -69,6 +46,12 @@
       "gt_id": "JS-001",
       "type": "SQLi",
       "endpoint": "/rest/user/login",
+      "severity": "High"
+    },
+    {
+      "gt_id": "JS-002",
+      "type": "SQLi",
+      "endpoint": "/rest/products/search",
       "severity": "High"
     },
     {
