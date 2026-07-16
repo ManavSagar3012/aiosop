@@ -160,6 +160,36 @@ async def test_clean_endpoint_not_confirmed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_finding_carries_request_and_response_evidence(monkeypatch):
+    """The persisted finding must embed real request + response artifacts so a
+    triager can reproduce it without re-running the scan. Before this, findings
+    carried only the semantic result (accepted_fields) and scored 0 evidence."""
+    # order (no readback_url): control request, injected request (echoes role)
+    monkeypatch.setattr(
+        va.httpx,
+        "AsyncClient",
+        _fake_client_factory(['{"id":1}', '{"id":1,"role":"admin"}']),
+    )
+    agent = _agent()
+    await agent._execute_mass_assignment_scan(
+        {
+            "url": "https://x/api/users",
+            "engagement_id": "e1",
+            "base_body": {"name": "bob"},
+            "inject": {"role": "admin"},
+        }
+    )
+    vuln = next(iter(agent.findings.values()))
+    ev = vuln.evidence[0]
+    assert ev["request"]["method"] == "POST"
+    assert ev["request"]["url"] == "https://x/api/users"
+    assert ev["request"]["body"]["role"] == "admin"  # the injected payload
+    assert ev["response"]["status"] == 200
+    assert "admin" in ev["response"]["body_snippet"]  # response demonstrates acceptance
+    assert ev["response"]["source"] == "create_response"
+
+
+@pytest.mark.asyncio
 async def test_requires_url(monkeypatch):
     from ai_osop.core.exceptions import AgentException
 

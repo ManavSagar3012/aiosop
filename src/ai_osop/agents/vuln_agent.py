@@ -27,6 +27,11 @@ from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, Vulnerability
 from ai_osop.core.oast_correlation import OASTCorrelationRegistry, OASTProbe
 
+# Max chars of an HTTP response body persisted as finding evidence. Bounds graph
+# storage and avoids dumping unbounded/PII-heavy bodies while keeping enough of
+# the response to demonstrate the vulnerability.
+_EVIDENCE_BODY_SNIPPET = 2048
+
 
 class VulnAnalysisAgent(BaseAgent):
     """
@@ -1126,6 +1131,22 @@ class VulnAnalysisAgent(BaseAgent):
                     "method": method,
                     "accepted_fields": accepted_fields,
                     "injected": inject,
+                    # Real HTTP request/response artifacts so the finding is
+                    # reproducible without re-running the scan (HackerOne-grade
+                    # evidence). The body snippet is bounded to avoid persisting
+                    # unbounded/PII-heavy payloads into the graph.
+                    "request": {
+                        "method": method,
+                        "url": url,
+                        "body": {**base_body, **inject},
+                    },
+                    "response": {
+                        "status": inj_resp.status_code,
+                        "body_snippet": (inj_text or "")[:_EVIDENCE_BODY_SNIPPET],
+                        "source": (
+                            "independent_readback" if independent_readback else "create_response"
+                        ),
+                    },
                     "baseline_suppressed": True,  # confirmed absent in the control request
                     "independent_readback": independent_readback,
                     "manual_confirm_required": manual_confirm_required,
