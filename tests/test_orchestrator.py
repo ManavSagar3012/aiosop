@@ -62,11 +62,13 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
     assert updated_session.phase == EngagementPhase.RECONNAISSANCE.value
     mock_orchestrator.session_memory.store_session_state.assert_called()
 
-    # Verify auto-task scheduling for recon
-    assert len(mock_orchestrator._tasks) == 1
-    task = list(mock_orchestrator._tasks.values())[0]
-    assert task.type == "full_recon"
-    assert task.payload["domain"] == "example.com"
+    # Verify auto-task scheduling for recon: GET crawler + guest browser XHR
+    # capture (AIOSOP-SPA-XHR-RECON).
+    assert len(mock_orchestrator._tasks) == 2
+    by_type = {t.type: t for t in mock_orchestrator._tasks.values()}
+    assert set(by_type) == {"full_recon", "capture_authenticated_surface"}
+    assert by_type["full_recon"].payload["domain"] == "example.com"
+    assert by_type["capture_authenticated_surface"].payload["user_label"] == "guest"
 
 
 @pytest.mark.asyncio

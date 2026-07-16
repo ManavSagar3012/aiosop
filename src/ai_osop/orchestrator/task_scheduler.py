@@ -38,6 +38,12 @@ class TaskScheduler:
     # Terminal failure statuses that should not trigger retry success path
     _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
 
+    # Emit a single starvation WARNING once a task has waited this long for an
+    # idle agent of its type. An agent-pool outage (e.g. agents transiently
+    # unregistered during an API restart) was previously silent — a task looped
+    # no_agent_found for 610s with zero alerting. This makes the outage visible.
+    AGENT_STARVATION_WARN_SECONDS = 60
+
     def __init__(
         self, orchestrator: Any, state_machine: Optional[EngagementStateMachine] = None
     ) -> None:
@@ -45,6 +51,8 @@ class TaskScheduler:
         self.state_machine = state_machine or getattr(
             orchestrator, "engagement_state_machine", None
         )
+        # Task ids already warned about agent starvation (warn once, not per tick).
+        self._starvation_warned: set = set()
 
     async def schedule_task(self, task: Task) -> Task:
         """Schedule a task for execution."""
@@ -366,8 +374,10 @@ class TaskScheduler:
             )
             agent = await self._find_available_agent(task.agent_type, task.type)
             if not agent:
+                await self._warn_if_starved(task)
                 logger.info("no_agent_found", task_id=task.id)
             if agent:
+                self._starvation_warned.discard(task.id)
                 record_stage(
                     task,
                     ExecutionStage.WORKER_LEASE_GRANTED,
@@ -425,6 +435,49 @@ class TaskScheduler:
                 record_stage(task, ExecutionStage.WORKER_LEASE_REQUESTED, error="no_agent_found")
                 await self._orch.graph_memory.upsert_task(task)
                 await self._orch.session_memory.store_task(task)
+
+    async def _warn_if_starved(self, task: Task) -> bool:
+        """Emit a single WARNING (+ best-effort audit) when a task has waited past
+        AGENT_STARVATION_WARN_SECONDS for an idle agent of its type.
+
+        Assignment latency is sub-second in steady state; a task waiting far
+        longer means no idle agent of its type exists (a pool outage), which was
+        previously silent. Warns at most once per task id; returns True if it
+        warned this call.
+        """
+        if task.id in self._starvation_warned:
+            return False
+        created = getattr(task, "created_at", None)
+        if not created:
+            return False
+        waited = (datetime.utcnow() - created).total_seconds()
+        if waited < self.AGENT_STARVATION_WARN_SECONDS:
+            return False
+        self._starvation_warned.add(task.id)
+        logger.warning(
+            "task_starved_no_agent",
+            task_id=task.id,
+            agent_type=str(task.agent_type),
+            waited_seconds=round(waited, 1),
+        )
+        try:
+            from ai_osop.core.models import AuditEvent
+
+            await self._orch._audit_log(
+                AuditEvent(
+                    event_type="agent_starvation",
+                    severity="warning",
+                    actor_type="system",
+                    actor_id="task_scheduler",
+                    action={"reason": "no_idle_agent_of_type", "agent_type": str(task.agent_type)},
+                    result={"waited_seconds": round(waited, 1)},
+                    context={"task_id": task.id, "task_type": task.type},
+                    engagement_id=getattr(task, "engagement_id", "") or "",
+                )
+            )
+        except Exception:  # noqa: BLE001 - audit is best-effort, never break scheduling
+            pass
+        return True
 
     async def _find_available_agent(
         self, agent_type: AgentType, task_type: str = ""
