@@ -122,6 +122,12 @@ class ApplicabilityEngine:
                 bool(parsed.query)
                 or has_fragment_query
                 or bool(payload.get("body"))
+                # `data` is the POST-body key the sqli_scan/run_sqlmap path actually
+                # uses (e.g. a JSON/form login body). Without it a login SQLi scan
+                # dispatched with a body but no explicit method defaulted to GET and
+                # was wrongly skipped as "no input vectors" — the JS-001 false
+                # negative. A present body is an injectable vector regardless of verb.
+                or bool(payload.get("data"))
                 or bool(payload.get("query_keys"))
             )
             if not has_params and method == "GET":

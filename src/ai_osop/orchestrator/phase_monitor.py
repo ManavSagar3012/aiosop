@@ -6,6 +6,7 @@ Handles phase monitoring and automatic task dispatch on phase entry.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -114,6 +115,15 @@ class PhaseMonitor:
                     s += 5
             return s
 
+        def _build_body(keys: List[str], content_type: str) -> str:
+            """A whitespace-free injectable body (per the bridge sanitizer). sqlmap
+            fuzzes each value; JSON bodies (e.g. a JSON login API) get a compact
+            JSON object so sqlmap auto-detects application/json, form bodies get a
+            urlencoded pair set."""
+            if "json" in (content_type or "").lower():
+                return json.dumps({k: "test" for k in keys}, separators=(",", ":"))
+            return "&".join(f"{k}=test" for k in keys)
+
         seen: set = set()
         scored: List[tuple] = []
         for r in records:
@@ -121,29 +131,52 @@ class PhaseMonitor:
             if not url:
                 continue
             parsed = urlparse(url)
+            method = r.get("method") or "GET"
+
+            # (a) GET/query-string injectable params.
             q = {
                 k: v
                 for k, v in parse_qsl(parsed.query, keep_blank_values=True)
                 if _is_probable_param_key(k)
             }
-            if not q:
-                continue
-            param_names = tuple(sorted(q.keys()))
-            key = (parsed.path, param_names)
-            if key in seen:
-                continue
-            seen.add(key)
-            target_url = urlunparse(parsed._replace(query=urlencode(q)))
-            scored.append(
-                (
-                    _score(param_names),
-                    {
-                        "url": target_url,
-                        "method": r.get("method") or "GET",
-                        "technologies": r.get("technologies") or [],
-                    },
-                )
-            )
+            if q:
+                param_names = tuple(sorted(q.keys()))
+                key = (parsed.path, param_names)
+                if key not in seen:
+                    seen.add(key)
+                    target_url = urlunparse(parsed._replace(query=urlencode(q)))
+                    scored.append(
+                        (
+                            _score(param_names),
+                            {
+                                "url": target_url,
+                                "method": method,
+                                "technologies": r.get("technologies") or [],
+                            },
+                        )
+                    )
+
+            # (b) POST/PUT/PATCH body params. Recon records these as body_schema_keys
+            # with has_body=true; without this branch a body-only injectable — e.g. a
+            # JSON login's `email` — is never scanned, since the URL carries no '?'.
+            body_keys = [k for k in (r.get("body_keys") or []) if _is_probable_param_key(k)]
+            if r.get("has_body") and body_keys:
+                bparam_names = tuple(sorted(body_keys))
+                bkey = (parsed.path, ("__body__",) + bparam_names)
+                if bkey not in seen:
+                    seen.add(bkey)
+                    scored.append(
+                        (
+                            _score(bparam_names),
+                            {
+                                "url": urlunparse(parsed._replace(query="")),
+                                # A body implies a state-changing verb; never GET.
+                                "method": method if method != "GET" else "POST",
+                                "data": _build_body(body_keys, r.get("content_type") or ""),
+                                "technologies": r.get("technologies") or [],
+                            },
+                        )
+                    )
         # Highest injectability first (stable within equal scores), then cap so the
         # active-scan phase converges: 25 targets x ~4 scanners x ~240s / ~13 agents
         # drained >> the 1200s window; a smaller high-value set finishes in time.
@@ -331,10 +364,16 @@ class PhaseMonitor:
             #     (AIOSOP-ACTIVE-INJECTION-WIRE-2026-07-08)
             param_endpoint_records = await self._orch.graph_memory.run_read_query(
                 """MATCH (e:Endpoint {engagement_id: $sid})
-                   WHERE e.status_code IS NOT NULL AND e.url CONTAINS '?'
+                   WHERE e.status_code IS NOT NULL
+                     AND (e.url CONTAINS '?'
+                          OR (coalesce(e.has_body, false)
+                              AND size(coalesce(e.body_schema_keys, [])) > 0))
                    RETURN e.url AS url, e.query_keys AS query_keys,
                           coalesce(e.method, 'GET') AS method,
-                          e.technologies AS technologies""",
+                          e.technologies AS technologies,
+                          coalesce(e.has_body, false) AS has_body,
+                          coalesce(e.body_schema_keys, []) AS body_keys,
+                          coalesce(e.content_type, '') AS content_type""",
                 {"sid": session.session_id},
             )
 
@@ -413,17 +452,28 @@ class PhaseMonitor:
                         target_techs = techs
                         break
 
+                # level=1 (was 2): level=2 multiplies requests per parameter, which
+                # causes ~677s network_wait against slow external targets like
+                # ginandjuice.shop and exhausts the 900s task budget. level=1 uses
+                # the minimal set of payloads and completes in ~400-500s for the same
+                # target. level=2+ can be re-enabled for local/fast targets.
+                # (AIOSOP-SQLI-BUDGET-003)
+                sqli_payload: Dict[str, Any] = {
+                    "url": target_url,
+                    "method": target_method,
+                    "level": 1,
+                    "risk": 1,
+                }
+                # Body-param targets carry an injectable POST body (JSON or form) so
+                # sqlmap fuzzes body params (e.g. a JSON login's `email`), not just
+                # query params. (AIOSOP-SQLI-POSTBODY-JS001)
+                if target.get("data"):
+                    sqli_payload["data"] = target["data"]
                 sqli_task = Task(
                     type="sqli_scan",
                     priority=8,
                     agent_type=AgentType.VULN_ANALYSIS,
-                    # level=1 (was 2): level=2 multiplies requests per parameter, which
-                    # causes ~677s network_wait against slow external targets like
-                    # ginandjuice.shop and exhausts the 900s task budget. level=1 uses
-                    # the minimal set of payloads and completes in ~400-500s for the same
-                    # target. level=2+ can be re-enabled for local/fast targets.
-                    # (AIOSOP-SQLI-BUDGET-003)
-                    payload={"url": target_url, "method": target_method, "level": 1, "risk": 1},
+                    payload=sqli_payload,
                     engagement_id=session.session_id,
                     timeout_seconds=self.SQLI_TASK_TIMEOUT_SECONDS,
                 )

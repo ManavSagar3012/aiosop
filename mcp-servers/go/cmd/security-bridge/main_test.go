@@ -1,6 +1,64 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func hasArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+// buildSqlmapArgs must always add --ignore-code (default 401,403) so sqlmap does
+// not abort on auth-gated endpoints (the JS-001 login-SQLi false negative).
+func TestBuildSqlmapArgsDefaultsIgnoreCode(t *testing.T) {
+	args := buildSqlmapArgs(map[string]any{
+		"url":  "http://localhost:3000/rest/user/login",
+		"data": `{"email":"a*","password":"b"}`,
+	})
+	if !hasArg(args, "--ignore-code=401,403") {
+		t.Fatalf("expected default --ignore-code=401,403, got %v", args)
+	}
+	if !hasArg(args, `--data={"email":"a*","password":"b"}`) {
+		t.Fatalf("data flag missing/altered, got %v", args)
+	}
+}
+
+func TestBuildSqlmapArgsIgnoreCodeOverrideSanitised(t *testing.T) {
+	// valid override is honoured
+	args := buildSqlmapArgs(map[string]any{"url": "http://x", "ignore_code": "500"})
+	if !hasArg(args, "--ignore-code=500") {
+		t.Fatalf("valid override not applied, got %v", args)
+	}
+	// a malicious override (spaces/extra tokens) is rejected -> falls back to default
+	bad := buildSqlmapArgs(map[string]any{"url": "http://x", "ignore_code": "401 --dump ;rm"})
+	if !hasArg(bad, "--ignore-code=401,403") {
+		t.Fatalf("malicious override must fall back to default, got %v", bad)
+	}
+	for _, a := range bad {
+		if strings.Contains(a, "rm") || strings.Contains(a, ";") {
+			t.Fatalf("sanitiser leaked tokens into argv: %v", bad)
+		}
+	}
+}
+
+func TestIsCodeList(t *testing.T) {
+	for _, ok := range []string{"401", "401,403", "500,502,401"} {
+		if !isCodeList(ok) {
+			t.Errorf("expected %q to be a valid code list", ok)
+		}
+	}
+	for _, bad := range []string{"", "401 403", "401;rm", "abc", "401,--dump"} {
+		if isCodeList(bad) {
+			t.Errorf("expected %q to be rejected", bad)
+		}
+	}
+}
 
 // A realistic sqlmap stdout for a confirmed injection (trimmed but structurally faithful).
 const sqlmapInjectable = `

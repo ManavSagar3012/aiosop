@@ -27,30 +27,14 @@ func main() {
 			{"name": "risk", "type": "number", "description": "Risk of tests 1-3 (default 1). Higher includes heavier payloads.", "required": false},
 			{"name": "batch", "type": "boolean", "description": "Never ask for user input, use the default behavior", "required": false},
 			{"name": "dump", "type": "boolean", "description": "Dump DBMS database table entries", "required": false},
+			{"name": "ignore_code", "type": "string", "description": "Comma-separated HTTP status codes sqlmap should ignore instead of aborting (default 401,403). Digits/commas only.", "required": false},
 		},
 		Returns: map[string]any{"data": "object", "status": "string"},
 		Handler: func(params map[string]any) any {
-			url, _ := params["url"].(string)
-			_, err := exec.LookPath("sqlmap")
-			if err != nil {
+			if _, err := exec.LookPath("sqlmap"); err != nil {
 				return map[string]any{"status": "error", "error": "sqlmap not installed"}
 			}
-			args := []string{"-u", url, "--batch", "--random-agent"}
-			// level/risk arrive as JSON numbers (float64). Clamp to sqlmap's valid
-			// ranges and format as integer flags here so they never pass through the
-			// string argument-injection sanitizer and can't be tampered with.
-			if lvl, ok := params["level"].(float64); ok {
-				args = append(args, fmt.Sprintf("--level=%d", clampInt(int(lvl), 1, 5)))
-			}
-			if rk, ok := params["risk"].(float64); ok {
-				args = append(args, fmt.Sprintf("--risk=%d", clampInt(int(rk), 1, 3)))
-			}
-			if data, ok := params["data"].(string); ok && data != "" {
-				args = append(args, fmt.Sprintf("--data=%s", data))
-			}
-			if dump, ok := params["dump"].(bool); ok && dump {
-				args = append(args, "--dump")
-			}
+			args := buildSqlmapArgs(params)
 			output, execErr := exec.Command("sqlmap", args...).CombinedOutput()
 			raw := string(output)
 			data := parseSqlmapOutput(raw)
@@ -345,6 +329,53 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// isCodeList reports whether s is a non-empty comma-separated list of digits
+// (e.g. "401,403"). Used to sanitise the ignore_code override so it can never
+// smuggle extra argv tokens into the sqlmap invocation.
+func isCodeList(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && r != ',' {
+			return false
+		}
+	}
+	return true
+}
+
+// buildSqlmapArgs assembles the sqlmap argv from tool params. Extracted from the
+// handler so the flag construction is unit-testable.
+//
+// --ignore-code is the decisive addition (AIOSOP-SQLI-IGNORECODE-JS001): an
+// auth-gated endpoint (e.g. a login) answers unauthenticated probes with 401/403,
+// on which sqlmap ABORTS before testing — a false negative that hid the Juice
+// Shop login SQLi (JS-001). Default to the common auth codes; allow a sanitised
+// override. level/risk are formatted as integers so they bypass the string
+// argument-injection sanitiser and can't be tampered with.
+func buildSqlmapArgs(params map[string]any) []string {
+	url, _ := params["url"].(string)
+	args := []string{"-u", url, "--batch", "--random-agent"}
+	if lvl, ok := params["level"].(float64); ok {
+		args = append(args, fmt.Sprintf("--level=%d", clampInt(int(lvl), 1, 5)))
+	}
+	if rk, ok := params["risk"].(float64); ok {
+		args = append(args, fmt.Sprintf("--risk=%d", clampInt(int(rk), 1, 3)))
+	}
+	if data, ok := params["data"].(string); ok && data != "" {
+		args = append(args, fmt.Sprintf("--data=%s", data))
+	}
+	ignoreCode := "401,403"
+	if ic, ok := params["ignore_code"].(string); ok && isCodeList(ic) {
+		ignoreCode = ic
+	}
+	args = append(args, "--ignore-code="+ignoreCode)
+	if dump, ok := params["dump"].(bool); ok && dump {
+		args = append(args, "--dump")
+	}
+	return args
 }
 
 var (
