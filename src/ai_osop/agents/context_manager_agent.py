@@ -51,7 +51,7 @@ class ContextManagerAgent(BaseAgent):
 
         recent_state = {}
         try:
-            recent_state = await self.ctx.session_memory.get_session_state(engagement_id)
+            recent_state = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
         except Exception:
             recent_state = {}
 

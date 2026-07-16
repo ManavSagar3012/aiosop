@@ -416,6 +416,66 @@ class SessionMemory:
                 return SessionState(**data)
             return None
 
+    async def store_engagement_id_mapping(self, engagement_id: str, session_id: str) -> None:
+        """Store a Redis mapping from ``engagement_id`` → ``session_id``.
+
+        Agents pass ``engagement_id`` (e.g. ``juice-e2e-611e6a3d``) but the
+        session is stored under the full ``session_id``
+        (e.g. ``eng-20260716-juice-e2e-611e6a3d``). This index lets agents
+        resolve the right session without knowing the generated timestamp prefix.
+        """
+        await self.store_hot(
+            f"engagement:{engagement_id}",
+            session_id,
+            ttl=settings.redis_session_ttl_hours * 3600,
+        )
+
+    async def get_session_state_by_engagement_id(
+        self, engagement_id: str
+    ) -> Optional[SessionState]:
+        """Resolve a session state by ``engagement_id`` (scope.engagement_id).
+
+        Tries two strategies in order:
+          1. Look up ``engagement:{engagement_id}`` → ``session_id`` (the mapping
+             written by ``store_engagement_id_mapping`` at engagement creation).
+          2. If the mapping doesn't exist (e.g. the caller passed the full
+             ``session_id`` instead of the short ``scope.engagement_id``), try
+             ``get_session_state(engagement_id)`` directly as a fallback.
+
+        Returns ``None`` if both strategies fail.
+        """
+        session_id = await self.retrieve_hot(f"engagement:{engagement_id}")
+        if session_id:
+            # retrieve_hot returns deserialized JSON; for a plain string value it
+            # may return the string itself or a wrapped variant depending on Redis
+            # serializer. Normalize to str.
+            if not isinstance(session_id, str):
+                session_id = str(session_id)
+            return await self.get_session_state(session_id)
+
+        # Fallback: the caller may have passed the full session_id format
+        # (eng-YYYYMMDDHHMMSS-juice-e2e-xxxx) directly. Try it as a session key.
+        state = await self.get_session_state(engagement_id)
+        if state:
+            logger.info(
+                "session_mapping_fallback_used",
+                engagement_id=engagement_id,
+                session_id=engagement_id,
+                message="engagement→session mapping not found; "
+                "resolved by treating engagement_id as session_id directly",
+            )
+            return state
+
+        logger.warning(
+            "session_mapping_missing",
+            engagement_id=engagement_id,
+            message="No engagement→session mapping found and the engagement_id does not "
+            "match any known session. The security-bridge's scope will NOT be "
+            "initialized; targets may be incorrectly rejected as out of scope. "
+            "Ensure store_engagement_id_mapping is called at engagement creation.",
+        )
+        return None
+
     async def store_agent_state(
         self, agent_id: str, state: Dict[str, Any], ttl: int = 3600
     ) -> None:

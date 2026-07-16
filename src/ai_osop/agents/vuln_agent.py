@@ -237,7 +237,7 @@ class VulnAnalysisAgent(BaseAgent):
         await self.ctx.graph_memory.add_endpoint(default_ep)
 
         # Ensure adapter is initialized for this engagement
-        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        session = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
         if session:
             await self.burp_adapter.initialize(session.scope, session.session_id)
 
@@ -600,7 +600,7 @@ class VulnAnalysisAgent(BaseAgent):
         risk = int(payload.get("risk", 1))
 
         # Initialize the bridge for this engagement so scope enforcement applies.
-        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        session = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
         if session:
             await self.security_bridge.initialize(session.scope, session.session_id)
 
@@ -793,7 +793,7 @@ class VulnAnalysisAgent(BaseAgent):
             )
         param = payload.get("param")
         # Initialize the browser connection for this engagement (scope enforcement).
-        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        session = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
         if session:
             # Best-effort: a browser-mcp init stall (e.g. Chromium launch under load) must
             # not sink the whole scan. If it fails, the execution probe simply no-ops and we
@@ -1640,7 +1640,7 @@ class VulnAnalysisAgent(BaseAgent):
         if cookie:
             headers["Cookie"] = cookie
 
-        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        session = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
         if session:
             try:
                 await self.turbo.initialize(session.scope, session.session_id)
@@ -2336,7 +2336,7 @@ class VulnAnalysisAgent(BaseAgent):
         poll_seconds = float(payload.get("poll_seconds", 15))
         poll_interval = float(payload.get("poll_interval", 1.5))
 
-        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        session = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
         if session and hasattr(self, "browser_adapter"):
             try:
                 await self.browser_adapter.initialize(session.scope, session.session_id)
@@ -2519,7 +2519,7 @@ class VulnAnalysisAgent(BaseAgent):
         poll_seconds = float(payload.get("poll_seconds", 15))
         poll_interval = float(payload.get("poll_interval", 1.5))
 
-        session = await self.ctx.session_memory.get_session_state(engagement_id)
+        session = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
         if session:
             await self.oast.initialize(session.scope, session.session_id)
 

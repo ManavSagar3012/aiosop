@@ -196,6 +196,12 @@ func domainMatches(domain string, allowed []string) bool {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	for _, item := range allowed {
 		item = strings.ToLower(strings.TrimSpace(item))
+		// Strip port from allowed domain (e.g. "localhost:3000" → "localhost")
+		// so the Go server matches against the bare hostname extracted by
+		// extractHost(), which strips the port from the target URL.
+		if h, _, err := net.SplitHostPort(item); err == nil {
+			item = h
+		}
 		if item == domain {
 			return true
 		}

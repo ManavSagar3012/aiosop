@@ -73,6 +73,11 @@ class EngagementManager:
             )
             await self._orch.session_memory.store_session_state(session)
             await self._orch.session_memory.persist_session_state(session)
+            # Index: engagement_id (juice-e2e-...) → session_id (eng-20260716-...)
+            # so agents can resolve the session without knowing the generated prefix.
+            await self._orch.session_memory.store_engagement_id_mapping(
+                scope.engagement_id, session.session_id
+            )
             self._orch._sessions[session.session_id] = session
             record_engagement_started(session.session_id)
             await self._orch._audit_log(
