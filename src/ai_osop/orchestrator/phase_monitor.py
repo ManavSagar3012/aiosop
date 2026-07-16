@@ -13,7 +13,7 @@ import structlog
 from ai_osop.core.config import AgentType, EngagementPhase, VulnClass, settings
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.knowledge_engine import get_knowledge_engine
-from ai_osop.core.models import SessionState, Task
+from ai_osop.core.models import AuditEvent, SessionState, Task
 from ai_osop.core.value_engine import batch_endpoints_for_scan
 from ai_osop.orchestrator.state_machine import EngagementStateMachine
 

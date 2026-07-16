@@ -48,5 +48,5 @@ def test_only_observed_query_parameters_become_injection_targets():
 
 if __name__ == "__main__":
     test_key_classifier()
-    test_graphql_junk_params_dropped()
+    test_only_observed_query_parameters_become_injection_targets()
     print("injection param-filter tests OK")

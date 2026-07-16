@@ -307,9 +307,14 @@ class GraphMemory:
         # agent flags it before calling us; repeat the downgrade at the persistence
         # boundary so an alternate producer cannot bypass that validation.
         self._apply_nuclei_spa_persistence_guard(vuln)
+        dedup_key = self._vulnerability_dedup_key(vuln)
 
         cypher = """
-        MERGE (v:Vulnerability {id: $id})
+        MERGE (v:Vulnerability {dedup_key: $dedup_key})
+        ON CREATE SET v.id = $id,
+            v.created_at = $created_at,
+            v.duplicate_count = 0
+        ON MATCH SET v.duplicate_count = coalesce(v.duplicate_count, 0) + 1
         SET v.cwe = $cwe,
             v.vuln_type = $vuln_type,
             v.severity = $severity,
@@ -326,7 +331,7 @@ class GraphMemory:
             v.impact = $impact,
             v.endpoint_id = $endpoint_id,
             v.engagement_id = $engagement_id,
-            v.created_at = $created_at
+            v.last_seen = $created_at
         WITH v
         OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
         // AIOSOP-GRAPHLINK-001 (2026-07-03): fall back to HOST-based linking when
@@ -345,7 +350,7 @@ class GraphMemory:
         FOREACH (x IN CASE WHEN e IS NULL AND ehost IS NOT NULL THEN [ehost] ELSE [] END |
             MERGE (ehost)-[:HAS_VULNERABILITY]->(v)
         )
-        RETURN v.id
+        RETURN v.id AS id, v.id = $id AS created
         """
 
         # AIOSOP-GRAPHLINK-001: derive a host from the vuln's evidence (nuclei/burp put
@@ -381,6 +386,7 @@ class GraphMemory:
                     cypher,
                     {
                         "id": vuln.id,
+                        "dedup_key": dedup_key,
                         "host": vuln_host,
                         "cwe": vuln.cwe,
                         "vuln_type": vuln.vuln_type.value,
@@ -403,10 +409,15 @@ class GraphMemory:
                 )
                 record = await result.single()
 
+        # Compatibility for persisted records returned by older query mocks or a
+        # rolling deployment before every worker has the new RETURN aliases.
+        created = record.get("created", True)
+        persisted_id = record.get("id") or record["v.id"]
+
         # P2 learning brain: auto-record this real finding into semantic memory.
         # Best-effort — a KB failure must never break graph persistence, and the
         # finding is already confirmed non-simulated by the guard above.
-        if self.findings_knowledge is not None:
+        if created and self.findings_knowledge is not None:
             try:
                 await self.findings_knowledge.record_finding(vuln)
             except Exception as e:  # noqa: BLE001 - knowledge recording is best-effort
@@ -415,7 +426,7 @@ class GraphMemory:
         # Chain-first loop: record this confirmed finding as a typed primitive so the
         # escalation/chain engine can chain it with co-located signals. Best-effort;
         # a ledger failure must never break graph persistence.
-        if self.primitive_ledger is not None:
+        if created and self.primitive_ledger is not None:
             try:
                 from ai_osop.core.chain_analysis import vuln_to_primitive
 
@@ -423,7 +434,40 @@ class GraphMemory:
             except Exception as e:  # noqa: BLE001 - primitive recording is best-effort
                 logger.warning("primitive_ledger_record_failed id=%s error=%s", vuln.id, e)
 
-        return record["v.id"]
+        if not created:
+            logger.info(
+                "deduplicated_vulnerability incoming_id=%s existing_id=%s dedup_key=%s",
+                vuln.id,
+                persisted_id,
+                dedup_key,
+            )
+        return persisted_id
+
+    @staticmethod
+    def _vulnerability_dedup_key(vuln: Vulnerability) -> str:
+        """Return a stable key for one concrete scanner signal in one engagement."""
+        template = ""
+        location = ""
+        for evidence in vuln.evidence or []:
+            if not isinstance(evidence, dict):
+                continue
+            template = str(evidence.get("template") or template)
+            location = str(
+                evidence.get("matched_at")
+                or evidence.get("url")
+                or evidence.get("host")
+                or location
+            )
+            if template and location:
+                break
+        identity = {
+            "engagement_id": vuln.engagement_id,
+            "tool_source": vuln.tool_source,
+            "template": template or vuln.title.strip().lower(),
+            "location": location or vuln.endpoint_id or vuln.entry_point or "unknown",
+        }
+        canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _apply_nuclei_spa_persistence_guard(vuln: Vulnerability) -> None:
@@ -546,10 +590,21 @@ class GraphMemory:
         if not real_vulns:
             return []
 
+        # Do not submit duplicate rows from one MCP response.  Cypher still uses
+        # the same key as a cross-task/retry safety net.
+        unique_vulns: Dict[str, Vulnerability] = {}
+        for vuln in real_vulns:
+            self._apply_nuclei_spa_persistence_guard(vuln)
+            dedup_key = self._vulnerability_dedup_key(vuln)
+            if dedup_key in unique_vulns:
+                logger.info("deduplicated_batch_vulnerability id=%s", vuln.id)
+                continue
+            unique_vulns[dedup_key] = vuln
+
         from urllib.parse import urlsplit
 
         rows = []
-        for vuln in real_vulns:
+        for dedup_key, vuln in unique_vulns.items():
             vuln_host = ""
             try:
                 for ev in vuln.evidence or []:
@@ -568,6 +623,7 @@ class GraphMemory:
             rows.append(
                 {
                     "id": vuln.id,
+                    "dedup_key": dedup_key,
                     "host": vuln_host,
                     "cwe": vuln.cwe,
                     "vuln_type": vuln.vuln_type.value,
@@ -591,7 +647,10 @@ class GraphMemory:
 
         cypher = """
         UNWIND $rows AS v
-        MERGE (vn:Vulnerability {id: v.id})
+        MERGE (vn:Vulnerability {dedup_key: v.dedup_key})
+        ON CREATE SET vn.id = v.id, vn.created_at = v.created_at,
+            vn.duplicate_count = 0
+        ON MATCH SET vn.duplicate_count = coalesce(vn.duplicate_count, 0) + 1
         SET vn.cwe = v.cwe, vn.vuln_type = v.vuln_type, vn.severity = v.severity,
             vn.cvss_score = v.cvss_score, vn.title = v.title,
             vn.description = v.description, vn.evidence = v.evidence,
@@ -599,7 +658,7 @@ class GraphMemory:
             vn.entry_point = v.entry_point, vn.requires_auth = v.requires_auth,
             vn.validated = v.validated, vn.exploitability = v.exploitability,
             vn.impact = v.impact, vn.engagement_id = v.engagement_id,
-            vn.created_at = v.created_at
+            vn.last_seen = v.created_at
         WITH vn, v
         OPTIONAL MATCH (e:Endpoint {id: v.endpoint_id})
         OPTIONAL MATCH (eh:Endpoint {engagement_id: v.engagement_id})
@@ -611,14 +670,18 @@ class GraphMemory:
         FOREACH (x IN CASE WHEN e IS NULL AND ehost IS NOT NULL THEN [ehost] ELSE [] END |
             MERGE (ehost)-[:HAS_VULNERABILITY]->(vn)
         )
-        RETURN vn.id AS id
+        RETURN vn.id AS id, v.dedup_key AS dedup_key, vn.id = v.id AS created
         """
 
         async with self._driver.session() as session:
             result = await session.run(cypher, {"rows": rows})
-            ids = [rec["id"] async for rec in result]
+            records = [rec async for rec in result]
+            ids = [rec["id"] for rec in records]
+            created_keys = {rec["dedup_key"] for rec in records if rec["created"]}
 
-        for vuln in real_vulns:
+        for dedup_key, vuln in unique_vulns.items():
+            if dedup_key not in created_keys:
+                continue
             if self.findings_knowledge is not None:
                 try:
                     await self.findings_knowledge.record_finding(vuln)

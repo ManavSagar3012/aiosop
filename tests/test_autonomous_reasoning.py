@@ -15,6 +15,13 @@ def mock_orchestrator():
     session_memory = AsyncMock()
     graph_memory = AsyncMock()
     mcp_registry = AsyncMock()
+    # PhaseMonitor._assert_vulnerability_mcp_ready inspects the registry's
+    # synchronous `_servers` mapping and treats an empty one as "no MCP scanners
+    # registered" — the documented tolerated path for isolated unit tests. A bare
+    # AsyncMock would expose a truthy child-mock `_servers`, tripping the readiness
+    # gate on a coroutine. Pin it to an empty dict so these tests exercise the
+    # scheduling logic, not MCP readiness.
+    mcp_registry._servers = {}
     llm_client = AsyncMock()
 
     orch = Orchestrator(session_memory, graph_memory, mcp_registry, llm_client)
@@ -59,7 +66,7 @@ async def test_phase_monitor_schedules_tech_specific_scanners(mock_orchestrator,
                 "technologies": ["django"],
             }
         ]
-        if "size(coalesce(e.query_keys" in query
+        if "CONTAINS '?'" in query
         else []  # Return empty for the other queries (assets, endpoints with status_code)
     )
 
@@ -115,7 +122,7 @@ async def test_phase_monitor_fallback_scanners(mock_orchestrator, dummy_scope):
                 "technologies": [],
             }
         ]
-        if "size(coalesce(e.query_keys" in query
+        if "CONTAINS '?'" in query
         else []
     )
 
@@ -164,7 +171,7 @@ async def test_phase_monitor_bounds_sqli_tasks_independently_of_nuclei_timeout(
                 "technologies": [],
             }
         ]
-        if "size(coalesce(e.query_keys" in query
+        if "CONTAINS '?'" in query
         else []
     )
 
