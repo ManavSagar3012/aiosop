@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -311,8 +312,17 @@ class GraphMemory:
         dedup_key = self._vulnerability_dedup_key(vuln)
 
         cypher = """
+        // Identity guard (AIOSOP-UPSERT-IDEMPOTENT): a caller-supplied id (e.g. the
+        // upsert_verified_finding MCP tool, restart-recovery, re-import) may already
+        // exist on a node with a DIFFERENT dedup_key. Setting v.id = $id on the CREATE
+        // branch would then violate the unique-id constraint and abort the whole
+        // upsert. Detect the clash up front and mint a fresh id instead, so a genuinely
+        // new finding is still persisted rather than crashing. Dedup identity remains
+        // the content-based dedup_key; the external id is non-authoritative on clash.
+        OPTIONAL MATCH (idclash:Vulnerability {id: $id})
+        WITH idclash
         MERGE (v:Vulnerability {dedup_key: $dedup_key})
-        ON CREATE SET v.id = $id,
+        ON CREATE SET v.id = CASE WHEN idclash IS NULL THEN $id ELSE $fresh_id END,
             v.created_at = $created_at,
             v.duplicate_count = 0
         ON MATCH SET v.duplicate_count = coalesce(v.duplicate_count, 0) + 1
@@ -351,7 +361,10 @@ class GraphMemory:
         FOREACH (x IN CASE WHEN e IS NULL AND ehost IS NOT NULL THEN [ehost] ELSE [] END |
             MERGE (ehost)-[:HAS_VULNERABILITY]->(v)
         )
-        RETURN v.id AS id, v.id = $id AS created
+        // 'created' derives from duplicate_count (0 on ON CREATE, >=1 after ON MATCH),
+        // NOT from v.id = $id — the id may be a freshly-minted clash-avoidance id on
+        // create, and on match it is the original id, so an id comparison misreports.
+        RETURN v.id AS id, v.duplicate_count = 0 AS created
         """
 
         # AIOSOP-GRAPHLINK-001: derive a host from the vuln's evidence (nuclei/burp put
@@ -387,6 +400,7 @@ class GraphMemory:
                     cypher,
                     {
                         "id": vuln.id,
+                        "fresh_id": f"vuln-{uuid.uuid4().hex[:12]}",
                         "dedup_key": dedup_key,
                         "host": vuln_host,
                         "cwe": vuln.cwe,
@@ -1058,9 +1072,7 @@ class GraphMemory:
                 "graph_memory.export_findings_json",
                 attributes={"engagement_id": engagement_id, "count": len(findings)},
             ):
-                Path(path).write_text(
-                    json.dumps(findings, indent=2, default=str), encoding="utf-8"
-                )
+                Path(path).write_text(json.dumps(findings, indent=2, default=str), encoding="utf-8")
             logger.info(
                 "exported %d findings for engagement=%s -> %s",
                 len(findings),
