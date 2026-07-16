@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
+from tests._mocks import stub_session_memory
 
 
 def _capture(store, v):
@@ -42,7 +43,7 @@ def _agent(turbo, captured):
     a.turbo = turbo
     a.ctx = SimpleNamespace(
         current_task=SimpleNamespace(engagement_id="eng-race"),
-        session_memory=SimpleNamespace(get_session_state=lambda _e: _none()),
+        session_memory=stub_session_memory(),
         graph_memory=SimpleNamespace(add_vulnerability=lambda v: _capture(captured, v)),
     )
     return a

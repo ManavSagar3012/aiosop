@@ -20,13 +20,14 @@ import pytest
 import ai_osop.core.smuggle_probe as smuggle_probe
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 from ai_osop.core.config import Severity
+from tests._mocks import stub_session_memory
 
 
 def _agent():
     agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)
     agent.ctx = SimpleNamespace(
         graph_memory=SimpleNamespace(add_vulnerability=AsyncMock()),
-        session_memory=SimpleNamespace(get_session_state=AsyncMock(return_value=None)),
+        session_memory=stub_session_memory(),
         current_task=None,
     )
     agent.findings = {}
