@@ -249,6 +249,35 @@ class PhaseMonitor:
                     engagement_id=session.session_id,
                 )
                 await self._orch.task_scheduler.schedule_task(task)
+
+                # Browser-driven XHR/API discovery (AIOSOP-SPA-XHR-RECON). The GET
+                # link crawler above never observes a SPA's client-side XHR/fetch
+                # calls (Angular /rest, /api), so the entire API surface of an app
+                # like Juice Shop went undiscovered and active injection had no API
+                # targets. A guest browser navigation records a HAR whose on-load
+                # XHR requests are extracted into Endpoint{type:'api'} nodes. Runs
+                # unconditionally (not gated on stored credentials, unlike the
+                # authenticated-surface capture in vuln discovery) so unauthenticated
+                # engagements still get an API surface. Best-effort: a browser-MCP
+                # outage must never block reconnaissance.
+                try:
+                    surface_url = self._orch.engagement_manager._domain_to_url(domain)
+                except Exception:  # noqa: BLE001 - URL derivation is best-effort
+                    surface_url = None
+                if surface_url:
+                    xhr_task = Task(
+                        type="capture_authenticated_surface",
+                        priority=5,
+                        agent_type=AgentType.WORKFLOW,
+                        payload={
+                            "engagement_id": session.session_id,
+                            "user_label": "guest",
+                            "url": surface_url,
+                        },
+                        engagement_id=session.session_id,
+                        timeout_seconds=300,
+                    )
+                    await self._orch.task_scheduler.schedule_task(xhr_task)
             url_hint = (
                 self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
                 if session.scope.domains
