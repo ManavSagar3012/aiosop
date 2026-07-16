@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 import logging
+
 logging.getLogger("neo4j").setLevel(logging.ERROR)
 
 
@@ -301,6 +302,12 @@ class GraphMemory:
             )
             return vuln.id
 
+        # Defense in depth for Nuclei normalization: an HTTP-status-only match on
+        # a Next.js/SPA response is a discovery signal, not exploit evidence.  The
+        # agent flags it before calling us; repeat the downgrade at the persistence
+        # boundary so an alternate producer cannot bypass that validation.
+        self._apply_nuclei_spa_persistence_guard(vuln)
+
         cypher = """
         MERGE (v:Vulnerability {id: $id})
         SET v.cwe = $cwe,
@@ -418,6 +425,27 @@ class GraphMemory:
 
         return record["v.id"]
 
+    @staticmethod
+    def _apply_nuclei_spa_persistence_guard(vuln: Vulnerability) -> None:
+        """Keep status-only SPA Nuclei signals out of high-confidence finding flows."""
+        if vuln.tool_source != "nuclei":
+            return
+        for evidence in vuln.evidence or []:
+            if not isinstance(evidence, dict):
+                continue
+            signal = evidence.get("false_positive_signal") or {}
+            if not (signal.get("status_only_match") and signal.get("spa_response")):
+                continue
+            vuln.confidence = min(vuln.confidence, 0.1)
+            vuln.validated = False
+            vuln.exploitability = "low"
+            logger.warning(
+                "nuclei_spa_status_only_persistence_guard vuln_id=%s engagement_id=%s",
+                vuln.id,
+                vuln.engagement_id,
+            )
+            return
+
     async def add_endpoints_batch(self, endpoints: List[Endpoint]) -> List[str]:
         """Persist a list of Endpoints in one UNWIND Cypher transaction (N endpoints = 1
         round-trip, not N). Mirrors add_endpoint semantics exactly. Returns list of
@@ -500,7 +528,8 @@ class GraphMemory:
         from ai_osop.core.config import settings as _settings
 
         real_vulns = [
-            v for v in vulns
+            v
+            for v in vulns
             if not v.is_simulated() or getattr(_settings, "allow_simulated_findings", False)
         ]
 
@@ -508,7 +537,10 @@ class GraphMemory:
             if v not in real_vulns:
                 logger.warning(
                     "rejected_simulated_vulnerability id=%s tool_source=%s title=%s engagement=%s",
-                    v.id, v.tool_source, v.title, v.engagement_id,
+                    v.id,
+                    v.tool_source,
+                    v.title,
+                    v.engagement_id,
                 )
 
         if not real_vulns:
@@ -533,27 +565,29 @@ class GraphMemory:
             except Exception:  # noqa: BLE001
                 vuln_host = ""
 
-            rows.append({
-                "id": vuln.id,
-                "host": vuln_host,
-                "cwe": vuln.cwe,
-                "vuln_type": vuln.vuln_type.value,
-                "severity": vuln.severity.value,
-                "cvss_score": vuln.cvss_score,
-                "title": vuln.title,
-                "description": vuln.description,
-                "evidence": json.dumps(vuln.evidence, default=str),
-                "tool_source": vuln.tool_source,
-                "confidence": vuln.confidence,
-                "entry_point": vuln.entry_point,
-                "requires_auth": vuln.requires_auth,
-                "validated": vuln.validated,
-                "exploitability": vuln.exploitability,
-                "impact": vuln.impact,
-                "engagement_id": vuln.engagement_id,
-                "created_at": vuln.created_at.isoformat(),
-                "endpoint_id": vuln.endpoint_id,
-            })
+            rows.append(
+                {
+                    "id": vuln.id,
+                    "host": vuln_host,
+                    "cwe": vuln.cwe,
+                    "vuln_type": vuln.vuln_type.value,
+                    "severity": vuln.severity.value,
+                    "cvss_score": vuln.cvss_score,
+                    "title": vuln.title,
+                    "description": vuln.description,
+                    "evidence": json.dumps(vuln.evidence, default=str),
+                    "tool_source": vuln.tool_source,
+                    "confidence": vuln.confidence,
+                    "entry_point": vuln.entry_point,
+                    "requires_auth": vuln.requires_auth,
+                    "validated": vuln.validated,
+                    "exploitability": vuln.exploitability,
+                    "impact": vuln.impact,
+                    "engagement_id": vuln.engagement_id,
+                    "created_at": vuln.created_at.isoformat(),
+                    "endpoint_id": vuln.endpoint_id,
+                }
+            )
 
         cypher = """
         UNWIND $rows AS v
@@ -593,6 +627,7 @@ class GraphMemory:
             if self.primitive_ledger is not None:
                 try:
                     from ai_osop.core.chain_analysis import vuln_to_primitive
+
                     await self.primitive_ledger.upsert_primitive(vuln_to_primitive(vuln))
                 except Exception as e:  # noqa: BLE001
                     logger.warning("primitive_ledger_record_failed id=%s error=%s", vuln.id, e)
@@ -615,7 +650,9 @@ class GraphMemory:
         RETURN v.id, v.vuln_type AS vuln_type, v.engagement_id AS engagement_id
         """
         async with self._driver.session() as session:
-            result = await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
+            result = await session.run(
+                cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()}
+            )
             record = await result.single()
 
         # P2b calibration feedback: record this validated finding as a real
@@ -1972,9 +2009,7 @@ class GraphMemory:
                [n in nodes(path) | n.title] AS titles
         """
         async with self._driver.session() as session:
-            result = await session.execute_read(
-                lambda tx: tx.run(query, eid=engagement_id)
-            )
+            result = await session.execute_read(lambda tx: tx.run(query, eid=engagement_id))
             records = await result.data()
             return records
 
@@ -2049,9 +2084,7 @@ class GraphMemory:
         LIMIT 50
         """
         async with self._driver.session() as session:
-            result = await session.run(
-                cypher, {"endpoint_id": endpoint_id}
-            )
+            result = await session.run(cypher, {"endpoint_id": endpoint_id})
             return [dict(rec) async for rec in result]
 
     async def get_co_occurring_vuln_classes(

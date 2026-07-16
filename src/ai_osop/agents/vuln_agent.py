@@ -252,11 +252,14 @@ class VulnAnalysisAgent(BaseAgent):
         from ai_osop.core.exceptions import MCPException
 
         burp_error = None
+        scan_started = False
         try:
             scan_result = await self.burp_adapter.scan_target(url, config)
             if scan_result.status != "success":
                 burp_error = scan_result.error
                 logger.warning("Burp scan failed to start: %s", burp_error)
+            else:
+                scan_started = True
         except MCPException as e:
             burp_error = str(e)
             logger.warning("burp_scan_degraded_active_scan_unavailable", error=burp_error)
@@ -352,12 +355,27 @@ class VulnAnalysisAgent(BaseAgent):
             logger.warning("vuln_agent_reasoning_error", domain=domain, error=str(e))
         logger.info(f"AGENT REASONING: {reasoning}")
 
+        # A reasoning string alone is not evidence that Burp ran.  A successful
+        # active-scan submission or observable passive data is required before a
+        # task can be reported as successful.
+        execution_verified = scan_started or bool(vulns) or bool(all_endpoints)
+        if not execution_verified:
+            return {
+                "status": "error",
+                "tool": "burp_scanner",
+                "target": url,
+                "execution_verified": False,
+                "error": "Burp execution was not verified: no active scan or passive evidence",
+                "burp_error": burp_error,
+            }
+
         return {
             "status": "success",
             "tool": "burp_scanner",
             "target": url,
             "findings_count": len(vulns),
             "endpoints_count": len(all_endpoints),
+            "execution_verified": True,
             "reasoning": reasoning,
             "burp_error": burp_error,
             "findings": [v.model_dump() for v in vulns],
@@ -503,6 +521,7 @@ class VulnAnalysisAgent(BaseAgent):
             vuln = self._normalize_nuclei_finding(finding)
             if catch_all.get("is_catch_all"):
                 self._apply_catch_all_fp_downrank(vuln, catch_all)
+            self._apply_spa_status_only_fp_guard(finding, vuln)
             if engagement_id:
                 vuln.engagement_id = engagement_id
             await self.ctx.graph_memory.add_vulnerability(vuln)
@@ -523,6 +542,7 @@ class VulnAnalysisAgent(BaseAgent):
             "tool": "nuclei",
             "targets": targets,
             "findings_count": len(vulns),
+            "execution_verified": True,
             "catch_all_host": bool(catch_all.get("is_catch_all")),
             "likely_false_positives": fp_count,
             "findings": [v.model_dump() for v in vulns],
@@ -2764,6 +2784,33 @@ class VulnAnalysisAgent(BaseAgent):
             }
             if getattr(vuln, "evidence", None):
                 vuln.evidence[0] = ev
+
+    def _apply_spa_status_only_fp_guard(self, finding: Dict[str, Any], vuln: Vulnerability) -> None:
+        """Flag status-only Nuclei matches against Next.js/SPA response bodies.
+
+        A HTTP 200 matcher proves only that a route returned a page.  On a client
+        side routed SPA that is insufficient evidence of a vulnerable endpoint,
+        so retain the signal for auditability but prevent it from driving an
+        exploitation path.
+        """
+        matcher = str(finding.get("matcher-name") or finding.get("matcher_name") or "").lower()
+        response = str(finding.get("response") or "").lower()
+        extracted = finding.get("extracted-results") or finding.get("extracted_results")
+        spa_markers = ("__next_data__", "/_next/", "next.js", "webpack")
+        status_only = matcher in {"status", "status-200", "http-status"} or matcher.startswith(
+            "status-"
+        )
+        if not status_only or extracted or not any(marker in response for marker in spa_markers):
+            return
+
+        vuln.confidence = min(vuln.confidence, 0.1)
+        vuln.exploitability = "low"
+        if vuln.evidence and isinstance(vuln.evidence[0], dict):
+            vuln.evidence[0]["false_positive_signal"] = {
+                "status_only_match": True,
+                "spa_response": True,
+                "reason": "HTTP status match against a Next.js/SPA response is not exploit evidence",
+            }
 
     def _normalize_nuclei_finding(self, finding: Dict[str, Any]) -> Vulnerability:
         """Convert Nuclei finding to Vulnerability model."""

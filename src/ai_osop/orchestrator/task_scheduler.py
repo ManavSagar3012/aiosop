@@ -121,6 +121,12 @@ class TaskScheduler:
             await self._orch.session_memory.push_task_queue(
                 f"tasks:{task.engagement_id}", task.model_dump()
             )
+            # Wake remote scheduler loops immediately.  The ZSET remains the
+            # durable source of truth; this event only removes the polling delay.
+            await self._orch.session_memory.publish_event(
+                "task.queue.ready",
+                {"task_id": task.id, "engagement_id": task.engagement_id},
+            )
 
             if self._orch.temporal_enabled and self._orch.temporal_scheduler:
                 workflow_id = await self._orch.temporal_scheduler.start_task_workflow(
@@ -164,6 +170,9 @@ class TaskScheduler:
                 try:
                     result = await agent.execute_task(task)
                     status = result.get("status") if isinstance(result, dict) else None
+                    contract_error = self._execution_contract_error(task, result)
+                    if contract_error:
+                        result = {"status": "failed", "error": contract_error}
                     if (
                         result is None
                         or not isinstance(result, dict)
@@ -525,6 +534,20 @@ class TaskScheduler:
         "invalid parameter",
     )
 
+    @staticmethod
+    def _execution_contract_error(task: Task, result: Any) -> Optional[str]:
+        """Return an error if a scanner claims success without execution proof."""
+        if task.type not in {"burp_scan", "nuclei_scan"}:
+            return None
+        if not isinstance(result, dict):
+            return "scanner returned no structured execution result"
+        expected_tool = "burp_scanner" if task.type == "burp_scan" else "nuclei"
+        if result.get("tool") != expected_tool:
+            return f"{task.type} result did not identify the expected tool"
+        if result.get("execution_verified") is not True:
+            return f"{task.type} result did not prove tool execution"
+        return None
+
     @classmethod
     def _is_non_retryable(cls, result: Dict[str, Any]) -> bool:
         err = str(result.get("error") or result.get("status") or "").lower()
@@ -655,6 +678,10 @@ class TaskScheduler:
                 _timeout = getattr(task, "timeout_seconds", None) or 300
                 result = await asyncio.wait_for(agent.execute_task(task), timeout=_timeout)
                 status = result.get("status") if isinstance(result, dict) else None
+                contract_error = self._execution_contract_error(task, result)
+                if contract_error:
+                    result = {"status": "failed", "error": contract_error}
+                    status = "failed"
                 if (
                     result is None
                     or not isinstance(result, dict)

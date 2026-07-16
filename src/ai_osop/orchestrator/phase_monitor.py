@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from ai_osop.core.config import AgentType, EngagementPhase, VulnClass, settings
+from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.knowledge_engine import get_knowledge_engine
 from ai_osop.core.models import SessionState, Task
 from ai_osop.core.value_engine import batch_endpoints_for_scan
@@ -19,6 +20,7 @@ from ai_osop.orchestrator.state_machine import EngagementStateMachine
 logger = structlog.get_logger("ai_osop.orchestrator.phase_monitor")
 
 from ai_osop.core.url_intelligence import _is_probable_param_key
+
 
 class PhaseMonitor:
     """Monitor engagement phases and trigger automatic tasks on phase entry."""
@@ -55,6 +57,11 @@ class PhaseMonitor:
     # adequate wall-clock time against remote targets.
     ACTIVE_SCAN_TIMEOUT_SECONDS = 600
 
+    # These scanners are the execution path for vulnerability discovery.  Do not
+    # enter the phase when a registered critical service is unavailable: otherwise
+    # the phase can appear complete without having performed a real scan.
+    _CRITICAL_VULN_MCP_SERVERS = ("nuclei-mcp", "burp-mcp")
+
     def __init__(
         self, orchestrator: Any, state_machine: Optional[EngagementStateMachine] = None
     ) -> None:
@@ -70,10 +77,10 @@ class PhaseMonitor:
     ) -> List[Dict[str, Any]]:
         """One representative injectable URL per (path, parameter-set).
 
-        Collapses e.g. productId=1..18 into a single scan target, and for form
-        endpoints that carry ``query_keys`` but no literal query string (search
-        boxes) synthesizes a probe value (``?param=test``) so sqlmap/xss have
-        something to mutate. Bounded so the active-scan phase stays time-boxed.
+        Collapses e.g. productId=1..18 into a single scan target.  Targets must
+        contain parameters observed in a concrete URL; graph metadata alone is
+        never turned into a synthetic request.  Bounded so the active-scan phase
+        stays time-boxed.
         """
         from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -119,9 +126,6 @@ class PhaseMonitor:
                 for k, v in parse_qsl(parsed.query, keep_blank_values=True)
                 if _is_probable_param_key(k)
             }
-            for k in r.get("query_keys") or []:
-                if k and k not in q and _is_probable_param_key(k):
-                    q[k] = "test"
             if not q:
                 continue
             param_names = tuple(sorted(q.keys()))
@@ -145,6 +149,37 @@ class PhaseMonitor:
         # drained >> the 1200s window; a smaller high-value set finishes in time.
         scored.sort(key=lambda t: t[0], reverse=True)
         return [t[1] for t in scored[:max_targets]]
+
+    def _assert_vulnerability_mcp_ready(self) -> None:
+        """Fail phase entry when a configured critical scanner is not usable.
+
+        An empty registry is tolerated for isolated unit tests and deployments
+        which intentionally run without MCP scanners.  Once MCP connections are
+        registered, though, silently proceeding with an open/uninitialized
+        nuclei or Burp connection would create a hollow discovery phase.
+        """
+        registry = self._orch.mcp_registry
+        servers = getattr(registry, "_servers", {})
+        if not servers:
+            logger.warning("vuln_mcp_readiness_skipped_no_registered_servers")
+            return
+
+        unavailable: List[str] = []
+        for server_id in self._CRITICAL_VULN_MCP_SERVERS:
+            connection = registry.get_server(server_id)
+            if connection is None:
+                unavailable.append(f"{server_id}:missing")
+                continue
+            state = connection.get_circuit_state()
+            if state != "closed" or not getattr(connection, "_initialized", False):
+                unavailable.append(f"{server_id}:{state}")
+
+        if unavailable:
+            detail = ", ".join(unavailable)
+            logger.error("vuln_mcp_readiness_failed", unavailable=unavailable)
+            raise WorkflowException(
+                "Cannot enter vulnerability_discovery; critical MCPs are not ready: " + detail
+            )
 
     async def _auto_advance_phase(self, session: SessionState) -> None:
         """Evaluate and advance the phase for a single session if tasks are complete."""
@@ -191,6 +226,7 @@ class PhaseMonitor:
             )
 
         elif phase == EngagementPhase.VULNERABILITY_DISCOVERY:
+            self._assert_vulnerability_mcp_ready()
             # Sprint 15A/15B + nuclei self-heal (AIOSOP-NUCLEI-TIMEOUT/FANOUT-2026-06-24).
             # NOTE: this is the LIVE phase-entry implementation (Orchestrator._on_phase_enter
             # delegates here). Scans the discovered ENDPOINT surface ranked by the Attack
@@ -295,7 +331,7 @@ class PhaseMonitor:
             #     (AIOSOP-ACTIVE-INJECTION-WIRE-2026-07-08)
             param_endpoint_records = await self._orch.graph_memory.run_read_query(
                 """MATCH (e:Endpoint {engagement_id: $sid})
-                   WHERE e.url CONTAINS '?' OR size(coalesce(e.query_keys, [])) > 0
+                   WHERE e.status_code IS NOT NULL AND e.url CONTAINS '?'
                    RETURN e.url AS url, e.query_keys AS query_keys,
                           coalesce(e.method, 'GET') AS method,
                           e.technologies AS technologies""",
@@ -317,55 +353,26 @@ class PhaseMonitor:
                 param_endpoint_records, max_targets=12
             )
 
-            # AIOSOP-INJECTION-FALLBACK-001 (2026-07-12): When recon discovers
-            # NO parametrized endpoints (empty query string, no query_keys),
-            # every active injection scanner (sqli_scan, xss_scan, csrf_scan,
-            # jwt_scan, ...) is silently NOT dispatched, leaving the entire
-            # attack surface untested. Fall back to discovered endpoints,
-            # synthesising a probe parameter (q=test) so scanners have
-            # something injectable. Without this, a full_recon that returns
-            # 38 endpoints (all root pages, no params) dispatches zero
-            # injection tasks and the platform reports 0 findings against
-            # a deliberately-vulnerable app.
+            # Active injection must be backed by an observed parameter.  Do not
+            # manufacture ``?q=test`` targets from arbitrary pages: doing so lets
+            # the planner claim scan coverage that recon never established.
             if not injection_targets:
-                from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-
-                fallback_records = await self._orch.graph_memory.run_read_query(
-                    """MATCH (e:Endpoint {engagement_id: $sid})
-                       WHERE e.status_code IS NOT NULL
-                       RETURN e.url AS url, coalesce(e.method, 'GET') AS method,
-                              e.technologies AS technologies
-                       LIMIT 12""",
-                    {"sid": session.session_id},
-                )
-                seen_fallback: set = set()
-                for r in fallback_records:
-                    url = r.get("url")
-                    if not url:
-                        continue
-                    parsed = urlparse(url)
-                    q = dict(parse_qsl(parsed.query, keep_blank_values=True))
-                    if not q:
-                        q["q"] = "test"
-                    key = (parsed.path, tuple(sorted(q.keys())))
-                    if key in seen_fallback:
-                        continue
-                    seen_fallback.add(key)
-                    target_url = urlunparse(parsed._replace(query=urlencode(q)))
-                    injection_targets.append(
-                        {
-                            "url": target_url,
-                            "method": r.get("method") or "GET",
-                            "technologies": r.get("technologies") or [],
-                        }
-                    )
-                    url_to_techs[url] = r.get("technologies") or []
-                    if len(injection_targets) >= 12:
-                        break
-                logger.info(
-                    "active_injection_fallback_synthesized",
+                logger.warning(
+                    "active_injection_not_dispatched_no_observed_parameters",
                     session_id=session.session_id,
-                    targets=len(injection_targets),
+                    parametrized_endpoint_records=len(param_endpoint_records),
+                )
+                await self._orch._audit_log(
+                    AuditEvent(
+                        event_type="active_injection_skipped",
+                        severity="warning",
+                        actor_type="system",
+                        actor_id="phase_monitor",
+                        action={"reason": "no_observed_query_parameters"},
+                        result={"scheduled": 0},
+                        context={"parametrized_endpoint_records": len(param_endpoint_records)},
+                        engagement_id=session.session_id,
+                    )
                 )
 
             knowledge_engine = get_knowledge_engine()
