@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -59,6 +60,18 @@ from ai_osop.memory.vector_memory import VectorMemory
 from ai_osop.orchestrator.orchestrator import Orchestrator
 from ai_osop.safety.rate_limiter import RateLimiter
 from ai_osop.safety.scope import SandboxManager
+
+# Force UTF-8 stdio (AIOSOP-UTF8-STDIO). On Windows the default console/file codec
+# is cp1252, so logging a string containing a non-cp1252 character — e.g. sqlmap
+# output with a '→' arrow — raises UnicodeEncodeError, and uncaught inside an
+# agent it FAILS the whole task (observed: the autonomous login SQLi scan crashed
+# on '→'). Reconfigure stdio to UTF-8 with a replacement fallback so logging
+# can never crash execution. No-op where stdio is already UTF-8 (Linux/PYTHONUTF8).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except (AttributeError, ValueError):
+        pass
 
 # ============== Global State ==============
 
@@ -113,15 +126,50 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
         ("payload-mcp", settings.payload_mcp_host, settings.payload_mcp_port, settings.api_token),
         ("nuclei-mcp", settings.nuclei_mcp_host, settings.nuclei_mcp_port, settings.api_token),
         ("browser-mcp", settings.browser_mcp_host, settings.browser_mcp_port, settings.api_token),
-        ("security-bridge", settings.security_bridge_host, settings.security_bridge_port, settings.api_token),
-        ("threat-intel-mcp", settings.threat_intel_mcp_host, settings.threat_intel_mcp_port, settings.api_token),
+        (
+            "security-bridge",
+            settings.security_bridge_host,
+            settings.security_bridge_port,
+            settings.api_token,
+        ),
+        (
+            "threat-intel-mcp",
+            settings.threat_intel_mcp_host,
+            settings.threat_intel_mcp_port,
+            settings.api_token,
+        ),
         ("cloud-mcp", settings.cloud_mcp_host, settings.cloud_mcp_port, settings.api_token),
-        ("turbo-intruder-mcp", settings.turbo_intruder_mcp_host, settings.turbo_intruder_mcp_port, settings.api_token),
-        ("source-map-mcp", settings.source_map_mcp_host, settings.source_map_mcp_port, settings.api_token),
+        (
+            "turbo-intruder-mcp",
+            settings.turbo_intruder_mcp_host,
+            settings.turbo_intruder_mcp_port,
+            settings.api_token,
+        ),
+        (
+            "source-map-mcp",
+            settings.source_map_mcp_host,
+            settings.source_map_mcp_port,
+            settings.api_token,
+        ),
         ("oast-mcp", settings.oast_mcp_host, settings.oast_mcp_port, settings.api_token),
-        ("session-memory-mcp", settings.session_memory_mcp_host, settings.session_memory_mcp_port, settings.api_token),
-        ("reporting-mcp", settings.reporting_mcp_host, settings.reporting_mcp_port, settings.api_token),
-        ("attack-graph-mcp", settings.attack_graph_mcp_host, settings.attack_graph_mcp_port, settings.api_token),
+        (
+            "session-memory-mcp",
+            settings.session_memory_mcp_host,
+            settings.session_memory_mcp_port,
+            settings.api_token,
+        ),
+        (
+            "reporting-mcp",
+            settings.reporting_mcp_host,
+            settings.reporting_mcp_port,
+            settings.api_token,
+        ),
+        (
+            "attack-graph-mcp",
+            settings.attack_graph_mcp_host,
+            settings.attack_graph_mcp_port,
+            settings.api_token,
+        ),
     ]
     # Critical MCPs whose ABSENCE is logged loudly. NOTE: this set only governs
     # log severity on failure — it must NOT gate whether a server is initialized.
@@ -328,6 +376,7 @@ async def lifespan(app: FastAPI):
         # feeds accepted findings into the Beta-Binomial feedback loop.
         try:
             from ai_osop.core.calibration_engine import ConfidenceCalibrationEngine
+
             graph_memory.calibration_engine = ConfidenceCalibrationEngine(
                 session_memory=session_memory,
             )
@@ -351,12 +400,12 @@ async def lifespan(app: FastAPI):
         # 5a. Outbox Processor (Transactional sync)
         try:
             from ai_osop.memory.outbox_processor import OutboxProcessor
+
             outbox_processor = OutboxProcessor(session_memory, graph_memory)
             asyncio.create_task(outbox_processor.run())
             logger.info("OutboxProcessor started.")
         except Exception as e:  # noqa: BLE001
             logger.warning(f"OutboxProcessor initialization failed: {e}")
-
 
         orch = Orchestrator(
             session_memory=session_memory,
@@ -368,7 +417,9 @@ async def lifespan(app: FastAPI):
         # Reliability sprint: Run self-test after orchestrator initialization
         startup_results = await run_startup_self_test()
         if startup_results["status"] != "healthy":
-            logger.critical(f"Startup self-test failed: {startup_results} — proceeding in degraded mode")
+            logger.critical(
+                f"Startup self-test failed: {startup_results} — proceeding in degraded mode"
+            )
 
         # 6. Session Store (user sessions for DiffAuth)
         try:
@@ -405,8 +456,8 @@ async def lifespan(app: FastAPI):
 
             # Instantiate and register the 11 core agents + 9 experimental agents
             from ai_osop.agents.attack_chain_agent import AttackChainAgent
-            from ai_osop.agents.chain_composer_agent import ChainComposerAgent
             from ai_osop.agents.base import AgentContext
+            from ai_osop.agents.chain_composer_agent import ChainComposerAgent
             from ai_osop.agents.cloud_agent import CloudSpecialistAgent
             from ai_osop.agents.codeql_agent import CodeQLAgent
             from ai_osop.agents.concurrency_agent import ConcurrencyAgent
