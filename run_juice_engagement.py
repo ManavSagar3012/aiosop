@@ -246,32 +246,54 @@ def main() -> None:
         else:
             print(f"    [!] user_b session store HTTP {store_rr.status_code}: {store_rr.text[:200]}")
 
-    # Generate a workflow_id upfront so we can pass it to both the surface
-    # capture and the diff-auth analyzer — avoids depending on the return value.
-    wid = f"wf-{uuid.uuid4().hex[:12]}"
-    surface_id = dispatch(
+    # Dispatch TWO surface captures: home page (general API endpoints) and
+    # basket page (JS-003: /rest/basket/{id} IDOR target). Both persist their
+    # endpoints to Neo4j under the same engagement_id, then diff-auth tests all.
+    wid_home = f"wf-{uuid.uuid4().hex[:12]}"
+    wid_basket = f"wf-{uuid.uuid4().hex[:12]}"
+    surface_ids = []
+
+    sid_home = dispatch(
         "capture_authenticated_surface",
         "workflow",
-        {"url": BASE, "user_label": "user_a", "workflow_id": wid},
+        {"url": BASE, "user_label": "user_a", "workflow_id": wid_home},
         priority=6,
     )
+    if sid_home:
+        surface_ids.append(sid_home)
 
-    if surface_id:
-        surface_task = wait_task(H, surface_id, "surface_capture", timeout=180)
+    sid_basket = dispatch(
+        "capture_authenticated_surface",
+        "workflow",
+        {"url": f"{BASE}/#/basket", "user_label": "user_a", "workflow_id": wid_basket},
+        priority=6,
+    )
+    if sid_basket:
+        surface_ids.append(sid_basket)
+
+    total_extracted = 0
+    total_persisted = 0
+    for sid in surface_ids:
+        label = "surf_home" if sid == sid_home else "surf_basket"
+        surface_task = wait_task(H, sid, label, timeout=180)
         r = surface_task.get("result") or {}
         har_path = r.get("har_path", "")
-        api_count = r.get("endpoints_extracted", 0)
-        api_persisted = r.get("endpoints_persisted", 0)
+        api_count = int(r.get("endpoints_extracted", 0) or 0)
+        api_persisted = int(r.get("endpoints_persisted", 0) or 0)
+        total_extracted += api_count
+        total_persisted += api_persisted
         status = r.get("status", "?")
         error = r.get("error", "")
-        print(f"    [+] status={status} workflow_id={wid} har_path={har_path[-50:] if har_path else 'N/A'} ext={api_count} persist={api_persisted}")
+        print(f"    [{label}] status={status} har_path={har_path[-50:] if har_path else 'N/A'} ext={api_count} persist={api_persisted}")
         if error:
-            print(f"    [!] surface_capture error: {error}")
+            print(f"    [!] {label} error: {error}")
         if not har_path or api_count == 0:
-            # Diagnostic: dump full result when no endpoints found
             import json as _json
-            print(f"    [dbg] surface result dump: {_json.dumps(r, default=str)[:600]}")
+            print(f"    [dbg] {label} result: {_json.dumps(r, default=str)[:500]}")
 
+    print(f"    [+] total: {total_extracted} endpoints extracted, {total_persisted} persisted")
+
+    if surface_ids:
         # Dispatch diff-auth analysis: replay endpoints as user_a / user_b / anonymous.
         # IMPORTANT: use session_id (full key) not eid (short form) as engagement_id,
         # because capture_authenticated_surface persists endpoints with
