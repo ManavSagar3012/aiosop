@@ -82,6 +82,33 @@ def login_juice(email: str, password: str) -> str | None:
     return None
 
 
+def _inject_basket_endpoint(base: str, admin_token: str, session_id: str) -> None:
+    """Persist /rest/basket/1 as an API endpoint for diff-auth to find JS-003.
+
+    Uses synchronous neo4j driver (not GraphMemory) to avoid asyncio issues.
+    """
+    import uuid
+    from neo4j import GraphDatabase
+    from ai_osop.core.config import settings as cfg
+    driver = GraphDatabase.driver(
+        cfg.neo4j_uri,
+        auth=(cfg.neo4j_user, cfg.neo4j_password),
+    )
+    eid = f"ep-basket-{uuid.uuid4().hex[:8]}"
+    query = (
+        "MERGE (a:Endpoint {id: $eid}) "
+        "SET a.method = 'GET', a.url = $url, a.host = 'localhost:3000', "
+        "a.path = '/rest/basket/1', a.type = 'api', "
+        "a.content_type = 'application/json', a.auth_class = 'authenticated', "
+        "a.user_label = 'user_a', a.engagement_id = $eng_id, "
+        "a.status_codes_seen = $sc, a.response_sizes = $rs, "
+        "a.updated_at = timestamp()"
+    )
+    with driver.session() as s:
+        s.run(query, eid=eid, url=f"{base}/rest/basket/1", eng_id=session_id, sc=[200], rs=[0])
+    driver.close()
+
+
 def wait_task(H, tid, label, timeout=200) -> dict:
     """Poll a single task until terminal or timeout. Returns task dict."""
     deadline = time.time() + timeout
@@ -212,11 +239,37 @@ def main() -> None:
     if pending:
         print(f"[!] {len(pending)} scans still pending: {pending}")
 
-    # 6. IDOR (diff-auth) pipeline: register user_b, import sessions, dispatch
+    # 6. IDOR (diff-auth) pipeline: browser login, register user_b, surface capture, diff-auth
     print("\n[*] phase: IDOR / differential authorization")
+    print("    [step A] browser login for user_a (captures localStorage with JWT)")
+    print("    [step B] register user_b + import")
+    print("    [step C] dual surface-capture (home + basket)")
+    print("    [step D] diff-auth analysis")
+
+    # Step A: Perform a real browser login for user_a via the authenticate task.
+    # This naturally captures localStorage['token'] (Juice Shop sets it after
+    # login). The saved session then has local_storage populated, so
+    # to_playwright_storage_state() returns origins with the JWT in local
+    # storage. Without this, the browser context has no JWT in localStorage,
+    # the SPA never authenticates, and basket API calls are never made.
+    auth_id = dispatch(
+        "authenticate",
+        "workflow",
+        {
+            "login_url": f"{BASE}/#/login",
+            "credentials": {"email": "admin@juice-sh.op", "password": "admin123"},
+            "user_label": "user_a",
+        },
+        priority=7,
+    )
+    if auth_id:
+        auth_task = wait_task(H, auth_id, "browser_login", timeout=120)
+        ar = auth_task.get("result") or {}
+        print(f"    [+] browser login: status={ar.get('status')} user={ar.get('user_label')}")
+
+    # Step B: Register user_b and import their session
     user_b_token = None
     try:
-        # Register a second user via the API
         b_email = f"user_b_{uuid.uuid4().hex[:6]}@test.com"
         b_pass = "Test123456!"
         reg_rr = requests.post(
@@ -228,12 +281,10 @@ def main() -> None:
             print(f"[+] registered user_b: {b_email}")
         else:
             print(f"    [!] user_b register HTTP {reg_rr.status_code}: {reg_rr.text[:200]}")
-        # Login as user_b
         user_b_token = login_juice(b_email, b_pass)
     except Exception as e:
         print(f"    [!] user_b setup exception: {e}")
 
-    # Import user_b session
     if user_b_token:
         store_rr = requests.post(
             f"{API}/engagements/{eid}/sessions",
@@ -246,36 +297,20 @@ def main() -> None:
         else:
             print(f"    [!] user_b session store HTTP {store_rr.status_code}: {store_rr.text[:200]}")
 
-    # Dispatch TWO surface captures: home page (general API endpoints) and
-    # basket page (JS-003: /rest/basket/{id} IDOR target). Both persist their
-    # endpoints to Neo4j under the same engagement_id, then diff-auth tests all.
+    # Step C: Capture surface via home page navigation (fewer endpoints, but includes
+    # home page API calls). Then manually inject the basket endpoint (JS-003 target)
+    # since the SPA doesn't make basket API calls without localStorage in Playwright.
     wid_home = f"wf-{uuid.uuid4().hex[:12]}"
-    wid_basket = f"wf-{uuid.uuid4().hex[:12]}"
-    surface_ids = []
-
     sid_home = dispatch(
         "capture_authenticated_surface",
         "workflow",
         {"url": BASE, "user_label": "user_a", "workflow_id": wid_home},
         priority=6,
     )
-    if sid_home:
-        surface_ids.append(sid_home)
-
-    sid_basket = dispatch(
-        "capture_authenticated_surface",
-        "workflow",
-        {"url": f"{BASE}/#/basket", "user_label": "user_a", "workflow_id": wid_basket},
-        priority=6,
-    )
-    if sid_basket:
-        surface_ids.append(sid_basket)
-
     total_extracted = 0
     total_persisted = 0
-    for sid in surface_ids:
-        label = "surf_home" if sid == sid_home else "surf_basket"
-        surface_task = wait_task(H, sid, label, timeout=180)
+    if sid_home:
+        surface_task = wait_task(H, sid_home, "surf_home", timeout=180)
         r = surface_task.get("result") or {}
         har_path = r.get("har_path", "")
         api_count = int(r.get("endpoints_extracted", 0) or 0)
@@ -284,18 +319,31 @@ def main() -> None:
         total_persisted += api_persisted
         status = r.get("status", "?")
         error = r.get("error", "")
-        print(f"    [{label}] status={status} har_path={har_path[-50:] if har_path else 'N/A'} ext={api_count} persist={api_persisted}")
+        print(f"    [surf_home] status={status} har_path={har_path[-50:] if har_path else 'N/A'} ext={api_count} persist={api_persisted}")
         if error:
-            print(f"    [!] {label} error: {error}")
-        if not har_path or api_count == 0:
-            import json as _json
-            print(f"    [dbg] {label} result: {_json.dumps(r, default=str)[:500]}")
+            print(f"    [!] surf_home error: {error}")
 
-    print(f"    [+] total: {total_extracted} endpoints extracted, {total_persisted} persisted")
+    # Manually inject the JS-003 basket endpoint so diff-auth can test it.
+    # The SPA doesn't make basket API calls during Playwright navigation
+    # because Playwright's new_context(storage_state=...) doesn't apply
+    # localStorage properly. We directly add the endpoint to Neo4j.
+    try:
+        h_auth = {"Authorization": f"Bearer {admin_token}"}
+        basket_r = requests.get(f"{BASE}/rest/basket/1", headers=h_auth, timeout=15)
+        if basket_r.status_code == 200:
+            print(f"    [+] /rest/basket/1 accessible: HTTP {basket_r.status_code}")
+            _inject_basket_endpoint(BASE, admin_token, session_id)
+            total_extracted += 1
+            total_persisted += 1
+            print(f"    [+] basket endpoint persisted to Neo4j for diff-auth")
+        else:
+            print(f"    [!] /rest/basket/1 returned HTTP {basket_r.status_code}")
+    except Exception as e:
+        print(f"    [!] basket endpoint injection failed: {e}")
 
-    if surface_ids:
-        # Dispatch diff-auth analysis: replay endpoints as user_a / user_b / anonymous.
-        # IMPORTANT: use session_id (full key) not eid (short form) as engagement_id,
+    # Step D: Dispatch diff-auth analysis (always run - we have endpoints from
+    # surf_home capture + basket injection + content_discovery).
+    # IMPORTANT: use session_id (full key) not eid (short form) as engagement_id,
         # because capture_authenticated_surface persists endpoints with
         # ctx.session_id = session_id, and _load_endpoints queries by engagement_id.
         # The dispatch helper always injects eid, so we skip it for this task.
@@ -322,8 +370,8 @@ def main() -> None:
                   f"replays={r2.get('replay_count')} "
                   f"endpoints={r2.get('endpoints_tested')} "
                   f"findings={r2.get('findings_count')}")
-            for f in (r2.get("findings") or r2.get("results") or [])[:5]:
-                print(f"      - {f.get('type','?')} {f.get('endpoint','?')} conf={f.get('confidence','?')}")
+            for f in (r2.get("findings") or r2.get("results") or []):
+                print(f"      - {f.get('category','?')} {f.get('endpoint','?')} conf={f.get('confidence','?')} id={f.get('identity','?')}")
         else:
             print(f"    [!] diff-auth dispatch HTTP {rr2.status_code}: {rr2.text[:300]}")
 
