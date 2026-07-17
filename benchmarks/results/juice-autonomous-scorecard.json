@@ -1,0 +1,101 @@
+{
+  "summary": {
+    "manifest_positives": 5,
+    "manifest_negative_controls": 4,
+    "findings_total": 3,
+    "findings_real": 3,
+    "findings_simulated_dropped": 0,
+    "true_positives": 2,
+    "false_negatives": 3,
+    "false_positives": 0,
+    "extras_for_triage": 1,
+    "precision": 1.0,
+    "recall": 0.4,
+    "coverage": 0.4,
+    "evidence_completeness": 0.0
+  },
+  "matched": [
+    {
+      "gt_id": "JS-001",
+      "finding_id": "vuln-6e2c3a051741",
+      "finding_type": "sqli",
+      "endpoint": "http://localhost:3000/rest/user/login",
+      "confidence": 0.98,
+      "evidence_kinds": [
+        "dbms",
+        "parameter",
+        "payload",
+        "payloads",
+        "provenance",
+        "request",
+        "sqlmap_injection",
+        "techniques",
+        "type",
+        "url"
+      ],
+      "evidence_complete": false,
+      "missing_evidence": [
+        "response"
+      ]
+    },
+    {
+      "gt_id": "JS-002",
+      "finding_id": "vuln-385075a5dcb0",
+      "finding_type": "sqli",
+      "endpoint": "http://localhost:3000/rest/products/search?q=",
+      "confidence": 0.98,
+      "evidence_kinds": [
+        "dbms",
+        "parameter",
+        "payload",
+        "payloads",
+        "provenance",
+        "request",
+        "sqlmap_injection",
+        "techniques",
+        "type",
+        "url"
+      ],
+      "evidence_complete": false,
+      "missing_evidence": [
+        "response"
+      ]
+    }
+  ],
+  "false_negatives": [
+    {
+      "gt_id": "JS-003",
+      "type": "IDOR",
+      "endpoint": "/rest/basket/",
+      "severity": "High"
+    },
+    {
+      "gt_id": "JS-004",
+      "type": "JWT",
+      "endpoint": "/rest/user/login",
+      "severity": "High"
+    },
+    {
+      "gt_id": "JS-005",
+      "type": "MassAssignment",
+      "endpoint": "/api/Users",
+      "severity": "High"
+    }
+  ],
+  "false_positives": [],
+  "extras": [
+    {
+      "finding_id": "vuln-aa510e72b270",
+      "type": "csrf",
+      "endpoint": "http://localhost:3000/rest/user/login",
+      "confidence": 0.7,
+      "severity": "medium"
+    }
+  ],
+  "notes": [
+    "recall measured over manifest positives (what MUST be found).",
+    "precision measured only against explicit negative controls; None means no negative controls were defined.",
+    "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+    "simulated/mock findings dropped before scoring."
+  ]
+}
