@@ -21,6 +21,7 @@ import time
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List
 
 import requests
 from dotenv import load_dotenv
@@ -119,12 +120,54 @@ def main() -> None:
     if t:
         task_ids.append(t)
 
-    # 3. vuln scans matching ground truth
+    # 3. Authenticate to capture a valid JWT for jwt_scan
+    print("[*] authenticating to capture JWT...")
+    juice_token = None
+    try:
+        rr = requests.post(
+            f"{BASE}/rest/user/login",
+            json={"email": "admin@juice-sh.op", "password": "admin123"},
+            timeout=15,
+        )
+        if rr.status_code == 200:
+            body = rr.json()
+            # Juice Shop returns: {"authentication": {"token": "eyJ..."}}
+            juice_token = (
+                body.get("authentication", {}).get("token")
+                or body.get("token")
+            )
+            if juice_token:
+                # Store the token in a session so _token_from_session can find it
+                store_rr = requests.post(
+                    f"{API}/engagements/{eid}/sessions",
+                    headers=H,
+                    json={"user_label": "user_a", "bearer_token": juice_token},
+                    timeout=15,
+                )
+                if store_rr.status_code < 400:
+                    print(f"    [+] JWT stored in session: {juice_token[:40]}...")
+                else:
+                    print(f"    [!] session store HTTP {store_rr.status_code}: {store_rr.text[:200]}")
+                    # Keep juice_token intact — inline-token passing is the fallback
+            else:
+                print(f"    [!] no token in login response: {rr.text[:300]}")
+        else:
+            print(f"    [!] login HTTP {rr.status_code}: {rr.text[:300]}")
+    except Exception as e:
+        print(f"    [!] login exception: {e}")
+
+    # 4. vuln scans matching ground truth
     print("[*] phase: vuln discovery")
-    scans = [
+    # Build jwt_scan payload — pass token inline if we have it, else fall back to
+    # _token_from_session (which checks the session store). /rest/user/whoami is
+    # the identity-reflecting endpoint the tester uses to confirm token acceptance.
+    jwt_payload: Dict[str, Any] = {"url": f"{BASE}/rest/user/whoami"}
+    if juice_token:
+        jwt_payload["token"] = juice_token
+    scans: List[tuple[str, str, dict]] = [
         ("sqli_scan", "vuln_analysis", {"url": f"{BASE}/rest/products/search?q=test", "level": 2, "risk": 2}),
         ("sqli_scan", "vuln_analysis", {"url": f"{BASE}/rest/user/login", "data": "email=a@a.com&password=b", "level": 2, "risk": 2}),
-        ("jwt_scan", "vuln_analysis", {"url": f"{BASE}/rest/user/login"}),
+        ("jwt_scan", "vuln_analysis", jwt_payload),
         ("mass_assignment_scan", "vuln_analysis", {"url": f"{BASE}/api/Users", "data": "email=x@x.com&password=Test1234&role=admin"}),
     ]
     for task_type, agent_type, payload in scans:
@@ -132,7 +175,7 @@ def main() -> None:
         if tid:
             task_ids.append(tid)
 
-    # 4. poll to completion
+    # 6. poll to completion
     print(f"[*] polling {len(task_ids)} tasks (up to 6 min)...")
     deadline = time.time() + 360
     done = {}
