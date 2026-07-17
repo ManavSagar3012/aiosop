@@ -329,8 +329,14 @@ async def mcp_initialize(req: MCPInitializeRequest, authenticated: None = Depend
         from ai_osop.core.models import ScopeDefinition
         try:
             scope_def = ScopeDefinition(**req.scope)
-            app.state.scope_enforcer = ScopeEnforcer(scope_def)
-            app.state.session_id = req.session_id
+            # Per-session scope enforcer (was single global — last-wins across
+            # concurrent engagements, scope-bleed risk). Each engagement gets its
+            # own enforcer so concurrent navigation never validates against the
+            # wrong scope. (AIOSOP-SCOPE-BLEED-001)
+            if not hasattr(app.state, "scope_enforcers"):
+                app.state.scope_enforcers = {}
+            key = req.session_id or "__default__"
+            app.state.scope_enforcers[key] = ScopeEnforcer(scope_def)
         except Exception as e:  # noqa: BLE001
             print(f"Failed to initialize scope: {e}")
 
@@ -374,10 +380,16 @@ async def mcp_execute(req: MCPExecuteRequest, authenticated: None = Depends(veri
 
         if action == "navigate":
             url = params.get("url", "")
-            # Enforce scope check
-            if getattr(app.state, "scope_enforcer", None) and getattr(app.state, "session_id", "") != "api-bootstrap":
+            # Enforce scope check — per-session enforcer so concurrent
+            # engagements never validate against the wrong scope.
+            # (AIOSOP-SCOPE-BLEED-001)
+            enforcer = None
+            if hasattr(app.state, "scope_enforcers"):
+                key = req.session_id or engagement_id or "__default__"
+                enforcer = app.state.scope_enforcers.get(key)
+            if enforcer and key != "__default__":
                 try:
-                    app.state.scope_enforcer.validate_target(url)
+                    enforcer.validate_target(url)
                 except Exception as e:  # noqa: BLE001
                     return {
                         "request_id": request_id,

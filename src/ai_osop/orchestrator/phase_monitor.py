@@ -295,14 +295,61 @@ class PhaseMonitor:
                     )
                     await self._orch.task_scheduler.schedule_task(xhr_task)
 
-                    # Guest login-probe (AIOSOP-SPA-XHR-RECON). Navigation captures
-                    # only on-load GET XHR; an auth-gated POST endpoint (e.g. POST
-                    # /rest/user/login) fires ONLY on form submit. A single benign
-                    # login submission surfaces that endpoint and its body params in
-                    # the HAR so it becomes a scannable Endpoint. Obviously-invalid
-                    # probe credentials, one attempt; the submit only fires when a
-                    # real login form (password field) is detected, and HAR
-                    # extraction is scope-filtered. The 401 is expected and harmless.
+                    # AIOSOP-REG-PROBE-001: Registration probe + valid-credential
+                    # login (was guest-only with invalid creds).
+                    #
+                    # Problem: the previous guest login-probe used obviously-invalid
+                    # credentials (osop-recon-probe@example.invalid / osop-recon-probe)
+                    # which returned 401 with no JWT. Every downstream scanner that
+                    # required a valid session (jwt_scan, IDOR/BOLA diff-auth) was
+                    # dead code — jwt_scan reported "skipped: no JWT token in scope"
+                    # and the diff-auth engine had no sessions to replay against.
+                    #
+                    # Fix: register a real user FIRST via the registration page,
+                    # then authenticate with the same valid credentials. Registration
+                    # also discovers the POST /api/Users endpoint (mass-assignment
+                    # target JS-005) via HAR extraction. The authenticate task
+                    # depends on registration completing so creds exist when login
+                    # fires. Both share the same label so the browser context chain
+                    # survives across the two tasks (the registration context gets
+                    # flushed+closed; login creates a fresh one, but the user exists
+                    # in the backend DB).
+                    #
+                    # After login: the captured session carries a JWT and cookies
+                    # that the diff-auth engine and jwt_scanner consume. JS-004 (JWT)
+                    # becomes scannable and JS-003 (IDOR) gains an authenticated
+                    # identity for basket reference testing.
+                    #
+                    # JS-NEG-004 guard: the mass-assignment scanner is deliberately
+                    # NOT routed to this login POST path (see vuln-discover dispatch).
+                    # Registration credentials are seeded so the same user can be
+                    # used for login across retries/restarts.
+                    reg_email = f"osop-auto-{dom_slug[:20]}@recon.test"
+                    reg_password = "AutoRegPass1!"
+                    reg_label = f"recon-probe-{dom_slug}"
+
+                    reg_task = Task(
+                        type="register",
+                        priority=6,
+                        agent_type=AgentType.WORKFLOW,
+                        payload={
+                            "engagement_id": session.session_id,
+                            "register_url": surface_url.rstrip("/") + "/#/register",
+                            "credentials": {
+                                "email": reg_email,
+                                "password": reg_password,
+                                "security_answer": "auto_reg_answer",
+                            },
+                            "user_label": reg_label,
+                            "scope_hosts": scope_hosts,
+                        },
+                        engagement_id=session.session_id,
+                        timeout_seconds=180,
+                    )
+                    await self._orch.task_scheduler.schedule_task(reg_task)
+
+                    # Login task with valid registered credentials. Depends on
+                    # registration completing so the user exists.
                     login_task = Task(
                         type="authenticate",
                         priority=5,
@@ -311,13 +358,14 @@ class PhaseMonitor:
                             "engagement_id": session.session_id,
                             "login_url": surface_url.rstrip("/") + "/#/login",
                             "credentials": {
-                                "email": "osop-recon-probe@example.invalid",
-                                "password": "osop-recon-probe",
+                                "email": reg_email,
+                                "password": reg_password,
                             },
-                            "user_label": f"recon-probe-{dom_slug}",
+                            "user_label": f"recon-auth-{dom_slug}",
                             "scope_hosts": scope_hosts,
                         },
                         engagement_id=session.session_id,
+                        dependencies=[reg_task.id],
                         timeout_seconds=180,
                     )
                     await self._orch.task_scheduler.schedule_task(login_task)
@@ -612,6 +660,134 @@ class PhaseMonitor:
                     "active_injection_scheduled",
                     session_id=session.session_id,
                     targets=len(injection_targets),
+                )
+
+            # 2c) MASS ASSIGNMENT SCAN (AIOSOP-MASS-ASSIGN-DISPATCH-001).
+            #     Route object-creation POST/PUT/PATCH endpoints (with body params)
+            #     to the mass_assignment_scan scanner. Explicitly EXCLUDE auth
+            #     endpoints (login, auth) to prevent JS-NEG-004 false positive
+            #     (login body must NOT be flagged as mass assignment).
+            massassign_records = await self._orch.graph_memory.run_read_query(
+                """MATCH (e:Endpoint {engagement_id: $sid})
+                   WHERE coalesce(e.has_body, false) = true
+                     AND coalesce(e.method, 'POST') IN ['POST', 'PUT', 'PATCH']
+                   RETURN e.url AS url, coalesce(e.method, 'POST') AS method,
+                          coalesce(e.content_type, '') AS content_type,
+                          coalesce(e.body_schema_keys, []) AS body_keys""",
+                {"sid": session.session_id},
+            )
+
+            _AUTH_PATH_TOKENS = ("login", "auth", "signin", "token", "session", "authenticate")
+
+            massassign_targets: List[Dict[str, Any]] = []
+            for r in massassign_records:
+                url = r.get("url")
+                if not url:
+                    continue
+                from urllib.parse import urlparse as _up
+
+                path = (_up(url).path or "").lower()
+                # JS-NEG-004 guard: skip auth/login endpoints — their body params
+                # (email, password) are not object-binding sinks.
+                if any(tok in path for tok in _AUTH_PATH_TOKENS):
+                    continue
+                method = r.get("method") or "POST"
+                content_type = r.get("content_type") or ""
+                body_keys = r.get("body_keys") or []
+                # Build a minimal base_body from discovered body_keys so the
+                # mass_assignment_scan sends a valid request WITH privileged field
+                # injection and a control WITHOUT them. Without base_body the
+                # scanner sends an empty body which fails validation on most
+                # create endpoints (no useful comparison).
+                # Skip privileged fields that the scanner injects by default.
+                _SKIP_INJECT = {"role", "isAdmin", "isDeluxe", "admin"}
+                base_body = {k: "test" for k in body_keys if k not in _SKIP_INJECT}
+                massassign_targets.append(
+                    {
+                        "url": url,
+                        "method": method,
+                        "content_type": content_type,
+                        "base_body": base_body,
+                    }
+                )
+
+            if massassign_targets:
+                logger.info(
+                    "massassgin_targets_found",
+                    session_id=session.session_id,
+                    targets=len(massassign_targets),
+                )
+                for ma_target in massassign_targets:
+                    ma_payload: Dict[str, Any] = {
+                        "url": ma_target["url"],
+                        "method": ma_target["method"],
+                        "engagement_id": session.session_id,
+                    }
+                    if ma_target.get("base_body"):
+                        ma_payload["base_body"] = ma_target["base_body"]
+                    ma_task = Task(
+                        type="mass_assignment_scan",
+                        priority=8,
+                        agent_type=AgentType.VULN_ANALYSIS,
+                        payload=ma_payload,
+                        engagement_id=session.session_id,
+                        timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
+                    )
+                    await self._orch.task_scheduler.schedule_task(ma_task)
+            else:
+                logger.info(
+                    "massassgin_no_targets",
+                    session_id=session.session_id,
+                    records=len(massassign_records),
+                )
+
+            # 2d) JWT SCAN (AIOSOP-JWT-DISPATCH-001). After the registration +
+            #     valid-credential login (recon phase for JS-006), the login response
+            #     carries a JWT in the browser session. Dispatch jwt_scan against
+            #     the identity-reflecting endpoint when sessions exist.
+            try:
+                jwt_sessions = await self._orch.session_store.list_sessions(
+                    session.session_id
+                )
+            except Exception:  # noqa: BLE001 - session lookup must not break phase entry
+                jwt_sessions = []
+
+            if jwt_sessions:
+                # Use the first authenticated session for JWT testing
+                jwt_label = jwt_sessions[0].user_label
+                domain_base = (
+                    self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
+                    if session.scope.domains
+                    else None
+                )
+                # The identity-reflecting endpoint: many apps have /me, /whoami,
+                # or /user/profile. When unknown, fall back to the login URL.
+                jwt_task = Task(
+                    type="jwt_scan",
+                    priority=8,
+                    agent_type=AgentType.VULN_ANALYSIS,
+                    payload={
+                        "url": f"{domain_base.rstrip('/')}/rest/user/whoami"
+                        if domain_base
+                        else None,
+                        "verify_url": f"{domain_base.rstrip('/')}/rest/user/whoami"
+                        if domain_base
+                        else None,
+                        "user_label": jwt_label,
+                        "method": "GET",
+                        "engagement_id": session.session_id,
+                    },
+                    engagement_id=session.session_id,
+                    timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
+                )
+                await self._orch.task_scheduler.schedule_task(jwt_task)
+                logger.info(
+                    "jwt_scan_dispatched",
+                    session_id=session.session_id,
+                    user_label=jwt_label,
+                    verify_url=f"{domain_base.rstrip('/')}/rest/user/whoami"
+                    if domain_base
+                    else None,
                 )
 
             # 3) Autonomous authenticated authorization testing — IDOR / BOLA /

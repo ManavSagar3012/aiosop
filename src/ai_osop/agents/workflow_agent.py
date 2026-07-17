@@ -84,6 +84,8 @@ class PlaywrightAgent(BaseAgent):
                 result = await self._execute_navigation(payload)
             elif task_type == "authenticate":
                 result = await self._execute_authentication(payload)
+            elif task_type == "register":
+                result = await self._execute_registration(payload)
             elif task_type == "map_workflow":
                 result = await self._execute_workflow_mapping(payload)
             elif task_type == "replay_for_diff_auth":
@@ -521,12 +523,271 @@ class PlaywrightAgent(BaseAgent):
         except Exception as e:  # noqa: BLE001 - discovery is best-effort
             logger.warning(f"auth HAR api-inventory extraction failed: {e}")
 
+        # AIOSOP-SESSION-PERSIST-001: persist the captured session so downstream
+        # scanners (jwt_scan, diff-auth analysis) can consume it. Without this,
+        # session_store.list_sessions() returns empty and the jwt_scan dispatch
+        # in the vuln discovery phase is dead code. Best-effort: a persistence
+        # failure must never change the auth verdict.
+        if login_succeeded:
+            try:
+                cookies = session_state.get("cookies") or []
+                local_storage = session_state.get("localStorage") or {}
+                session_storage = session_state.get("sessionStorage") or {}
+                # Extract bearer token from the first matching cookie or storage.
+                bearer_token = ""
+                for c in cookies:
+                    if c.get("name", "").lower() in ("token", "jwt", "access_token"):
+                        bearer_token = c.get("value", "")
+                        break
+                if not bearer_token and local_storage:
+                    for k, v in local_storage.items():
+                        if "token" in k.lower() or "jwt" in k.lower():
+                            bearer_token = str(v)
+                            break
+                await self.session_store.save_session(
+                    engagement_id=engagement_id,
+                    user_label=user_label,
+                    cookies=cookies,
+                    bearer_token=bearer_token,
+                    local_storage=local_storage,
+                    session_storage=session_storage,
+                    metadata_blob={
+                        "source": "authenticate_task",
+                        "origin": current_url,
+                        "user_agent": "AI-OSOP Playwright",
+                    },
+                )
+                logger.info(
+                    "auth_session_persisted",
+                    user_label=user_label,
+                    cookies=len(cookies),
+                    has_bearer=bool(bearer_token),
+                )
+            except Exception as persist_err:
+                logger.warning(f"auth session persist failed for {user_label}: {persist_err}")
+
         return {
             "status": "authenticated" if login_succeeded else "auth_failed",
             "user_label": user_label,
             "session_state": session_state,
             "post_login_url": current_url,
             "selectors_used": {"user": user_sel, "pass": pass_sel, "submit": submit_sel},
+            **api_inventory,
+        }
+
+    async def _execute_registration(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Register a new user account and return credentials.
+
+        Navigates to the registration page, finds email/password/security fields,
+        fills them, submits, and returns the created credentials for downstream
+        authenticated scans (JWT, IDOR, basket access).
+
+        Payload:
+            register_url   URL of the registration page
+            credentials    dict with desired email+password
+            user_label     identity label for the browser context
+            scope_hosts    optional list[hostname] for HAR extraction
+        """
+        register_url = payload.get("register_url")
+        if not register_url:
+            return {"status": "failed", "error": "register_url is required"}
+        credentials = dict(payload.get("credentials", {}))
+        if not credentials.get("email"):
+            import uuid
+            credentials["email"] = f"osop-auto-{uuid.uuid4().hex[:8]}@test.invalid"
+        if not credentials.get("password"):
+            credentials["password"] = "AutoRegPass1!"
+        user_label = payload.get("user_label", "registered_user")
+        engagement_id = self.ctx.session_id
+        scope_hosts = payload.get("scope_hosts")
+
+        # Step 1: Navigate to registration page
+        await self.browser_adapter.navigate(register_url, user_label, engagement_id=engagement_id)
+
+        # Step 2: Find registration form fields via JS
+        js_find_form = """
+        () => {
+            const inputs = Array.from(document.querySelectorAll('input'));
+            const selects = Array.from(document.querySelectorAll('select'));
+            const email_field = inputs.find(i =>
+                /email|e-mail|mail/i.test(i.name + i.id + i.placeholder + i.autocomplete)
+            );
+            const pass_field = inputs.find(i =>
+                /password|pass|pwd/i.test(i.name + i.id + i.placeholder + i.autocomplete) || i.type === 'password'
+            );
+            const pass_repeat = inputs.find(i =>
+                /pass.*(repeat|confirm|again|2|verify)|repeat.*pass/i.test(i.name + i.id + i.placeholder) ||
+                (i.type === 'password' && i !== pass_field)
+            );
+            // Also search <select> elements for security question dropdowns
+            const question_field = inputs.find(i =>
+                /question|security|secret/i.test(i.name + i.id + i.placeholder)
+            ) || selects.find(s =>
+                /question|security|secret/i.test(s.name + s.id)
+            );
+            const answer_field = inputs.find(i =>
+                /answer|response/i.test(i.name + i.id + i.placeholder)
+            );
+            const submit_btn = document.querySelector(
+                'button[type=submit], input[type=submit], button:not([type])'
+            );
+            return {
+                email_selector: email_field ? (email_field.id ? '#' + email_field.id : '[name=' + email_field.name + ']') : null,
+                pass_selector: pass_field ? (pass_field.id ? '#' + pass_field.id : '[name=' + pass_field.name + ']') : null,
+                pass_repeat_selector: pass_repeat ? (pass_repeat.id ? '#' + pass_repeat.id : '[name=' + pass_repeat.name + ']') : null,
+                question_selector: question_field ? (question_field.id ? '#' + question_field.id : '[name=' + question_field.name + ']') : null,
+                answer_selector: answer_field ? (answer_field.id ? '#' + answer_field.id : '[name=' + answer_field.name + ']') : null,
+                submit_selector: submit_btn ? (submit_btn.id ? '#' + submit_btn.id : submit_btn.tagName.toLowerCase() + '[type=submit]') : null,
+            };
+        }
+        """
+        # Also try a secondary detection: if no question_sel found but a <select>
+        # exists in a form context near the password field, use any visible select.
+        if not selectors.get("question_selector"):
+            try:
+                fallback_select = await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": "() => { const pwd = document.querySelector('input[type=password]'); const form = pwd ? pwd.closest('form') : null; const sel = form ? form.querySelectorAll('select') : document.querySelectorAll('select'); return sel.length > 0 ? (sel[0].id ? '#' + sel[0].id : '[name=' + sel[0].name + ']') : null; }"},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                if fallback_select.get("result"):
+                    selectors["question_selector"] = fallback_select["result"]
+                    question_sel = selectors["question_selector"]
+            except Exception:
+                pass
+        form_result = await self.browser_adapter.execute_action(
+            action="eval",
+            params={"expression": js_find_form},
+            user_label=user_label,
+            engagement_id=engagement_id,
+        )
+        selectors = form_result.get("result", {}) or {}
+
+        email_sel = selectors.get("email_selector") or "input[type=email], input[name*=email]"
+        pass_sel = selectors.get("pass_selector") or "input[type=password]"
+        pass_repeat_sel = selectors.get("pass_repeat_selector") or pass_sel
+        question_sel = selectors.get("question_selector")
+        answer_sel = selectors.get("answer_selector")
+        submit_sel = selectors.get("submit_selector") or "button[type=submit]"
+
+        # Step 3: Fill fields — ONLY when a password field is detected (confirms a
+        # real registration form, not a search/login page).
+        reg_form_present = bool(selectors.get("pass_selector"))
+        if reg_form_present:
+            try:
+                await self.browser_adapter.execute_action(
+                    action="fill",
+                    params={"selector": email_sel, "value": credentials["email"]},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                await self.browser_adapter.execute_action(
+                    action="fill",
+                    params={"selector": pass_sel, "value": credentials["password"]},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                if pass_repeat_sel != pass_sel:
+                    await self.browser_adapter.execute_action(
+                        action="fill",
+                        params={"selector": pass_repeat_sel, "value": credentials["password"]},
+                        user_label=user_label,
+                        engagement_id=engagement_id,
+                    )
+                # Fill security question + answer if present (Juice Shop requires
+                # a security question for registration)
+                if question_sel:
+                    # Juice Shop's security question is a <select>; pick the first
+                    # non-placeholder option via JS.
+                    select_q_js = (
+                        "() => { const s = document.querySelector(%s); "
+                        "if (!s) return false; "
+                        "const opts = Array.from(s.options); "
+                        "const opt = opts.find(o => o.value && o.value !== '' && !o.disabled) || opts[0]; "
+                        "if (opt) { s.value = opt.value; s.dispatchEvent(new Event('change', {bubbles: true})); return true; } "
+                        "return false; }" % json.dumps(question_sel)
+                    )
+                    await self.browser_adapter.execute_action(
+                        action="eval",
+                        params={"expression": select_q_js},
+                        user_label=user_label,
+                        engagement_id=engagement_id,
+                    )
+                if answer_sel:
+                    await self.browser_adapter.execute_action(
+                        action="fill",
+                        params={
+                            "selector": answer_sel,
+                            "value": credentials.get("security_answer", "auto_reg_answer"),
+                        },
+                        user_label=user_label,
+                        engagement_id=engagement_id,
+                    )
+                # Submit via JS click (same rationale as authenticate — framework
+                # buttons frequently time out on Playwright actionability)
+                submit_js = (
+                    "() => { const b = document.querySelector(%s); "
+                    "if (b) { b.click(); return true; } return false; }" % json.dumps(submit_sel)
+                )
+                await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": submit_js},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                # Let the XHR fire and land in the HAR before flush
+                await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": "() => new Promise(r => setTimeout(r, 3000))"},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+            except Exception as fill_err:
+                logger.warning(f"Registration form fill failed for {user_label}: {fill_err}")
+        else:
+            logger.info(f"reg_no_form_detected user_label={user_label} url={register_url}")
+
+        # Step 4: Capture state + flush HAR for API endpoint discovery
+        session_state = await self.browser_adapter.capture_state(
+            user_label, engagement_id=engagement_id
+        )
+        current_url = session_state.get("url") or session_state.get("current_url") or register_url
+
+        # Step 5: Flush HAR and extract discovered API endpoints (especially POST
+        # /api/Users which is the mass-assignment target).
+        api_inventory: Dict[str, Any] = {}
+        try:
+            har = await self.browser_adapter.flush_har(
+                user_label=user_label,
+                engagement_id=engagement_id,
+                workflow_id=payload.get("workflow_id", ""),
+            )
+            har_path = har.get("path", "")
+            if har_path and har.get("exists"):
+                api_inventory = await self._extract_and_persist_har(
+                    har_path=har_path,
+                    user_label=user_label,
+                    workflow_id=payload.get("workflow_id", ""),
+                    scope_hosts=scope_hosts,
+                )
+        except Exception as e:  # noqa: BLE001 - discovery best-effort
+            logger.warning(f"reg HAR api-inventory extraction failed: {e}")
+
+        reg_succeeded = "register" not in current_url.lower() or bool(
+            session_state.get("cookies")
+        )
+
+        return {
+            "status": "registered" if reg_succeeded else "reg_failed",
+            "user_label": user_label,
+            "credentials": credentials,
+            "post_reg_url": current_url,
+            "selectors_used": {
+                "email": email_sel,
+                "pass": pass_sel,
+                "submit": submit_sel,
+            },
             **api_inventory,
         }
 
