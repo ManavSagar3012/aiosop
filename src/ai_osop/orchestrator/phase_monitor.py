@@ -273,13 +273,20 @@ class PhaseMonitor:
                         for d in session.scope.domains
                         if d
                     ]
+                    # Per-domain browser label. The browser MCP keys its Page/HAR
+                    # context by label ALONE, so a fixed "guest"/"recon_probe" label
+                    # makes N concurrent per-domain captures collide on one Page
+                    # (nav races, HAR cross-contamination, one flush closing the
+                    # context under a peer). A domain slug isolates each so the 3
+                    # WORKFLOW agents can run per-domain captures in parallel safely.
+                    dom_slug = "".join(c if c.isalnum() else "-" for c in domain.lower()).strip("-")
                     xhr_task = Task(
                         type="capture_authenticated_surface",
                         priority=5,
                         agent_type=AgentType.WORKFLOW,
                         payload={
                             "engagement_id": session.session_id,
-                            "user_label": "guest",
+                            "user_label": f"guest-{dom_slug}",
                             "url": surface_url,
                             "scope_hosts": scope_hosts,
                         },
@@ -307,7 +314,7 @@ class PhaseMonitor:
                                 "email": "osop-recon-probe@example.invalid",
                                 "password": "osop-recon-probe",
                             },
-                            "user_label": "recon_probe",
+                            "user_label": f"recon-probe-{dom_slug}",
                             "scope_hosts": scope_hosts,
                         },
                         engagement_id=session.session_id,

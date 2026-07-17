@@ -68,8 +68,8 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
     by_type = {t.type: t for t in mock_orchestrator._tasks.values()}
     assert set(by_type) == {"full_recon", "capture_authenticated_surface", "authenticate"}
     assert by_type["full_recon"].payload["domain"] == "example.com"
-    assert by_type["capture_authenticated_surface"].payload["user_label"] == "guest"
-    assert by_type["authenticate"].payload["user_label"] == "recon_probe"
+    assert by_type["capture_authenticated_surface"].payload["user_label"].startswith("guest-")
+    assert by_type["authenticate"].payload["user_label"].startswith("recon-probe-")
 
 
 @pytest.mark.asyncio
