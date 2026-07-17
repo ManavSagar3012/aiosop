@@ -429,10 +429,15 @@ class PhaseMonitor:
             #     (AIOSOP-ACTIVE-INJECTION-WIRE-2026-07-08)
             param_endpoint_records = await self._orch.graph_memory.run_read_query(
                 """MATCH (e:Endpoint {engagement_id: $sid})
-                   WHERE e.status_code IS NOT NULL
-                     AND (e.url CONTAINS '?'
-                          OR (coalesce(e.has_body, false)
-                              AND size(coalesce(e.body_schema_keys, [])) > 0))
+                   // status_code gates the GET/query-string branch (proves the
+                   // page was actually observed with a response). Body-param
+                   // endpoints come from HAR extraction of a real fired XHR (e.g.
+                   // the login POST) and legitimately carry no status_code, so they
+                   // must NOT be gated on it — else the discovered auth-gated POST
+                   // is filtered out and never scanned. (AIOSOP-SPA-XHR-RECON)
+                   WHERE (e.status_code IS NOT NULL AND e.url CONTAINS '?')
+                      OR (coalesce(e.has_body, false)
+                          AND size(coalesce(e.body_schema_keys, [])) > 0)
                    RETURN e.url AS url, e.query_keys AS query_keys,
                           coalesce(e.method, 'GET') AS method,
                           e.technologies AS technologies,
