@@ -273,20 +273,27 @@ def main() -> None:
             print(f"    [dbg] surface result dump: {_json.dumps(r, default=str)[:600]}")
 
         # Dispatch diff-auth analysis: replay endpoints as user_a / user_b / anonymous.
-        # Pass empty workflow_id so the analyzer queries by engagement_id instead
-        # of looking for a (Workflow)-[:CALLED]->(Endpoint) path — capture_authenticated_surface
-        # only persists Endpoint nodes, not Workflow nodes.
-        da_id = dispatch(
-            "run_diff_auth_analysis",
-            "workflow",
-            {
-                "workflow_id": "",
-                "user_a": "user_a",
-                "user_b": "user_b",
-            },
-            priority=6,
-        )
-        if da_id:
+        # IMPORTANT: use session_id (full key) not eid (short form) as engagement_id,
+        # because capture_authenticated_surface persists endpoints with
+        # ctx.session_id = session_id, and _load_endpoints queries by engagement_id.
+        # The dispatch helper always injects eid, so we skip it for this task.
+        da_payload = {
+            "engagement_id": session_id,
+            "workflow_id": "",
+            "user_a": "user_a",
+            "user_b": "user_b",
+        }
+        da_req = {
+            "task_type": "run_diff_auth_analysis",
+            "agent_type": "workflow",
+            "engagement_id": eid,
+            "priority": 6,
+            "payload": da_payload,
+        }
+        rr2 = requests.post(f"{API}/tasks", headers=H, json=da_req, timeout=30)
+        if rr2.status_code < 400:
+            da_id = rr2.json().get("id")
+            print(f"    [+] dispatched run_diff_auth_analysis task={da_id}")
             da_result = wait_task(H, da_id, "diff_auth", timeout=300)
             r2 = da_result.get("result") or {}
             print(f"    [=] diff-auth: status={da_result.get('status')} "
@@ -295,6 +302,8 @@ def main() -> None:
                   f"findings={r2.get('findings_count')}")
             for f in (r2.get("findings") or r2.get("results") or [])[:5]:
                 print(f"      - {f.get('type','?')} {f.get('endpoint','?')} conf={f.get('confidence','?')}")
+        else:
+            print(f"    [!] diff-auth dispatch HTTP {rr2.status_code}: {rr2.text[:300]}")
 
     print(f"\n[*] DONE. engagement_id={eid}")
     print(f"[*] score with: poetry run python benchmarks/score_engagement.py "
