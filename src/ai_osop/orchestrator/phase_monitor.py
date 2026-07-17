@@ -745,12 +745,25 @@ class PhaseMonitor:
             #     valid-credential login (recon phase for JS-006), the login response
             #     carries a JWT in the browser session. Dispatch jwt_scan against
             #     the identity-reflecting endpoint when sessions exist.
-            try:
-                jwt_sessions = await self._orch.session_store.list_sessions(
-                    session.session_id
-                )
-            except Exception:  # noqa: BLE001 - session lookup must not break phase entry
-                jwt_sessions = []
+            #
+            #     Timing: the recon phase dispatches registration+login tasks
+            #     asynchronously and may transition to vuln_discovery before they
+            #     complete. Poll for up to 60s (12 x 5s) for an authenticated
+            #     session with a valid bearer_token to appear.
+            jwt_sessions: List[Any] = []
+            for _poll_attempt in range(12):
+                try:
+                    jwt_sessions = await self._orch.session_store.list_sessions(
+                        session.session_id
+                    )
+                    # Only accept sessions that actually carry a bearer token
+                    jwt_sessions = [s for s in jwt_sessions if s.bearer_token]
+                    if jwt_sessions:
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
+                if _poll_attempt < 11:
+                    await asyncio.sleep(5)
 
             if jwt_sessions:
                 # Use the first authenticated session for JWT testing

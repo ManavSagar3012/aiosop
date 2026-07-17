@@ -476,10 +476,32 @@ class PlaywrightAgent(BaseAgent):
                     user_label=user_label,
                     engagement_id=engagement_id,
                 )
-                # Let the login XHR fire and land in the HAR before we flush it.
+                # Poll for JWT token in localStorage or URL redirect after login.
+                # Blind timeout is unreliable: SPA frameworks take variable time
+                # to complete the XHR, store the JWT, and redirect. We poll up
+                # to 10s (every 500ms) so the captured session carries a valid
+                # bearer_token for downstream jwt_scan and diff-auth engines.
+                # (AIOSOP-JWT-POLL-001)
+                poll_js = (
+                    "() => new Promise(resolve => {"
+                    "  const start = Date.now();"
+                    "  const maxWait = 10000;"
+                    "  const poll = () => {"
+                    "    const token = (localStorage || {}).getItem('token');"
+                    "    const url = window.location.href;"
+                    "    const urlChanged = " + json.dumps(login_url) + " !== url;"
+                    "    if (token || urlChanged || (Date.now() - start) >= maxWait) {"
+                    "      resolve({token: token || null, url: url, elapsed: Date.now() - start});"
+                    "    } else {"
+                    "      setTimeout(poll, 500);"
+                    "    }"
+                    "  };"
+                    "  poll();"
+                    "})"
+                )
                 await self.browser_adapter.execute_action(
                     action="eval",
-                    params={"expression": "() => new Promise(r => setTimeout(r, 2500))"},
+                    params={"expression": poll_js},
                     user_label=user_label,
                     engagement_id=engagement_id,
                 )
@@ -641,21 +663,8 @@ class PlaywrightAgent(BaseAgent):
             };
         }
         """
-        # Also try a secondary detection: if no question_sel found but a <select>
-        # exists in a form context near the password field, use any visible select.
-        if not selectors.get("question_selector"):
-            try:
-                fallback_select = await self.browser_adapter.execute_action(
-                    action="eval",
-                    params={"expression": "() => { const pwd = document.querySelector('input[type=password]'); const form = pwd ? pwd.closest('form') : null; const sel = form ? form.querySelectorAll('select') : document.querySelectorAll('select'); return sel.length > 0 ? (sel[0].id ? '#' + sel[0].id : '[name=' + sel[0].name + ']') : null; }"},
-                    user_label=user_label,
-                    engagement_id=engagement_id,
-                )
-                if fallback_select.get("result"):
-                    selectors["question_selector"] = fallback_select["result"]
-                    question_sel = selectors["question_selector"]
-            except Exception:
-                pass
+        # The main JS query below already handles <select> elements for
+        # security question dropdowns. No separate fallback needed.
         form_result = await self.browser_adapter.execute_action(
             action="eval",
             params={"expression": js_find_form},
@@ -774,9 +783,29 @@ class PlaywrightAgent(BaseAgent):
         except Exception as e:  # noqa: BLE001 - discovery best-effort
             logger.warning(f"reg HAR api-inventory extraction failed: {e}")
 
-        reg_succeeded = "register" not in current_url.lower() or bool(
-            session_state.get("cookies")
-        )
+        # Registration success check: DOM-based instead of URL-based because
+        # SPA frameworks (e.g. Juice Shop) show a success overlay without
+        # navigating away from /#/register. Also checks cookies as fallback.
+        reg_succeeded = bool(session_state.get("cookies"))
+        if not reg_succeeded:
+            try:
+                dom_check = await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={
+                        "expression": (
+                            "() => {"
+                            "  const t = document.body.innerText;"
+                            "  return /success|completed|confirmation|thank you|registration/i.test(t)"
+                            "    ? 'success' : null;"
+                            "}"
+                        )
+                    },
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                reg_succeeded = bool(dom_check.get("result"))
+            except Exception:
+                pass
 
         return {
             "status": "registered" if reg_succeeded else "reg_failed",

@@ -2649,13 +2649,23 @@ class VulnAnalysisAgent(BaseAgent):
         }
 
     async def _token_from_session(self, engagement_id: str, user_label: str) -> Optional[str]:
-        """Best-effort: pull a bearer token from a stored session's metadata."""
+        """Best-effort: pull a bearer token from a stored session's metadata.
+
+        The save_session() call in workflow_agent stores the JWT in the
+        ``bearer_token`` field of UserSession, NOT in metadata. Check that field
+        first, then fall back to metadata for backward compatibility with sessions
+        that were stored with the token in metadata.
+        """
         try:
             sess = await self.session_store.get_session_or_none(engagement_id, user_label)
         except Exception:
             return None
         if not sess:
             return None
+        # bearer_token field is the primary storage (set by save_session)
+        if sess.bearer_token:
+            return sess.bearer_token
+        # Fall back to metadata dict for legacy sessions
         meta = getattr(sess, "metadata", {}) or {}
         return meta.get("token") or meta.get("bearer") or meta.get("jwt")
 
