@@ -891,8 +891,17 @@ class Orchestrator:
         # hydrated), and trusting memory alone lets the monitor advance the phase while
         # durable pending tasks still exist. Union by task id; the durable record wins
         # for status so a not-yet-hydrated pending task still blocks completion.
+        #
+        # engagement_id resolution: the session key in _sessions is the FULL form
+        # (eng-{timestamp}-juice-e2e-xxx) but scripts and API callers often create
+        # tasks with only the SHORT form (juice-e2e-xxx). Match BOTH so the phase
+        # monitor correctly tracks tasks regardless of which form they carry.
+        _session = self._sessions.get(session_id)
+        _short_eid = _session.scope.engagement_id if _session else session_id
         by_id: Dict[str, Task] = {
-            t.id: t for t in self.state.get_all_tasks().values() if t.engagement_id == session_id
+            t.id: t
+            for t in list(self.state.get_all_tasks().values())
+            if t.engagement_id == session_id or t.engagement_id == _short_eid
         }
         try:
             for t in await self.session_memory.load_all_active_tasks():
