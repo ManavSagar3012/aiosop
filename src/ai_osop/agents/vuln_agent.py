@@ -933,17 +933,28 @@ class VulnAnalysisAgent(BaseAgent):
                 "error": "no JWT available (pass 'token' or store a session with a bearer token)",
             }
 
+        # Validate token format before passing to JWTTester (its _decode
+        # crashes with ValueError on non-3-part tokens -> UncaughtException).
+        if token.count(".") != 2:
+            return {
+                "status": "error",
+                "tool": "jwt_scan",
+                "error": f"invalid JWT token format (expected 3 parts, got {token.count('.') + 1})",
+            }
+
         from ai_osop.core.jwt_tester import JWTTester
 
-        tester = JWTTester(
-            verify_url,
-            token,
-            sentinel=payload.get("sentinel", "osop-forged@attacker.test"),
-            method=payload.get("method", "GET"),
-            extra_secrets=payload.get("extra_secrets"),
-            public_key_pem=payload.get("public_key_pem"),
-        )
+        # Wrap JWTTester construction + run in try/except so an invalid
+        # (but 3-part) token produces a clean error, not an UncaughtException crash.
         try:
+            tester = JWTTester(
+                verify_url,
+                token,
+                sentinel=payload.get("sentinel", "osop-forged@attacker.test"),
+                method=payload.get("method", "GET"),
+                extra_secrets=payload.get("extra_secrets"),
+                public_key_pem=payload.get("public_key_pem"),
+            )
             jwt_findings = await tester.run()
         except Exception as e:
             logger.warning("jwt_scan_failed", verify_url=verify_url, error=str(e))
