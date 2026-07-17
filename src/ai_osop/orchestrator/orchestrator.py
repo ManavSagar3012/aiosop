@@ -386,7 +386,7 @@ class Orchestrator:
         """Restart-safe check: is there already a map_workflow for this engagement,
         either in memory (_tasks) or persisted in Neo4j (survives a process restart,
         since _tasks is in-memory only)?"""
-        for t in self.state.get_all_tasks().values():
+        for t in list(self.state.get_all_tasks().values()):
             if t.engagement_id == engagement_id and t.type == "map_workflow":
                 return True
         cypher = "MATCH (t:Task {engagement_id: $eid, type: 'map_workflow'}) RETURN count(t) AS c"
