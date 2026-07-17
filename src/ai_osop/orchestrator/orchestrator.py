@@ -869,6 +869,23 @@ class Orchestrator:
 
         allowed_agents = phase_agent_mapping.get(phase, set())
 
+        # AIOSOP-RECON-WORKFLOW-GATE: only gate the phase on agent types that
+        # actually have a registered agent. RECON now includes WORKFLOW so it waits
+        # for the browser API-discovery tasks — but if NO WORKFLOW agent is
+        # registered (a browser-less deployment, or an agent-pool outage), those
+        # tasks sit 'pending' forever (the reaper only fails 'running' tasks) and
+        # RECON would hang. Dropping unregistered agent types lets the phase still
+        # complete on the work that can actually run.
+        try:
+            registered = {
+                str(getattr(getattr(a, "ctx", None), "agent_type", ""))
+                for a in self._agents.values()
+            }
+            if registered:
+                allowed_agents = {a for a in allowed_agents if str(a) in registered}
+        except Exception as e:  # noqa: BLE001 - never let this gate helper crash completion
+            logger.warning("phase_gate_agent_filter_failed", error=str(e))
+
         # GAP-3-3: merge the in-memory view with the durable store. self._tasks can be
         # incomplete (e.g. mid-recovery, or another worker scheduled a task we haven't
         # hydrated), and trusting memory alone lets the monitor advance the phase while
