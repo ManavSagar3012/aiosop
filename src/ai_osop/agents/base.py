@@ -384,13 +384,24 @@ class BaseAgent(ABC):
 
                 # Execute agent-specific logic under a hard timeout. An unbounded
                 # _execute previously left agents permanently "running" (Issue 3).
+                #
+                # AIOSOP-DOUBLE-TIMEOUT-FIX: intentionally use (timeout_s - 5) here so the
+                # INNER timeout always fires 5 seconds BEFORE the outer timeout in
+                # _execute_via_agent (task_scheduler.py). When both timeouts fire at the
+                # same value (both default to 300s), asyncio.wait_for races — the outer's
+                # CancelledError can propagate INTO execute_task before the inner's
+                # TimeoutError handler runs, preventing the failure result from being
+                # returned and stranding the task in "running" forever. A 5s buffer
+                # guarantees the inner fires first and returns cleanly.
                 try:
                     record_stage(
                         task,
                         ExecutionStage.SCANNER_STARTED,
                         metadata={"scanner": self.ctx.agent_type.value, "task_type": task.type},
                     )
-                    result = await asyncio.wait_for(self._execute(task), timeout=timeout_s)
+                    # min(..., 1) ensures timeout_s=5 doesn't produce 0
+                    _inner_timeout = max(1, timeout_s - 5)
+                    result = await asyncio.wait_for(self._execute(task), timeout=_inner_timeout)
                     record_stage(
                         task,
                         ExecutionStage.VERIFICATION_STARTED,
@@ -400,13 +411,13 @@ class BaseAgent(ABC):
                     record_stage(
                         task,
                         ExecutionStage.SCANNER_TIMED_OUT,
-                        error=f"timed out after {timeout_s}s",
-                        metadata={"timeout": timeout_s},
+                        error=f"timed out after {_inner_timeout}s",
+                        metadata={"timeout": _inner_timeout},
                     )
                     record_failure(
                         task,
                         FailureCategory.SCANNER,
-                        f"task timed out after {timeout_s}s",
+                        f"task timed out after {_inner_timeout}s",
                         component=self.ctx.agent_id,
                     )
                     task.status = "failed"
@@ -421,7 +432,7 @@ class BaseAgent(ABC):
                         "failure_type": "ScannerTimeout",
                         "component": self.ctx.agent_id,
                         "phase": task.status,
-                        "reason": f"task timed out after {timeout_s}s",
+                        "reason": f"task timed out after {_inner_timeout}s",
                         "elapsed": elapsed,
                         "retryable": True,
                     }
