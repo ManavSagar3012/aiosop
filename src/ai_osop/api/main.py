@@ -544,7 +544,13 @@ async def lifespan(app: FastAPI):
                     (ContextManagerAgent, AgentType.CONTEXT_MANAGER, "context-manager-agent-001"),
                     (ConcurrencyAgent, AgentType.CONCURRENCY, "concurrency-agent-001"),
                     (StackProfilerAgent, AgentType.CONTEXT_MANAGER, "stack-profiler-agent-001"),
+                    # 3 WORKFLOW (browser) agents: RECON dispatches 2 browser tasks
+                    # per domain (guest capture + login-probe) and now waits for them;
+                    # a single agent serialized them and tripped the starvation warning.
+                    # (AIOSOP-WORKFLOW-POOL)
                     (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-001"),
+                    (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-002"),
+                    (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-003"),
                     (CloudSpecialistAgent, AgentType.CLOUD_SPECIALIST, "cloud-agent-001"),
                     (CodeQLAgent, AgentType.SAST_ANALYSIS, "codeql-agent-001"),
                     (GraphQLAgent, AgentType.VULN_ANALYSIS, "graphql-agent-001"),
