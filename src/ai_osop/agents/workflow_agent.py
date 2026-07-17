@@ -3,6 +3,7 @@ Playwright Intelligence Agent
 Orchestrates real browser journeys, handles authentication, and maps workflows.
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -345,9 +346,7 @@ class PlaywrightAgent(BaseAgent):
         semantics = []
 
         if payload.get("capture_semantics"):
-            await self._execute_semantic_extraction(
-                {"url": url, "user_label": user_label}
-            )
+            await self._execute_semantic_extraction({"url": url, "user_label": user_label})
             semantics = ["button:delete", "link:settings"]
 
         if payload.get("capture_body"):
@@ -436,40 +435,91 @@ class PlaywrightAgent(BaseAgent):
         pass_sel = selectors.get("pass_selector") or "input[type=password]"
         submit_sel = selectors.get("submit_selector") or "button[type=submit]"
 
-        # Step 3: Fill and submit
-        try:
-            await self.browser_adapter.execute_action(
-                action="fill",
-                params={
-                    "selector": user_sel,
-                    "value": credentials.get("username", credentials.get("email", "")),
-                },
-                user_label=user_label,
-                engagement_id=engagement_id,
-            )
-            await self.browser_adapter.execute_action(
-                action="fill",
-                params={"selector": pass_sel, "value": credentials.get("password", "")},
-                user_label=user_label,
-                engagement_id=engagement_id,
-            )
-            await self.browser_adapter.execute_action(
-                action="click",
-                params={"selector": submit_sel},
-                user_label=user_label,
-                engagement_id=engagement_id,
-            )
-        except Exception as fill_err:
-            logger.warning(f"Auth form fill failed for {user_label}: {fill_err}")
+        # Step 3: Fill and submit — ONLY when a real login form is present (a
+        # detected password field). This stops the guest recon probe from
+        # filling+submitting an unrelated form (search/newsletter) on a non-login
+        # landing page when the login route doesn't resolve. (review-finding-2)
+        login_form_present = bool(selectors.get("pass_selector"))
+        if login_form_present:
+            try:
+                await self.browser_adapter.execute_action(
+                    action="fill",
+                    params={
+                        "selector": user_sel,
+                        "value": credentials.get("username", credentials.get("email", "")),
+                    },
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                await self.browser_adapter.execute_action(
+                    action="fill",
+                    params={"selector": pass_sel, "value": credentials.get("password", "")},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                # Robust submit (AIOSOP-AUTH-JSSUBMIT): a Playwright click on an
+                # Angular-Material submit button frequently times out on
+                # actionability even when the button exists and is enabled. A
+                # programmatic JS click reliably fires the framework's submit
+                # handler and the resulting XHR (e.g. POST /rest/user/login) —
+                # verified against Juice Shop. This is what makes an auth-gated
+                # POST endpoint observable in the HAR.
+                submit_js = (
+                    "() => { const b = document.querySelector(%s); "
+                    "if (b) { b.click(); return true; } return false; }" % json.dumps(submit_sel)
+                )
+                await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": submit_js},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                # Let the login XHR fire and land in the HAR before we flush it.
+                await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": "() => new Promise(r => setTimeout(r, 2500))"},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+            except Exception as fill_err:
+                logger.warning(f"Auth form fill failed for {user_label}: {fill_err}")
+        else:
+            logger.info(f"auth_no_login_form_detected user_label={user_label} url={login_url}")
 
         # Step 4 + 5: Capture post-login state
         session_state = await self.browser_adapter.capture_state(
             user_label, engagement_id=engagement_id
         )
 
-        # Detect auth success: URL changed away from login page, or session cookies set
-        current_url = session_state.get("current_url", login_url)
+        # Detect auth success: URL changed away from login page, or session cookies
+        # set. capture_state's state dict carries the URL under "url" (not
+        # "current_url"), so read that first. (review-finding-4)
+        current_url = session_state.get("url") or session_state.get("current_url") or login_url
         login_succeeded = (login_url not in current_url) or bool(session_state.get("cookies"))
+
+        # Discovery: flush the HAR (which now contains the login POST fired by the
+        # submit above, plus any XHR the journey triggered) and extract + persist
+        # the API endpoints. This turns an auth-gated POST endpoint — with its
+        # body params — into a discovered, scannable Endpoint{type:'api'} node,
+        # which the GET link crawler could never observe. Best-effort: a discovery
+        # hiccup must never change the auth verdict. (AIOSOP-AUTH-XHR-DISCOVERY)
+        api_inventory: Dict[str, Any] = {}
+        try:
+            har = await self.browser_adapter.flush_har(
+                user_label=user_label,
+                engagement_id=engagement_id,
+                workflow_id=payload.get("workflow_id", ""),
+            )
+            har_path = har.get("path", "")
+            if har_path and har.get("exists"):
+                api_inventory = await self._extract_and_persist_har(
+                    har_path=har_path,
+                    user_label=user_label,
+                    workflow_id=payload.get("workflow_id", ""),
+                    scope_hosts=payload.get("scope_hosts"),
+                )
+        except Exception as e:  # noqa: BLE001 - discovery is best-effort
+            logger.warning(f"auth HAR api-inventory extraction failed: {e}")
 
         return {
             "status": "authenticated" if login_succeeded else "auth_failed",
@@ -477,6 +527,7 @@ class PlaywrightAgent(BaseAgent):
             "session_state": session_state,
             "post_login_url": current_url,
             "selectors_used": {"user": user_sel, "pass": pass_sel, "submit": submit_sel},
+            **api_inventory,
         }
 
     async def _probe_workflow_abuse(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -673,9 +724,7 @@ class PlaywrightAgent(BaseAgent):
 
         for attempt, user in [(1, user_label_a), (2, user_label_b)]:
             try:
-                await self.browser_adapter.navigate(
-                    invite_url, user, engagement_id=engagement_id
-                )
+                await self.browser_adapter.navigate(invite_url, user, engagement_id=engagement_id)
                 state = await self.browser_adapter.capture_state(user, engagement_id=engagement_id)
                 body = (state.get("body") or "").lower()
                 success_words = [

@@ -265,6 +265,14 @@ class PhaseMonitor:
                 except Exception:  # noqa: BLE001 - URL derivation is best-effort
                     surface_url = None
                 if surface_url:
+                    # In-scope hostnames so HAR extraction persists ONLY in-scope
+                    # endpoints. Without this the extractor's scope guard is disabled
+                    # and every third-party host a page calls is stored as in-scope.
+                    scope_hosts = [
+                        d.split("://")[-1].split("/")[0].split(":")[0]
+                        for d in session.scope.domains
+                        if d
+                    ]
                     xhr_task = Task(
                         type="capture_authenticated_surface",
                         priority=5,
@@ -273,11 +281,39 @@ class PhaseMonitor:
                             "engagement_id": session.session_id,
                             "user_label": "guest",
                             "url": surface_url,
+                            "scope_hosts": scope_hosts,
                         },
                         engagement_id=session.session_id,
                         timeout_seconds=300,
                     )
                     await self._orch.task_scheduler.schedule_task(xhr_task)
+
+                    # Guest login-probe (AIOSOP-SPA-XHR-RECON). Navigation captures
+                    # only on-load GET XHR; an auth-gated POST endpoint (e.g. POST
+                    # /rest/user/login) fires ONLY on form submit. A single benign
+                    # login submission surfaces that endpoint and its body params in
+                    # the HAR so it becomes a scannable Endpoint. Obviously-invalid
+                    # probe credentials, one attempt; the submit only fires when a
+                    # real login form (password field) is detected, and HAR
+                    # extraction is scope-filtered. The 401 is expected and harmless.
+                    login_task = Task(
+                        type="authenticate",
+                        priority=5,
+                        agent_type=AgentType.WORKFLOW,
+                        payload={
+                            "engagement_id": session.session_id,
+                            "login_url": surface_url.rstrip("/") + "/#/login",
+                            "credentials": {
+                                "email": "osop-recon-probe@example.invalid",
+                                "password": "osop-recon-probe",
+                            },
+                            "user_label": "recon_probe",
+                            "scope_hosts": scope_hosts,
+                        },
+                        engagement_id=session.session_id,
+                        timeout_seconds=180,
+                    )
+                    await self._orch.task_scheduler.schedule_task(login_task)
             url_hint = (
                 self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
                 if session.scope.domains

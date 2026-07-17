@@ -834,7 +834,13 @@ class Orchestrator:
 
         # Map phase to corresponding AgentTypes
         phase_agent_mapping = {
-            EngagementPhase.RECONNAISSANCE: {AgentType.RECON},
+            # RECON must wait for the WORKFLOW discovery tasks (guest browser XHR
+            # capture + login-probe), not just the RECON GET crawler. Otherwise the
+            # fast full_recon finishes first, RECON is judged complete, and
+            # VULNERABILITY_DISCOVERY selects injection targets before the browser
+            # login-probe has persisted the login endpoint — so the auth-gated POST
+            # SQLi (JS-001) is missed by a race. (AIOSOP-SPA-XHR-RECON)
+            EngagementPhase.RECONNAISSANCE: {AgentType.RECON, AgentType.WORKFLOW},
             EngagementPhase.VULNERABILITY_DISCOVERY: {
                 AgentType.VULN_ANALYSIS,
                 AgentType.SSTI_SCANNER,

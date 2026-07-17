@@ -41,10 +41,17 @@ async def test_recon_dispatches_guest_xhr_capture_alongside_full_recon():
     types = [t.type for t in scheduled]
     assert "full_recon" in types  # GET crawler still runs
     assert "capture_authenticated_surface" in types  # + browser XHR discovery
+    assert "authenticate" in types  # + guest login-probe (POST endpoint discovery)
 
     xhr = next(t for t in scheduled if t.type == "capture_authenticated_surface")
     assert xhr.payload["user_label"] == "guest"  # unauthenticated surface
     assert xhr.payload["url"] == "http://localhost:3000"
+
+    probe = next(t for t in scheduled if t.type == "authenticate")
+    assert probe.payload["user_label"] == "recon_probe"
+    assert probe.payload["login_url"].endswith("/#/login")
+    # obviously-benign probe credentials, never real
+    assert probe.payload["credentials"]["email"].endswith("@example.invalid")
 
 
 @pytest.mark.asyncio
