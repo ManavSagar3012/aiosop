@@ -260,15 +260,27 @@ def main() -> None:
         surface_task = wait_task(H, surface_id, "surface_capture", timeout=180)
         r = surface_task.get("result") or {}
         har_path = r.get("har_path", "")
-        api_count = r.get("api_endpoints_count") or r.get("endpoint_count", 0)
-        print(f"    [+] workflow_id={wid} har_path={har_path[-50:] if har_path else 'N/A'} endpoints={api_count}")
+        api_count = r.get("endpoints_extracted", 0)
+        api_persisted = r.get("endpoints_persisted", 0)
+        status = r.get("status", "?")
+        error = r.get("error", "")
+        print(f"    [+] status={status} workflow_id={wid} har_path={har_path[-50:] if har_path else 'N/A'} ext={api_count} persist={api_persisted}")
+        if error:
+            print(f"    [!] surface_capture error: {error}")
+        if not har_path or api_count == 0:
+            # Diagnostic: dump full result when no endpoints found
+            import json as _json
+            print(f"    [dbg] surface result dump: {_json.dumps(r, default=str)[:600]}")
 
-        # Dispatch diff-auth analysis: replay endpoints as user_a / user_b / anonymous
+        # Dispatch diff-auth analysis: replay endpoints as user_a / user_b / anonymous.
+        # Pass empty workflow_id so the analyzer queries by engagement_id instead
+        # of looking for a (Workflow)-[:CALLED]->(Endpoint) path — capture_authenticated_surface
+        # only persists Endpoint nodes, not Workflow nodes.
         da_id = dispatch(
             "run_diff_auth_analysis",
             "workflow",
             {
-                "workflow_id": wid,
+                "workflow_id": "",
                 "user_a": "user_a",
                 "user_b": "user_b",
             },
