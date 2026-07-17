@@ -522,22 +522,24 @@ class PhaseMonitor:
                         target_techs = techs
                         break
 
-                # level=1 (was 2): level=2 multiplies requests per parameter, which
-                # causes ~677s network_wait against slow external targets like
-                # ginandjuice.shop and exhausts the 900s task budget. level=1 uses
-                # the minimal set of payloads and completes in ~400-500s for the same
-                # target. level=2+ can be re-enabled for local/fast targets.
-                # (AIOSOP-SQLI-BUDGET-003)
+                # level=1 for query params (was 2): level=2 multiplies requests per
+                # parameter, causing ~677s network_wait against slow external targets
+                # and exhausting the task budget. (AIOSOP-SQLI-BUDGET-003)
+                #
+                # BUT body-param (JSON/POST) targets need level>=2: sqlmap's JSON
+                # boolean-based payload only appears at the deeper (DBMS-specific)
+                # stage, so level=1 MISSES a JSON login SQLi that level=2 confirms
+                # (verified against Juice Shop /rest/user/login). Body targets are
+                # few (one per login-like endpoint), so the extra cost is bounded.
+                # (AIOSOP-SQLI-POSTBODY-JS001)
+                has_body = bool(target.get("data"))
                 sqli_payload: Dict[str, Any] = {
                     "url": target_url,
                     "method": target_method,
-                    "level": 1,
+                    "level": 2 if has_body else 1,
                     "risk": 1,
                 }
-                # Body-param targets carry an injectable POST body (JSON or form) so
-                # sqlmap fuzzes body params (e.g. a JSON login's `email`), not just
-                # query params. (AIOSOP-SQLI-POSTBODY-JS001)
-                if target.get("data"):
+                if has_body:
                     sqli_payload["data"] = target["data"]
                 sqli_task = Task(
                     type="sqli_scan",
