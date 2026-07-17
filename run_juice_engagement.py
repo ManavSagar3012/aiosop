@@ -11,8 +11,9 @@ Flow:
        - SQLi on /rest/user/login           (POST email/password)
        - JWT abuse on /rest/user/login
        - Mass assignment on /api/Users
-  5. poll each task to completion, print verdicts
-  6. print the engagement_id so the export/score step can pick it up
+  5. poll scans to completion
+  6. register second user, import sessions, run diff-auth for IDOR (JS-003)
+  7. print the engagement_id so the export/score step can pick it up
 """
 
 import os
@@ -35,13 +36,6 @@ BASE = "http://localhost:3000"
 
 
 def mint_token() -> str:
-    """Return the bearer the running API accepts.
-
-    Precedence mirrors deps.verify_token: a non-empty OSOP_JWT_SECRET means the
-    API expects a signed JWT; otherwise it does constant-time equality against
-    OSOP_API_TOKEN. This API instance has an empty jwt_secret, so the static
-    token is the correct credential.
-    """
     secret = (os.environ.get("OSOP_JWT_SECRET") or "").strip()
     if secret:
         from jose import jwt
@@ -67,6 +61,48 @@ def mint_token() -> str:
     return api_token
 
 
+def login_juice(email: str, password: str) -> str | None:
+    """Login to Juice Shop and return JWT token."""
+    try:
+        rr = requests.post(
+            f"{BASE}/rest/user/login",
+            json={"email": email, "password": password},
+            timeout=15,
+        )
+        if rr.status_code == 200:
+            body = rr.json()
+            token = body.get("authentication", {}).get("token") or body.get("token")
+            if token:
+                return token
+            print(f"    [!] no token in login response for {email}: {rr.text[:200]}")
+        else:
+            print(f"    [!] login HTTP {rr.status_code} for {email}: {rr.text[:200]}")
+    except Exception as e:
+        print(f"    [!] login exception for {email}: {e}")
+    return None
+
+
+def wait_task(H, tid, label, timeout=200) -> dict:
+    """Poll a single task until terminal or timeout. Returns task dict."""
+    deadline = time.time() + timeout
+    last_st = None
+    while time.time() < deadline:
+        rr = requests.get(f"{API}/tasks/{tid}", headers=H, timeout=15)
+        if rr.status_code != 200:
+            time.sleep(3)
+            continue
+        tk = rr.json()
+        st = tk.get("status")
+        if st != last_st:
+            print(f"    [{label}] {tid[:12]} -> {st}")
+            last_st = st
+        if st in ("completed", "failed", "cancelled"):
+            return tk
+        time.sleep(3)
+    rr = requests.get(f"{API}/tasks/{tid}", headers=H, timeout=15)
+    return rr.json() if rr.status_code == 200 else {"status": "timeout"}
+
+
 def main() -> None:
     tok = mint_token()
     H = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
@@ -78,8 +114,8 @@ def main() -> None:
     body = {
         "engagement_id": eid,
         "domains": [TARGET],
-        "allowed_techniques": ["sqli", "jwt", "mass_assignment", "recon"],
-        "approval_required_for": [],  # no gating for the local authorized target
+        "allowed_techniques": ["sqli", "jwt", "mass_assignment", "recon", "idor"],
+        "approval_required_for": [],
         "authorization_ref": "local-authorized-juice-shop",
         "roe": {"max_requests_per_second": 20},
     }
@@ -109,7 +145,7 @@ def main() -> None:
         print(f"    [+] dispatched {task_type} task={tid}")
         return tid
 
-    # 2. recon: content discovery to populate endpoints
+    # 2. recon: content discovery
     print("[*] phase: recon (content discovery)")
     task_ids = []
     t = dispatch(
@@ -120,50 +156,26 @@ def main() -> None:
     if t:
         task_ids.append(t)
 
-    # 3. Authenticate to capture a valid JWT for jwt_scan
-    print("[*] authenticating to capture JWT...")
-    juice_token = None
-    try:
-        rr = requests.post(
-            f"{BASE}/rest/user/login",
-            json={"email": "admin@juice-sh.op", "password": "admin123"},
+    # 3. Authenticate as admin for JWT scan
+    print("[*] authenticating as admin@juice-sh.op...")
+    admin_token = login_juice("admin@juice-sh.op", "admin123")
+    if admin_token:
+        store_rr = requests.post(
+            f"{API}/engagements/{eid}/sessions",
+            headers=H,
+            json={"user_label": "user_a", "bearer_token": admin_token},
             timeout=15,
         )
-        if rr.status_code == 200:
-            body = rr.json()
-            # Juice Shop returns: {"authentication": {"token": "eyJ..."}}
-            juice_token = (
-                body.get("authentication", {}).get("token")
-                or body.get("token")
-            )
-            if juice_token:
-                # Store the token in a session so _token_from_session can find it
-                store_rr = requests.post(
-                    f"{API}/engagements/{eid}/sessions",
-                    headers=H,
-                    json={"user_label": "user_a", "bearer_token": juice_token},
-                    timeout=15,
-                )
-                if store_rr.status_code < 400:
-                    print(f"    [+] JWT stored in session: {juice_token[:40]}...")
-                else:
-                    print(f"    [!] session store HTTP {store_rr.status_code}: {store_rr.text[:200]}")
-                    # Keep juice_token intact — inline-token passing is the fallback
-            else:
-                print(f"    [!] no token in login response: {rr.text[:300]}")
+        if store_rr.status_code < 400:
+            print(f"    [+] admin JWT stored as user_a: {admin_token[:40]}...")
         else:
-            print(f"    [!] login HTTP {rr.status_code}: {rr.text[:300]}")
-    except Exception as e:
-        print(f"    [!] login exception: {e}")
+            print(f"    [!] user_a session store HTTP {store_rr.status_code}: {store_rr.text[:200]}")
 
     # 4. vuln scans matching ground truth
     print("[*] phase: vuln discovery")
-    # Build jwt_scan payload — pass token inline if we have it, else fall back to
-    # _token_from_session (which checks the session store). /rest/user/whoami is
-    # the identity-reflecting endpoint the tester uses to confirm token acceptance.
     jwt_payload: Dict[str, Any] = {"url": f"{BASE}/rest/user/whoami"}
-    if juice_token:
-        jwt_payload["token"] = juice_token
+    if admin_token:
+        jwt_payload["token"] = admin_token
     scans: List[tuple[str, str, dict]] = [
         ("sqli_scan", "vuln_analysis", {"url": f"{BASE}/rest/products/search?q=test", "level": 2, "risk": 2}),
         ("sqli_scan", "vuln_analysis", {"url": f"{BASE}/rest/user/login", "data": "email=a@a.com&password=b", "level": 2, "risk": 2}),
@@ -175,10 +187,10 @@ def main() -> None:
         if tid:
             task_ids.append(tid)
 
-    # 6. poll to completion
-    print(f"[*] polling {len(task_ids)} tasks (up to 6 min)...")
+    # 5. poll main scans to completion
+    print(f"[*] polling {len(task_ids)} scans (up to 6 min)...")
     deadline = time.time() + 360
-    done = {}
+    done: Dict[str, Any] = {}
     while time.time() < deadline and len(done) < len(task_ids):
         for tid in task_ids:
             if tid in done:
@@ -193,16 +205,88 @@ def main() -> None:
                 res = tk.get("result") or {}
                 confirmed = res.get("confirmed")
                 fc = res.get("findings_count")
-                print(f"    [=] {tk.get('type')} {st} confirmed={confirmed} findings={fc} reason={str(res.get('reason'))[:80]}")
+                print(f"    [=] {tk.get('type')} {st} confirmed={confirmed} findings={fc}")
         time.sleep(6)
 
     pending = [t for t in task_ids if t not in done]
     if pending:
-        print(f"[!] {len(pending)} tasks still pending at deadline: {pending}")
+        print(f"[!] {len(pending)} scans still pending: {pending}")
+
+    # 6. IDOR (diff-auth) pipeline: register user_b, import sessions, dispatch
+    print("\n[*] phase: IDOR / differential authorization")
+    user_b_token = None
+    try:
+        # Register a second user via the API
+        b_email = f"user_b_{uuid.uuid4().hex[:6]}@test.com"
+        b_pass = "Test123456!"
+        reg_rr = requests.post(
+            f"{BASE}/api/Users",
+            json={"email": b_email, "password": b_pass},
+            timeout=15,
+        )
+        if reg_rr.status_code in (200, 201):
+            print(f"[+] registered user_b: {b_email}")
+        else:
+            print(f"    [!] user_b register HTTP {reg_rr.status_code}: {reg_rr.text[:200]}")
+        # Login as user_b
+        user_b_token = login_juice(b_email, b_pass)
+    except Exception as e:
+        print(f"    [!] user_b setup exception: {e}")
+
+    # Import user_b session
+    if user_b_token:
+        store_rr = requests.post(
+            f"{API}/engagements/{eid}/sessions",
+            headers=H,
+            json={"user_label": "user_b", "bearer_token": user_b_token},
+            timeout=15,
+        )
+        if store_rr.status_code < 400:
+            print(f"    [+] user_b JWT stored: {user_b_token[:40]}...")
+        else:
+            print(f"    [!] user_b session store HTTP {store_rr.status_code}: {store_rr.text[:200]}")
+
+    # Generate a workflow_id upfront so we can pass it to both the surface
+    # capture and the diff-auth analyzer — avoids depending on the return value.
+    wid = f"wf-{uuid.uuid4().hex[:12]}"
+    surface_id = dispatch(
+        "capture_authenticated_surface",
+        "workflow",
+        {"url": BASE, "user_label": "user_a", "workflow_id": wid},
+        priority=6,
+    )
+
+    if surface_id:
+        surface_task = wait_task(H, surface_id, "surface_capture", timeout=180)
+        r = surface_task.get("result") or {}
+        har_path = r.get("har_path", "")
+        api_count = r.get("api_endpoints_count") or r.get("endpoint_count", 0)
+        print(f"    [+] workflow_id={wid} har_path={har_path[-50:] if har_path else 'N/A'} endpoints={api_count}")
+
+        # Dispatch diff-auth analysis: replay endpoints as user_a / user_b / anonymous
+        da_id = dispatch(
+            "run_diff_auth_analysis",
+            "workflow",
+            {
+                "workflow_id": wid,
+                "user_a": "user_a",
+                "user_b": "user_b",
+            },
+            priority=6,
+        )
+        if da_id:
+            da_result = wait_task(H, da_id, "diff_auth", timeout=300)
+            r2 = da_result.get("result") or {}
+            print(f"    [=] diff-auth: status={da_result.get('status')} "
+                  f"replays={r2.get('replay_count')} "
+                  f"endpoints={r2.get('endpoints_tested')} "
+                  f"findings={r2.get('findings_count')}")
+            for f in (r2.get("findings") or r2.get("results") or [])[:5]:
+                print(f"      - {f.get('type','?')} {f.get('endpoint','?')} conf={f.get('confidence','?')}")
 
     print(f"\n[*] DONE. engagement_id={eid}")
-    print(f"[*] export with: gm.export_findings_json('{eid}', path=...)")
-    # write the engagement id for the scoring step
+    print(f"[*] score with: poetry run python benchmarks/score_engagement.py "
+          f"--findings <export> --manifest benchmarks/ground_truth/juice_shop.yaml")
     with open(".last_engagement_id", "w") as f:
         f.write(eid)
 
