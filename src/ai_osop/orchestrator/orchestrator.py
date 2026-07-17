@@ -879,7 +879,7 @@ class Orchestrator:
         try:
             registered = {
                 str(getattr(getattr(a, "ctx", None), "agent_type", ""))
-                for a in self._agents.values()
+                for a in list(self._agents.values())
             }
             if registered:
                 allowed_agents = {a for a in allowed_agents if str(a) in registered}

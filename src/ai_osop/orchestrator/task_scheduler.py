@@ -483,7 +483,7 @@ class TaskScheduler:
         self, agent_type: AgentType, task_type: str = ""
     ) -> Optional[Any]:
         """Find and atomically claim an idle agent."""
-        for agent in self._orch._agents.values():
+        for agent in list(self._orch._agents.values()):
             # AIOSOP-LOGHYGIENE-002 (2026-07-03): removed per-agent, per-tick matcher
             # telemetry (matching_debug / lock_attempt / lock_result). At INFO it emitted
             # ~N_agents lines every scheduler tick (~3.7k lines per run) and — because
