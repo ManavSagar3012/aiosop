@@ -6,20 +6,28 @@ Scope enforcement, sandbox management, approval gates, and audit integrity.
 import hashlib
 import hmac
 import ipaddress
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 import structlog
 
 from ai_osop.core.config import settings
-from ai_osop.core.exceptions import (
-    OutOfScopeError,
-    SandboxException,
-    ScopeValidationError,
-)
+from ai_osop.core.exceptions import OutOfScopeError, SandboxException, ScopeValidationError
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition
 
 logger = structlog.get_logger()
+
+# Strip a trailing ":<port>" from a host. Scope domains are host-based; a URL's
+# parsed hostname never carries the port, so an allowed domain stored WITH a port
+# (e.g. "localhost:3000") could never match the extracted host "localhost",
+# silently rejecting every in-scope browser navigation. Mirror the Go bridge's
+# SplitHostPort normalisation (cb19e3e) on the Python side. (AIOSOP-SCOPE-PORT)
+_PORT_SUFFIX = re.compile(r":\d+$")
+
+
+def _strip_port(host: str) -> str:
+    return _PORT_SUFFIX.sub("", host or "")
 
 
 class ScopeEnforcer:
@@ -34,7 +42,7 @@ class ScopeEnforcer:
 
     def __init__(self, scope: ScopeDefinition):
         self.scope = scope
-        self._allowed_domains: Set[str] = set(d.lower() for d in scope.domains)
+        self._allowed_domains: Set[str] = set(_strip_port(d.lower().strip()) for d in scope.domains)
         self._allowed_ips: List[ipaddress.ip_network] = [
             ipaddress.ip_network(ip) for ip in scope.ips
         ]
@@ -101,6 +109,7 @@ class ScopeEnforcer:
 
     def _validate_domain(self, domain: str) -> bool:
         """Validate domain against scope."""
+        domain = _strip_port(domain)
         for allowed in self._allowed_domains:
             if domain == allowed or domain.endswith(f".{allowed}"):
                 return True
@@ -132,6 +141,7 @@ class ScopeEnforcer:
             return False  # IP not in any allowed network
         except ValueError:
             pass  # not an IP, fall through to domain check
+        h = _strip_port(h)
         for allowed in self._allowed_domains:
             if h == allowed or h.endswith(f".{allowed}"):
                 return True
