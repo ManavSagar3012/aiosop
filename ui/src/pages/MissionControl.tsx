@@ -5,6 +5,7 @@ import { EmptyState } from '../components/shared/EmptyState';
 import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
+import { Crosshair } from 'lucide-react';
 
 // Recharts sets colors as raw SVG attributes (fill=/stroke=), so a bare
 // var(--x) string or Tailwind class won't resolve there — we need a
@@ -19,7 +20,7 @@ const cssVar = (name: string, fallback: string) => {
 
 export const MissionControl: React.FC = () => {
   const { agents, budget } = useSwarmStore();
-  const { auditLog, sessionId } = useIntelligenceStore();
+  const { auditLog, sessionId, hasCheckedSession } = useIntelligenceStore();
 
   const palette = useMemo(() => ({
     primary:      cssVar('--primary', '#39ff14'),                    // success / operational (green)
@@ -51,33 +52,44 @@ export const MissionControl: React.FC = () => {
   ).slice(0, 5);
 
   // Loading skeleton while waiting for store data
-  if (!sessionId && agents.length === 0) {
+  if (!sessionId) {
+    if (!hasCheckedSession) {
+      return (
+        <div className="flex flex-col gap-gutter">
+          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
+            <div className="flex justify-between items-center">
+              <div className="space-y-2">
+                <div className="h-3 w-32 bg-surface-container-high/60"></div>
+                <div className="h-6 w-48 bg-surface-container-high/60"></div>
+              </div>
+              <div className="flex gap-2">
+                <div className="h-10 w-28 bg-surface-container-high/60"></div>
+                <div className="h-10 w-28 bg-surface-container-high/60"></div>
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-gutter">
+            <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
+              <div className="h-5 w-40 bg-surface-container-high/60 mb-6"></div>
+              {[1,2,3].map(i => (
+                <div key={i} className="h-16 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
+              ))}
+            </div>
+            <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
+              <div className="h-5 w-36 bg-surface-container-high/60 mb-6"></div>
+              <div className="h-64 bg-surface-container-high/60 rounded-full mx-auto w-64"></div>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
-      <div className="flex flex-col gap-gutter">
-        <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
-          <div className="flex justify-between items-center">
-            <div className="space-y-2">
-              <div className="h-3 w-32 bg-surface-container-high/60"></div>
-              <div className="h-6 w-48 bg-surface-container-high/60"></div>
-            </div>
-            <div className="flex gap-2">
-              <div className="h-10 w-28 bg-surface-container-high/60"></div>
-              <div className="h-10 w-28 bg-surface-container-high/60"></div>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-gutter">
-          <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
-            <div className="h-5 w-40 bg-surface-container-high/60 mb-6"></div>
-            {[1,2,3].map(i => (
-              <div key={i} className="h-16 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
-            ))}
-          </div>
-          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
-            <div className="h-5 w-36 bg-surface-container-high/60 mb-6"></div>
-            <div className="h-64 bg-surface-container-high/60 rounded-full mx-auto w-64"></div>
-          </div>
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-[400px] bg-surface-container border border-outline-variant p-8 rounded-sm">
+        <EmptyState 
+          message="No active engagement found in the database. Use 'NEW MISSION' in the header to start a new offensive security orchestration run." 
+          icon={<Crosshair size={48} />}
+          hint="Awaiting target configuration..."
+        />
       </div>
     );
   }

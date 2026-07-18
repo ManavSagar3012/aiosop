@@ -9,33 +9,58 @@ export const NetworkHealth: React.FC = () => {
   const [metrics, setMetrics] = useState({ latency: 0, throughput: 0 });
   const sessionId = useIntelligenceStore((s) => s.sessionId);
   const setSessionId = useIntelligenceStore((s) => s.setSessionId);
+  const setHasCheckedSession = useIntelligenceStore((s) => s.setHasCheckedSession);
 
   useEffect(() => {
-    if (sessionId) return;
+    if (sessionId) {
+      setHasCheckedSession(true);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
         const response = await fetch(`${API_BASE}/engagements`, {
           headers: { "Authorization": `Bearer ${AUTH_TOKEN}` }
         });
-        if (!response.ok) { if (!cancelled) setStatus('disconnected'); return; }
+        if (!response.ok) {
+          if (!cancelled) {
+            setStatus('disconnected');
+            setHasCheckedSession(true);
+          }
+          return;
+        }
         const sessions = await response.json();
-        if (!Array.isArray(sessions)) return;
+        if (!Array.isArray(sessions)) {
+          if (!cancelled) setHasCheckedSession(true);
+          return;
+        }
         const realSessions = sessions.filter((s: any) => s.session_id !== 'global');
-        if (realSessions.length === 0) { if (!cancelled) setStatus('disconnected'); return; }
+        if (realSessions.length === 0) {
+          if (!cancelled) {
+            setStatus('disconnected');
+            setHasCheckedSession(true);
+          }
+          return;
+        }
         const isLive = (s: any) => {
           const ph = String(s.phase || '').toLowerCase();
           return ph !== 'halted' && ph !== 'completed' && ph !== 'aborted';
         };
         const latestId = (realSessions.find(isLive) || realSessions[0]).session_id;
-        if (!cancelled) setSessionId(latestId);
+        if (!cancelled) {
+          setSessionId(latestId);
+          setHasCheckedSession(true);
+        }
       } catch (e) {
         console.error("Failed to fetch sessions for network health", e);
-        if (!cancelled) setStatus('disconnected');
+        if (!cancelled) {
+          setStatus('disconnected');
+          setHasCheckedSession(true);
+        }
       }
     })();
     return () => { cancelled = true; };
-  }, [sessionId, setSessionId]);
+  }, [sessionId, setSessionId, setHasCheckedSession]);
 
   useEffect(() => {
     if (!sessionId) return;

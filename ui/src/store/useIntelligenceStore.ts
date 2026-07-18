@@ -89,6 +89,7 @@ interface GraphData {
 
 interface IntelligenceState {
   sessionId: string | null
+  hasCheckedSession: boolean
   findings: Finding[]
   verifications: VerificationRequest[]
   uncertainties: Uncertainty[]
@@ -97,6 +98,7 @@ interface IntelligenceState {
   auditLog: AuditLogEntry[]
   graphData: GraphData
   setSessionId: (id: string) => void
+  setHasCheckedSession: (checked: boolean) => void
   appendFinding: (finding: Finding) => void
   updateFinding: (id: string, updates: Partial<Finding>) => void
   setFindings: (findings: Finding[]) => void
@@ -114,6 +116,7 @@ interface IntelligenceState {
 
 export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   sessionId: null,
+  hasCheckedSession: false,
   findings: [],
   verifications: [],
   uncertainties: [],
@@ -121,7 +124,16 @@ export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   skillStats: null,
   auditLog: [],
   graphData: { nodes: [], edges: [] },
-  setSessionId: (sessionId) => set({ sessionId }),
+  setSessionId: (sessionId) => set({ 
+    sessionId, 
+    findings: [], 
+    verifications: [], 
+    uncertainties: [], 
+    diffAuthFindings: [], 
+    auditLog: [], 
+    graphData: { nodes: [], edges: [] } 
+  }),
+  setHasCheckedSession: (hasCheckedSession) => set({ hasCheckedSession }),
   appendFinding: (finding) => set((state) => ({ 
     findings: [...state.findings.filter(f => f.id !== finding.id), finding] 
   })),

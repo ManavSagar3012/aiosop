@@ -6,25 +6,26 @@ import { API_BASE, authHeaders } from '../services/api';
 
 export const Administration: React.FC = () => {
   const [actionError, setActionError] = useState<{ message: string; retry: () => void } | null>(null);
+  const [engId, setEngId] = useState('');
+  const [phaseVal, setPhaseVal] = useState('');
 
   const haltEngagement = () => {
-    const id = (document.getElementById('eng-id-input') as HTMLInputElement).value;
-    fetch(`${API_BASE}/engagements/${id}/halt`, { method: 'POST', headers: authHeaders() })
+    if (!engId) return;
+    fetch(`${API_BASE}/engagements/${engId}/halt`, { method: 'POST', headers: authHeaders() })
       .then(() => setActionError(null))
-      .catch(() => setActionError({ message: `Failed to halt engagement "${id}".`, retry: haltEngagement }));
+      .catch(() => setActionError({ message: `Failed to halt engagement "${engId}".`, retry: haltEngagement }));
   };
 
   const transitionPhase = () => {
-    const id = (document.getElementById('eng-id-input') as HTMLInputElement).value;
-    const phase = (document.getElementById('phase-input') as HTMLInputElement).value;
-    fetch(`${API_BASE}/engagements/${id}/transition`, {
+    if (!engId || !phaseVal) return;
+    fetch(`${API_BASE}/engagements/${engId}/transition`, {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ phase }),
+      body: JSON.stringify({ phase: phaseVal }),
     })
       .then(() => setActionError(null))
       .catch(() => setActionError({
-        message: `Failed to transition engagement "${id}" to phase "${phase}".`,
+        message: `Failed to transition engagement "${engId}" to phase "${phaseVal}".`,
         retry: transitionPhase,
       }));
   };
@@ -171,9 +172,23 @@ export const Administration: React.FC = () => {
                {actionError && (
                  <ErrorState message={actionError.message} onRetry={actionError.retry} />
                )}
-               <input type="text" placeholder="Engagement ID" className="w-full p-2 bg-black/40 border border-outline" id="eng-id-input" />
+               <input 
+                 type="text" 
+                 placeholder="Engagement ID" 
+                 className="w-full p-2 bg-black/40 border border-outline" 
+                 id="eng-id-input" 
+                 value={engId} 
+                 onChange={(e) => setEngId(e.target.value)} 
+               />
                <button className="w-full py-2 border border-red-500 text-red-500 hover:bg-red-500/10 transition-all" onClick={haltEngagement}>HALT ENGAGEMENT</button>
-               <input type="text" placeholder="Phase (e.g., exploitation)" className="w-full p-2 bg-black/40 border border-outline" id="phase-input" />
+               <input 
+                 type="text" 
+                 placeholder="Phase (e.g., exploitation)" 
+                 className="w-full p-2 bg-black/40 border border-outline" 
+                 id="phase-input" 
+                 value={phaseVal} 
+                 onChange={(e) => setPhaseVal(e.target.value)} 
+               />
                <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all" onClick={transitionPhase}>TRANSITION PHASE</button>
            </div>
         </Card>

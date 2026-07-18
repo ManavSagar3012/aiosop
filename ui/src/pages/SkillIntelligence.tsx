@@ -44,19 +44,8 @@ export const SkillIntelligence: React.FC = () => {
   const [stats, setStats] = useState<SkillStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  void sessionId;
-
   const fetchStats = useCallback(async () => {
     try {
-      const sessionResponse = await fetch(`${API_BASE}/engagements`, {
-        headers: authHeaders()
-      });
-      if (sessionResponse.ok) {
-        const sessions = await sessionResponse.json();
-        if (sessions.length > 0) setSessionId(sessions[0].session_id);
-      }
-
       const response = await fetch(`${API_BASE}/system/skills/stats`, {
         headers: authHeaders()
       });

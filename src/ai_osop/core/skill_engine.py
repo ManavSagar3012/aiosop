@@ -368,6 +368,7 @@ class SkillEngine:
                     else 0
                 ),
                 "total_payout": s["total_payout"],
+                "verified_findings": s["verified_findings"],
             }
             for s in sorted_skills[:10]
             if s["usage_count"] > 0

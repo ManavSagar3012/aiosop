@@ -7,7 +7,7 @@ import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { useToast } from '../hooks/useToast';
-import { ShieldCheck, UserCheck, Microscope, FileText, Package, Rocket, TrendingUp, Link as LinkIcon, Zap } from 'lucide-react';
+import { ShieldCheck, UserCheck, Microscope, FileText, Package, Rocket, TrendingUp, Link as LinkIcon, Zap, Crosshair } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { EvidenceVaultModal } from '../components/shared/EvidenceVaultModal';
 
@@ -20,12 +20,30 @@ const VALIDATION_STAGES = [
 ];
 
 export const FindingsVerification: React.FC = () => {
-  const { findings, verifications, sessionId } = useIntelligenceStore();
+  const { findings, verifications, sessionId, hasCheckedSession } = useIntelligenceStore();
   const { addToast } = useToast();
   const [vaultOpen, setVaultOpen] = React.useState(false);
   const [selectedFinding, setSelectedFinding] = React.useState<any>(null);
   const [vaultData, setVaultData] = React.useState<any>(null);
   const [actionError, setActionError] = React.useState<{ message: string; retry: () => void } | null>(null);
+
+  const triggerValidationSwarm = async () => {
+    if (!sessionId) return;
+    try {
+      const response = await fetch(`${API_BASE}/engagements/${sessionId}/discovery/trigger`, {
+        method: 'POST',
+        headers: authHeaders()
+      });
+      if (response.ok) {
+        addToast("Validation/discovery swarm successfully deployed to target.", "success");
+      } else {
+        addToast(`Failed to trigger swarm: ${response.status}`, "error");
+      }
+    } catch (e) {
+      console.error("Failed to trigger validation swarm", e);
+      addToast("Failed to reach target API to trigger validation swarm.", "error");
+    }
+  };
 
   const openVault = async (finding: any) => {
      if (!sessionId) return;
@@ -88,40 +106,51 @@ export const FindingsVerification: React.FC = () => {
   const liveCount = findings.filter(f => f.provenance === 'live').length;
 
   // Loading skeleton while waiting for first data
-  if (!sessionId && findings.length === 0) {
+  if (!sessionId) {
+    if (!hasCheckedSession) {
+      return (
+        <div className="flex flex-col gap-gutter">
+          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-surface-container-high/60"></div>
+              <div className="space-y-2">
+                <div className="h-3 w-40 bg-surface-container-high/60"></div>
+                <div className="h-5 w-56 bg-surface-container-high/60"></div>
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-gutter mb-2">
+            {[1,2,3,4].map(i => (
+              <div key={i} className="bg-surface-container-low border border-outline-variant p-5 animate-pulse" style={{animationDelay: i * 60 + 'ms'}}>
+                <div className="h-3 w-28 bg-surface-container-high/60 mb-3"></div>
+                <div className="h-8 w-20 bg-surface-container-high/60"></div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[500px]">
+              <div className="h-5 w-56 bg-surface-container-high/60 mb-6"></div>
+              {[1,2].map(i => (
+                <div key={i} className="h-32 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
+              ))}
+            </div>
+            <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[500px]">
+              <div className="h-5 w-40 bg-surface-container-high/60 mb-6"></div>
+              {[1,2].map(i => (
+                <div key={i} className="h-24 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
-      <div className="flex flex-col gap-gutter">
-        <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-surface-container-high/60"></div>
-            <div className="space-y-2">
-              <div className="h-3 w-40 bg-surface-container-high/60"></div>
-              <div className="h-5 w-56 bg-surface-container-high/60"></div>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-gutter mb-2">
-          {[1,2,3,4].map(i => (
-            <div key={i} className="bg-surface-container-low border border-outline-variant p-5 animate-pulse" style={{animationDelay: i * 60 + 'ms'}}>
-              <div className="h-3 w-28 bg-surface-container-high/60 mb-3"></div>
-              <div className="h-8 w-20 bg-surface-container-high/60"></div>
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[500px]">
-            <div className="h-5 w-56 bg-surface-container-high/60 mb-6"></div>
-            {[1,2].map(i => (
-              <div key={i} className="h-32 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
-            ))}
-          </div>
-          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[500px]">
-            <div className="h-5 w-40 bg-surface-container-high/60 mb-6"></div>
-            {[1,2].map(i => (
-              <div key={i} className="h-24 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
-            ))}
-          </div>
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-[400px] bg-surface-container border border-outline-variant p-8 rounded-sm">
+        <EmptyState 
+          message="No active engagement found in the database. Use 'NEW MISSION' in the header to start a new offensive security orchestration run." 
+          icon={<Crosshair size={48} />}
+          hint="Awaiting target configuration..."
+        />
       </div>
     );
   }
@@ -147,7 +176,10 @@ export const FindingsVerification: React.FC = () => {
               >
                   <FileText size={14} /> VIEW MISSION REPORT
               </Link>
-              <button className="flex items-center gap-2 px-4 py-2 bg-primary-fixed text-black font-label-caps text-label-caps font-bold hover:brightness-110 transition-all shadow-lg glow-cyan">
+              <button 
+                onClick={triggerValidationSwarm}
+                className="flex items-center gap-2 px-4 py-2 bg-primary-fixed text-black font-label-caps text-label-caps font-bold hover:brightness-110 transition-all shadow-lg glow-cyan"
+              >
                   <Zap size={14} /> TRIGGER VALIDATION SWARM
               </button>
            </div>

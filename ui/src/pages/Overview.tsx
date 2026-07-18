@@ -54,7 +54,7 @@ const ledgerColumns: Column<Finding>[] = [
 
 export const Overview: React.FC = () => {
   const { agents, budget } = useSwarmStore();
-  const { findings, verifications, sessionId } = useIntelligenceStore();
+  const { findings, verifications, sessionId, hasCheckedSession } = useIntelligenceStore();
 
   const verifiedCount = (findings || []).filter(f => f.status === 'verified').length;
   const pendingCount = (verifications || []).length;
@@ -69,45 +69,56 @@ export const Overview: React.FC = () => {
   const spendPct = Math.min(100, (spent / (cap || 1)) * 100);
 
   // Show loading skeleton while waiting for first data
-  if (!sessionId && findings.length === 0) {
+  if (!sessionId) {
+    if (!hasCheckedSession) {
+      return (
+        <div className="flex flex-col gap-gutter">
+          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-surface-container-high/60 border border-outline-variant/40"></div>
+              <div className="space-y-2">
+                <div className="h-7 w-64 bg-surface-container-high/60"></div>
+                <div className="h-4 w-48 bg-surface-container-high/60"></div>
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-gutter">
+            {[1,2,3,4].map(i => (
+              <div key={i} className="bg-surface-container-low border border-outline-variant p-5 animate-pulse" style={{animationDelay: i * 80 + 'ms'}}>
+                <div className="h-3 w-24 bg-surface-container-high/60 mb-3"></div>
+                <div className="h-8 w-16 bg-surface-container-high/60 mb-2"></div>
+                <div className="h-3 w-32 bg-surface-container-high/60"></div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
+              <div className="h-5 w-48 bg-surface-container-high/60 mb-6"></div>
+              <div className="space-y-4">
+                {[1,2,3].map(i => (
+                  <div key={i} className="h-16 bg-surface-container-high/60 border border-outline-variant/40"></div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
+              <div className="h-5 w-40 bg-surface-container-high/60 mb-6"></div>
+              <div className="space-y-4">
+                {[1,2,3].map(i => (
+                  <div key={i} className="h-20 bg-surface-container-high/60 border border-outline-variant/40"></div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
-      <div className="flex flex-col gap-gutter">
-        <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-surface-container-high/60 border border-outline-variant/40"></div>
-            <div className="space-y-2">
-              <div className="h-7 w-64 bg-surface-container-high/60"></div>
-              <div className="h-4 w-48 bg-surface-container-high/60"></div>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-gutter">
-          {[1,2,3,4].map(i => (
-            <div key={i} className="bg-surface-container-low border border-outline-variant p-5 animate-pulse" style={{animationDelay: i * 80 + 'ms'}}>
-              <div className="h-3 w-24 bg-surface-container-high/60 mb-3"></div>
-              <div className="h-8 w-16 bg-surface-container-high/60 mb-2"></div>
-              <div className="h-3 w-32 bg-surface-container-high/60"></div>
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
-            <div className="h-5 w-48 bg-surface-container-high/60 mb-6"></div>
-            <div className="space-y-4">
-              {[1,2,3].map(i => (
-                <div key={i} className="h-16 bg-surface-container-high/60 border border-outline-variant/40"></div>
-              ))}
-            </div>
-          </div>
-          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
-            <div className="h-5 w-40 bg-surface-container-high/60 mb-6"></div>
-            <div className="space-y-4">
-              {[1,2,3].map(i => (
-                <div key={i} className="h-20 bg-surface-container-high/60 border border-outline-variant/40"></div>
-              ))}
-            </div>
-          </div>
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-[400px] bg-surface-container border border-outline-variant p-8 rounded-sm">
+        <EmptyState 
+          message="No active engagement found in the database. Use 'NEW MISSION' in the header to start a new offensive security orchestration run." 
+          icon={<Crosshair size={48} />}
+          hint="Awaiting target configuration..."
+        />
       </div>
     );
   }

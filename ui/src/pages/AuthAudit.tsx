@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { Crosshair } from 'lucide-react';
 import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
 import { StatTile } from '../components/shared/StatTile';
@@ -21,34 +23,36 @@ export const AuthAudit: React.FC = () => {
   const [sessionStats, setSessionStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const sessionId = useIntelligenceStore((s) => s.sessionId);
 
   const fetchLatest = useCallback(async () => {
+    if (!sessionId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE}/engagements`, {
+      const response = await fetch(`${API_BASE}/engagements/${sessionId}`, {
         headers: authHeaders()
       });
       if (response.ok) {
-        const sessions = await response.json();
-        if (sessions.length > 0) {
-          const current = sessions[0];
-          setSessionStats(current);
+        const current = await response.json();
+        setSessionStats(current);
 
-          // Re-using findings for now to populate enforcement matrix if real audit engine is still processing
-          const findRes = await fetch(`${API_BASE}/engagements/${current.session_id}/findings`, {
-             headers: authHeaders()
-          });
-          if (findRes.ok) {
-              const findings = await findRes.json();
-              setControls(findings.map((f: any) => ({
-                  endpoint: f.endpoint_id || '/api/v1/unknown',
-                  workflow: f.title,
-                  roleRequired: f.severity === 'high' ? 'Admin' : 'User',
-                  observedEnforcement: f.status === 'verified' ? 'ENFORCED' : 'BYPASSED',
-                  confidence: f.confidence
-              })));
-          }
+        // Re-using findings for now to populate enforcement matrix if real audit engine is still processing
+        const findRes = await fetch(`${API_BASE}/engagements/${sessionId}/findings`, {
+           headers: authHeaders()
+        });
+        if (findRes.ok) {
+            const findings = await findRes.json();
+            setControls(findings.map((f: any) => ({
+                endpoint: f.endpoint_id || '/api/v1/unknown',
+                workflow: f.title,
+                roleRequired: f.severity === 'high' ? 'Admin' : 'User',
+                observedEnforcement: f.status === 'verified' ? 'ENFORCED' : 'BYPASSED',
+                confidence: f.confidence
+            })));
         }
       } else {
         setError(`Failed to load auth audit data (${response.status})`);
@@ -58,7 +62,7 @@ export const AuthAudit: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     fetchLatest();
@@ -129,6 +133,18 @@ export const AuthAudit: React.FC = () => {
       ),
     },
   ];
+
+  if (!sessionId) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] bg-surface-container border border-outline-variant p-8 rounded-sm">
+        <EmptyState 
+          message="No active engagement found in the database. Use 'NEW MISSION' in the header to start a new offensive security orchestration run." 
+          icon={<Crosshair size={48} />}
+          hint="Awaiting target configuration..."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 h-full">

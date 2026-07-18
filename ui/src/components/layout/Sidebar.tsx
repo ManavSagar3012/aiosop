@@ -11,7 +11,9 @@ import {
     Fingerprint,
     HelpCircle,
     Clock,
-    FileText
+    FileText,
+    Lock,
+    Eye
 } from 'lucide-react';
 import { NetworkHealth } from '../shared/NetworkHealth';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
@@ -27,8 +29,10 @@ export const Sidebar: React.FC = () => {
     { path: '/knowledge-graphs', label: 'Knowledge Graphs', icon: <Network size={18} /> },
     { path: '/skills', label: 'Skill Intelligence', icon: <Brain size={18} /> },
     { path: '/auth-audit', label: 'Authorization Audit', icon: <ShieldCheck size={18} /> },
+    { path: '/differential-auth', label: 'Differential Auth', icon: <Lock size={18} /> },
     { path: '/findings', label: 'Finding Pipeline', icon: <ShieldCheck size={18} /> },
     { path: '/verification', label: 'Reality Verification', icon: <Fingerprint size={18} /> },
+    { path: '/visual-context', label: 'Visual Context', icon: <Eye size={18} /> },
     { path: '/uncertainty', label: 'Uncertainty Engine', icon: <HelpCircle size={18} /> },
     { path: '/learning', label: 'Learning & Analytics', icon: <LineChart size={18} /> },
     { path: '/admin', label: 'Administration', icon: <Settings size={18} /> },

@@ -8,10 +8,10 @@ import { ErrorState } from '../components/shared/ErrorState';
 import { Skeleton } from '../components/shared/Skeleton';
 import {
     GitMerge, AlertOctagon, ShieldAlert,
-    Activity, CheckCircle2, DollarSign
+    Activity, CheckCircle2, DollarSign, Crosshair
 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
-
+import { useIntelligenceStore } from '../store/useIntelligenceStore';
 interface Invariant {
   id: string;
   description: string;
@@ -24,38 +24,38 @@ export const ResearchIntelligence: React.FC = () => {
   const { addToast } = useToast();
   const [invariants, setInvariants] = useState<Invariant[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const sessionId = useIntelligenceStore((s) => s.sessionId);
   const [stats, setStats] = useState<any>({ yield: 0, coverage: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchLatest = useCallback(async () => {
+    if (!sessionId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE}/engagements`, {
+      const response = await fetch(`${API_BASE}/engagements/${sessionId}`, {
         headers: authHeaders()
       });
       if (response.ok) {
-        const sessions = await response.json();
-        if (sessions.length > 0) {
-          const current = sessions[0];
-          setSessionId(current.session_id);
-          setStats({
-              yield: current.expected_yield || 0,
-              coverage: Math.round((current.mapped_paths_count / (current.total_paths_count || 1)) * 100) || 0
-          });
+        const current = await response.json();
+        setStats({
+            yield: current.expected_yield || 0,
+            coverage: Math.round((current.mapped_paths_count / (current.total_paths_count || 1)) * 100) || 0
+        });
 
-          const invRes = await fetch(`${API_BASE}/engagements/${current.session_id}/invariants`, {
-             headers: authHeaders()
-          });
-          if (invRes.ok) setInvariants(await invRes.json());
+        const invRes = await fetch(`${API_BASE}/engagements/${sessionId}/invariants`, {
+           headers: authHeaders()
+        });
+        if (invRes.ok) setInvariants(await invRes.json());
 
-          const payRes = await fetch(`${API_BASE}/engagements/${current.session_id}/payouts`, {
-              headers: authHeaders()
-          });
-          if (payRes.ok) setPayouts(await payRes.json());
-        }
+        const payRes = await fetch(`${API_BASE}/engagements/${sessionId}/payouts`, {
+            headers: authHeaders()
+        });
+        if (payRes.ok) setPayouts(await payRes.json());
       } else {
         setError(`Failed to load research intelligence data (${response.status})`);
       }
@@ -64,7 +64,7 @@ export const ResearchIntelligence: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     fetchLatest();
@@ -131,6 +131,18 @@ export const ResearchIntelligence: React.FC = () => {
       ),
     },
   ];
+
+  if (!sessionId) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] bg-surface-container border border-outline-variant p-8 rounded-sm">
+        <EmptyState 
+          message="No active engagement found in the database. Use 'NEW MISSION' in the header to start a new offensive security orchestration run." 
+          icon={<Crosshair size={48} />}
+          hint="Awaiting target configuration..."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
