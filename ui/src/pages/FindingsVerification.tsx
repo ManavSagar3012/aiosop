@@ -6,6 +6,7 @@ import { StatusBadge } from '../components/shared/StatusBadge';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useToast } from '../hooks/useToast';
 import { ShieldCheck, UserCheck, Microscope, FileText, Package, Rocket, TrendingUp, Link as LinkIcon, Zap } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { EvidenceVaultModal } from '../components/shared/EvidenceVaultModal';
@@ -20,6 +21,7 @@ const VALIDATION_STAGES = [
 
 export const FindingsVerification: React.FC = () => {
   const { findings, verifications, sessionId } = useIntelligenceStore();
+  const { addToast } = useToast();
   const [vaultOpen, setVaultOpen] = React.useState(false);
   const [selectedFinding, setSelectedFinding] = React.useState<any>(null);
   const [vaultData, setVaultData] = React.useState<any>(null);
@@ -51,8 +53,7 @@ export const FindingsVerification: React.FC = () => {
            headers: authHeaders()
         });
         setActionError(null);
-        alert("Finding manually verified in graph ledger.");
-        window.location.reload();
+        addToast("Finding manually verified in graph ledger.", "success");
      } catch (e) {
         console.error("Verification failed", e);
         setActionError({ message: "Manual verification request failed.", retry: () => handleVerify(fid) });
@@ -67,7 +68,7 @@ export const FindingsVerification: React.FC = () => {
            headers: authHeaders()
         });
         setActionError(null);
-        alert("Replay task queued in execution sandbox.");
+        addToast("Replay task queued in execution sandbox.", "success");
      } catch (e) {
         console.error("Replay failed", e);
         setActionError({ message: "Replay request failed to queue.", retry: () => handleReplay(fid) });
@@ -85,6 +86,45 @@ export const FindingsVerification: React.FC = () => {
     : 0;
   const evidenceChainScore = Math.round(avgEvRaw <= 1 ? avgEvRaw * 100 : avgEvRaw);
   const liveCount = findings.filter(f => f.provenance === 'live').length;
+
+  // Loading skeleton while waiting for first data
+  if (!sessionId && findings.length === 0) {
+    return (
+      <div className="flex flex-col gap-gutter">
+        <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-surface-container-high/60"></div>
+            <div className="space-y-2">
+              <div className="h-3 w-40 bg-surface-container-high/60"></div>
+              <div className="h-5 w-56 bg-surface-container-high/60"></div>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-gutter mb-2">
+          {[1,2,3,4].map(i => (
+            <div key={i} className="bg-surface-container-low border border-outline-variant p-5 animate-pulse" style={{animationDelay: i * 60 + 'ms'}}>
+              <div className="h-3 w-28 bg-surface-container-high/60 mb-3"></div>
+              <div className="h-8 w-20 bg-surface-container-high/60"></div>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[500px]">
+            <div className="h-5 w-56 bg-surface-container-high/60 mb-6"></div>
+            {[1,2].map(i => (
+              <div key={i} className="h-32 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
+            ))}
+          </div>
+          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[500px]">
+            <div className="h-5 w-40 bg-surface-container-high/60 mb-6"></div>
+            {[1,2].map(i => (
+              <div key={i} className="h-24 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-gutter">
@@ -123,7 +163,7 @@ export const FindingsVerification: React.FC = () => {
       )}
 
       {/* Evidence Integrity Stats */}
-      <div className="grid grid-cols-4 gap-gutter mb-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-gutter mb-2">
          <StatTile
            label="Avg Acceptance Prob" value={`${(avgConfidence * 100).toFixed(1)}%`}
            accent="primary" icon={<TrendingUp size={16} />} delay={0}
@@ -142,7 +182,7 @@ export const FindingsVerification: React.FC = () => {
          />
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card title="Finding Validation Pipeline (RAPTOR Methodology)" className="col-span-2">
            {findings.length === 0 ? (
              <EmptyState

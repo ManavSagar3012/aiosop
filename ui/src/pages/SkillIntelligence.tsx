@@ -45,6 +45,7 @@ export const SkillIntelligence: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  void sessionId;
 
   const fetchStats = useCallback(async () => {
     try {
@@ -159,7 +160,7 @@ export const SkillIntelligence: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6 h-full p-2">
-      <div className="grid grid-cols-4 gap-6 shrink-0">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6 shrink-0">
         <StatTile
           label="Revenue ROI"
           value={`${(safeStats.revenue_roi || 0).toFixed(1)}x`}
@@ -190,7 +191,7 @@ export const SkillIntelligence: React.FC = () => {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
         <Card title="Skill Reputation Leaderboard (Relevant to Target)" className="flex flex-col overflow-y-auto">
           <DataTable
             columns={skillColumns}

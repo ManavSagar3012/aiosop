@@ -63,23 +63,32 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
     mock_orchestrator.session_memory.store_session_state.assert_called()
 
     # Verify auto-task scheduling for recon: GET crawler + guest browser XHR
-    # capture + registration probe + valid-credential login-probe
-    # (AIOSOP-SPA-XHR-RECON / AIOSOP-REG-PROBE-001).
-    assert len(mock_orchestrator._tasks) == 4
-    by_type = {t.type: t for t in mock_orchestrator._tasks.values()}
+    # capture + TWO register+login identity probes (a/b) so diff-auth can run a
+    # user_a-vs-user_b IDOR test (AIOSOP-SPA-XHR-RECON / AIOSOP-REG-PROBE-001 /
+    # AIOSOP-DIFFAUTH-2IDENTITY-001).
+    assert len(mock_orchestrator._tasks) == 6
+    by_type = {}
+    for t in mock_orchestrator._tasks.values():
+        by_type.setdefault(t.type, []).append(t)
     assert set(by_type) == {
         "full_recon",
         "capture_authenticated_surface",
         "register",
         "authenticate",
     }
-    assert by_type["full_recon"].payload["domain"] == "example.com"
-    assert by_type["capture_authenticated_surface"].payload["user_label"].startswith("guest-")
-    # The registration probe carries the recon-probe- label; the dependent
-    # login carries recon-auth- and waits on the register task completing.
-    assert by_type["register"].payload["user_label"].startswith("recon-probe-")
-    assert by_type["authenticate"].payload["user_label"].startswith("recon-auth-")
-    assert by_type["authenticate"].dependencies == [by_type["register"].id]
+    assert len(by_type["register"]) == 2
+    assert len(by_type["authenticate"]) == 2
+    assert by_type["full_recon"][0].payload["domain"] == "example.com"
+    assert by_type["capture_authenticated_surface"][0].payload["user_label"].startswith("guest-")
+    # Two identity probes: recon-probe-<slug>-{a,b} register, recon-auth-<slug>-{a,b} login.
+    reg_labels = sorted(t.payload["user_label"] for t in by_type["register"])
+    auth_labels = sorted(t.payload["user_label"] for t in by_type["authenticate"])
+    assert reg_labels == ["recon-probe-example-com-a", "recon-probe-example-com-b"]
+    assert auth_labels == ["recon-auth-example-com-a", "recon-auth-example-com-b"]
+    # Each login waits on a register task completing.
+    reg_ids = {r.id for r in by_type["register"]}
+    for login in by_type["authenticate"]:
+        assert len(login.dependencies) == 1 and login.dependencies[0] in reg_ids
 
 
 @pytest.mark.asyncio

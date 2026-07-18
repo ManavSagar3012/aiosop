@@ -184,6 +184,22 @@ class PlaywrightAgent(BaseAgent):
             {"url": url, "user_label": user_label, "workflow_id": workflow_id}
         )
 
+        # 1b. Deep authenticated navigation. Object-scoped APIs (basket, orders,
+        #     wallet, addresses) only fire when their page loads, so a single home
+        #     navigation never surfaces them — leaving IDOR/BOLA testing blind to
+        #     endpoints like /rest/basket/{id}. Visit a few common per-user routes
+        #     in the SAME (already-authenticated) context so the HAR captures
+        #     those object-scoped endpoints. Best-effort; a route that 404s is
+        #     harmless. (AIOSOP-AUTHSURFACE-DEEPNAV-001)
+        base = str(url).rstrip("/")
+        for route in ("/#/basket", "/#/order-history", "/#/wallet", "/#/saved-addresses"):
+            try:
+                await self.browser_adapter.navigate(
+                    base + route, user_label, engagement_id=self.ctx.session_id
+                )
+            except Exception:  # noqa: BLE001 - deep nav is best-effort
+                pass
+
         # 2. Flush the HAR Playwright has been recording for this identity.
         har = await self.browser_adapter.flush_har(
             user_label=user_label,
@@ -515,6 +531,30 @@ class PlaywrightAgent(BaseAgent):
             user_label, engagement_id=engagement_id
         )
 
+        # AIOSOP-JWT-CAPTURE-001: read the JWT straight from localStorage after
+        # login. Juice Shop (and most SPA apps) store the bearer in
+        # localStorage['token'], NOT a cookie, and capture_state does not reliably
+        # serialize localStorage across the browser-MCP boundary — so the session
+        # was persisted with an EMPTY bearer_token, leaving jwt_scan and the
+        # diff-auth engine with no identity to use (JS-004/JS-003 dead).
+        polled_token = ""
+        try:
+            tok_res = await self.browser_adapter.execute_action(
+                action="eval",
+                params={
+                    "expression": (
+                        "() => { try { return localStorage.getItem('token')"
+                        " || localStorage.getItem('access_token') || null; }"
+                        " catch (e) { return null; } }"
+                    )
+                },
+                user_label=user_label,
+                engagement_id=engagement_id,
+            )
+            polled_token = str((tok_res or {}).get("result") or "")
+        except Exception as tok_err:  # noqa: BLE001
+            logger.info(f"jwt localStorage grab skipped: {tok_err}")
+
         # Detect auth success: URL changed away from login page, or session cookies
         # set. capture_state's state dict carries the URL under "url" (not
         # "current_url"), so read that first. (review-finding-4)
@@ -555,17 +595,24 @@ class PlaywrightAgent(BaseAgent):
                 cookies = session_state.get("cookies") or []
                 local_storage = session_state.get("localStorage") or {}
                 session_storage = session_state.get("sessionStorage") or {}
-                # Extract bearer token from the first matching cookie or storage.
-                bearer_token = ""
-                for c in cookies:
-                    if c.get("name", "").lower() in ("token", "jwt", "access_token"):
-                        bearer_token = c.get("value", "")
-                        break
+                # Bearer token: prefer the value grabbed straight from
+                # localStorage after login (AIOSOP-JWT-CAPTURE-001), then fall
+                # back to a matching cookie or the captured storage dict.
+                bearer_token = polled_token
+                if not bearer_token:
+                    for c in cookies:
+                        if c.get("name", "").lower() in ("token", "jwt", "access_token"):
+                            bearer_token = c.get("value", "")
+                            break
                 if not bearer_token and local_storage:
                     for k, v in local_storage.items():
                         if "token" in k.lower() or "jwt" in k.lower():
                             bearer_token = str(v)
                             break
+                # Seed the JWT into the persisted localStorage so the diff-auth
+                # replay reconstructs an authenticated browser storage_state.
+                if bearer_token and "token" not in local_storage:
+                    local_storage = {**local_storage, "token": bearer_token}
                 await self.session_store.save_session(
                     engagement_id=engagement_id,
                     user_label=user_label,

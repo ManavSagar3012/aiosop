@@ -35,6 +35,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from sqlalchemy import JSON, Column, DateTime, String, Text
 from sqlalchemy import delete as sa_delete
@@ -240,7 +241,16 @@ class UserSession:
         if self.local_storage:
             # Playwright wants per-origin breakdown; if caller only gave us a flat
             # dict, place it under a synthetic origin so import still works.
-            origin = self.metadata_blob.get("origin") or "https://localhost"
+            raw_origin = self.metadata_blob.get("origin") or "https://localhost"
+            # Playwright applies localStorage PER ORIGIN, matched on the bare
+            # scheme://host[:port]. A full URL with a path/fragment (e.g. the SPA's
+            # post-login "http://localhost:3000/#/search") never matches the page
+            # origin, so the JWT is silently NOT seeded and the replayed context
+            # stays anonymous — the real cause of "storage_state doesn't apply
+            # localStorage" and why authenticated IDOR replay only ever saw public
+            # data. Normalise to the bare origin. (AIOSOP-STORAGE-ORIGIN-001)
+            _p = urlparse(raw_origin)
+            origin = f"{_p.scheme}://{_p.netloc}" if _p.scheme and _p.netloc else raw_origin
             origins.append(
                 {
                     "origin": origin,

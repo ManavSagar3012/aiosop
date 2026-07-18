@@ -10,6 +10,7 @@ import {
     GitMerge, AlertOctagon, ShieldAlert,
     Activity, CheckCircle2, DollarSign
 } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
 
 interface Invariant {
   id: string;
@@ -20,6 +21,7 @@ interface Invariant {
 }
 
 export const ResearchIntelligence: React.FC = () => {
+  const { addToast } = useToast();
   const [invariants, setInvariants] = useState<Invariant[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -75,7 +77,7 @@ export const ResearchIntelligence: React.FC = () => {
            method: 'POST',
            headers: authHeaders()
         });
-        alert("PoC generation task queued for ExploitAgent.");
+        addToast("PoC generation task queued for ExploitAgent.", "success");
      } catch (e) {
         console.error("PoC task failed", e);
      }
@@ -133,7 +135,7 @@ export const ResearchIntelligence: React.FC = () => {
   return (
     <div className="flex flex-col gap-6">
       {/* V6 Strategy KPIs */}
-      <div className="grid grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
         <StatTile
           label="Invariant Violations"
           value={loading ? <Skeleton className="h-8 w-16" /> : invariants.filter(i => i.is_violated).length}
@@ -170,7 +172,7 @@ export const ResearchIntelligence: React.FC = () => {
 
       {error && <ErrorState message={error} onRetry={fetchLatest} />}
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Invariant Engine */}
         <Card title="Business Invariant Engine (Violations)">
           {loading ? (
@@ -197,7 +199,7 @@ export const ResearchIntelligence: React.FC = () => {
                   {inv.is_violated && (
                     <div className="mt-3 pt-3 border-t border-error/20 flex gap-4">
                        <button onClick={() => handleGeneratePoC(inv.id)} className="flex-1 py-2 bg-error/10 border border-error/30 text-error font-label-caps text-label-xs hover:bg-error/20 transition-all">GENERATE PoC</button>
-                       <button onClick={() => alert("Loading state diff viewer...")} className="flex-1 py-2 bg-surface-container-high border border-outline-variant text-on-surface font-label-caps text-label-xs">VIEW STATE DIFF</button>
+                       <button onClick={() => addToast("State diff viewer not yet implemented.", "warning")} className="flex-1 py-2 bg-surface-container-high border border-outline-variant text-on-surface font-label-caps text-label-xs">VIEW STATE DIFF</button>
                     </div>
                   )}
                 </div>

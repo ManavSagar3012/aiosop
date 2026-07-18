@@ -19,7 +19,7 @@ const cssVar = (name: string, fallback: string) => {
 
 export const MissionControl: React.FC = () => {
   const { agents, budget } = useSwarmStore();
-  const { auditLog } = useIntelligenceStore();
+  const { auditLog, sessionId } = useIntelligenceStore();
 
   const palette = useMemo(() => ({
     primary:      cssVar('--primary', '#39ff14'),                    // success / operational (green)
@@ -50,11 +50,43 @@ export const MissionControl: React.FC = () => {
     e.severity === 'critical'
   ).slice(0, 5);
 
+  // Loading skeleton while waiting for store data
+  if (!sessionId && agents.length === 0) {
+    return (
+      <div className="flex flex-col gap-gutter">
+        <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
+          <div className="flex justify-between items-center">
+            <div className="space-y-2">
+              <div className="h-3 w-32 bg-surface-container-high/60"></div>
+              <div className="h-6 w-48 bg-surface-container-high/60"></div>
+            </div>
+            <div className="flex gap-2">
+              <div className="h-10 w-28 bg-surface-container-high/60"></div>
+              <div className="h-10 w-28 bg-surface-container-high/60"></div>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-gutter">
+          <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
+            <div className="h-5 w-40 bg-surface-container-high/60 mb-6"></div>
+            {[1,2,3].map(i => (
+              <div key={i} className="h-16 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
+            ))}
+          </div>
+          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[400px]">
+            <div className="h-5 w-36 bg-surface-container-high/60 mb-6"></div>
+            <div className="h-64 bg-surface-container-high/60 rounded-full mx-auto w-64"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-gutter">
       <ApprovalQueue />
 
-      <div className="grid grid-cols-3 gap-gutter">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-gutter">
         <Card title="Agent Utilization" className="col-span-2">
           <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
             {agents.length > 0 ? agents.map(agent => (
@@ -88,7 +120,7 @@ export const MissionControl: React.FC = () => {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {costData.map((entry, index) => (
+                  {costData.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
@@ -106,7 +138,7 @@ export const MissionControl: React.FC = () => {
         </Card>
       </div>
       
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card title="Resource Consumption Over Time">
             <div className="h-64 w-full">
                 {agents.length === 0 ? (

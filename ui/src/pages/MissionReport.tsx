@@ -138,23 +138,12 @@ export const MissionReport: React.FC = () => {
            {/* Report Content */}
            <div className="relative z-10 text-on-surface">
               {(report.body_html || report.html) ? (
-                <div 
-                  className="report-body
-                    [&_h1]:text-[36px] [&_h1]:font-display [&_h1]:text-on-surface [&_h1]:uppercase [&_h1]:tracking-tighter [&_h1]:border-b-2 [&_h1]:border-primary-fixed/20 [&_h1]:pb-6 [&_h1]:mb-12 [&_h1]:font-black
-                    [&_h2]:text-[22px] [&_h2]:font-display [&_h2]:text-primary-fixed [&_h2]:uppercase [&_h2]:mt-16 [&_h2]:mb-8 [&_h2]:tracking-widest [&_h2]:border-l-4 [&_h2]:border-primary-fixed [&_h2]:pl-4
-                    [&_h3]:text-[18px] [&_h3]:font-headline-md [&_h3]:text-on-surface [&_h3]:mt-10 [&_h3]:mb-6 [&_h3]:border-b [&_h3]:border-outline-variant [&_h3]:pb-2
-                    [&_h4]:text-[14px] [&_h4]:font-label-caps [&_h4]:text-secondary-fixed [&_h4]:mt-8 [&_h4]:mb-4 [&_h4]:opacity-80
-                    [&_p]:mb-6 [&_p]:leading-relaxed [&_p]:text-[16px] [&_p]:text-on-surface/90
-                    [&_strong]:text-primary-fixed [&_strong]:font-bold
-                    [&_code]:bg-black/60 [&_code]:px-2 [&_code]:py-1 [&_code]:rounded [&_code]:text-secondary-fixed [&_code]:font-code-sm [&_code]:text-code-sm [&_code]:border [&_code]:border-secondary/20
-                    [&_pre]:bg-black/80 [&_pre]:p-8 [&_pre]:border [&_pre]:border-outline-variant [&_pre]:my-8 [&_pre]:overflow-x-auto [&_pre]:shadow-inner
-                    [&_ul]:list-none [&_ul]:pl-0 [&_ul]:mb-8
-                    [&_li]:mb-4 [&_li]:pl-6 [&_li]:relative [&_li]:text-[15px] [&_li]:before:content-['▶'] [&_li]:before:absolute [&_li]:before:left-0 [&_li]:before:text-primary-fixed [&_li]:before:text-[10px] [&_li]:before:top-1.5
-                    [&_table]:w-full [&_table]:border-collapse [&_table]:my-10 [&_table]:shadow-xl
-                    [&_th]:border [&_th]:border-outline-variant [&_th]:p-4 [&_th]:bg-surface-variant/50 [&_th]:text-left [&_th]:text-[12px] [&_th]:font-label-caps [&_th]:text-primary-fixed
-                    [&_td]:border [&_td]:border-outline-variant [&_td]:p-4 [&_td]:text-[14px] [&_td]:bg-black/20
-                  "
-                  dangerouslySetInnerHTML={{ __html: report.body_html || report.html || "" }} 
+                <iframe
+                  className="w-full min-h-[900px] border border-outline-variant bg-white"
+                  title="Mission report content"
+                  sandbox=""
+                  referrerPolicy="no-referrer"
+                  srcDoc={report.body_html || report.html || ''}
                 />
               ) : (
                 <pre className="whitespace-pre-wrap font-code-sm text-on-surface-variant text-[15px] leading-relaxed bg-black/40 p-10 border border-outline-variant">

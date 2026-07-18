@@ -1060,20 +1060,49 @@ class VulnAnalysisAgent(BaseAgent):
                 or f'"{k}": {json.dumps(v)}' in flat
             )
 
+        def _valid_body(base: Dict[str, Any]) -> Dict[str, Any]:
+            """Fresh, valid, UNIQUE-per-call body for a create endpoint.
+
+            Create endpoints commonly enforce a uniqueness constraint (e.g.
+            email) plus field-format validation. Reusing ONE body for both the
+            control and injected requests makes the second collide (400/409), so
+            the injected privileged field never gets the chance to persist and
+            the vuln is masked (AIOSOP-MASS-ASSIGN-UNIQUE-001). Give every
+            email-like field a fresh unique address and every password-like
+            field a policy-satisfying value; replace empty/"test" placeholders
+            with a benign token so plain validation passes.
+            """
+            out = dict(base)
+            tag = uuid.uuid4().hex[:12]
+            for bk in list(out.keys()):
+                kl = bk.lower()
+                if "email" in kl or kl in ("mail", "e-mail"):
+                    out[bk] = f"osop-ma-{tag}@recon.test"
+                elif "pass" in kl or "pwd" in kl:
+                    out[bk] = "OSOPmass1!"
+                elif out.get(bk) in (None, "", "test", "osop"):
+                    out[bk] = "osop"
+            return out
+
         readback_url = payload.get("readback_url")
         try:
             async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
                 # 1. CONTROL — a legitimate request WITHOUT the injected privileged
-                #    fields. Anything already present here is a server default / echo-all,
-                #    NOT attacker-controlled, so it must be suppressed from the result.
-                control_resp = await c.request(method, url, json=base_body, headers=headers)
+                #    fields, with a FRESH unique identity so a uniqueness-constrained
+                #    create accepts it. Anything already present here is a server
+                #    default / echo-all, NOT attacker-controlled, so it must be
+                #    suppressed from the result.
+                control_resp = await c.request(
+                    method, url, json=_valid_body(base_body), headers=headers
+                )
                 control_text = control_resp.text
                 if readback_url:
                     control_text = (await c.get(readback_url, headers=headers)).text
 
-                # 2. INJECTED — the same request WITH the privileged fields added.
+                # 2. INJECTED — the same shape with a DIFFERENT fresh identity plus
+                #    the privileged fields, so it does not collide with the control.
                 inj_resp = await c.request(
-                    method, url, json={**base_body, **inject}, headers=headers
+                    method, url, json={**_valid_body(base_body), **inject}, headers=headers
                 )
                 inj_text = inj_resp.text
                 independent_readback = False

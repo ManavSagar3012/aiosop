@@ -46,8 +46,42 @@ const ledgerColumns: Column<LedgerFinding>[] = [
 ];
 
 export const RealityVerificationCenter: React.FC = () => {
-  const { verifications } = useIntelligenceStore();
+  const { verifications, sessionId } = useIntelligenceStore();
   const rows = verifications || [];
+
+  // Loading skeleton while waiting for first data
+  if (!sessionId && verifications.length === 0) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse">
+          <div className="flex justify-between items-center">
+            <div className="space-y-2">
+              <div className="h-3 w-36 bg-surface-container-high/60"></div>
+              <div className="h-5 w-72 bg-surface-container-high/60"></div>
+            </div>
+            <div className="flex gap-6">
+              <div className="h-10 w-24 bg-surface-container-high/60"></div>
+              <div className="h-10 w-24 bg-surface-container-high/60"></div>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-6 min-h-0">
+          <div className="col-span-2 bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[500px]">
+            <div className="h-5 w-36 bg-surface-container-high/60 mb-6"></div>
+            {[1,2].map(i => (
+              <div key={i} className="h-48 bg-surface-container-high/60 border border-outline-variant/40 mb-4"></div>
+            ))}
+          </div>
+          <div className="bg-surface-container-low border border-outline-variant p-5 animate-pulse h-[500px]">
+            <div className="h-5 w-36 bg-surface-container-high/60 mb-6"></div>
+            {[1,2,3].map(i => (
+              <div key={i} className="h-12 bg-surface-container-high/60 border border-outline-variant/40 mb-3"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">

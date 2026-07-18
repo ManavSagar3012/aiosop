@@ -307,6 +307,19 @@ class DiffAuthAnalyzer:
             "signals": signals,
         }
 
+    def _equivalent(self, r1: Dict[str, Any], r2: Dict[str, Any]) -> bool:
+        """Two replay responses represent the same (public/open) content: both
+        2xx, similar size, and ~identical JSON key sets. Used to suppress
+        access-control findings on resources every client can already read.
+        """
+        s1 = int(r1.get("status_code") or 0)
+        s2 = int(r2.get("status_code") or 0)
+        if not (200 <= s1 < 300 and 200 <= s2 < 300):
+            return False
+        if not _size_similar(r1.get("response_size", 0), r2.get("response_size", 0)):
+            return False
+        return _jaccard(r1.get("json_keys", []), r2.get("json_keys", [])) >= 0.9
+
     async def analyze(
         self,
         engagement_id: str,
@@ -353,6 +366,20 @@ class DiffAuthAnalyzer:
             # 2. Compare each test identity against user_a baseline.
             cmp_b = self._compare(r_a, r_b, "user_b")
             cmp_anon = self._compare(r_a, r_anon, "anonymous")
+
+            # Public-resource suppression (AIOSOP-DIFFAUTH-PUBLIC-SUPPRESS-001): an
+            # access-control flaw exists only if the test identity sees something an
+            # ANONYMOUS client does NOT. If user_a's response equals the anonymous
+            # one, the endpoint is simply public (kills broken_access_control FPs);
+            # if user_b's response equals the anonymous one, user_b saw nothing
+            # privileged (kills the horizontal_pe FPs that a real second identity
+            # would otherwise mass-produce on every same-shaped public/own object).
+            # A genuine IDOR (anon gets 401 on /rest/basket/{id}) is never
+            # "equivalent" to anon, so it survives.
+            if cmp_anon["category"] and self._equivalent(r_a, r_anon):
+                cmp_anon = {"category": "", "confidence": 0.0, "signals": cmp_anon["signals"]}
+            if cmp_b["category"] and self._equivalent(r_b, r_anon):
+                cmp_b = {"category": "", "confidence": 0.0, "signals": cmp_b["signals"]}
 
             # Dominant signal: anonymous access subsumes user_b "IDOR" (it's just open).
             primary = cmp_anon if cmp_anon["category"] else cmp_b

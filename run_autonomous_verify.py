@@ -32,7 +32,7 @@ load_dotenv()
 
 API = "http://localhost:8200"
 TARGET = "localhost:3000"
-DEADLINE_S = 1080  # 18 min hard cap
+DEADLINE_S = 1500  # 25 min hard cap (two identities + deep nav lengthen recon)
 QUIET_STOP_S = 150  # stop early if no task/finding/phase change for this long
 POLL_S = 8
 FINDINGS_PATH = "autonomous_findings.json"

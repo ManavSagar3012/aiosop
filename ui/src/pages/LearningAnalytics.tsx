@@ -7,9 +7,9 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     BarChart, Bar, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, DollarSign, Target, UserCheck, ShieldCheck, Activity } from 'lucide-react';
+import { TrendingUp, DollarSign, Target, ShieldCheck, Activity } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
-import { useSwarmStore } from '../store/useSwarmStore';
+// import { useSwarmStore } from '../store/useSwarmStore';
 
 // Recharts sets colors as raw SVG attributes (fill=/stroke=), so a bare
 // var(--x) string or Tailwind class won't resolve there — we need a
@@ -24,7 +24,6 @@ const cssVar = (name: string, fallback: string) => {
 
 export const LearningAnalytics: React.FC = () => {
   const { skillStats, findings } = useIntelligenceStore();
-  const { agents } = useSwarmStore();
 
   const palette = useMemo(() => ({
     primary:   cssVar('--primary', '#39ff14'),                    // success / operational (green)
@@ -85,14 +84,14 @@ export const LearningAnalytics: React.FC = () => {
     <div className="flex flex-col gap-6">
       {/* Top Strategic KPIs */}
       {!skillStats ? (
-        <div className="grid grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
           <Skeleton className="h-28" />
           <Skeleton className="h-28" />
           <Skeleton className="h-28" />
           <Skeleton className="h-28" />
         </div>
       ) : (
-        <div className="grid grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
           <StatTile
             label="Engagement ROI" value={`$${(safeStats.total_revenue || 0).toLocaleString()}`}
             caption="Total Bounty Captured" accent="primary" icon={<DollarSign size={16} />}
@@ -117,7 +116,7 @@ export const LearningAnalytics: React.FC = () => {
       {/* Persona ROI Section */}
       <div className="grid grid-cols-1">
         <Card title="Research Persona Performance (ROI Breakdown)">
-           <div className="grid grid-cols-4 gap-8 py-4">
+           <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-8 py-4">
               {personaROI.length > 0 ? personaROI.map(p => (
                 <div key={p.name} className="bg-black/40 border border-outline-variant p-5 relative overflow-hidden group hover:border-primary-fixed/30 transition-all">
                    <div className="flex justify-between items-start mb-4">
@@ -147,7 +146,7 @@ export const LearningAnalytics: React.FC = () => {
         </Card>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 1. Skill Performance Breakdown */}
         <Card title="Skill Engine Performance Breakdown" className="col-span-2">
            <div className="h-72 w-full">
@@ -209,7 +208,7 @@ export const LearningAnalytics: React.FC = () => {
         </Card>
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
          {/* 3. Findings by severity — LIVE (replaced a hardcoded AI-vs-human mock) */}
          <Card title="Findings by Severity (Live)">
             <div className="h-64 w-full">

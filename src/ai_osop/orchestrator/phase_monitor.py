@@ -324,51 +324,56 @@ class PhaseMonitor:
                     # NOT routed to this login POST path (see vuln-discover dispatch).
                     # Registration credentials are seeded so the same user can be
                     # used for login across retries/restarts.
-                    reg_email = f"osop-auto-{dom_slug[:20]}@recon.test"
                     reg_password = "AutoRegPass1!"
-                    reg_label = f"recon-probe-{dom_slug}"
-
-                    reg_task = Task(
-                        type="register",
-                        priority=6,
-                        agent_type=AgentType.WORKFLOW,
-                        payload={
-                            "engagement_id": session.session_id,
-                            "register_url": surface_url.rstrip("/") + "/#/register",
-                            "credentials": {
-                                "email": reg_email,
-                                "password": reg_password,
-                                "security_answer": "auto_reg_answer",
+                    # Register + log in TWO identities so the diff-auth engine can
+                    # run a real user_a-vs-user_b IDOR/BOLA comparison (e.g. Juice
+                    # Shop /rest/basket/{id}, where the vuln is only visible when a
+                    # SECOND authenticated user reads the first user's object — a
+                    # single identity can only compare against anonymous, which
+                    # just returns 401). (AIOSOP-DIFFAUTH-2IDENTITY-001)
+                    for _suffix in ("a", "b"):
+                        reg_email = f"osop-auto-{dom_slug[:18]}-{_suffix}@recon.test"
+                        reg_task = Task(
+                            type="register",
+                            priority=6,
+                            agent_type=AgentType.WORKFLOW,
+                            payload={
+                                "engagement_id": session.session_id,
+                                "register_url": surface_url.rstrip("/") + "/#/register",
+                                "credentials": {
+                                    "email": reg_email,
+                                    "password": reg_password,
+                                    "security_answer": "auto_reg_answer",
+                                },
+                                "user_label": f"recon-probe-{dom_slug}-{_suffix}",
+                                "scope_hosts": scope_hosts,
                             },
-                            "user_label": reg_label,
-                            "scope_hosts": scope_hosts,
-                        },
-                        engagement_id=session.session_id,
-                        timeout_seconds=180,
-                    )
-                    await self._orch.task_scheduler.schedule_task(reg_task)
+                            engagement_id=session.session_id,
+                            timeout_seconds=180,
+                        )
+                        await self._orch.task_scheduler.schedule_task(reg_task)
 
-                    # Login task with valid registered credentials. Depends on
-                    # registration completing so the user exists.
-                    login_task = Task(
-                        type="authenticate",
-                        priority=5,
-                        agent_type=AgentType.WORKFLOW,
-                        payload={
-                            "engagement_id": session.session_id,
-                            "login_url": surface_url.rstrip("/") + "/#/login",
-                            "credentials": {
-                                "email": reg_email,
-                                "password": reg_password,
+                        # Login task with valid registered credentials. Depends on
+                        # registration completing so the user exists.
+                        login_task = Task(
+                            type="authenticate",
+                            priority=5,
+                            agent_type=AgentType.WORKFLOW,
+                            payload={
+                                "engagement_id": session.session_id,
+                                "login_url": surface_url.rstrip("/") + "/#/login",
+                                "credentials": {
+                                    "email": reg_email,
+                                    "password": reg_password,
+                                },
+                                "user_label": f"recon-auth-{dom_slug}-{_suffix}",
+                                "scope_hosts": scope_hosts,
                             },
-                            "user_label": f"recon-auth-{dom_slug}",
-                            "scope_hosts": scope_hosts,
-                        },
-                        engagement_id=session.session_id,
-                        dependencies=[reg_task.id],
-                        timeout_seconds=180,
-                    )
-                    await self._orch.task_scheduler.schedule_task(login_task)
+                            engagement_id=session.session_id,
+                            dependencies=[reg_task.id],
+                            timeout_seconds=180,
+                        )
+                        await self._orch.task_scheduler.schedule_task(login_task)
             url_hint = (
                 self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
                 if session.scope.domains

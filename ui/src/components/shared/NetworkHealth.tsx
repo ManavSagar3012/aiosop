@@ -2,19 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { API_BASE, AUTH_TOKEN } from '../../services/api';
 import { NetworkService, ConnectionStatus } from '../../services/network';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
-import { Activity, Wifi, WifiOff, RefreshCcw } from 'lucide-react';
+import { Wifi, WifiOff, RefreshCcw } from 'lucide-react';
 
 export const NetworkHealth: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [metrics, setMetrics] = useState({ latency: 0, throughput: 0 });
-  // AIOSOP-UI-ENGAGEMENT-SELECTOR-2026-07-03: the selected engagement now lives in
-  // the shared store so the Header dropdown can switch it. NetworkHealth remains the
-  // single owner of the socket lifecycle: it derives the initial engagement when none
-  // is selected, and reconnects whenever the selection changes.
   const sessionId = useIntelligenceStore((s) => s.sessionId);
   const setSessionId = useIntelligenceStore((s) => s.setSessionId);
 
-  // Derive the initial engagement once, if the operator hasn't picked one yet.
   useEffect(() => {
     if (sessionId) return;
     let cancelled = false;
@@ -26,11 +21,6 @@ export const NetworkHealth: React.FC = () => {
         if (!response.ok) { if (!cancelled) setStatus('disconnected'); return; }
         const sessions = await response.json();
         if (!Array.isArray(sessions)) return;
-        // API returns engagements latest-first. Pick the most recent LIVE engagement
-        // (not halted/completed/aborted) so the dashboard tracks the run actually in
-        // progress; fall back to the latest overall. NOTE: do not exclude ids
-        // containing 'test' — that wrongly hid real engagements like
-        // 'SYFE-approvaltest'. (AIOSOP-UI-ACTIVE-SESSION-2026-06-30)
         const realSessions = sessions.filter((s: any) => s.session_id !== 'global');
         if (realSessions.length === 0) { if (!cancelled) setStatus('disconnected'); return; }
         const isLive = (s: any) => {
@@ -47,7 +37,6 @@ export const NetworkHealth: React.FC = () => {
     return () => { cancelled = true; };
   }, [sessionId, setSessionId]);
 
-  // Own the socket lifecycle: (re)connect whenever the selected engagement changes.
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;

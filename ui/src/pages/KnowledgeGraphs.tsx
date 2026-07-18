@@ -19,7 +19,8 @@ import {
   Server, Globe, ShieldAlert, Cloud, Activity,
   Box, FileJson, AlertTriangle, Search
 } from 'lucide-react';
-import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useIntelligenceStore } from '../store/useIntelligenceStore'
+import { useToast } from '../hooks/useToast'
 
 // React Flow sets node/edge colors as raw SVG/DOM style props (stroke=,
 // fill=, background-color=), so a bare var(--x) string or Tailwind class
@@ -73,9 +74,10 @@ const nodeTypes = { custom: CustomNode };
 
 export const KnowledgeGraphs: React.FC = () => {
   const [activeGraph, setActiveGraph] = useState<'attack' | 'workflow' | 'cloud' | 'learning'>('attack');
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
   const { graphData } = useIntelligenceStore();
+  const { addToast } = useToast();
   const [selectedNode, setSelectedNode] = useState<any>(null);
   const [isRelayouting, setIsRelayouting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -391,7 +393,7 @@ export const KnowledgeGraphs: React.FC = () => {
                           </div>
                           
                           <button 
-                            onClick={() => alert(`Showing evidence for ${inspectorData.label}... (Not implemented in demo)`)}
+                            onClick={() => addToast(`Evidence timeline for ${inspectorData.label} not yet implemented`, "warning")}
                             className="w-full py-3 bg-surface-container-high border border-outline-variant text-on-surface font-label-caps text-[10px] hover:bg-surface-variant transition-all mt-4"
                           >
                              VIEW EVIDENCE TIMELINE

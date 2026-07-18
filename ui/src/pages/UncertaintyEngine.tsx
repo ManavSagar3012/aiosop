@@ -4,9 +4,11 @@ import { Card } from '../components/shared/Card';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useToast } from '../hooks/useToast';
 import { AlertOctagon, Lightbulb, Search, ArrowRight } from 'lucide-react';
 
 export const UncertaintyEngine: React.FC = () => {
+  const { addToast } = useToast();
   const { uncertainties, sessionId } = useIntelligenceStore();
   const [launchError, setLaunchError] = useState<string | null>(null);
 
@@ -18,7 +20,7 @@ export const UncertaintyEngine: React.FC = () => {
            method: 'POST',
            headers: authHeaders()
         });
-        alert("Discovery swarm successfully deployed to target asset.");
+        addToast("Discovery swarm successfully deployed to target asset.", "success");
      } catch (e) {
         console.error("Discovery trigger failed", e);
         setLaunchError("Failed to deploy discovery swarm. Check target connectivity and retry.");
@@ -46,7 +48,7 @@ export const UncertaintyEngine: React.FC = () => {
          </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
         <Card title="Knowledge Boundaries (What the AI is Missing)" className="overflow-y-auto">
            <div className="space-y-6 h-[600px] custom-scrollbar pr-2">
               {launchError && (
@@ -113,7 +115,7 @@ export const UncertaintyEngine: React.FC = () => {
                  </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 mt-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
                  <div className="border border-outline-variant p-3">
                     <div className="font-label-caps text-label-xs text-primary-fixed mb-2">MOST UNCERTAIN STACK</div>
                     <div className="text-on-surface">Cloudflare Turnstile + Custom WebGL</div>

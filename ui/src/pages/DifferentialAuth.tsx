@@ -3,13 +3,15 @@ import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
-import { User, Shield, Lock, FileJson, Layout as LayoutIcon, Eye } from 'lucide-react';
+import { Shield, Lock, Eye } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useToast } from '../hooks/useToast';
 
 export const DifferentialAuth: React.FC = () => {
   const { diffAuthFindings, sessionId } = useIntelligenceStore();
   const [activeFindingIdx, setActiveFindingIdx] = useState(0);
   const [activeIdentity, setActiveIdentity] = useState<'user_a' | 'user_b' | 'admin'>('user_b');
+  const { addToast } = useToast();
   const [validateError, setValidateError] = useState<string | null>(null);
 
   const currentFinding = diffAuthFindings[activeFindingIdx];
@@ -22,7 +24,7 @@ export const DifferentialAuth: React.FC = () => {
               method: 'POST',
               headers: authHeaders()
           });
-          alert("Exploit validation task queued.");
+          addToast("Exploit validation task queued.", "success");
       } catch (e) {
           setValidateError('Failed to queue exploit validation task.');
       }
@@ -70,7 +72,7 @@ export const DifferentialAuth: React.FC = () => {
           />
         </div>
       ) : (
-      <div className="flex-1 grid grid-cols-2 gap-6 min-h-0">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0">
         {/* Baseline (User A) */}
         <Card title="Baseline Observation (Expected Identity)" className="flex flex-col overflow-hidden">
            <div className="flex-1 overflow-y-auto space-y-4 font-code-sm text-[11px]">

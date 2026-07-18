@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { API_BASE, AUTH_TOKEN, authHeaders } from '../../services/api';
 import { useSwarmStore } from '../../store/useSwarmStore';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
-import { Bell, Activity, PauseCircle, Rocket } from 'lucide-react';
+import { Rocket } from 'lucide-react';
 import { NewMissionModal } from '../shared/NewMissionModal';
+import { useToast } from '../../hooks/useToast';
 
 import { ConnectionManager } from '../shared/ConnectionManager';
 export const Header: React.FC = () => {
-  const { currentObjective, currentPhase, setObjective } = useSwarmStore();
+  const { currentObjective, currentPhase, setObjective, setPhase } = useSwarmStore();
+  const { addToast } = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   // AIOSOP-UI-ENGAGEMENT-SELECTOR-2026-07-03: the active engagement is the shared
   // store's sessionId (owned/derived by NetworkHealth). The Header only lists the
@@ -59,12 +61,24 @@ export const Header: React.FC = () => {
       });
 
       if (response.ok) {
+        const engagement = await response.json();
+        const sessionId = engagement.session_id || engagement.engagement_id;
         setObjective(domain);
-        // Refresh the whole UI context to connect to new session
-        window.location.reload(); 
+        setPhase(engagement.phase || 'initialized');
+        if (sessionId) {
+          setSessionId(sessionId);
+          setEngagements((current) => [
+            engagement,
+            ...current.filter((item) => item.session_id !== sessionId),
+          ]);
+        }
+        addToast('Mission launched. Connecting the command core to the new engagement.', 'success');
+      } else {
+        addToast('Mission launch was rejected by the API.', 'error');
       }
     } catch (e) {
       console.error("Failed to launch mission", e);
+      addToast('Mission launch failed. Check API connectivity and try again.', 'error');
     }
   };
 
@@ -73,14 +87,18 @@ export const Header: React.FC = () => {
      if (!window.confirm("EMERGENCY: Are you sure you want to HALT all agents?")) return;
      
      try {
-        await fetch(`${API_BASE}/engagements/${currentSessionId}/halt`, {
+        const response = await fetch(`${API_BASE}/engagements/${currentSessionId}/halt`, {
            method: 'POST',
            headers: authHeaders()
         });
-        alert("Swarm halted successfully.");
-        window.location.reload();
+        if (!response.ok) {
+          throw new Error(`Halt request failed with status ${response.status}`);
+        }
+        setPhase('halted');
+        addToast('Swarm halted successfully.', 'success');
      } catch (e) {
         console.error("Halt failed", e);
+        addToast('Unable to halt the swarm. Check API connectivity and try again.', 'error');
      }
   };
 
