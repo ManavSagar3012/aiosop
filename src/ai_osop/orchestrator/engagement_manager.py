@@ -138,7 +138,7 @@ class EngagementManager:
             for agent in self._orch._agents.values():
                 if agent.ctx.session_id == session_id and agent.ctx.status == "running":
                     agent.ctx.current_task = None
-                    agent.ctx.status = "idle"
+                    await self._orch._release_agent(agent.ctx.agent_id)
                     logger.info(
                         "agent_released_from_halted_engagement",
                         agent_id=agent.ctx.agent_id,
