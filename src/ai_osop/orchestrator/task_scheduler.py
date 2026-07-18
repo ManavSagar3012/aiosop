@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+from ai_osop.core.config import AgentType, EngagementPhase, VulnClass
 
 import structlog
 
@@ -43,6 +45,76 @@ class TaskScheduler:
     # unregistered during an API restart) was previously silent — a task looped
     # no_agent_found for 610s with zero alerting. This makes the outage visible.
     AGENT_STARVATION_WARN_SECONDS = 60
+
+    # ── Dynamic agent fallback (GAP-3-4) ──────────────────────────────────────
+    #
+    # When a scanner task exhausts its retry budget, the scheduler tries an
+    # ALTERNATE technique for the same vulnerability class rather than giving
+    # up entirely. The table below maps ``task_type`` to a list of
+    # ``(technique_marker, AgentType)`` tuples.
+    #
+    # Unlike the original task type (e.g. ``sqli_scan``), the fallback uses the
+    # **same** task type but injects ``technique`` into the payload so the agent
+    # can branch on it. This avoids requiring agents to register handlers for
+    # novel type names like ``sqli_manual_scan``.
+    #
+    # The first entry is the PRIMARY alternate; the second (if present) is a
+    # secondary fallback. The chain stops after one level since alternate types
+    # are not themselves in this table.
+    _ALTERNATE_TECHNIQUES: Dict[str, List[tuple]] = {
+        # SQLi: sqlmap MCP -> manual payload injection
+        "sqli_scan": [
+            ("sqli_scan", AgentType.VULN_ANALYSIS, {"technique": "manual"}),
+        ],
+        # XSS: browser-based -> HTTP payload injection
+        "xss_scan": [
+            ("xss_scan", AgentType.VULN_ANALYSIS, {"technique": "manual"}),
+        ],
+        # SSRF: OAST-based -> timing-based probe
+        "ssrf_scan": [
+            ("ssrf_scan", AgentType.SSRF_SCANNER, {"technique": "timing"}),
+        ],
+        # SSTI: template detection -> RCE probe
+        "ssti_scan": [
+            ("ssti_scan", AgentType.SSTI_SCANNER, {"technique": "manual"}),
+        ],
+        # CSRF: automatic -> manual verification
+        "csrf_scan": [
+            ("csrf_scan", AgentType.CSRF_SCANNER, {"technique": "manual"}),
+        ],
+        # JWT: alg confusion -> key brute-force
+        "jwt_scan": [
+            ("jwt_scan", AgentType.JWT_SCANNER, {"technique": "brute"}),
+        ],
+        # SMUGGLING: CL.TE -> TE.CL
+        "smuggling_scan": [
+            ("smuggling_scan", AgentType.SMUGGLING_SCANNER, {"technique": "reverse"}),
+        ],
+        # RACE: single-packet -> multi-connection
+        "race_scan": [
+            ("race_scan", AgentType.RACE_SCANNER, {"technique": "multi"}),
+        ],
+        # UPLOAD / LFI: path traversal -> extension bypass
+        "upload_scan": [
+            ("upload_scan", AgentType.UPLOAD_SCANNER, {"technique": "mime"}),
+        ],
+        # SAML: signature exclusion -> XML wrapping
+        "saml_scan": [
+            ("saml_scan", AgentType.SAML_SCANNER, {"technique": "xml"}),
+        ],
+        # POLLUTION: prototype -> constructor
+        "pollution_scan": [
+            ("pollution_scan", AgentType.POLLUTION_SCANNER, {"technique": "deep"}),
+        ],
+        # WEBSOCKET: message flooding -> URL manipulation
+        "websocket_scan": [
+            ("websocket_scan", AgentType.WEBSOCKET_SCANNER, {"technique": "url"}),
+        ],
+        # TAKEOVER: DNS probe -> HTTP fingerprint
+        "takeover_scan": [
+            ("takeover_scan", AgentType.TAKEOVER_SCANNER, {"technique": "http"}),
+        ],
+    }
 
     def __init__(
         self, orchestrator: Any, state_machine: Optional[EngagementStateMachine] = None
@@ -996,6 +1068,84 @@ class TaskScheduler:
                 )
                 await self.schedule_task(follow_up_task)
 
+    async def _schedule_fallback_task(self, task: Task, result: Dict[str, Any]) -> bool:
+        """Schedule an alternate technique when a scanner task exhausts retries.
+
+        Returns True if a fallback was dispatched, False if no alternate exists
+        (the task goes to the DLQ normally).
+
+        The fallback uses the **same** task type as the original, but injects
+        a ``technique`` key into the payload so the agent can branch on it
+        without needing to register handlers for novel type names.
+        """
+        alternates = self._ALTERNATE_TECHNIQUES.get(task.type)
+        if not alternates:
+            return False
+
+        # Determine which alternate index to try based on prior fallback attempts.
+        # The task payload records ``_fallback_index`` — 0 for first alternate,
+        # 1 for second, etc. If the index exceeds the list, all alternates have
+        # been exhausted.
+        fallback_idx = task.payload.get("_fallback_index", 0)
+        if fallback_idx >= len(alternates):
+            return False
+
+        next_task_type, next_agent_type, payload_overrides = alternates[fallback_idx]
+
+        # Build the fallback payload: start with a copy of the original, merge
+        # in the technique override + fallback metadata.
+        fallback_payload = {
+            **task.payload,
+            **payload_overrides,
+            "_fallback_index": fallback_idx + 1,
+            "_fallback_of": task.id,
+            "_fallback_reason": str(result.get("error", ""))[:200],
+        }
+
+        fallback_task = Task(
+            type=next_task_type,
+            priority=max(task.priority - 1, 1),  # slightly lower priority
+            agent_type=next_agent_type,
+            payload=fallback_payload,
+            engagement_id=task.engagement_id,
+            timeout_seconds=task.timeout_seconds,
+        )
+
+        logger.info(
+            "dynamic_fallback_scheduled",
+            parent_task_id=task.id,
+            parent_task_type=task.type,
+            fallback_technique=payload_overrides.get("technique", "unknown"),
+            fallback_attempt=fallback_idx + 1,
+            reason=str(result.get("error", ""))[:120],
+        )
+
+        # Audit the fallback decision
+        try:
+            await self._orch._audit_log(
+                AuditEvent(
+                    event_type="dynamic_fallback_scheduled",
+                    severity="info",
+                    actor_type="system",
+                    actor_id="task_scheduler",
+                    action={
+                        "parent_task_id": task.id,
+                        "parent_task_type": task.type,
+                        "fallback_technique": payload_overrides.get("technique", "unknown"),
+                        "fallback_attempt": fallback_idx + 1,
+                        "reason": str(result.get("error", ""))[:200],
+                    },
+                    result={"fallback_task_id": fallback_task.id},
+                    context={"engagement_id": task.engagement_id},
+                    engagement_id=task.engagement_id,
+                )
+            )
+        except Exception:  # noqa: BLE001 — audit is best-effort
+            pass
+
+        await self.schedule_task(fallback_task)
+        return True
+
     async def _on_task_failure(self, task: Task, result: Dict[str, Any]) -> None:
         """Handle task failure."""
         with trace_span(
@@ -1052,14 +1202,17 @@ class TaskScheduler:
                 metadata={"via": "coordination_bus", "topic": "task.failed"},
             )
             if task.retry_count >= task.max_retries:
-                try:
-                    await self._orch.dlq.enqueue(
-                        task,
-                        reason="terminal_failure",
-                        final_error=str(result.get("error") or result.get("status") or ""),
-                    )
-                except Exception as e:
-                    logger.error("dlq_enqueue_fallback_failed", task_id=task.id, error=str(e))
+                # Retries exhausted: try an alternate technique before giving up
+                fallback_dispatched = await self._schedule_fallback_task(task, result)
+                if not fallback_dispatched:
+                    try:
+                        await self._orch.dlq.enqueue(
+                            task,
+                            reason="terminal_failure",
+                            final_error=str(result.get("error") or result.get("status") or ""),
+                        )
+                    except Exception as e:
+                        logger.error("dlq_enqueue_fallback_failed", task_id=task.id, error=str(e))
 
     async def _trigger_downstream_tasks(self, parent: Task) -> None:
         """Launch child tasks that depend on parent completion."""

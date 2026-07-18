@@ -182,12 +182,18 @@ class UserSession:
 
     Used by agents and the SessionClient. Serializes to/from JSON for Redis
     and to/from ORM for Postgres.
+
+    ``refresh_token`` is an opaque credential that the ``token_refresh_callback``
+    (see :class:`SessionClient`) can exchange for a new ``bearer_token`` when the
+    original token expires mid-scan. Populated by the caller at capture time;
+    consumed by the callback registered in ``SessionStore.as_user``.
     """
 
     engagement_id: str
     user_label: str
     cookies: List[Dict[str, Any]] = field(default_factory=list)
     bearer_token: str = ""
+    refresh_token: str = ""  # opaque IdP refresh token for credential rotation
     local_storage: Dict[str, Any] = field(default_factory=dict)
     session_storage: Dict[str, Any] = field(default_factory=dict)
     csrf_token: str = ""
@@ -215,6 +221,7 @@ class UserSession:
             user_label=d["user_label"],
             cookies=d.get("cookies") or [],
             bearer_token=d.get("bearer_token") or "",
+            refresh_token=d.get("refresh_token") or "",
             local_storage=d.get("local_storage") or {},
             session_storage=d.get("session_storage") or {},
             csrf_token=d.get("csrf_token") or "",
@@ -478,15 +485,45 @@ class SessionStore:
                 r = await client.get("https://api.target.com/me")
 
         Auto-persists any new cookies the response Set-Cookie-d back to us.
+        If the captured session includes a ``refresh_token``, the client will
+        automatically attempt a credential refresh on 401/403 responses.
         """
         from ai_osop.auth.session_client import SessionClient  # lazy to break cycle
 
         sess = await self.get_session(engagement_id, user_label)
-        client = SessionClient(session=sess, base_url=base_url, store=self)
+
+        # Build a token refresh callback that exchanges the refresh_token
+        # for a new bearer_token. Agents can override this by setting an
+        # explicit refresh_callback on the session metadata.
+        async def _default_refresh(session_dict: Dict[str, Any]) -> Dict[str, Any]:
+            """Default token refresh: re-fetch from store and return fresh creds.
+
+            In the common case the session is still valid and we just need to
+            re-apply it. Operators with a custom IdP can hook a real refresh
+            endpoint here via session.extra_headers['refresh_callback'].
+            """
+            try:
+                refreshed = await self.get_session(engagement_id, user_label)
+                return {
+                    "bearer_token": refreshed.bearer_token,
+                    "cookies": refreshed.cookies,
+                }
+            except Exception:
+                return {"bearer_token": sess.bearer_token, "cookies": sess.cookies}
+
+        # Allow operators to provide a custom refresh implementation via metadata
+        custom_refresh = getattr(sess, "metadata_blob", {}).get("refresh_callback")
+        callback = custom_refresh if callable(custom_refresh) else _default_refresh
+
+        client = SessionClient(
+            session=sess,
+            base_url=base_url,
+            store=self,
+            token_refresh_callback=callback if sess.refresh_token else None,
+        )
         try:
             yield client
         finally:
-            # Persist any cookie updates the client recorded mid-flight.
             if client.cookies_dirty:
                 await self.save_session(
                     engagement_id,

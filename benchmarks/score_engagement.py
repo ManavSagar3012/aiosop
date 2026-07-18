@@ -101,24 +101,44 @@ _TYPE_ALIASES: Dict[str, set] = {
 # so a finding that never captured a response is honestly reported incomplete.
 # --------------------------------------------------------------------------- #
 _EVIDENCE_ALIASES: Dict[str, str] = {
+    # Request aliases
     "request": "request",
     "req": "request",
     "http_request": "request",
     "url": "request",
     "curl": "request",
+    # Response aliases
     "response": "response",
     "resp": "response",
     "http_response": "response",
     "response_body": "response",
+    # Payload aliases
     "payload": "payload",
     "payloads": "payload",
     "injected": "payload",
     "injection": "payload",
+    "sqlmap_injection": "payload",
+    "xss_confirmation": "payload",
+    "csrf": "payload",
+    "mass_assignment": "payload",
+    "oast_callback": "payload",
+    "request_smuggling": "payload",
+    "smuggling_probe": "payload",
+    # Token aliases
     "token": "token",
     "jwt": "token",
     "jwt_token": "token",
+    "jwt_forgery": "token",
+    # Diff aliases
     "diff": "diff",
     "baseline_diff": "diff",
+    # Scanner-specific evidence keys that contribute to completeness
+    "callbacks": "response",
+    "proof_url": "response",
+    "accepted_fields": "response",
+    "techniques": "response",
+    "interaction": "response",
+    "tester_evidence": "response",
 }
 
 
@@ -292,12 +312,24 @@ def _finding_type_str(f: Any) -> str:
 
 
 def _finding_is_simulated(f: Any) -> bool:
-    # Prefer the model's own authoritative check.
+    # 1. Explicit boolean field (most authoritative).
+    explicit = _finding_field(f, "is_simulated", "simulated", default=None)
+    if explicit is not None:
+        try:
+            if bool(explicit):
+                return True
+        except Exception:
+            pass
+    # 2. Prefer the model's own authoritative check (uses heuristic fallback).
     if hasattr(f, "is_simulated"):
         try:
             return bool(f.is_simulated())
         except Exception:
             pass
+    # 3. Duck-type field check for raw dicts.
+    if isinstance(f, dict) and f.get("is_simulated", False):
+        return True
+    # 4. String heuristic fallback.
     src = str(_finding_field(f, "tool_source", "tool", default="")).lower()
     if "mock" in src or src.endswith("-sim") or "simulated" in src:
         return True

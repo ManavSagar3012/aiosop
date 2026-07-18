@@ -117,19 +117,35 @@ class Vulnerability(BaseModel):
     impact: str = "unknown"
     correlated_ids: List[str] = Field(default_factory=list)
     engagement_id: str
+    simulated: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     yield_metadata: Dict[str, Any] = Field(default_factory=dict)
 
     def is_simulated(self) -> bool:
         """True if this finding is fabricated/mock rather than a real observation
         (OSOP-P0-02). Used to keep simulated findings out of the real corpus, reports,
-        and headline metrics. Signals: a mock tool_source, a "(Simulated)" title, or any
-        evidence entry whose provenance is 'simulated'."""
+        and headline metrics.
+
+        Evaluation order (exit on first True):
+          1. Explicit boolean field ``simulated`` (hardest to evade — set by
+             the producer).
+          2. tool_source heuristic: ``mock`` prefix, ``-sim`` suffix, or
+             ``simulated`` in the source name.
+          3. Title heuristic: ``(Simulated)`` marker in the title.
+          4. Evidence provenance: any evidence entry whose provenance is
+             ``simulated``.
+        """
+        # 1. Explicit boolean field — the most authoritative signal.
+        if self.simulated:
+            return True
+        # 2. String heuristic on tool_source (backward compat).
         src = (self.tool_source or "").lower()
         if "mock" in src or src.endswith("-sim") or "simulated" in src:
             return True
+        # 3. Title heuristic.
         if "(simulated)" in (self.title or "").lower():
             return True
+        # 4. Evidence provenance heuristic.
         for ev in self.evidence or []:
             if isinstance(ev, dict) and str(ev.get("provenance", "")).lower() == "simulated":
                 return True
