@@ -399,7 +399,7 @@ class BaseAgent(ABC):
                         ExecutionStage.SCANNER_STARTED,
                         metadata={"scanner": self.ctx.agent_type.value, "task_type": task.type},
                     )
-                    # min(..., 1) ensures timeout_s=5 doesn't produce 0
+                    # max(1, ...) keeps the inner timeout positive for tiny timeout_s
                     _inner_timeout = max(1, timeout_s - 5)
                     result = await asyncio.wait_for(self._execute(task), timeout=_inner_timeout)
                     record_stage(

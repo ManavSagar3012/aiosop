@@ -616,6 +616,7 @@ class PlaywrightAgent(BaseAgent):
         credentials = dict(payload.get("credentials", {}))
         if not credentials.get("email"):
             import uuid
+
             credentials["email"] = f"osop-auto-{uuid.uuid4().hex[:8]}@test.invalid"
         if not credentials.get("password"):
             credentials["password"] = "AutoRegPass1!"
@@ -676,7 +677,9 @@ class PlaywrightAgent(BaseAgent):
         email_sel = selectors.get("email_selector") or "input[type=email], input[name*=email]"
         pass_sel = selectors.get("pass_selector") or "input[type=password]"
         pass_repeat_sel = selectors.get("pass_repeat_selector") or pass_sel
-        question_sel = selectors.get("question_selector")
+        # question_selector is intentionally not read: the security question is
+        # handled directly below (mat-select overlay + native <select> fallback),
+        # not via a pre-detected selector. (AIOSOP-REG-MATSELECT-001)
         answer_sel = selectors.get("answer_selector")
         submit_sel = selectors.get("submit_selector") or "button[type=submit]"
 
@@ -704,35 +707,75 @@ class PlaywrightAgent(BaseAgent):
                         user_label=user_label,
                         engagement_id=engagement_id,
                     )
-                # Fill security question + answer if present (Juice Shop requires
-                # a security question for registration)
-                if question_sel:
-                    # Juice Shop's security question is a <select>; pick the first
-                    # non-placeholder option via JS.
-                    select_q_js = (
-                        "() => { const s = document.querySelector(%s); "
-                        "if (!s) return false; "
-                        "const opts = Array.from(s.options); "
-                        "const opt = opts.find(o => o.value && o.value !== '' && !o.disabled) || opts[0]; "
-                        "if (opt) { s.value = opt.value; s.dispatchEvent(new Event('change', {bubbles: true})); return true; } "
-                        "return false; }" % json.dumps(question_sel)
-                    )
-                    await self.browser_adapter.execute_action(
+                # Security question — Juice Shop (and most Angular apps) render
+                # this as an Angular Material <mat-select> overlay, NOT a native
+                # <select>, so setting .value does nothing and the old
+                # question_sel detection (inputs/selects only) never even found
+                # it. Drive it like a user: click the trigger, wait for the cdk
+                # overlay to render <mat-option>s, then click the first real
+                # option. Falls back to a native <select> for non-Material apps.
+                # (AIOSOP-REG-MATSELECT-001)
+                select_q_js = (
+                    "() => new Promise(resolve => {"
+                    "  const m = document.querySelector('mat-select');"
+                    "  if (m) {"
+                    "    m.click();"
+                    "    setTimeout(() => {"
+                    "      const opts = Array.from("
+                    "        document.querySelectorAll('mat-option, [role=option]'));"
+                    "      const pick = opts.find(o => (o.textContent || '').trim())"
+                    "        || opts[0];"
+                    "      if (pick) { pick.click();"
+                    "        setTimeout(() => resolve("
+                    "          {kind: 'mat', ok: true, n: opts.length}), 250); }"
+                    "      else { resolve({kind: 'mat', ok: false, n: 0}); }"
+                    "    }, 700);"
+                    "    return;"
+                    "  }"
+                    "  const s = document.querySelector('select');"
+                    "  if (s && s.options && s.options.length) {"
+                    "    const o = Array.from(s.options)"
+                    "      .find(x => x.value && !x.disabled) || s.options[0];"
+                    "    if (o) { s.value = o.value;"
+                    "      s.dispatchEvent(new Event('change', {bubbles: true}));"
+                    "      resolve({kind: 'select', ok: true}); return; }"
+                    "  }"
+                    "  resolve({kind: 'none', ok: false});"
+                    "})"
+                )
+                try:
+                    q_result = await self.browser_adapter.execute_action(
                         action="eval",
                         params={"expression": select_q_js},
                         user_label=user_label,
                         engagement_id=engagement_id,
                     )
-                if answer_sel:
+                    logger.info(
+                        "reg_security_question",
+                        user_label=user_label,
+                        outcome=(q_result or {}).get("result"),
+                    )
+                except Exception as q_err:  # noqa: BLE001
+                    logger.info(f"reg_question_select_skipped: {q_err}")
+                # Answer field: detected selector, else a robust fallback covering
+                # Juice Shop (#securityAnswerControl) and generic forms. Not gated
+                # on detection — the account won't create without it.
+                answer_target = answer_sel or (
+                    "#securityAnswerControl, input[name*=securityAnswer], "
+                    "input[placeholder*=Answer], input[placeholder*=answer]"
+                )
+                try:
                     await self.browser_adapter.execute_action(
                         action="fill",
                         params={
-                            "selector": answer_sel,
+                            "selector": answer_target,
                             "value": credentials.get("security_answer", "auto_reg_answer"),
                         },
                         user_label=user_label,
                         engagement_id=engagement_id,
                     )
+                except Exception as ans_err:  # noqa: BLE001
+                    logger.info(f"reg_answer_fill_skipped: {ans_err}")
                 # Submit via JS click (same rationale as authenticate — framework
                 # buttons frequently time out on Playwright actionability)
                 submit_js = (

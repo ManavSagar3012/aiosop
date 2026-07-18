@@ -41,17 +41,26 @@ async def test_recon_dispatches_guest_xhr_capture_alongside_full_recon():
     types = [t.type for t in scheduled]
     assert "full_recon" in types  # GET crawler still runs
     assert "capture_authenticated_surface" in types  # + browser XHR discovery
-    assert "authenticate" in types  # + guest login-probe (POST endpoint discovery)
+    assert "register" in types  # + registration probe (POST /api/Users discovery)
+    assert "authenticate" in types  # + valid-credential login-probe
 
     xhr = next(t for t in scheduled if t.type == "capture_authenticated_surface")
     assert xhr.payload["user_label"].startswith("guest-")  # per-domain unauth surface
     assert xhr.payload["url"] == "http://localhost:3000"
 
+    reg = next(t for t in scheduled if t.type == "register")
+    assert reg.payload["user_label"].startswith("recon-probe-")
+    assert reg.payload["register_url"].endswith("/#/register")
+    # obviously-synthetic probe credentials, never real (RFC 6761 .test TLD)
+    assert reg.payload["credentials"]["email"].endswith("@recon.test")
+
     probe = next(t for t in scheduled if t.type == "authenticate")
-    assert probe.payload["user_label"].startswith("recon-probe-")
+    assert probe.payload["user_label"].startswith("recon-auth-")
     assert probe.payload["login_url"].endswith("/#/login")
-    # obviously-benign probe credentials, never real
-    assert probe.payload["credentials"]["email"].endswith("@example.invalid")
+    # login reuses the synthetic account the register probe creates, and must
+    # wait for registration so the account exists before it fires
+    assert probe.payload["credentials"]["email"].endswith("@recon.test")
+    assert reg.id in probe.dependencies
 
 
 @pytest.mark.asyncio

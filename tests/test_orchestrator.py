@@ -63,13 +63,23 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
     mock_orchestrator.session_memory.store_session_state.assert_called()
 
     # Verify auto-task scheduling for recon: GET crawler + guest browser XHR
-    # capture + guest login-probe (AIOSOP-SPA-XHR-RECON).
-    assert len(mock_orchestrator._tasks) == 3
+    # capture + registration probe + valid-credential login-probe
+    # (AIOSOP-SPA-XHR-RECON / AIOSOP-REG-PROBE-001).
+    assert len(mock_orchestrator._tasks) == 4
     by_type = {t.type: t for t in mock_orchestrator._tasks.values()}
-    assert set(by_type) == {"full_recon", "capture_authenticated_surface", "authenticate"}
+    assert set(by_type) == {
+        "full_recon",
+        "capture_authenticated_surface",
+        "register",
+        "authenticate",
+    }
     assert by_type["full_recon"].payload["domain"] == "example.com"
     assert by_type["capture_authenticated_surface"].payload["user_label"].startswith("guest-")
-    assert by_type["authenticate"].payload["user_label"].startswith("recon-probe-")
+    # The registration probe carries the recon-probe- label; the dependent
+    # login carries recon-auth- and waits on the register task completing.
+    assert by_type["register"].payload["user_label"].startswith("recon-probe-")
+    assert by_type["authenticate"].payload["user_label"].startswith("recon-auth-")
+    assert by_type["authenticate"].dependencies == [by_type["register"].id]
 
 
 @pytest.mark.asyncio
