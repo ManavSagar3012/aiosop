@@ -598,17 +598,124 @@ async def run_generalized_idor(
     return persisted, len(id_endpoints)
 
 
+async def run_generalized_injection(
+    engagement_id: str, graph_memory: Any, *, per_check_timeout: float = 20.0
+) -> Tuple[List[Vulnerability], int]:
+    """Drive the deterministic injection/redirection oracles (path traversal,
+    open redirect, reflected SSRF, XXE) off recon-discovered endpoints. Every
+    finding here is asserted validated ONLY on an objective in-band signal (a
+    system-file signature, an off-origin 3xx Location) — same honesty bar as the
+    SQLi oracle. Endpoints with no confirmable signal produce nothing, not a
+    speculative lead. Returns (persisted, endpoints_examined)."""
+    import httpx
+
+    from ai_osop.core.injection_oracles import (
+        detect_open_redirect,
+        detect_path_traversal,
+        detect_ssrf_reflected,
+        detect_xxe,
+    )
+
+    eps = await _discovered_endpoints(graph_memory, engagement_id)
+    persisted: List[Vulnerability] = []
+
+    # DEDUPE by shape; cap breadth so a wide surface stays bounded.
+    MAX_CANDIDATES = 60
+    shapes: set = set()
+    get_candidates: list = []  # (url, params)  -> traversal / open-redirect / ssrf
+    xml_candidates: list = []  # (url, method)  -> xxe
+    for ep in eps:
+        url = ep.get("url")
+        if not url:
+            continue
+        method = (ep.get("method") or "GET").upper()
+        path = (ep.get("path") or "").lower()
+        params = list(ep.get("query_keys") or []) + list(ep.get("parameters") or [])
+        body_keys = list(ep.get("body_schema_keys") or [])
+        shape = (method, path, tuple(sorted(params)), tuple(sorted(body_keys)))
+        if shape in shapes:
+            continue
+        shapes.add(shape)
+        if method == "GET":
+            get_candidates.append((url, params))
+        # XXE only where the endpoint plausibly parses XML: a body-carrying
+        # method whose path/keys hint at import/upload/xml/parse. Never spray XML
+        # at arbitrary JSON APIs.
+        if method in ("POST", "PUT", "PATCH") and (
+            "xml" in path or any(k in path for k in ("import", "upload", "parse", "feed", "soap"))
+            or any("xml" in str(k).lower() for k in body_keys)
+        ):
+            xml_candidates.append((url, method))
+        if len(get_candidates) + len(xml_candidates) >= MAX_CANDIDATES:
+            break
+
+    # cwe/class/severity per injection technique
+    _INJ = {
+        "path_traversal": ("CWE-22", VulnClass.LFI, Severity.HIGH),
+        "open_redirect": ("CWE-601", VulnClass.BROKEN_ACCESS_CONTROL, Severity.MEDIUM),
+        "ssrf_reflected": ("CWE-918", VulnClass.SSRF, Severity.HIGH),
+        "xxe": ("CWE-611", VulnClass.XXE, Severity.HIGH),
+    }
+
+    async def _persist(ev: dict):
+        cwe, vc, sev = _INJ.get(ev["technique"], ("CWE-0", VulnClass.UNKNOWN, Severity.MEDIUM))
+        vuln = Vulnerability(
+            cwe=cwe,
+            vuln_type=vc,
+            severity=sev,
+            title=f"{ev['technique'].replace('_', ' ').title()} at {ev['endpoint']}",
+            description=(
+                f"Deterministic oracle confirmed {ev['technique']} at {ev['endpoint']} — "
+                f"{ev.get('proof', '')} Driven off a recon-discovered endpoint "
+                f"(payload: {ev.get('payload')!r})."
+            ),
+            evidence=[{"type": ev["technique"], "provenance": "http", "discovered": True, **ev}],
+            tool_source="deterministic_scan_generalized",
+            confidence=float(ev.get("confidence", 1.0)),
+            validated=True,  # asserted only because the oracle requires an objective signal
+            exploitability="high",
+            impact="high",
+            engagement_id=engagement_id,
+        )
+        try:
+            await graph_memory.add_vulnerability(vuln)
+            persisted.append(vuln)
+        except Exception:
+            pass
+
+    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+        for url, params in get_candidates:
+            for oracle in (detect_path_traversal, detect_open_redirect, detect_ssrf_reflected):
+                try:
+                    ev = await asyncio.wait_for(oracle(c, url, params=params), timeout=per_check_timeout)
+                except Exception:
+                    continue
+                if ev:
+                    await _persist(ev)
+        for url, method in xml_candidates:
+            try:
+                ev = await asyncio.wait_for(detect_xxe(c, url, method=method), timeout=per_check_timeout)
+            except Exception:
+                continue
+            if ev:
+                await _persist(ev)
+
+    return persisted, len(get_candidates) + len(xml_candidates)
+
+
 async def run_generalized_scan(
     engagement_id: str, graph_memory: Any
 ) -> Tuple[List[Vulnerability], int]:
     """Combined generalized pass over recon-discovered endpoints: SQLi + mass
-    assignment + JWT forgery + IDOR — driven off the discovered surface with
+    assignment + JWT forgery + IDOR + injection/redirection (path traversal, open
+    redirect, reflected SSRF, XXE) — driven off the discovered surface with
     deterministic/engine oracles (no LLM, no agent lifecycle)."""
     sqli, examined = await run_generalized_sqli(engagement_id, graph_memory)
     ma, _ = await run_generalized_massassign(engagement_id, graph_memory)
     jwt, _ = await run_generalized_jwt(engagement_id, graph_memory)
     idor, _ = await run_generalized_idor(engagement_id, graph_memory)
-    return sqli + ma + jwt + idor, examined
+    inj, _ = await run_generalized_injection(engagement_id, graph_memory)
+    return sqli + ma + jwt + idor + inj, examined
 
 
 # Common REST/API paths covering the patterns the generalized oracles key off:
@@ -659,6 +766,100 @@ async def _crawl_api_paths(c, base: str) -> set:
     return paths
 
 
+_SPEC_LOCATIONS = (
+    "/openapi.json", "/swagger.json", "/api-docs", "/api-docs/swagger.json",
+    "/v2/api-docs", "/v3/api-docs", "/swagger/v1/swagger.json", "/api/swagger.json",
+    "/openapi.yaml", "/swagger.yaml", "/.well-known/openapi.json",
+)
+
+
+async def _crawl_spec_paths(c, base: str) -> list:
+    """Parse an OpenAPI/Swagger spec if the target exposes one, plus robots.txt and
+    sitemap.xml. A spec is the richest possible source: it yields path + method +
+    parameter names + whether a body is expected — no shape *inference* needed.
+    Returns a list of (path, method, keys, has_body) tuples. Target-agnostic: this
+    is standard content-discovery, not juice-shop-specific."""
+    import json as _json
+    import re
+
+    out: list = []
+
+    # 1) OpenAPI / Swagger spec (JSON). Yields exact method + params + body flag.
+    for loc in _SPEC_LOCATIONS:
+        try:
+            r = await c.get(base + loc)
+        except Exception:
+            continue
+        if r.status_code != 200 or "json" not in (r.headers.get("content-type") or "").lower():
+            continue
+        try:
+            spec = r.json()
+        except Exception:
+            continue
+        paths = (spec or {}).get("paths") or {}
+        if not isinstance(paths, dict):
+            continue
+        for raw_path, ops in paths.items():
+            if not isinstance(ops, dict):
+                continue
+            clean = str(raw_path).split("?")[0]
+            for method, op in ops.items():
+                mu = method.upper()
+                if mu not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                    continue
+                keys: list = []
+                has_body = False
+                if isinstance(op, dict):
+                    for p in (op.get("parameters") or []):
+                        if isinstance(p, dict) and p.get("name"):
+                            keys.append(p["name"])
+                    body = op.get("requestBody") or {}
+                    if body:
+                        has_body = True
+                        # try to pull JSON body property names for mass-assign/xxe hints
+                        try:
+                            schema = (
+                                body.get("content", {})
+                                .get("application/json", {})
+                                .get("schema", {})
+                            )
+                            props = schema.get("properties") or {}
+                            keys.extend(list(props))
+                        except Exception:
+                            pass
+                out.append((clean, mu, keys, has_body))
+        if out:
+            break  # first spec that parses wins
+
+    # 2) robots.txt — Disallow/Allow lines often name real, non-linked paths.
+    try:
+        rb = await c.get(base + "/robots.txt")
+        if rb.status_code == 200:
+            for line in rb.text.splitlines()[:500]:
+                m = re.match(r"\s*(?:dis)?allow\s*:\s*(\S+)", line, re.I)
+                if m:
+                    p = m.group(1).split("?")[0].rstrip("/")
+                    if p.startswith("/") and "*" not in p:
+                        out.append((p, *_infer_shape(p)))
+    except Exception:
+        pass
+
+    # 3) sitemap.xml — <loc> URLs, path component only.
+    try:
+        sm = await c.get(base + "/sitemap.xml")
+        if sm.status_code == 200:
+            for loc in re.findall(r"<loc>\s*([^<]+?)\s*</loc>", sm.text)[:500]:
+                from urllib.parse import urlparse as _up
+
+                p = _up(loc.strip()).path.split("?")[0].rstrip("/")
+                if p.startswith("/"):
+                    out.append((p, *_infer_shape(p)))
+    except Exception:
+        pass
+
+    return out
+
+
 def _infer_shape(path: str):
     """Guess (method, keys, has_body) for a crawled path."""
     pl = path.lower()
@@ -686,9 +887,23 @@ async def bootstrap_discovery(
     base = base_url.rstrip("/")
     seeded = 0
     async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
-        # merge wordlist + crawled surface (crawled paths deduped against wordlist)
+        # merge wordlist + crawled surface. Priority order:
+        #   1. wordlist seeds (always probed)
+        #   2. spec-derived entries (richest: real method+keys+body from OpenAPI)
+        #   3. JS-literal + robots/sitemap crawl (shape inferred)
+        # deduped by path so a spec's exact shape is never clobbered by inference.
         probe = list(_COMMON_ENDPOINTS)
         known = {p for p, *_ in _COMMON_ENDPOINTS}
+        # spec/robots/sitemap first — carries exact shapes
+        try:
+            spec_entries = await _crawl_spec_paths(c, base)
+        except Exception:
+            spec_entries = []
+        for path, method, keys, has_body in spec_entries:
+            if path and path not in known:
+                probe.append((path, method, keys, has_body))
+                known.add(path)
+        # JS-literal crawl — shape inferred
         try:
             crawled = await _crawl_api_paths(c, base)
         except Exception:
@@ -697,7 +912,7 @@ async def bootstrap_discovery(
             if cp not in known:
                 probe.append((cp, *_infer_shape(cp)))
                 known.add(cp)
-        for path, method, keys, has_body in probe[:150]:
+        for path, method, keys, has_body in probe[:250]:
             url = base + path
             try:
                 r = await c.get(url)  # GET probes existence for GET and POST alike (405/401/400 == present)
