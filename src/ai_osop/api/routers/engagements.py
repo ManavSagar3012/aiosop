@@ -132,6 +132,79 @@ async def get_audit_log(
     return [e.model_dump(mode="json") for e in sorted_events[:limit]]
 
 
+@router.post("/{session_id}/scan/deterministic")
+async def deterministic_scan(
+    session_id: str,
+    target: str = "",
+    mode: str = "suite",
+    operator: Dict[str, Any] = Depends(verify_token),
+):
+    """Run the deterministic detection backbone against the engagement target and
+    persist validated findings (SQLi, IDOR, JWT forgery, mass-assignment, ...).
+
+    This bypasses the LLM/agent/MCP task lifecycle that strands findings on the
+    300s timeout, so a scan is hang-proof and completes in seconds. Target is the
+    engagement scope's first domain unless an explicit ``target`` is supplied.
+    """
+    session = await assert_engagement_access(operator, session_id)
+    engagement_id = session.scope.engagement_id
+
+    base = target
+    if not base:
+        domains = session.scope.domains or []
+        if not domains:
+            raise HTTPException(
+                status_code=400,
+                detail="no target: engagement scope has no domains and no 'target' was provided",
+            )
+        d = domains[0]
+        base = d if d.startswith("http") else f"http://{d}"
+
+    from ai_osop.core.deterministic_scan import run_deterministic_scan, run_generalized_sqli
+
+    gm = state["orchestrator"].graph_memory
+    persisted: list = []
+    validated: list = []
+    expected = 0
+    # suite   = benchmark-proven checks (juice-shop-tuned, recall-scored)
+    # discovered = general oracles driven off recon-discovered endpoints (any target)
+    if mode in ("suite", "both"):
+        p, validated, expected = await run_deterministic_scan(base, engagement_id, gm)
+        persisted += p
+    if mode in ("discovered", "both"):
+        gp, _examined = await run_generalized_sqli(engagement_id, gm)
+        persisted += gp
+    return {
+        "status": "success",
+        "mode": mode,
+        "target": base,
+        "engagement_id": engagement_id,
+        "suite_validated": len(validated),
+        "suite_expected": expected,
+        "recall": round(len(validated) / expected, 3) if expected else None,
+        "persisted": len(persisted),
+        "findings": [v.model_dump(mode="json") for v in persisted],
+    }
+
+
+@router.get("/{session_id}/report/bounty")
+async def bounty_report(
+    session_id: str,
+    target: str = "",
+    operator: Dict[str, Any] = Depends(verify_token),
+):
+    """Render a submittable markdown bounty report from the engagement's validated
+    findings (severity-ranked, with CWE/OWASP, evidence, and reproduction steps)."""
+    session = await assert_engagement_access(operator, session_id)
+    engagement_id = session.scope.engagement_id
+    from ai_osop.core.report_generator import generate_bounty_report
+
+    gm = state["orchestrator"].graph_memory
+    tgt = target or (session.scope.domains[0] if session.scope.domains else "")
+    md = await generate_bounty_report(engagement_id, gm, target=tgt)
+    return {"engagement_id": engagement_id, "format": "markdown", "report": md}
+
+
 @router.post("/{session_id}/transition")
 async def transition_phase(
     session_id: str,

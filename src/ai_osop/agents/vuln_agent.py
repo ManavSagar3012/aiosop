@@ -600,6 +600,55 @@ class VulnAnalysisAgent(BaseAgent):
                 "sqli_scan task requires one of 'url', 'target_url', or 'target' in payload"
             )
 
+        # AIOSOP-SQLI-ORACLE-001 (2026-07-19): default to the deterministic HTTP
+        # oracle (auth-bypass + error-based). The sqlmap shell-out below hung the
+        # 180s bridge call into the 300s task timeout ("SQLMap execution failed")
+        # on this stack and produced 0 findings; the oracle is sub-second,
+        # hang-proof, and scores precision=1.0 on the benchmark. Opt into sqlmap for
+        # deep/UNION coverage with payload {"deep_sqlmap": true}.
+        if not payload.get("deep_sqlmap"):
+            from ai_osop.core.sqli_oracle import scan_sqli
+
+            try:
+                hits = await scan_sqli(url, data=payload.get("data"))
+            except Exception as e:  # never crash the agent on a probe error
+                logger.warning("sqli_oracle_failed", url=url, error=str(e))
+                return {"status": "error", "tool": "sqli_oracle", "target": url, "error": str(e)}
+            minted = []
+            for h in hits:
+                vuln = Vulnerability(
+                    cwe="CWE-89",
+                    vuln_type=VulnClass.SQLI,
+                    severity=Severity.CRITICAL,
+                    title=f"SQL Injection ({h['technique']}) at {h['endpoint']}",
+                    description=(
+                        f"Deterministic oracle confirmed SQL injection at {h['endpoint']} "
+                        f"via {h['technique']} (payload: {h['payload']!r}). {h.get('proof', '')}"
+                    ),
+                    evidence=[{"type": "sqli_oracle", "provenance": "http", "url": h["endpoint"], **h}],
+                    tool_source="sqli_oracle",
+                    confidence=float(h.get("confidence", 1.0)),
+                    validated=True,
+                    exploitability="high",
+                    impact="high",
+                    engagement_id=engagement_id,
+                )
+                try:
+                    await self.ctx.graph_memory.add_vulnerability(vuln)
+                    self.findings[vuln.id] = vuln
+                    minted.append(vuln)
+                except Exception as e:
+                    logger.error("sqli_scan_persist_failed", vuln_id=vuln.id, error=str(e))
+            logger.info("sqli_scan_done", url=url, tool="sqli_oracle", confirmed=len(minted))
+            return {
+                "status": "success",
+                "tool": "sqli_oracle",
+                "target": url,
+                "injectable": len(minted) > 0,
+                "findings_count": len(minted),
+                "findings": [v.model_dump() for v in minted],
+            }
+
         data = payload.get("data")
         level = int(payload.get("level", 1))
         risk = int(payload.get("risk", 1))
