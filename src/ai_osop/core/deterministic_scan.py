@@ -135,7 +135,8 @@ async def _discovered_endpoints(graph_memory: Any, engagement_id: str) -> List[d
     q = (
         "MATCH (e:Endpoint {engagement_id: $eid}) "
         "RETURN e.url AS url, e.method AS method, e.query_keys AS query_keys, "
-        "e.parameters AS parameters, e.has_body AS has_body, e.path AS path "
+        "e.parameters AS parameters, e.has_body AS has_body, e.path AS path, "
+        "e.body_schema_keys AS body_schema_keys "
         "LIMIT 1000"
     )
     out: List[dict] = []
@@ -235,3 +236,127 @@ async def run_generalized_sqli(
                 pass
 
     return persisted, len(eps)
+
+
+async def _detect_mass_assignment(client, url: str, body_keys: list, method: str = "POST"):
+    """Baseline-suppressed mass-assignment oracle (ported from vuln_agent): a
+    privileged field is attacker-controlled only if it appears after injection but
+    was ABSENT from a control request without it. Returns evidence dict or None."""
+    import json as _json
+    import uuid as _uuid
+
+    inject = {"role": "admin", "isAdmin": True, "isDeluxe": True}
+
+    def _valid_body():
+        b = {}
+        for k in (body_keys or []):
+            kl = str(k).lower()
+            if "email" in kl or kl in ("mail", "e-mail"):
+                b[k] = f"osop-ma-{_uuid.uuid4().hex[:10]}@recon.test"
+            elif "pass" in kl or "pwd" in kl:
+                b[k] = "OSOPmass1!"
+            else:
+                b[k] = "osop"
+        return b
+
+    def _reflects(text, k, v):
+        try:
+            flat = _json.dumps(_json.loads(text))
+        except Exception:
+            flat = text or ""
+        return f'"{k}":{_json.dumps(v)}' in flat or f'"{k}": {_json.dumps(v)}' in flat
+
+    try:
+        ctrl = await client.request(method, url, json=_valid_body())
+        inj = await client.request(method, url, json={**_valid_body(), **inject})
+    except Exception:
+        return None
+    accepted = {k: v for k, v in inject.items() if _reflects(inj.text, k, v) and not _reflects(ctrl.text, k, v)}
+    if not accepted:
+        return None
+    return {
+        "technique": "mass_assignment",
+        "endpoint": url,
+        "accepted_fields": accepted,
+        "injected": inject,
+        "http_status": inj.status_code,
+        "provenance": "reflected",  # no independent read-back here -> manual-confirm lead
+        "confidence": 0.5,
+        "proof": "privileged field accepted in create response and absent from a baseline control request",
+    }
+
+
+async def run_generalized_massassign(
+    engagement_id: str, graph_memory: Any, *, per_check_timeout: float = 20.0
+) -> Tuple[List[Vulnerability], int]:
+    """Drive the mass-assignment oracle off recon-discovered create-like endpoints."""
+    import httpx
+
+    eps = await _discovered_endpoints(graph_memory, engagement_id)
+    persisted: List[Vulnerability] = []
+    shapes: set = set()
+    candidates: list = []
+    for ep in eps:
+        url = ep.get("url")
+        if not url:
+            continue
+        method = (ep.get("method") or "GET").upper()
+        path = (ep.get("path") or "").lower()
+        body_keys = list(ep.get("body_schema_keys") or [])
+        create_like = method in ("POST", "PUT", "PATCH") and any(
+            s in path for s in ("user", "register", "signup", "account", "profile", "create")
+        )
+        if not create_like or not body_keys:
+            continue
+        shape = (method, path, tuple(sorted(body_keys)))
+        if shape in shapes:
+            continue
+        shapes.add(shape)
+        candidates.append((url, method, body_keys))
+        if len(candidates) >= 40:
+            break
+
+    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+        for url, method, body_keys in candidates:
+            try:
+                ev = await asyncio.wait_for(
+                    _detect_mass_assignment(c, url, body_keys, method), timeout=per_check_timeout
+                )
+            except Exception:
+                continue
+            if not ev:
+                continue
+            vuln = Vulnerability(
+                cwe="CWE-915",
+                vuln_type=VulnClass.MASS_ASSIGNMENT,
+                severity=Severity.MEDIUM,  # reflected-only lead; readback would raise to HIGH
+                title=f"Mass assignment via {', '.join(ev['accepted_fields'])} at {ev['endpoint']}",
+                description=(
+                    f"The endpoint {ev['endpoint']} accepted attacker-supplied privileged field(s) "
+                    f"{ev['accepted_fields']} absent from a baseline control — driven off a "
+                    f"recon-discovered endpoint. Confirm persistence via read-back before submitting."
+                ),
+                evidence=[{"type": "mass_assignment", "provenance": "http", "discovered": True, **ev}],
+                tool_source="deterministic_scan_generalized",
+                confidence=float(ev.get("confidence", 0.5)),
+                validated=False,  # reflected-only -> manual-confirm; not asserted validated
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await graph_memory.add_vulnerability(vuln)
+                persisted.append(vuln)
+            except Exception:
+                pass
+    return persisted, len(candidates)
+
+
+async def run_generalized_scan(
+    engagement_id: str, graph_memory: Any
+) -> Tuple[List[Vulnerability], int]:
+    """Combined generalized pass over recon-discovered endpoints: SQLi + mass
+    assignment. The single seam other classes (JWT, IDOR) plug into next."""
+    sqli, examined = await run_generalized_sqli(engagement_id, graph_memory)
+    ma, _ = await run_generalized_massassign(engagement_id, graph_memory)
+    return sqli + ma, examined

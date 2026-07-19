@@ -160,7 +160,7 @@ async def deterministic_scan(
         d = domains[0]
         base = d if d.startswith("http") else f"http://{d}"
 
-    from ai_osop.core.deterministic_scan import run_deterministic_scan, run_generalized_sqli
+    from ai_osop.core.deterministic_scan import run_deterministic_scan, run_generalized_scan
 
     gm = state["orchestrator"].graph_memory
     persisted: list = []
@@ -172,7 +172,7 @@ async def deterministic_scan(
         p, validated, expected = await run_deterministic_scan(base, engagement_id, gm)
         persisted += p
     if mode in ("discovered", "both"):
-        gp, _examined = await run_generalized_sqli(engagement_id, gm)
+        gp, _examined = await run_generalized_scan(engagement_id, gm)
         persisted += gp
     return {
         "status": "success",
