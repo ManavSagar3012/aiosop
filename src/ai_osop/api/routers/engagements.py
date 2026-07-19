@@ -137,6 +137,7 @@ async def deterministic_scan(
     session_id: str,
     target: str = "",
     mode: str = "suite",
+    discover: bool = False,
     operator: Dict[str, Any] = Depends(verify_token),
 ):
     """Run the deterministic detection backbone against the engagement target and
@@ -160,9 +161,16 @@ async def deterministic_scan(
         d = domains[0]
         base = d if d.startswith("http") else f"http://{d}"
 
-    from ai_osop.core.deterministic_scan import run_deterministic_scan, run_generalized_scan
+    from ai_osop.core.deterministic_scan import (
+        bootstrap_discovery,
+        run_deterministic_scan,
+        run_generalized_scan,
+    )
 
     gm = state["orchestrator"].graph_memory
+    seeded = 0
+    if discover:
+        seeded = await bootstrap_discovery(base, engagement_id, gm)
     persisted: list = []
     validated: list = []
     expected = 0
@@ -177,6 +185,7 @@ async def deterministic_scan(
     return {
         "status": "success",
         "mode": mode,
+        "discovered_seeded": seeded,
         "target": base,
         "engagement_id": engagement_id,
         "suite_validated": len(validated),

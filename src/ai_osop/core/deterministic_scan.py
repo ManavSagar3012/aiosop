@@ -596,3 +596,67 @@ async def run_generalized_scan(
     jwt, _ = await run_generalized_jwt(engagement_id, graph_memory)
     idor, _ = await run_generalized_idor(engagement_id, graph_memory)
     return sqli + ma + jwt + idor, examined
+
+
+# Common REST/API paths covering the patterns the generalized oracles key off:
+# auth (login), identity (whoami), search (GET param), create (body), id-bearing.
+_COMMON_ENDPOINTS = [
+    ("/rest/user/login", "POST", ["email", "password"], True),
+    ("/rest/user/whoami", "GET", [], False),
+    ("/rest/products/search", "GET", ["q"], False),
+    ("/rest/basket/1", "GET", [], False),
+    ("/api/Users", "POST", ["email", "password"], True),
+    ("/api/Users/1", "GET", [], False),
+    ("/api/login", "POST", ["email", "password"], True),
+    ("/api/register", "POST", ["email", "password"], True),
+    ("/api/users", "GET", [], False),
+    ("/api/users/1", "GET", [], False),
+    ("/api/v1/users/1", "GET", [], False),
+    ("/api/search", "GET", ["q"], False),
+    ("/api/me", "GET", [], False),
+    ("/api/account", "GET", [], False),
+    ("/api/orders/1", "GET", [], False),
+    ("/api/products", "GET", [], False),
+    ("/rest/user/authentication-details", "GET", [], False),
+]
+
+
+async def bootstrap_discovery(
+    base_url: str, engagement_id: str, graph_memory: Any, *, timeout: float = 10.0
+) -> int:
+    """Lightweight content discovery: probe common REST/API paths and persist the
+    live ones as discovered endpoints, so a generalized scan has a surface to work
+    off without depending on the slower/flakier browser/orchestrator recon. A path
+    counts as present if it does not 404 and looks like an API (/, /rest, /api, or
+    a JSON response) — which sidesteps SPA catch-all false positives. Returns the
+    number of endpoints seeded.
+    """
+    import httpx
+
+    from ai_osop.core.models import Endpoint
+
+    base = base_url.rstrip("/")
+    seeded = 0
+    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
+        for path, method, keys, has_body in _COMMON_ENDPOINTS:
+            url = base + path
+            try:
+                r = await c.get(url)  # GET probes existence for GET and POST alike (405/401/400 == present)
+            except Exception:
+                continue
+            if r.status_code == 404:
+                continue
+            ct = (r.headers.get("content-type") or "").lower()
+            if not (path.startswith(("/rest", "/api")) or "json" in ct):
+                continue  # skip SPA catch-all HTML
+            try:
+                await graph_memory.add_endpoint(Endpoint(
+                    url=url, method=method, engagement_id=engagement_id, path=path, type="api",
+                    query_keys=(keys if method == "GET" else []),
+                    has_body=has_body,
+                    body_schema_keys=(keys if has_body else []),
+                ))
+                seeded += 1
+            except Exception:
+                pass
+    return seeded
