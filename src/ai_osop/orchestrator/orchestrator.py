@@ -124,6 +124,10 @@ class Orchestrator:
         # Sprint 1.3: chain-first consume loop — reads primitives, escalates +
         # composes chains, and gates them through the Triager Gate.
         self._chain_analysis_task: Optional[asyncio.Task] = None
+        # Graph-integrity sweep: detects orphan / ghost nodes at runtime so
+        # schema drift is surfaced (and self-heals via cleanup) without waiting
+        # for a manual CLI run. None until initialize() starts it.
+        self._graph_integrity_task: Optional[asyncio.Task] = None
         self._approval_callbacks: List[Callable[[ApprovalRequest], None]] = []
         # GAP-2-6: handles for in-flight agent executions, keyed by task_id, so
         # halt_engagement can actually cancel running coroutines (not just flip a
@@ -245,6 +249,12 @@ class Orchestrator:
         # canonical construct-then-initialize path can never leave it dead.
         if self._phase_monitor_task is None or self._phase_monitor_task.done():
             self._phase_monitor_task = asyncio.create_task(self.phase_monitor._phase_monitor())
+        # Graph integrity sweep: run once at startup (so drift is detected before
+        # any operator action), then on a fixed interval. Self-heals orphan
+        # Vulnerability / ghost Workflow nodes by archiving them (soft-delete).
+        # Failures are logged and swallowed — a wedged sweep must never block
+        # orchestrator startup or kill the scheduler loop.
+        self._graph_integrity_task = asyncio.create_task(self._graph_integrity_loop())
         # NOTE: ALL restart recovery (sessions, tasks, pending approvals, approval
         # re-gating, recovery-attempt cap) is owned by the single recover_state()
         # call above. The previously-duplicated inline recovery block here was
@@ -951,6 +961,66 @@ class Orchestrator:
             )
         return True
 
+    async def _graph_integrity_loop(self) -> None:
+        """Background sweep that detects orphan / ghost nodes in the Neo4j graph
+        at runtime and self-heals them by archiving (soft-delete).
+
+        Why this exists: ``graph_integrity_checker`` was previously a CLI-only
+        script (Phase-1 issue #4) — schema drift went undetected in production
+        until an operator remembered to run it manually. Wiring it into the
+        orchestrator's background loop makes drift a surfaced metric, not a
+        silent corruption.
+
+        Behaviour:
+        - Runs once immediately on startup, then every
+          ``settings.graph_integrity_check_interval_seconds`` (default 600s /
+          10min — frequent enough to catch drift before an operator relies on
+          a corrupt graph, rare enough to not add measurable Neo4j load).
+        - On each tick: runs ``run_integrity_check`` (read-only COUNTs), exports
+          the counts as structured logs, and if any orphans of the
+          auto-archive classes (Vulnerability, Workflow) are found, calls
+          ``cleanup_orphan_vulnerabilities`` to soft-delete them.
+        - Swallows all exceptions: a wedged sweep logs a warning and reschedules
+          on the next tick. It must never crash the orchestrator.
+        """
+        from ai_osop.memory.graph_integrity_checker import (
+            cleanup_orphan_vulnerabilities,
+            run_integrity_check,
+        )
+
+        interval = int(getattr(settings, "graph_integrity_check_interval_seconds", 600))
+        # First tick runs immediately so drift is caught before any operator
+        # action; subsequent ticks respect the configured interval.
+        while True:
+            try:
+                report = await run_integrity_check(self.graph_memory, emit_prints=False)
+                total = report.get("total_issues", 0)
+                if total > 0:
+                    logger.warning(
+                        "graph_integrity_issues_detected",
+                        total=total,
+                        ghost_workflows=report.get("ghost_workflows", 0),
+                        orphan_vulnerabilities=report.get("orphan_vulnerabilities", 0),
+                        orphan_diff_auth_findings=report.get("orphan_diff_auth_findings", 0),
+                        orphan_exploits=report.get("orphan_exploits", 0),
+                    )
+                    # Self-heal: archive orphan Vulnerabilities + ghost Workflows.
+                    # Never hard-deletes; archived nodes remain queryable for audit.
+                    try:
+                        await cleanup_orphan_vulnerabilities(self.graph_memory)
+                    except Exception as e:  # noqa: BLE001 - sweep must not crash loop
+                        logger.warning("graph_integrity_cleanup_failed error=%s", e)
+                else:
+                    logger.info("graph_integrity_ok total=0")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - sweep must not crash loop
+                logger.warning("graph_integrity_sweep_failed error=%s", e)
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                raise
+
     async def shutdown(self) -> None:
         """Graceful shutdown."""
         self._running = False
@@ -961,6 +1031,7 @@ class Orchestrator:
             self._phase_monitor_task,
             self._outcome_ingestion_task,
             self._chain_analysis_task,
+            self._graph_integrity_task,
         ):
             if bg:
                 bg.cancel()

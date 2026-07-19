@@ -342,6 +342,17 @@ class Settings(BaseSettings):
         default="ai-osop-tasks", validation_alias="OSOP_TEMPORAL_TASK_QUEUE"
     )
 
+    # Graph integrity sweep interval (seconds). The orchestrator runs the
+    # ``graph_integrity_checker`` on a background loop to surface orphan /
+    # ghost nodes at runtime and self-heal them via archive (soft-delete).
+    # Default 600s (10min): frequent enough to catch drift before an operator
+    # relies on a corrupt graph, rare enough to add negligible Neo4j load.
+    # Set to 0 to disable the sweep (the first-tick check still runs once at
+    # startup so a corrupt graph is always flagged before serving traffic).
+    graph_integrity_check_interval_seconds: int = Field(
+        default=600, validation_alias="OSOP_GRAPH_INTEGRITY_INTERVAL"
+    )
+
     # Burp Suite
     burp_mcp_host: str = Field(default="localhost", validation_alias="OSOP_BURP_MCP_HOST")
     burp_mcp_port: int = Field(default=8081, validation_alias="OSOP_BURP_MCP_PORT")
