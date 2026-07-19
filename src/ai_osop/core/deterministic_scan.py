@@ -448,13 +448,151 @@ async def run_generalized_jwt(
     return persisted, 1
 
 
+def _sub_last_id(url: str, new_id: Any) -> str:
+    """Replace an id-like trailing path segment (numeric, {id}, :id, or *id*)."""
+    from urllib.parse import urlparse, urlunparse
+
+    u = urlparse(url)
+    parts = u.path.rstrip("/").split("/")
+    if parts and (
+        parts[-1].isdigit()
+        or "id" in parts[-1].lower()
+        or parts[-1].startswith(("{", ":"))
+    ):
+        parts[-1] = str(new_id)
+    return urlunparse(u._replace(path="/".join(parts)))
+
+
+async def run_generalized_idor(
+    engagement_id: str, graph_memory: Any, *, per_check_timeout: float = 30.0
+) -> Tuple[List[Vulnerability], int]:
+    """Generalized IDOR / broken-object-level-authorization via the REAL
+    DifferentialAuthEngine: register two identities, have the attacker read the
+    victim's object on an id-bearing endpoint, and confirm cross-account access
+    with anonymous-baseline FP suppression (owner 200, attacker 200 same data,
+    anon denied). Low false positives by construction — the engine, not a
+    heuristic, makes the call."""
+    import os
+    import re
+
+    import httpx
+
+    from ai_osop.core.diff_auth_engine import DifferentialAuthEngine
+    from ai_osop.core.models import Resource
+
+    bench = _load_suite()
+    eps = await _discovered_endpoints(graph_memory, engagement_id)
+
+    base = None
+    id_endpoints: list = []
+    for ep in eps:
+        url = ep.get("url")
+        if not url:
+            continue
+        if base is None:
+            from urllib.parse import urlparse
+
+            u = urlparse(url)
+            base = f"{u.scheme}://{u.netloc}"
+        method = (ep.get("method") or "GET").upper()
+        path = (ep.get("path") or "").lower()
+        if method == "GET" and re.search(r"/\d+/?$|/\{?\w*id\}?/?$|/:\w+/?$", path):
+            id_endpoints.append(url)
+    if not (base and id_endpoints):
+        return [], 0
+
+    persisted: List[Vulnerability] = []
+    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+        t = bench.Target(base, c)
+        engine = DifferentialAuthEngine(session_memory=None)
+        victim = f"osop_v_{os.urandom(4).hex()}@recon.test"
+        attacker = f"osop_a_{os.urandom(4).hex()}@recon.test"
+        try:
+            await t.register(victim, "OSOPidor1!")
+            await t.register(attacker, "OSOPidor1!")
+            tok_v = await t.login(victim, "OSOPidor1!")
+            tok_a = await t.login(attacker, "OSOPidor1!")
+        except Exception:
+            return [], 0
+        if not (tok_v and tok_a):
+            return [], 0
+        vid = bench._bid_from_token(tok_v)  # victim's object id (basket/user id from JWT)
+        if not vid:
+            return [], 0
+
+        seen: set = set()
+        for url in id_endpoints[:30]:
+            tgt = _sub_last_id(url, vid)
+            if tgt in seen:
+                continue
+            seen.add(tgt)
+            try:
+                owner = await c.get(tgt, headers={"Authorization": f"Bearer {tok_v}"})
+                atk = await c.get(tgt, headers={"Authorization": f"Bearer {tok_a}"})
+                anon = await c.get(tgt)
+                ev_owner = bench._resp_evidence(owner)
+                ev_atk = bench._resp_evidence(atk)
+                ev_atk["user_label"] = "attacker"
+                ev_anon = bench._resp_evidence(anon)
+                resource = Resource(
+                    id=f"res:{vid}", type="object", value=str(vid),
+                    owner_identity_id=victim, metadata={}, engagement_id=engagement_id,
+                )
+                finding = await asyncio.wait_for(
+                    engine.compare(
+                        identity_a_evidence=ev_owner,
+                        identity_b_evidence=ev_atk,
+                        resource=resource,
+                        expected_allowed=False,
+                        anonymous_evidence=ev_anon,
+                    ),
+                    timeout=per_check_timeout,
+                )
+            except Exception:
+                continue
+            if not finding or getattr(finding, "confidence", 0) < 0.5:
+                continue
+            vuln = Vulnerability(
+                cwe="CWE-639",
+                vuln_type=VulnClass.IDOR,
+                severity=Severity.HIGH,
+                title=f"IDOR / broken object-level authorization at {tgt}",
+                description=(
+                    f"An attacker identity read the victim's object at {tgt} — confirmed by the "
+                    f"DifferentialAuthEngine ({getattr(finding, 'category', 'cross_account')}, "
+                    f"confidence {getattr(finding, 'confidence', 0)}). Driven off a recon-discovered "
+                    f"id-bearing endpoint with anonymous-baseline FP suppression."
+                ),
+                evidence=[{
+                    "type": "idor", "provenance": "diff_auth", "discovered": True,
+                    "endpoint": tgt, "category": getattr(finding, "category", ""),
+                    "diff": getattr(finding, "evidence_diff", ""),
+                    "attacker_status": ev_atk.get("status_code"),
+                    "anon_status": ev_anon.get("status_code"),
+                }],
+                tool_source="deterministic_scan_generalized",
+                confidence=float(getattr(finding, "confidence", 0.9)),
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await graph_memory.add_vulnerability(vuln)
+                persisted.append(vuln)
+            except Exception:
+                pass
+    return persisted, len(id_endpoints)
+
+
 async def run_generalized_scan(
     engagement_id: str, graph_memory: Any
 ) -> Tuple[List[Vulnerability], int]:
     """Combined generalized pass over recon-discovered endpoints: SQLi + mass
-    assignment + JWT forgery. IDOR (needs two authenticated sessions) is the next
-    class to plug into this seam."""
+    assignment + JWT forgery + IDOR — driven off the discovered surface with
+    deterministic/engine oracles (no LLM, no agent lifecycle)."""
     sqli, examined = await run_generalized_sqli(engagement_id, graph_memory)
     ma, _ = await run_generalized_massassign(engagement_id, graph_memory)
     jwt, _ = await run_generalized_jwt(engagement_id, graph_memory)
-    return sqli + ma + jwt, examined
+    idor, _ = await run_generalized_idor(engagement_id, graph_memory)
+    return sqli + ma + jwt + idor, examined
