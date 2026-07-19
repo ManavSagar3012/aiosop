@@ -161,7 +161,7 @@ async def run_generalized_sqli(
     """
     import httpx
 
-    from ai_osop.core.sqli_oracle import detect_error_based, detect_login_bypass
+    from ai_osop.core.sqli_oracle import detect_error_based, detect_login_bypass, detect_time_blind
 
     eps = await _discovered_endpoints(graph_memory, engagement_id)
     persisted: List[Vulnerability] = []
@@ -208,18 +208,31 @@ async def run_generalized_sqli(
                     )
                 if not ev and login_like:
                     ev = await asyncio.wait_for(detect_login_bypass(c, url), timeout=per_check_timeout)
+                # Error-based and auth-bypass leak a signal (5xx error / session
+                # token). If neither fired, run the time-blind oracle: a blind
+                # injection that leaks NOTHING still sleeps measurably when
+                # injected a SLEEP() — covers the largest real-world blind class.
+                if not ev and get_like:
+                    ev = await asyncio.wait_for(
+                        detect_time_blind(
+                            c, url, param=(params[0] if params else None),
+                            request_timeout=per_check_timeout,
+                        ),
+                        timeout=per_check_timeout,
+                    )
             except Exception:
                 continue
             if not ev:
                 continue
+            technique = ev.get("technique", "sqli")
             vuln = Vulnerability(
                 cwe="CWE-89",
                 vuln_type=VulnClass.SQLI,
-                severity=Severity.CRITICAL if ev["technique"] == "auth_bypass" else Severity.HIGH,
-                title=f"SQL Injection ({ev['technique']}) at {ev['endpoint']}",
+                severity=Severity.CRITICAL if technique == "auth_bypass" else Severity.HIGH,
+                title=f"SQL Injection ({technique}) at {ev['endpoint']}",
                 description=(
                     f"Deterministic oracle confirmed SQL injection at {ev['endpoint']} via "
-                    f"{ev['technique']} — driven off a recon-discovered endpoint (payload: {ev['payload']!r})."
+                    f"{technique} — driven off a recon-discovered endpoint (payload: {ev['payload']!r})."
                 ),
                 evidence=[{"type": "sqli_oracle", "provenance": "http", "discovered": True, **ev}],
                 tool_source="deterministic_scan_generalized",
@@ -621,15 +634,50 @@ _COMMON_ENDPOINTS = [
 ]
 
 
+async def _crawl_api_paths(c, base: str) -> set:
+    """Crawl the base page + its script bundles for /rest//api/ endpoint literals —
+    real, target-agnostic content discovery, richer than a fixed wordlist."""
+    import re
+
+    rx = re.compile(r"""["'`](/(?:rest|api)/[A-Za-z0-9_\-./]+)""")
+    paths: set = set()
+    try:
+        html = (await c.get(base + "/")).text[:200000]
+    except Exception:
+        return paths
+    for m in rx.findall(html):
+        paths.add(m.split("?")[0].rstrip("/"))
+    srcs = re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html)[:6]
+    for src in srcs:
+        u = src if src.startswith("http") else base + "/" + src.lstrip("/")
+        try:
+            js = (await c.get(u)).text[:600000]
+        except Exception:
+            continue
+        for m in rx.findall(js):
+            paths.add(m.split("?")[0].rstrip("/"))
+    return paths
+
+
+def _infer_shape(path: str):
+    """Guess (method, keys, has_body) for a crawled path."""
+    pl = path.lower()
+    if any(k in pl for k in ("login", "signin", "authenticate")):
+        return "POST", ["email", "password"], True
+    if any(k in pl for k in ("search", "find", "query", "filter")):
+        return "GET", ["q"], False
+    return "GET", [], False
+
+
 async def bootstrap_discovery(
     base_url: str, engagement_id: str, graph_memory: Any, *, timeout: float = 10.0
 ) -> int:
-    """Lightweight content discovery: probe common REST/API paths and persist the
-    live ones as discovered endpoints, so a generalized scan has a surface to work
-    off without depending on the slower/flakier browser/orchestrator recon. A path
-    counts as present if it does not 404 and looks like an API (/, /rest, /api, or
-    a JSON response) — which sidesteps SPA catch-all false positives. Returns the
-    number of endpoints seeded.
+    """Content discovery: CRAWL the target (base page + JS bundles) for /rest//api/
+    endpoints AND probe a common-path wordlist, persisting the live ones as
+    discovered endpoints so a generalized scan self-seeds a real surface without the
+    slower/flakier browser/orchestrator recon. A path counts as present if it does
+    not 404 and looks like an API (/rest, /api, or JSON) — sidestepping SPA
+    catch-all false positives. Returns the number of endpoints seeded.
     """
     import httpx
 
@@ -638,7 +686,18 @@ async def bootstrap_discovery(
     base = base_url.rstrip("/")
     seeded = 0
     async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
-        for path, method, keys, has_body in _COMMON_ENDPOINTS:
+        # merge wordlist + crawled surface (crawled paths deduped against wordlist)
+        probe = list(_COMMON_ENDPOINTS)
+        known = {p for p, *_ in _COMMON_ENDPOINTS}
+        try:
+            crawled = await _crawl_api_paths(c, base)
+        except Exception:
+            crawled = set()
+        for cp in crawled:
+            if cp not in known:
+                probe.append((cp, *_infer_shape(cp)))
+                known.add(cp)
+        for path, method, keys, has_body in probe[:150]:
             url = base + path
             try:
                 r = await c.get(url)  # GET probes existence for GET and POST alike (405/401/400 == present)
