@@ -236,14 +236,54 @@ engagement.json
 # benchmark run outputs (evidence, not source)
 benchmarks/*/results/
 
-# Local scratch / debug / one-off validation scripts
-/debug_eng.py
-/search_engagement.py
-/start_api.py
+# Local scratch / debug / one-off validation scripts.
+# All historical scratch scripts have been consolidated under scripts/scratch/
+# (see move in commit on fix/mock-findings-honest-stub-tool-guard). The patterns
+# below prevent any NEW root-level scratch file from leaking into a commit, and
+# keep the moved ones out of git if they are ever copied back to root.
+/check_*.py
+/fix_*.py
+/get_*.py
+/inspect_*.py
+/instrument_*.py
+/mcp_launch_*.py
+/move_*.py
+/query_*.py
+/restart_*.py
+/run_*.py
+/search_*.py
+/start_*.py
+/session_memory_*.py
+/test_api.py
+/test_list.py
+/task_dlq_*.py
+/update_*.py
+/wait_*.py
+/live_validation.py
 /comprehensive_live_validation.py
 /final_live_validation.py
-/live_validation.py
-/task_dlq_lifecycle_v2.py
-/task_dlq_lifecycle_validation.py
+/debug_eng.py
+/_test_*.py
+/_tauto*.py
+/_tcrawl*.py
+
+# Transient run artifacts (live-test sessions, debug logs, scorecards)
+.last_engagement_id
+.tmp_score/
+api_live*.err
+api_restart.err
+autonomous_findings.json
+autonomous_scorecard.json
+run_findings.json
+scorecard.json
+scorecard-ci.json
+bridge_new.err
+browser_mcp.err
+mcp_launch.s*.err
 /scripts/run_api_debug.sh
 /scripts/docker_trace_500.py
+
+# Skill reputation store is runtime state, not source. Selected-vs-verified
+# counts are mutated on every run; do not commit churn.
+/src/ai_osop/agents/.skill_stats.json
+
