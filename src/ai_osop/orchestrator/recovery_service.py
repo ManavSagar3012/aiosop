@@ -156,9 +156,42 @@ class RecoveryService:
         This is the SINGLE recovery authority (GAP-6-2). It restores sessions,
         pending approvals (with their timeout watchers), and active tasks. Recovered
         tasks are re-gated for approval (GAP-2-3) and bounded by a recovery-attempt
-        cap (GAP-4-5)."""
+        cap (GAP-4-5).
+
+        Phase-1 issue #5 fix: every agent that was mid-execution when the prior
+        process died left a stale Redis busy-set entry + `lock:agent:<id>` lock.
+        Previously these survived until the 30s TTL, shrinking the agent pool
+        immediately after every restart. We now release every registered agent's
+        claim at the start of recovery — they are idle by definition (the prior
+        process is gone) so the release is always correct, and the pool is fully
+        available the instant recovery completes.
+        """
         recovered = {"engagements": 0, "tasks": 0, "approvals": 0, "exhausted": 0}
         try:
+            # 0) Release stale agent locks. The prior process is gone, so every
+            #    agent that was mid-execution is now idle. Without this, the
+            #    Redis busy-set + lock:agent:* entries survive until their 30s
+            #    TTL and `_find_available_agent` skips them on the new process —
+            #    a self-inflicted 30s pool shrink on every restart. Safe because
+            #    _release_agent flips in-memory status first (cannot fail) and
+            #    swallows Redis errors so a wedged Redis cannot block recovery.
+            released_agents = 0
+            for agent in list(self._orch._agents.values()):
+                agent_id = getattr(getattr(agent, "ctx", None), "agent_id", None)
+                if agent_id is None:
+                    continue
+                try:
+                    await self._orch.task_scheduler._release_agent(agent_id)
+                    released_agents += 1
+                except Exception as e:  # noqa: BLE001 - recovery must not abort on a Redis blip
+                    logger.warning(
+                        "recovery_release_agent_failed",
+                        agent_id=agent_id,
+                        error=str(e),
+                    )
+            if released_agents:
+                logger.info("recovery_released_stale_agent_locks", count=released_agents)
+
             # 1) Sessions. list_all_sessions() returns raw Redis keys ("session:<id>");
             #    hydrate each into a real SessionState before storing it in memory.
             session_keys = await self._orch.session_memory.list_all_sessions()

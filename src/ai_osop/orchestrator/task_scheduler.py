@@ -746,6 +746,24 @@ class TaskScheduler:
             task, result_summary={"retry_attempt": task.retry_count}
         )
         await self._orch._retry_sleep(backoff)
+        # Phase-1 issue #6 fix: a retry that goes straight to _assign_task
+        # lives ONLY in the in-memory _tasks dict. If the orchestrator
+        # restarts between this retry dispatch and execution, the task is
+        # lost — recover_state() only restores from the Redis queue, not
+        # from in-memory state. Re-queue to Redis FIRST so the task is
+        # durable across a restart, THEN attempt immediate assignment. If
+        # assignment fails (no agent available) the task stays queued and
+        # the scheduler loop picks it up on its next tick.
+        try:
+            await self._orch.session_memory.push_task_queue(
+                f"tasks:{task.engagement_id}", task.model_dump()
+            )
+        except Exception as e:  # noqa: BLE001 - never strand a retry on a Redis blip
+            logger.warning(
+                "retry_push_queue_failed",
+                task_id=task.id,
+                error=str(e),
+            )
         await self._orch._assign_task(task)
         return True
 

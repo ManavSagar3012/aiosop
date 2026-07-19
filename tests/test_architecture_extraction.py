@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
@@ -31,6 +32,7 @@ class MockOrchestrator:
         self.session_memory.remove_busy_agent = AsyncMock()
         self.session_memory.is_busy_agent = AsyncMock()
         self.session_memory.store_task = AsyncMock()
+        self.session_memory.push_task_queue = AsyncMock()
         self._running = True
         self.graph_memory = AsyncMock()
         self.graph_memory.upsert_task = AsyncMock()
@@ -40,12 +42,29 @@ class MockOrchestrator:
         self.temporal_enabled = False
         self.temporal_scheduler = None
         self._approval_callbacks = []
+        # halt_engagement delegates to task_scheduler._release_agent; provide a
+        # no-op stand-in so the EngagementManager tests do not need a full
+        # TaskScheduler wired.
+        self.task_scheduler = SimpleNamespace()
+        self.task_scheduler._release_agent = AsyncMock()
 
     async def _retry_sleep(self, seconds: float) -> None:
         pass
 
     async def _assign_task(self, task: Any) -> None:
         pass
+
+    async def _release_agent(self, agent_id):
+        # halt_engagement calls self._orch._release_agent (which in production
+        # delegates to task_scheduler._release_agent). The real TaskScheduler
+        # implementation flips the in-memory agent.ctx.status to "idle" FIRST,
+        # then clears the Redis busy set + lock. Mirror that contract here so
+        # the halt_engagement_preserves_shared_worker_agents test pins the
+        # observable behaviour (agent ends up idle), not just the call shape.
+        agent = self._agents.get(agent_id)
+        if agent is not None and getattr(agent, "ctx", None) is not None:
+            agent.ctx.status = "idle"
+        await self.task_scheduler._release_agent(agent_id)
 
     async def _audit_log(self, event):
         pass
@@ -95,6 +114,7 @@ class TestTaskScheduler:
         scheduler._orch._tasks[task.id] = task
         scheduler._orch.graph_memory.upsert_task = AsyncMock()
         scheduler._orch.session_memory.store_task = AsyncMock()
+        scheduler._orch.session_memory.push_task_queue = AsyncMock()
         scheduler._orch._assign_task = AsyncMock()
         scheduler._orch._retry_sleep = AsyncMock()
 
