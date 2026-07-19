@@ -593,11 +593,65 @@ class BaseAgent(ABC):
             pass
 
     async def _validate_output(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate agent output against schema."""
-        # Schema validation
-        # Hallucination detection
-        # Confidence threshold checks
-        return result
+        """Validate agent output against schema.
+
+        Central honesty guard (Phase-1 issue #7): every scanner result dict
+        claiming ``status == "success"`` MUST carry verifiable execution
+        evidence — never a bare reasoning string or an empty tool_result.
+        This is the framework-level backstop for the per-scanner
+        ``execution_verified`` flags (vuln_agent.py:366-375 for burp_scan,
+        nuclei at vuln_agent.py:550). A scanner that forgets the flag, or
+        a future scanner added to vuln_agent.py, cannot silently report
+        ``success`` without proof.
+
+        The contract enforced (only on ``status == "success"``):
+          1. ``execution_verified`` is True, OR
+          2. ``findings_count > 0`` with at least one finding carrying a
+             non-empty ``evidence`` list, OR
+          3. ``tool_result`` / ``raw_result`` / ``response`` is present and
+             non-empty (a real tool ran).
+
+        A failure here downgrades ``status`` to ``"error"`` with a precise
+        ``error`` message rather than silently propagating an un-evidenced
+        success — the worst outcome is a visible false negative (which the
+        reaper / DLQ / operator can see), never a silent false positive.
+        """
+        if not isinstance(result, dict):
+            return result
+        # Only gate on success — failures and errors are already honest.
+        if result.get("status") != "success":
+            return result
+
+        # Contract (1): explicit execution_verified flag.
+        if result.get("execution_verified") is True:
+            return result
+
+        # Contract (2): at least one finding with real evidence.
+        findings = result.get("findings") or []
+        if findings and any(
+            (f.get("evidence") if isinstance(f, dict) else None)
+            for f in findings
+        ):
+            return result
+
+        # Contract (3): a raw tool result was returned.
+        for key in ("tool_result", "raw_result", "response", "scan_result"):
+            val = result.get(key)
+            if val is not None and val != "" and val != []:
+                return result
+
+        # No contract satisfied — downgrade to an honest error.
+        return {
+            "status": "error",
+            "error": (
+                "agent returned status=success without verifiable execution "
+                "evidence (no execution_verified flag, no findings with "
+                "evidence, and no raw tool_result). This is a framework-level "
+                "honesty guard (Phase-1 issue #7) preventing un-evidenced "
+                "success from propagating."
+            ),
+            "original_result": result,
+        }
 
     async def _update_working_memory(self, task: Task, result: Dict[str, Any]) -> None:
         """Update agent working memory with task results."""
