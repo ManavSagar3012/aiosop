@@ -16,6 +16,33 @@ def test_burp_success_requires_execution_evidence():
     )
 
 
+def test_evidence_bearing_scan_requires_evidence():
+    """R3 (2026-07-20): per-class scanners (sqli_scan etc.) must prove execution
+    via ``execution_verified=True`` OR a finding carrying evidence. A bare
+    ``status=success`` with no findings and no flag is rejected so a future
+    scanner cannot silently report success."""
+    task = Task(type="sqli_scan", agent_type=AgentType.VULN_ANALYSIS, engagement_id="eng-test")
+
+    bare_success = {"status": "success", "reasoning": "looks injectable"}
+    assert TaskScheduler._execution_contract_error(task, bare_success) == (
+        "sqli_scan result claimed success without execution_verified "
+        "and without any finding carrying evidence"
+    )
+
+    flagged = {"status": "success", "execution_verified": True}
+    assert TaskScheduler._execution_contract_error(task, flagged) is None
+
+    finding_with_evidence = {
+        "status": "success",
+        "findings": [{"evidence": [{"request": "GET /?q=' OR 1=1--"}]}],
+    }
+    assert TaskScheduler._execution_contract_error(task, finding_with_evidence) is None
+
+    # Non-scan task types are unaffected by the contract.
+    other_task = Task(type="full_recon", agent_type=AgentType.RECON, engagement_id="eng-test")
+    assert TaskScheduler._execution_contract_error(other_task, {"status": "success"}) is None
+
+
 def test_nuclei_status_match_on_nextjs_response_is_downranked_before_persistence():
     agent = object.__new__(VulnAnalysisAgent)
     raw = {

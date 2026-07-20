@@ -659,19 +659,90 @@ class TaskScheduler:
         "invalid parameter",
     )
 
-    @staticmethod
-    def _execution_contract_error(task: Task, result: Any) -> Optional[str]:
-        """Return an error if a scanner claims success without execution proof."""
-        if task.type not in {"burp_scan", "nuclei_scan"}:
+    # Scanner task types that must prove execution. R3 (2026-07-20): this is the
+    # scheduler-side backstop for the framework honesty guard in
+    # ``BaseAgent._validate_output`` (base.py:595). The base guard downgrades an
+    # un-evidenced ``status=success`` to ``status=error``, but it is satisfied by
+    # *any* non-empty ``tool_result``/``raw_result``/``response`` key — which is
+    # the right low-friction contract for arbitrary tasks. Scanner tasks need a
+    # tighter contract: they must carry a verifiable ``tool`` identifier AND an
+    # ``execution_verified`` flag (or a non-empty ``findings`` list with
+    # evidence) so a future scanner that forgets the flag cannot silently report
+    # success. ``burp_scan`` and ``nuclei_scan`` have always been gated here;
+    # the per-class scanner types (sqli_scan, xss_scan, ssrf_scan, ...) are now
+    # gated too — closing the gap surfaced in the Phase-1 audit.
+    _TOOL_BINDING_SCAN_TYPES = {
+        # task_type -> expected ``result.tool`` value
+        "burp_scan": "burp_scanner",
+        "nuclei_scan": "nuclei",
+    }
+
+    _EVIDENCE_BEARING_SCAN_TYPES = {
+        "sqli_scan",
+        "xss_scan",
+        "ssrf_scan",
+        "ssti_scan",
+        "csrf_scan",
+        "jwt_scan",
+        "smuggling_scan",
+        "race_scan",
+        "upload_scan",
+        "saml_scan",
+        "pollution_scan",
+        "websocket_scan",
+        "takeover_scan",
+        "mass_assignment_scan",
+    }
+
+    @classmethod
+    def _execution_contract_error(cls, task: Task, result: Any) -> Optional[str]:
+        """Return an error if a scanner claims success without execution proof.
+
+        Two tiers of contract, by task type:
+
+        * ``_TOOL_BINDING_SCAN_TYPES`` (burp_scan, nuclei_scan): the result
+          must identify the expected external tool AND carry
+          ``execution_verified=True``. These wrap a third-party tool whose
+          identity we can assert on.
+        * ``_EVIDENCE_BEARING_SCAN_TYPES`` (per-class scanners): the result
+          must either carry ``execution_verified=True`` or contain at least one
+          finding with a non-empty ``evidence`` list. The external tool here is
+          usually an internal oracle (sqli_oracle, diff_auth_engine) and the
+          contract is "produced real evidence", not "named a specific tool".
+        """
+        is_tool_bound = task.type in cls._TOOL_BINDING_SCAN_TYPES
+        is_evidence_bound = task.type in cls._EVIDENCE_BEARING_SCAN_TYPES
+        if not (is_tool_bound or is_evidence_bound):
             return None
         if not isinstance(result, dict):
             return "scanner returned no structured execution result"
-        expected_tool = "burp_scanner" if task.type == "burp_scan" else "nuclei"
-        if result.get("tool") != expected_tool:
-            return f"{task.type} result did not identify the expected tool"
-        if result.get("execution_verified") is not True:
+
+        # Tier 1: tool-binding scanners must identify the expected tool.
+        if is_tool_bound:
+            expected_tool = cls._TOOL_BINDING_SCAN_TYPES[task.type]
+            if result.get("tool") != expected_tool:
+                return f"{task.type} result did not identify the expected tool"
+
+        # Both tiers: ``execution_verified=True`` short-circuits the contract.
+        if result.get("execution_verified") is True:
+            return None
+
+        # Tier 2 (and Tier 1 fallback): a finding with real evidence also
+        # proves execution. A scanner that found nothing is fine — it must
+        # simply say so honestly via ``status`` rather than ``status=success``
+        # with an empty findings list.
+        findings = result.get("findings") or []
+        if findings and any(
+            (f.get("evidence") if isinstance(f, dict) else None) for f in findings
+        ):
+            return None
+
+        if is_tool_bound:
             return f"{task.type} result did not prove tool execution"
-        return None
+        return (
+            f"{task.type} result claimed success without execution_verified "
+            "and without any finding carrying evidence"
+        )
 
     @classmethod
     def _is_non_retryable(cls, result: Dict[str, Any]) -> bool:
