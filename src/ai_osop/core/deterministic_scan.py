@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, List, Tuple
+from contextlib import asynccontextmanager
+from typing import Any, List, Optional, Tuple
 
 from ai_osop.core.config import Severity, VulnClass
 from ai_osop.core.models import Vulnerability
@@ -147,6 +148,34 @@ async def _discovered_endpoints(graph_memory: Any, engagement_id: str) -> List[d
     return out
 
 
+@asynccontextmanager
+async def _scan_client(client: Any = None):
+    """Yield the HTTP client the generalized oracles should scan with.
+
+    Auth passthrough seam: when ``client`` is supplied (e.g. an auth-aware
+    ``SessionClient`` bound to a captured UserSession), it is yielded as-is and
+    its lifecycle stays with the CALLER — we never close a client we did not
+    open. When it is ``None`` we build and own the historical cookie-less
+    ``httpx.AsyncClient`` (verify off, redirects followed), so the pre-auth
+    behavior is byte-for-byte unchanged.
+
+    The oracles this feeds (SQLi / mass-assignment / injection) only ever call
+    ``.get`` / ``.post`` / ``.request``, all of which SessionClient proxies, so
+    an authenticated session is a drop-in — it just carries cookies + bearer +
+    CSRF on every probe, reaching post-auth surface the cookie-less client
+    cannot.
+    """
+    import httpx
+
+    if client is not None:
+        yield client
+        return
+    async with httpx.AsyncClient(
+        verify=False, follow_redirects=True, timeout=15
+    ) as owned:
+        yield owned
+
+
 async def run_generalized_sqli(
     engagement_id: str,
     graph_memory: Any,
@@ -154,6 +183,7 @@ async def run_generalized_sqli(
     per_check_timeout: float = 20.0,
     confirm_with_sqlmap: bool = False,
     sqlmap_timeout: float = 240.0,
+    client: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Drive the general SQLi oracles off RECON-DISCOVERED endpoints (not hardcoded
     paths): error-based on GET endpoints carrying params or a search-like path,
@@ -168,9 +198,12 @@ async def run_generalized_sqli(
     because sqlmap is slow; the oracle path stays fast and hang-proof by default.
     Confirmation is bounded (``sqlmap_timeout``) and targeted (one flagged point),
     so it never sprays the target.
-    """
-    import httpx
 
+    When ``client`` is supplied (an auth-aware SessionClient), every oracle probe
+    is issued through the authenticated session, so injection points that only
+    exist behind login are reachable. When it is ``None`` the historical
+    cookie-less client is used and pre-auth behavior is unchanged.
+    """
     from ai_osop.core.sqli_oracle import detect_error_based, detect_login_bypass, detect_time_blind
     if confirm_with_sqlmap:
         from ai_osop.core.sqlmap_confirm import sqlmap_available, sqlmap_confirm
@@ -209,7 +242,7 @@ async def run_generalized_sqli(
         if len(candidates) >= MAX_CANDIDATES:
             break
 
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+    async with _scan_client(client) as c:
         for url, params, get_like, login_like in candidates:
             ev = None
             try:
@@ -359,11 +392,18 @@ async def _detect_mass_assignment(client, url: str, body_keys: list, method: str
 
 
 async def run_generalized_massassign(
-    engagement_id: str, graph_memory: Any, *, per_check_timeout: float = 20.0
+    engagement_id: str,
+    graph_memory: Any,
+    *,
+    per_check_timeout: float = 20.0,
+    client: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
-    """Drive the mass-assignment oracle off recon-discovered create-like endpoints."""
-    import httpx
+    """Drive the mass-assignment oracle off recon-discovered create-like endpoints.
 
+    When ``client`` is supplied (auth-aware SessionClient) the create-like probes
+    run authenticated, reaching endpoints that reject anonymous writes; otherwise
+    the historical cookie-less client is used.
+    """
     eps = await _discovered_endpoints(graph_memory, engagement_id)
     persisted: List[Vulnerability] = []
     shapes: set = set()
@@ -388,7 +428,7 @@ async def run_generalized_massassign(
         if len(candidates) >= 40:
             break
 
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+    async with _scan_client(client) as c:
         for url, method, body_keys in candidates:
             try:
                 ev = await asyncio.wait_for(
@@ -668,6 +708,7 @@ async def run_generalized_injection(
     *,
     per_check_timeout: float = 20.0,
     oast_registry: Any = None,
+    client: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Drive the deterministic injection/redirection oracles (path traversal,
     open redirect, reflected SSRF, XXE) off recon-discovered endpoints. Every
@@ -680,9 +721,12 @@ async def run_generalized_injection(
     planted (external entity fetching a provenance-carrying callback URL). Those
     assert nothing in-band; the caller confirms them out-of-band via the
     registry's ``reconcile()``. This is what covers an entity-resolving parser
-    that reflects nothing (the ginandjuice.shop stock-check shape)."""
-    import httpx
+    that reflects nothing (the ginandjuice.shop stock-check shape).
 
+    When ``client`` is supplied (auth-aware SessionClient) the traversal / open-
+    redirect / SSRF / XXE probes run through the authenticated session, reaching
+    injectable parameters exposed only behind login; otherwise the historical
+    cookie-less client is used and pre-auth behavior is unchanged."""
     from ai_osop.core.injection_oracles import (
         detect_open_redirect,
         detect_path_traversal,
@@ -771,7 +815,7 @@ async def run_generalized_injection(
         except Exception:
             pass
 
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+    async with _scan_client(client) as c:
         for url, params in get_candidates:
             for oracle in (detect_path_traversal, detect_open_redirect, detect_ssrf_reflected):
                 try:
@@ -841,7 +885,11 @@ async def run_generalized_injection(
 
 
 async def run_generalized_scan(
-    engagement_id: str, graph_memory: Any, *, oast_registry: Any = None
+    engagement_id: str,
+    graph_memory: Any,
+    *,
+    oast_registry: Any = None,
+    client: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Combined generalized pass over recon-discovered endpoints: SQLi + mass
     assignment + JWT forgery + IDOR + injection/redirection (path traversal, open
@@ -850,13 +898,26 @@ async def run_generalized_scan(
 
     ``oast_registry``, when supplied, is threaded to the injection pass so blind
     XXE probes are planted; their confirmation is the caller's out-of-band
-    ``reconcile()``, not any in-band signal here."""
-    sqli, examined = await run_generalized_sqli(engagement_id, graph_memory)
-    ma, _ = await run_generalized_massassign(engagement_id, graph_memory)
+    ``reconcile()``, not any in-band signal here.
+
+    ``client``, when supplied (an auth-aware SessionClient bound to a captured
+    UserSession), is threaded ONLY to the surface-scanning oracles — SQLi, mass
+    assignment, and injection — so their probes reach post-auth surface. It is
+    deliberately NOT passed to the JWT and IDOR passes: those manage their own
+    identities (JWT mints a token; IDOR needs the owner/attacker/anon triad via
+    the DifferentialAuthEngine), and forcing a single shared session on them
+    would collapse the very identity separation their oracles depend on. The
+    caller owns the client's lifecycle; these functions never close it."""
+    sqli, examined = await run_generalized_sqli(
+        engagement_id, graph_memory, client=client
+    )
+    ma, _ = await run_generalized_massassign(
+        engagement_id, graph_memory, client=client
+    )
     jwt, _ = await run_generalized_jwt(engagement_id, graph_memory)
     idor, _ = await run_generalized_idor(engagement_id, graph_memory)
     inj, _ = await run_generalized_injection(
-        engagement_id, graph_memory, oast_registry=oast_registry
+        engagement_id, graph_memory, oast_registry=oast_registry, client=client
     )
     return sqli + ma + jwt + idor + inj, examined
 

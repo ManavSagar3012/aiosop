@@ -478,3 +478,143 @@ async def test_crawl_param_links_extracts_href_and_string_literals():
     assert "/catalog" in by_path and by_path["/catalog"] == ["category"]
     # non-URL string and paramless path must NOT become endpoints
     assert not any(p not in ("/blog/post", "/catalog") for p in by_path)
+
+
+# --------------------------------------------------------------------------- #
+# auth passthrough — injected client threading (Phase 3.5)                     #
+# --------------------------------------------------------------------------- #
+
+
+class _SentinelClient:
+    """Duck-typed stand-in for an auth-aware SessionClient.
+
+    Records the probes it received and whether anyone closed it. The generalized
+    surface oracles only call .get/.post/.request, so this minimal surface is
+    enough to prove the client is threaded through — and ``closed`` proves the
+    caller-owns-lifecycle contract (a scan must never close an injected client).
+    """
+
+    def __init__(self):
+        self.requests: list = []
+        self.closed = False
+
+    async def get(self, url, **kw):
+        self.requests.append(("GET", url))
+        return httpx.Response(200, text="ok", request=httpx.Request("GET", url))
+
+    async def post(self, url, **kw):
+        self.requests.append(("POST", url))
+        return httpx.Response(200, text="ok", request=httpx.Request("POST", url))
+
+    async def request(self, method, url, **kw):
+        self.requests.append((method, url))
+        return httpx.Response(200, text="ok", request=httpx.Request(method, url))
+
+    async def aclose(self):
+        self.closed = True
+
+    # Fail loudly if the scan ever tries to use us as an async context manager
+    # (which would imply it thinks it owns our lifecycle).
+    async def __aenter__(self):  # pragma: no cover - guard
+        raise AssertionError("scan must not enter injected client as a context manager")
+
+    async def __aexit__(self, *exc):  # pragma: no cover - guard
+        return False
+
+
+@pytest.mark.asyncio
+async def test_scan_client_uses_injected_client_and_never_closes_it():
+    """``_scan_client(client)`` must yield the injected client unchanged and leave
+    closing it to the caller."""
+    sentinel = _SentinelClient()
+    async with ds._scan_client(sentinel) as c:
+        assert c is sentinel
+    assert sentinel.closed is False
+
+
+@pytest.mark.asyncio
+async def test_scan_client_builds_and_owns_client_when_none():
+    """With no injected client, ``_scan_client`` builds a real httpx.AsyncClient
+    and closes it on exit (the historical, unauthenticated path)."""
+    async with ds._scan_client(None) as c:
+        assert isinstance(c, httpx.AsyncClient)
+        assert c.is_closed is False
+    assert c.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_generalized_sqli_threads_injected_client_to_oracles(monkeypatch):
+    """When a client is injected, the SQLi oracles must receive that exact object
+    — proving probes ride the authenticated session, not a fresh cookie-less one."""
+    from ai_osop.core import sqli_oracle
+
+    seen = {"client": None}
+
+    async def fake_error(c, url, *, param=None):
+        seen["client"] = c
+        return None
+
+    async def fake_login(c, url, **kw):
+        return None
+
+    async def fake_time(c, url, *, param=None, **kw):
+        return None
+
+    monkeypatch.setattr(sqli_oracle, "detect_error_based", fake_error)
+    monkeypatch.setattr(sqli_oracle, "detect_login_bypass", fake_login)
+    monkeypatch.setattr(sqli_oracle, "detect_time_blind", fake_time)
+
+    eps = [{"url": "http://t/search", "method": "GET", "path": "/search",
+            "query_keys": ["q"], "has_body": False}]
+    gm = _graph_with_endpoints(eps)
+    sentinel = _SentinelClient()
+
+    await ds.run_generalized_sqli("eng-test", gm, per_check_timeout=5.0, client=sentinel)
+
+    assert seen["client"] is sentinel
+    assert sentinel.closed is False
+
+
+@pytest.mark.asyncio
+async def test_generalized_scan_threads_client_only_to_surface_oracles(monkeypatch):
+    """The orchestrator must pass an injected client to the surface oracles (SQLi,
+    mass-assignment, injection) but NOT to the identity-managing ones (JWT, IDOR),
+    which own their own auth model."""
+    got: dict = {}
+
+    async def fake_sqli(eid, gm, **kw):
+        got["sqli"] = kw.get("client", "MISSING")
+        return [], 0
+
+    async def fake_ma(eid, gm, **kw):
+        got["ma"] = kw.get("client", "MISSING")
+        return [], 0
+
+    async def fake_jwt(eid, gm, **kw):
+        got["jwt_has_client"] = "client" in kw
+        return [], 0
+
+    async def fake_idor(eid, gm, **kw):
+        got["idor_has_client"] = "client" in kw
+        return [], 0
+
+    async def fake_inj(eid, gm, **kw):
+        got["inj"] = kw.get("client", "MISSING")
+        return [], 0
+
+    monkeypatch.setattr(ds, "run_generalized_sqli", fake_sqli)
+    monkeypatch.setattr(ds, "run_generalized_massassign", fake_ma)
+    monkeypatch.setattr(ds, "run_generalized_jwt", fake_jwt)
+    monkeypatch.setattr(ds, "run_generalized_idor", fake_idor)
+    monkeypatch.setattr(ds, "run_generalized_injection", fake_inj)
+
+    sentinel = _SentinelClient()
+    await ds.run_generalized_scan("eng-test", _FakeGraph(), client=sentinel)
+
+    # surface oracles receive the exact injected client
+    assert got["sqli"] is sentinel
+    assert got["ma"] is sentinel
+    assert got["inj"] is sentinel
+    # identity-managing oracles are called WITHOUT a client kwarg
+    assert got["jwt_has_client"] is False
+    assert got["idor_has_client"] is False

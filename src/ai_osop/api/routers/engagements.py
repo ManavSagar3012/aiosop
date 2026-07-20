@@ -138,6 +138,7 @@ async def deterministic_scan(
     target: str = "",
     mode: str = "suite",
     discover: bool = False,
+    auth_user: str = "",
     operator: Dict[str, Any] = Depends(verify_token),
 ):
     """Run the deterministic detection backbone against the engagement target and
@@ -146,6 +147,13 @@ async def deterministic_scan(
     This bypasses the LLM/agent/MCP task lifecycle that strands findings on the
     300s timeout, so a scan is hang-proof and completes in seconds. Target is the
     engagement scope's first domain unless an explicit ``target`` is supplied.
+
+    ``auth_user`` (only meaningful for ``mode`` = discovered/both) names a captured
+    UserSession label for this engagement. When set, the generalized surface
+    oracles (SQLi / mass-assignment / injection) run through that authenticated
+    session, so injection points that only exist behind login become reachable.
+    Unknown label or no stored session -> the scan runs unauthenticated (the
+    historical behavior), never an error.
     """
     session = await assert_engagement_access(operator, session_id)
     engagement_id = session.scope.engagement_id
@@ -179,8 +187,30 @@ async def deterministic_scan(
     if mode in ("suite", "both"):
         p, validated, expected = await run_deterministic_scan(base, engagement_id, gm)
         persisted += p
+    authenticated_as = None
     if mode in ("discovered", "both"):
-        gp, _examined = await run_generalized_scan(engagement_id, gm)
+        # Auth passthrough: if an auth_user label is supplied and a session was
+        # captured for it, drive the generalized surface oracles through that
+        # authenticated SessionClient. We own the client here (async with) — the
+        # scan functions never close a client they did not open. Any resolution
+        # failure degrades to an unauthenticated scan rather than erroring.
+        store = state.get("session_store")
+        sess_client = None
+        if auth_user and store is not None:
+            try:
+                usersession = await store.get_session_or_none(engagement_id, auth_user)
+                if usersession is not None:
+                    sess_client = store.as_user(engagement_id, auth_user, base_url=base)
+            except Exception:
+                sess_client = None
+        if sess_client is not None:
+            async with sess_client as client:
+                authenticated_as = auth_user
+                gp, _examined = await run_generalized_scan(
+                    engagement_id, gm, client=client
+                )
+        else:
+            gp, _examined = await run_generalized_scan(engagement_id, gm)
         persisted += gp
     return {
         "status": "success",
@@ -188,6 +218,7 @@ async def deterministic_scan(
         "discovered_seeded": seeded,
         "target": base,
         "engagement_id": engagement_id,
+        "authenticated_as": authenticated_as,
         "suite_validated": len(validated),
         "suite_expected": expected,
         "recall": round(len(validated) / expected, 3) if expected else None,
