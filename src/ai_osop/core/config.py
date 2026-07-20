@@ -302,6 +302,20 @@ class Settings(BaseSettings):
     # ~300s and was only caught by the 343s stuck-task reaper (the xss_scan hang). Init can
     # be heavier than a normal request (browser launch), hence a dedicated, generous bound.
     mcp_initialize_timeout: int = 60
+
+    # AIOSOP-REAPER-001 (2026-07-20): the AgentReaper previously hardcoded
+    # ``interval=15`` and ``heartbeat_timeout=60`` (reliability/agent_reaper.py).
+    # That is too aggressive for slow external targets where one round-trip can
+    # exceed 60s under network backpressure — a healthy agent mid-sqlmap-probe
+    # gets marked dead and its task requeued, doubling load and producing
+    # spurious ``agent_dead`` warnings. Make both knobs configurable so a
+    # deployment can tune them to its target profile without a code change.
+    agent_reaper_interval_seconds: int = Field(
+        default=15, validation_alias="OSOP_AGENT_REAPER_INTERVAL_SECONDS"
+    )
+    agent_reaper_heartbeat_timeout_seconds: int = Field(
+        default=60, validation_alias="OSOP_AGENT_REAPER_HEARTBEAT_TIMEOUT_SECONDS"
+    )
     # Nuclei template scans run for minutes; the 30s default silently times them
     # out to zero findings, so give them a dedicated generous bound.
     nuclei_mcp_timeout: int = 900

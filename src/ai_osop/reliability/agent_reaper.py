@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import Any, Optional
 
-from ai_osop.core.config import AgentState
+from ai_osop.core.config import AgentState, settings
 from ai_osop.core.metrics import (
     AGENT_RECOVERIES_TOTAL,
     AGENT_TIMEOUTS_TOTAL,
@@ -21,8 +21,11 @@ class AgentReaper:
         self.state_machine = state_machine or getattr(
             orchestrator, "engagement_state_machine", None
         )
-        self.interval = 15
-        self.heartbeat_timeout = 60
+        # AIOSOP-REAPER-001 (2026-07-20): both knobs are config-driven so a
+        # deployment with a slow external target can widen them without a code
+        # change. Defaults preserve the prior behaviour (15s poll, 60s timeout).
+        self.interval = int(settings.agent_reaper_interval_seconds)
+        self.heartbeat_timeout = int(settings.agent_reaper_heartbeat_timeout_seconds)
 
     async def run(self) -> None:
         while True:

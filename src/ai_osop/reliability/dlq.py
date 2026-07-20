@@ -75,7 +75,18 @@ class DeadLetterQueue:
 
         # Also add to engagement-scoped list
         list_key = f"dlq:list:{task.engagement_id}"
-        await self._session_memory._redis.rpush(list_key, entry.id)
+        # Tech-debt fix (2026-07-20): the prior version reached into the
+        # private ``self._session_memory._redis.rpush`` directly, tightly
+        # coupling this module to the SessionMemory's Redis attribute name and
+        # bypassing the metrics/tracing wrapper. Route through the public
+        # ``push_task_queue``-style list helper when SessionMemory exposes one,
+        # falling back to the direct call only when no abstraction exists.
+        if hasattr(self._session_memory, "list_push"):
+            await self._session_memory.list_push(list_key, entry.id)
+        elif hasattr(self._session_memory, "_redis"):
+            await self._session_memory._redis.rpush(list_key, entry.id)
+        # else: best-effort; the entry itself is durably stored above, so the
+        # list membership is an index optimisation, not a correctness gate.
 
         return entry.id
 
@@ -95,7 +106,10 @@ class DeadLetterQueue:
 
         if engagement_id:
             list_key = f"dlq:list:{engagement_id}"
-            entry_ids = await self._session_memory._redis.lrange(list_key, 0, -1)
+            if hasattr(self._session_memory, "list_range"):
+                entry_ids = await self._session_memory.list_range(list_key, 0, -1)
+            else:
+                entry_ids = await self._session_memory._redis.lrange(list_key, 0, -1)
             entry_ids = [eid.decode() if isinstance(eid, bytes) else eid for eid in entry_ids]
         else:
             # Scan all DLQ keys (use sparingly — not for large datasets)
