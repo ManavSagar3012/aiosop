@@ -1042,10 +1042,16 @@ class GraphMemory:
         ids = [i for i in (engagement_id, *aliases) if i]
         # de-dupe while preserving order
         ids = list(dict.fromkeys(ids))
+        # AIOSOP-FINDINGS-ROOT-2026-07-20: resolve url/method from the linked
+        # Endpoint in the same query (no N+1). head(collect(e)) keeps one row
+        # per vulnerability even if the undirected HAS_VULNERABILITY match
+        # would otherwise fan out across multiple endpoints.
         cypher = """
         MATCH (v:Vulnerability)
         WHERE v.engagement_id IN $ids
-        RETURN v
+        OPTIONAL MATCH (v)-[:HAS_VULNERABILITY]-(e:Endpoint)
+        WITH v, head(collect(e)) AS e
+        RETURN v, e.url AS ep_url, e.method AS ep_method
         """
         with trace_span(
             "graph_memory.get_vulnerabilities_by_engagement",
@@ -1054,7 +1060,15 @@ class GraphMemory:
             async with self._driver.session() as session:
                 result = await session.run(cypher, {"ids": ids})
                 records = await result.data()
-                return [record["v"] for record in records]
+                findings = []
+                for record in records:
+                    finding = record["v"]
+                    if record.get("ep_url") and not finding.get("url"):
+                        finding["url"] = record["ep_url"]
+                    if record.get("ep_method") and not finding.get("method"):
+                        finding["method"] = record["ep_method"]
+                    findings.append(finding)
+                return findings
 
     async def export_findings_json(
         self, engagement_id: str, path: Optional[str] = None

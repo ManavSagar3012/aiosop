@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+from ai_osop.core.finding_view import to_finding_view
+
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
 
@@ -27,9 +29,9 @@ def _evidence_list(f: Dict[str, Any]) -> List[Dict[str, Any]]:
     return ev or []
 
 
-def _repro(f: Dict[str, Any], ev0: Dict[str, Any]) -> List[str]:
+def _repro(f: Dict[str, Any], ev0: Dict[str, Any], view: Dict[str, Any]) -> List[str]:
     tech = str(ev0.get("technique") or ev0.get("type") or "")
-    ep = ev0.get("endpoint") or ev0.get("url") or ev0.get("verify_url") or "the affected endpoint"
+    ep = view.get("url") or "the affected endpoint"
     payload = ev0.get("payload")
     vt = (f.get("vuln_type") or "").lower()
     if "auth_bypass" in tech:
@@ -38,8 +40,11 @@ def _repro(f: Dict[str, Any], ev0: Dict[str, Any]) -> List[str]:
             "Observe the server issues a valid session token despite invalid credentials — a SQL-injection authentication bypass.",
         ]
     if "error_based" in tech:
+        param = view.get("param")
         return [
-            f"Send `GET {ep}` with the vulnerable parameter set to `{payload}`.",
+            f"Send `{view.get('method') or 'GET'} {ep}` with the vulnerable parameter"
+            + (f" `{param}`" if param else "")
+            + f" set to `{payload}`.",
             "Observe a 5xx response carrying a raw SQL/DB parse error, confirming unsanitized input reaches the query.",
         ]
     if "jwt" in vt:
@@ -68,6 +73,7 @@ def _repro(f: Dict[str, Any], ev0: Dict[str, Any]) -> List[str]:
 def _render_finding(i: int, f: Dict[str, Any]) -> str:
     ev = _evidence_list(f)
     ev0 = ev[0] if ev else {}
+    view = to_finding_view(f)
     sev = (f.get("severity") or "unknown").upper()
     lines = [f"### {i}. [{sev}] {f.get('title', 'Untitled finding')}", ""]
     meta = []
@@ -75,9 +81,9 @@ def _render_finding(i: int, f: Dict[str, Any]) -> str:
         meta.append(f"**CWE:** {f['cwe']}")
     if ev0.get("owasp"):
         meta.append(f"**OWASP:** {ev0['owasp']}")
-    ep = ev0.get("endpoint") or ev0.get("url") or ev0.get("verify_url")
+    ep = view.get("url")
     if ep:
-        meta.append(f"**Endpoint:** `{ep}`")
+        meta.append(f"**Endpoint:** `{ep}`" + (f" ({view['method']} · {view['param']})" if view.get("param") else f" ({view['method']})"))
     if f.get("confidence") is not None:
         meta.append(f"**Confidence:** {f['confidence']}" + (" (validated)" if f.get("validated") else ""))
     if meta:
@@ -94,7 +100,7 @@ def _render_finding(i: int, f: Dict[str, Any]) -> str:
         lines.append("- (oracle-validated; see engagement graph for raw request/response)")
     lines.append("")
     lines.append("**Reproduction:**")
-    lines += [f"{n}. {s}" for n, s in enumerate(_repro(f, ev0), 1)]
+    lines += [f"{n}. {s}" for n, s in enumerate(_repro(f, ev0, view), 1)]
     lines.append("")
     return "\n".join(lines)
 

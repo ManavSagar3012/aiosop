@@ -8,9 +8,10 @@ reason good bugs pay $0).
 
 import hashlib
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 from urllib.parse import urlparse
 
+from ai_osop.core.finding_view import FindingView, to_finding_view
 from ai_osop.core.models import Vulnerability
 from ai_osop.core.poc_generator import render_poc_markdown
 
@@ -61,50 +62,41 @@ _CVSS = {  # rough representative vectors for the report header
 }
 
 
-def _vt(vuln: Vulnerability) -> str:
-    vt = vuln.vuln_type
+def _as_dict(vuln: Union[Vulnerability, Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize a Vulnerability model or a raw graph dict into a plain dict."""
+    if isinstance(vuln, Vulnerability):
+        return vuln.model_dump()
+    if hasattr(vuln, "model_dump"):
+        return vuln.model_dump()
+    return dict(vuln)
+
+
+def _vt(view: FindingView) -> str:
+    vt = view.get("category")
     return vt.value if hasattr(vt, "value") else str(vt)
 
 
-def _sev(vuln: Vulnerability) -> str:
-    s = vuln.severity
+def _sev(view: FindingView) -> str:
+    s = view.get("severity")
     return (s.value if hasattr(s, "value") else str(s)).lower()
 
 
-def _primary_endpoint(ev: Dict[str, Any]) -> str:
-    return (
-        ev.get("url")
-        or ev.get("verify_url")
-        or ev.get("store_url")
-        or ev.get("host")
-        or ev.get("render_url")
-        or ""
-    )
-
-
-def finding_signature(vuln: Vulnerability) -> str:
+def finding_signature(vuln: Union[Vulnerability, Dict[str, Any]]) -> str:
     """Stable dedup signature: vuln class + normalized endpoint path + injection point.
     Identical bugs at the same location collapse to the same signature."""
-    ev = (vuln.evidence or [{}])[0]
-    endpoint = _primary_endpoint(ev)
+    view = to_finding_view(_as_dict(vuln))
+    endpoint = view.get("url") or ""
     parsed = urlparse(endpoint) if "://" in endpoint else urlparse("//" + endpoint)
     path = (parsed.netloc + parsed.path).rstrip("/").lower()
-    inj = str(
-        ev.get("injection")
-        or ev.get("parameter")
-        or ev.get("store_field")
-        or ev.get("provider")
-        or ev.get("service")
-        or ""
-    )
-    raw = f"{_vt(vuln)}|{path}|{inj.lower()}"
+    inj = str(view.get("param") or "")
+    raw = f"{_vt(view)}|{path}|{inj.lower()}"
     return "OSOP-" + hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
-def _repro_steps(vuln: Vulnerability) -> List[str]:
-    vt = _vt(vuln)
-    ev = (vuln.evidence or [{}])[0]
-    ep = _primary_endpoint(ev)
+def _repro_steps(view: FindingView) -> List[str]:
+    vt = _vt(view)
+    ev = view["evidence"][0] if view.get("evidence") else {}
+    ep = view.get("url") or ""
     if vt == "ssrf":
         it = ev.get("interaction", {})
         return [
@@ -161,30 +153,32 @@ def _repro_steps(vuln: Vulnerability) -> List[str]:
     return [f"Reproduce the confirmed condition at `{ep}` using the evidence below."]
 
 
-def render_bounty_report(vuln: Vulnerability, program: str = "") -> str:
+def render_bounty_report(vuln: Union[Vulnerability, Dict[str, Any]], program: str = "") -> str:
     """Render a submission-ready Markdown report for a single validated finding."""
-    vt = _vt(vuln)
-    sev = _sev(vuln)
-    ev = (vuln.evidence or [{}])[0]
+    view = to_finding_view(_as_dict(vuln))
+    vt = _vt(view)
+    sev = _sev(view)
+    ev = view["evidence"][0] if view.get("evidence") else {}
     sig = finding_signature(vuln)
     impact = _IMPACT.get(vt, "Demonstrated security impact on the target application.")
     remediation = _REMEDIATION.get(vt, "Apply input validation and least-privilege controls.")
-    steps = "\n".join(f"{i+1}. {s}" for i, s in enumerate(_repro_steps(vuln)))
+    steps = "\n".join(f"{i+1}. {s}" for i, s in enumerate(_repro_steps(view)))
     poc = render_poc_markdown(vuln)
     evidence_json = json.dumps(ev, indent=2, default=str)
 
-    header = f"# {vuln.title}\n\n"
+    severity = view.get("severity")
+    header = f"# {view.get('title')}\n\n"
     if program:
         header += f"**Program:** {program}  \n"
     header += (
-        f"**Severity:** {vuln.severity if not hasattr(vuln.severity,'value') else vuln.severity.value} "
+        f"**Severity:** {severity if not hasattr(severity,'value') else severity.value} "
         f"(CVSS ~{_CVSS.get(sev,'N/A')})  \n"
-        f"**Weakness:** {vuln.cwe or 'N/A'}  \n"
+        f"**Weakness:** {view.get('cwe') or 'N/A'}  \n"
         f"**Dedup signature:** `{sig}`  \n"
-        f"**Status:** {'Validated (active confirmation)' if vuln.validated else 'Unconfirmed'}\n\n"
+        f"**Status:** {'Validated (active confirmation)' if view.get('validated') else 'Unconfirmed'}\n\n"
     )
     body = (
-        f"## Summary\n{vuln.description}\n\n"
+        f"## Summary\n{view.get('description')}\n\n"
         f"## Steps to Reproduce\n{steps}\n\n"
         f"## Proof of Concept\n{poc}\n"
         f"## Impact\n{impact}\n\n"

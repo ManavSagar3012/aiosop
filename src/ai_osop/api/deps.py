@@ -7,7 +7,7 @@ so that routers can import them without circular imports from main.py.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -106,11 +106,8 @@ state = {
 # ============== Authentication ==============
 
 
-async def verify_token(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
-    token: Optional[str] = Query(None),
-):
-    """Verify bearer token.
+async def _authenticate(presented: Optional[str]) -> Dict[str, Any]:
+    """Core bearer-token verification shared by header auth and WebSocket auth.
 
     Order of precedence (AIOSOP-SEC-001 hard fix, 2026-06-15):
       1. If OSOP_JWT_SECRET is set, decode + validate the bearer as a JWT.
@@ -121,11 +118,8 @@ async def verify_token(
          <that value> (constant-time equality).
       3. Otherwise, log CRITICAL and reject the request (dev fallback removed).
     """
-    if not isinstance(credentials, HTTPAuthorizationCredentials):
-        credentials = None
-    if not credentials and not token:
+    if not presented:
         raise HTTPException(status_code=403, detail="Not authenticated")
-    presented = credentials.credentials if credentials else token
 
     if settings.jwt_secret:
         from jose import ExpiredSignatureError, JWTError, jwt
@@ -166,6 +160,33 @@ async def verify_token(
         status_code=401,
         detail="Authentication is not configured. Set OSOP_JWT_SECRET or OSOP_API_TOKEN.",
     )
+
+
+async def verify_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+) -> Dict[str, Any]:
+    """FastAPI dependency for HTTP routes: Authorization header only.
+
+    AIOSOP-SEC-002 (2026-07-20): dropped the `?token=` query-param fallback
+    this dependency used to accept. Query strings land in access logs, proxy
+    logs, and browser history, so every REST endpoint that depended on this
+    (engagements/findings/sessions/tasks/approvals/intelligence) was
+    accepting a leakable credential. WebSocket auth still needs a query-param
+    path (browsers can't set custom headers on the WS handshake) — use
+    `verify_ws_token` for that call site instead.
+    """
+    if not isinstance(credentials, HTTPAuthorizationCredentials):
+        credentials = None
+    return await _authenticate(credentials.credentials if credentials else None)
+
+
+async def verify_ws_token(token: Optional[str]) -> Dict[str, Any]:
+    """WebSocket-only auth entry point (see AIOSOP-SEC-002 note on verify_token).
+
+    Not wired to any HTTP route — only src/ai_osop/api/main.py's
+    get_websocket_operator should call this.
+    """
+    return await _authenticate(token)
 
 
 async def assert_engagement_access(operator: Dict[str, Any], session_id: str) -> SessionState:

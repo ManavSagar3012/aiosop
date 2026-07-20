@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from ai_osop.api.deps import assert_engagement_access, require_role, state, verify_token
 from ai_osop.core.findings_quality import FindingConversionEngine
+from ai_osop.core.finding_view import to_finding_view
 
 logger = structlog.get_logger("ai_osop.findings")
 
@@ -44,6 +45,7 @@ def _vuln_node_to_finding(v: Dict[str, Any]) -> Dict[str, Any]:
     # (AIOSOP-FINDINGS-EVIDENCE-2026-06-30)
     first = next((e for e in ev if isinstance(e, dict)), {})
     matched_at = first.get("matched_at") or first.get("url")
+    view = to_finding_view(v)
     confidence = float(v.get("confidence") or 0.0)
     tool_source = v.get("tool_source") or ""
     # evScore prefers real CVSS; nuclei findings carry none, so fall back to a
@@ -69,7 +71,9 @@ def _vuln_node_to_finding(v: Dict[str, Any]) -> Dict[str, Any]:
         "cwe": v.get("cwe"),
         "matchedAt": matched_at,
         "templateId": first.get("template"),
-        "url": first.get("url") or matched_at,
+        "url": view["url"] or first.get("url") or matched_at,
+        "method": view["method"],
+        "param": view["param"],
     }
 
 

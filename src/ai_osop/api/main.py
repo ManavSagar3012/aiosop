@@ -30,7 +30,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ai_osop.adapters.threat_intel_mcp import ThreatIntelAdapter
-from ai_osop.api.deps import require_role, state, verify_token
+from ai_osop.api.deps import require_role, state, verify_token, verify_ws_token
 from ai_osop.api.health import router as health_router
 from ai_osop.api.health import run_startup_self_test
 
@@ -920,7 +920,7 @@ async def get_websocket_operator(websocket: WebSocket) -> Dict[str, Any]:
             token = auth_header.split(" ", 1)[1]
     if not token:
         raise HTTPException(status_code=403, detail="Missing token")
-    return await verify_token(token=token)
+    return await verify_ws_token(token)
 
 
 async def get_websocket_session(

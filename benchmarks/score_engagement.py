@@ -59,6 +59,14 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
+_SRC = Path(__file__).resolve().parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+try:
+    from ai_osop.core.finding_view import to_finding_view
+except ImportError:  # pragma: no cover - scorer must work without full platform installed
+    to_finding_view = None  # type: ignore[assignment]
+
 try:
     import yaml
 except ImportError:  # pragma: no cover - PyYAML is a project dependency
@@ -309,6 +317,10 @@ def _finding_endpoint(f: Any) -> str:
     and silently degrades to type-only matching, mis-attributing a finding to
     the wrong ground-truth entry when two share a vuln type.
     """
+    if isinstance(f, dict) and to_finding_view is not None:
+        url = to_finding_view(f).get("url")
+        if url:
+            return str(url)
     top = _finding_field(f, "endpoint_id", "endpoint", "url", "target", default="")
     if top:
         return str(top)

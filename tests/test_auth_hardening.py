@@ -72,6 +72,46 @@ def test_jwt_bypass_gone():
 
 
 # ---------------------------------------------------------------------------
+# AIOSOP-SEC-002: no ?token= query-param fallback on HTTP routes
+# ---------------------------------------------------------------------------
+
+def test_verify_token_has_no_query_param_fallback():
+    """HTTP-facing verify_token must only accept the Authorization header.
+
+    Regression guard: a `token: Optional[str] = Query(None)` parameter here
+    would make every Depends(verify_token) route (engagements, findings,
+    sessions, tasks, approvals, intelligence) accept a bearer credential via
+    URL query string, which leaks into access logs / proxy logs / browser
+    history. WebSocket auth (which needs a query-param path because browsers
+    can't set custom headers on the handshake) must go through the separate
+    verify_ws_token instead.
+    """
+    params = inspect.signature(_deps.verify_token).parameters
+    assert "token" not in params, (
+        "verify_token regained a query-param token fallback (AIOSOP-SEC-002 regression)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_verify_ws_token_accepts_raw_token_string():
+    with (
+        patch.object(_cfg.settings, "jwt_secret", None),
+        patch.object(_cfg.settings, "api_token", "correct-api-token"),
+    ):
+        result = await _deps.verify_ws_token("correct-api-token")
+    assert result["role"] == "senior_operator"
+
+
+@pytest.mark.asyncio
+async def test_verify_ws_token_rejects_missing_token():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _deps.verify_ws_token(None)
+    assert exc_info.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # verify_token: JWT path
 # ---------------------------------------------------------------------------
 
@@ -86,8 +126,7 @@ async def test_valid_jwt_accepted():
         patch.object(_cfg.settings, "jwt_issuer", None),
     ):
         result = await _deps.verify_token(
-            credentials=_make_credentials(token), token=None
-        )
+            credentials=_make_credentials(token)        )
     assert result["sub"] == "user-1"
     assert result["role"] == "senior_operator"
 
@@ -106,8 +145,7 @@ async def test_expired_jwt_returns_401():
     ):
         with pytest.raises(HTTPException) as exc_info:
             await _deps.verify_token(
-                credentials=_make_credentials(token), token=None
-            )
+                credentials=_make_credentials(token)            )
     assert exc_info.value.status_code == 401
     assert "expired" in exc_info.value.detail.lower()
 
@@ -125,8 +163,7 @@ async def test_invalid_signature_returns_401():
     ):
         with pytest.raises(HTTPException) as exc_info:
             await _deps.verify_token(
-                credentials=_make_credentials(token), token=None
-            )
+                credentials=_make_credentials(token)            )
     assert exc_info.value.status_code == 401
 
 
@@ -144,8 +181,7 @@ async def test_jwt_missing_role_claim_returns_401():
     ):
         with pytest.raises(HTTPException) as exc_info:
             await _deps.verify_token(
-                credentials=_make_credentials(token), token=None
-            )
+                credentials=_make_credentials(token)            )
     assert exc_info.value.status_code == 401
     assert "role" in exc_info.value.detail.lower()
 
@@ -164,8 +200,7 @@ async def test_jwt_missing_sub_claim_returns_401():
     ):
         with pytest.raises(HTTPException) as exc_info:
             await _deps.verify_token(
-                credentials=_make_credentials(token), token=None
-            )
+                credentials=_make_credentials(token)            )
     assert exc_info.value.status_code == 401
     assert "sub" in exc_info.value.detail.lower()
 
@@ -181,8 +216,7 @@ async def test_api_token_fallback_accepted():
         patch.object(_cfg.settings, "api_token", "correct-api-token"),
     ):
         result = await _deps.verify_token(
-            credentials=_make_credentials("correct-api-token"), token=None
-        )
+            credentials=_make_credentials("correct-api-token")        )
     assert result["role"] == "senior_operator"
 
 
@@ -196,8 +230,7 @@ async def test_api_token_fallback_wrong_returns_401():
     ):
         with pytest.raises(HTTPException) as exc_info:
             await _deps.verify_token(
-                credentials=_make_credentials("wrong"), token=None
-            )
+                credentials=_make_credentials("wrong")            )
     assert exc_info.value.status_code == 401
 
 
@@ -210,7 +243,7 @@ async def test_no_credentials_returns_403():
         patch.object(_cfg.settings, "api_token", None),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await _deps.verify_token(credentials=None, token=None)
+            await _deps.verify_token(credentials=None)
     assert exc_info.value.status_code == 403
 
 

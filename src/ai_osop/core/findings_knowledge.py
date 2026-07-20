@@ -27,6 +27,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
 
+from ai_osop.core.finding_view import to_finding_view
+
 EmbedFn = Callable[[str], Awaitable[List[float]]]
 
 
@@ -57,7 +59,8 @@ def finding_to_document(finding: Any) -> str:
     title = str(_get(finding, "title", "") or "")
     cwe = str(_get(finding, "cwe", "") or "")
     description = str(_get(finding, "description", "") or "")
-    endpoint = str(_get(finding, "endpoint_id", "") or "")
+    view = to_finding_view(finding)
+    endpoint = str(view.get("url") or _get(finding, "endpoint_id", "") or "")
 
     parts = []
     if vuln_type:
