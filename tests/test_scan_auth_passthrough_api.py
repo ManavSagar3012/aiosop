@@ -58,7 +58,11 @@ class _Store:
 
 def _install_common(monkeypatch, store):
     """Patch auth + orchestrator + session_store so the handler reaches the scan."""
-    scope = SimpleNamespace(engagement_id="eng-1", domains=["http://target.test"])
+    # Real ScopeDefinition so the governed-client path (ScopeEnforcer(session.scope))
+    # constructs cleanly — a SimpleNamespace lacks ips/exclusions/testing_window.
+    from ai_osop.core.models import ScopeDefinition
+
+    scope = ScopeDefinition(engagement_id="eng-1", domains=["target.test"])
     fake_session = SimpleNamespace(scope=scope)
 
     async def _fake_access(operator, session_id):
@@ -66,7 +70,9 @@ def _install_common(monkeypatch, store):
 
     monkeypatch.setattr(eng, "assert_engagement_access", _fake_access)
     monkeypatch.setitem(
-        deps.state, "orchestrator", SimpleNamespace(graph_memory=object())
+        deps.state,
+        "orchestrator",
+        SimpleNamespace(graph_memory=object(), rate_limiter=None),
     )
     monkeypatch.setitem(deps.state, "session_store", store)
 
@@ -115,7 +121,11 @@ async def test_unknown_auth_user_degrades_to_unauthenticated(monkeypatch):
         "sess-1", mode="discovered", auth_user="ghost", operator={"role": "operator"}
     )
 
-    # No session -> unauthenticated scan, and as_user() was never opened
-    assert seen["client"] is None
+    # No session -> unauthenticated scan: as_user() was never opened, and the
+    # scan now runs through a GOVERNED httpx client (M1), not a bare None. The
+    # governance (scope/rate/header) is applied by that client's request hook.
+    import httpx
+
     assert client.entered is False and client.closed is False
+    assert isinstance(seen["client"], httpx.AsyncClient)
     assert resp["authenticated_as"] is None

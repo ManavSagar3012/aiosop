@@ -210,7 +210,31 @@ async def deterministic_scan(
                     engagement_id, gm, client=client
                 )
         else:
-            gp, _examined = await run_generalized_scan(engagement_id, gm)
+            # M1 governed egress: the unauthenticated surface scan runs through a
+            # governed httpx client so every probe is scope-checked per request,
+            # rate-limited per request, and stamped with the program research
+            # header. Passed via the existing client= seam (governs the SQLi /
+            # mass-assignment / injection surface oracles).
+            # ponytail: JWT/IDOR sub-scans build their own clients and are not yet
+            # governed; SessionClient (authed path) governance is the next M1 slice.
+            from ai_osop.safety.governed_client import (
+                governed_client,
+                research_header_from_settings,
+            )
+            from ai_osop.safety.scope import ScopeEnforcer
+
+            rl = getattr(state.get("orchestrator"), "rate_limiter", None)
+            async with governed_client(
+                scope=ScopeEnforcer(session.scope),
+                rate_limiter=rl,
+                research_header=research_header_from_settings(),
+                verify=False,
+                follow_redirects=True,
+                timeout=15,
+            ) as gclient:
+                gp, _examined = await run_generalized_scan(
+                    engagement_id, gm, client=gclient
+                )
         persisted += gp
     return {
         "status": "success",

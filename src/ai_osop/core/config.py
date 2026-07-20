@@ -316,6 +316,17 @@ class Settings(BaseSettings):
     agent_reaper_heartbeat_timeout_seconds: int = Field(
         default=60, validation_alias="OSOP_AGENT_REAPER_HEARTBEAT_TIMEOUT_SECONDS"
     )
+    # AIOSOP-GOVERNED-EGRESS-001 (2026-07-20): bug-bounty programs (e.g. Syfe/H1)
+    # require a research-identity header on every request to prod so their WAF can
+    # allow-list the researcher's traffic. Empty name => header disabled (the
+    # governed client simply skips it), so this is safe-by-default off and opt-in
+    # per deployment. Value is typically "X-HackerOne-Research: <h1-username>".
+    research_header_name: str = Field(
+        default="", validation_alias="OSOP_RESEARCH_HEADER_NAME"
+    )
+    research_header_value: str = Field(
+        default="", validation_alias="OSOP_RESEARCH_HEADER_VALUE"
+    )
     # Nuclei template scans run for minutes; the 30s default silently times them
     # out to zero findings, so give them a dedicated generous bound.
     nuclei_mcp_timeout: int = 900
