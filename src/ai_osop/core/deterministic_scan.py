@@ -663,14 +663,24 @@ async def run_generalized_idor(
 
 
 async def run_generalized_injection(
-    engagement_id: str, graph_memory: Any, *, per_check_timeout: float = 20.0
+    engagement_id: str,
+    graph_memory: Any,
+    *,
+    per_check_timeout: float = 20.0,
+    oast_registry: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Drive the deterministic injection/redirection oracles (path traversal,
     open redirect, reflected SSRF, XXE) off recon-discovered endpoints. Every
     finding here is asserted validated ONLY on an objective in-band signal (a
     system-file signature, an off-origin 3xx Location) — same honesty bar as the
     SQLi oracle. Endpoints with no confirmable signal produce nothing, not a
-    speculative lead. Returns (persisted, endpoints_examined)."""
+    speculative lead. Returns (persisted, endpoints_examined).
+
+    When ``oast_registry`` is supplied, XML endpoints ALSO get blind-XXE probes
+    planted (external entity fetching a provenance-carrying callback URL). Those
+    assert nothing in-band; the caller confirms them out-of-band via the
+    registry's ``reconcile()``. This is what covers an entity-resolving parser
+    that reflects nothing (the ginandjuice.shop stock-check shape)."""
     import httpx
 
     from ai_osop.core.injection_oracles import (
@@ -678,6 +688,7 @@ async def run_generalized_injection(
         detect_path_traversal,
         detect_ssrf_reflected,
         detect_xxe,
+        plant_blind_xxe,
     )
 
     eps = await _discovered_endpoints(graph_memory, engagement_id)
@@ -779,6 +790,21 @@ async def run_generalized_injection(
                 continue
             if ev:
                 await _persist(ev)
+            # Blind XXE: only when an OAST registry is available. Plants probes
+            # whose sole confirmation is an out-of-band callback the caller
+            # reconciles later — no in-band assertion is made here.
+            if oast_registry is not None:
+                try:
+                    await asyncio.wait_for(
+                        plant_blind_xxe(
+                            c, url, oast_registry=oast_registry,
+                            engagement_id=engagement_id, method=method,
+                            sample_xml=sample_xml,
+                        ),
+                        timeout=per_check_timeout,
+                    )
+                except Exception:
+                    pass
 
         # Dedicated open-redirect pass: redirectors often live outside /rest,/api
         # (so they never enter get_candidates) and are guarded by substring
@@ -815,17 +841,23 @@ async def run_generalized_injection(
 
 
 async def run_generalized_scan(
-    engagement_id: str, graph_memory: Any
+    engagement_id: str, graph_memory: Any, *, oast_registry: Any = None
 ) -> Tuple[List[Vulnerability], int]:
     """Combined generalized pass over recon-discovered endpoints: SQLi + mass
     assignment + JWT forgery + IDOR + injection/redirection (path traversal, open
     redirect, reflected SSRF, XXE) — driven off the discovered surface with
-    deterministic/engine oracles (no LLM, no agent lifecycle)."""
+    deterministic/engine oracles (no LLM, no agent lifecycle).
+
+    ``oast_registry``, when supplied, is threaded to the injection pass so blind
+    XXE probes are planted; their confirmation is the caller's out-of-band
+    ``reconcile()``, not any in-band signal here."""
     sqli, examined = await run_generalized_sqli(engagement_id, graph_memory)
     ma, _ = await run_generalized_massassign(engagement_id, graph_memory)
     jwt, _ = await run_generalized_jwt(engagement_id, graph_memory)
     idor, _ = await run_generalized_idor(engagement_id, graph_memory)
-    inj, _ = await run_generalized_injection(engagement_id, graph_memory)
+    inj, _ = await run_generalized_injection(
+        engagement_id, graph_memory, oast_registry=oast_registry
+    )
     return sqli + ma + jwt + idor + inj, examined
 
 
