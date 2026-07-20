@@ -83,3 +83,87 @@ async def test_open_redirect_returns_none_without_candidate_params():
     async with _client(_reflecting_app, "http://vuln.test") as c:
         ev = await detect_open_redirect(c, "http://vuln.test/redirect", params=[])
     assert ev is None
+
+
+# --- XXE: schema-aware external-entity detection -----------------------------
+#
+# Real XML endpoints validate against their own schema and reject a foreign
+# root/field before the parser reflects anything, so a fixed <osop><data> payload
+# misses them. These tests lock in the recall fix (target the app's OWN schema,
+# derived from a sample body) AND the honesty contract (a hardened/entity-blocking
+# parser that never reflects a local-file signature must NOT confirm).
+
+from ai_osop.core.injection_oracles import detect_xxe, _xxe_schemas_from_sample
+
+_STOCK_SAMPLE = (
+    '<?xml version="1.0"?>'
+    "<stockCheck><productId>1</productId><storeId>1</storeId></stockCheck>"
+)
+
+
+async def _stockcheck_reflecting_app(scope, receive, send):
+    """Vulnerable but SCHEMA-VALIDATING: only accepts <stockCheck>, and reflects
+    the productId content on error. Simulates the external entity having expanded
+    into /etc/passwd content that then surfaces in the echoed error."""
+    body = b""
+    while True:
+        msg = await receive()
+        body += msg.get("body", b"")
+        if not msg.get("more_body"):
+            break
+    text = body.decode("utf-8", "replace")
+    if "<stockCheck>" not in text:  # foreign schema rejected outright
+        resp, status = b'"Bad request"', 400
+    elif "&xxe;" in text:
+        # entity expands to passwd content, reflected in the validation error
+        resp = b'"Invalid product ID: root:x:0:0:root:/root:/bin/bash"'
+        status = 400
+    else:
+        resp, status = b"42 units", 200
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", b"application/xml")]})
+    await send({"type": "http.response.body", "body": resp})
+
+
+async def _stockcheck_hardened_app(scope, receive, send):
+    """Safe: accepts the schema but the parser does NOT resolve external entities
+    (or blocks them), so no local-file signature ever appears. Must not confirm."""
+    await send({"type": "http.response.start", "status": 400,
+                "headers": [(b"content-type", b"application/xml")]})
+    await send({"type": "http.response.body",
+                "body": b'"Entities are not allowed for security reasons"'})
+
+
+def test_xxe_schema_derivation_from_sample():
+    assert _xxe_schemas_from_sample(_STOCK_SAMPLE) == [("stockCheck", "productId")]
+    assert _xxe_schemas_from_sample(None) == []
+    assert _xxe_schemas_from_sample("not xml at all") == []
+
+
+@pytest.mark.asyncio
+async def test_xxe_generic_schema_misses_schema_validating_endpoint():
+    """Without a sample, only the generic <osop> shape is tried — a schema
+    validator rejects it, so the real XXE is (undesirably but honestly) missed.
+    This is the gap the sample-driven path closes."""
+    async with _client(_stockcheck_reflecting_app, "http://vuln.test") as c:
+        ev = await detect_xxe(c, "http://vuln.test/stock")
+    assert ev is None
+
+
+@pytest.mark.asyncio
+async def test_xxe_schema_aware_confirms_on_reflecting_endpoint():
+    async with _client(_stockcheck_reflecting_app, "http://vuln.test") as c:
+        ev = await detect_xxe(c, "http://vuln.test/stock", sample_xml=_STOCK_SAMPLE)
+    assert ev is not None
+    assert ev["technique"] == "xxe"
+    assert "stockCheck" in ev["payload"] and "productId" in ev["payload"]
+
+
+@pytest.mark.asyncio
+async def test_xxe_no_fp_on_entity_blocking_parser():
+    """Honesty contract: a parser that blocks entities / never reflects a local
+    file must NOT confirm, even when the schema is known (the ginandjuice.shop
+    case — schema present, but the confirmable channel is hardened)."""
+    async with _client(_stockcheck_hardened_app, "http://safe.test") as c:
+        ev = await detect_xxe(c, "http://safe.test/stock", sample_xml=_STOCK_SAMPLE)
+    assert ev is None

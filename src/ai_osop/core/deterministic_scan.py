@@ -687,7 +687,7 @@ async def run_generalized_injection(
     MAX_CANDIDATES = 60
     shapes: set = set()
     get_candidates: list = []  # (url, params)  -> traversal / open-redirect / ssrf
-    xml_candidates: list = []  # (url, method)  -> xxe
+    xml_candidates: list = []  # (url, method, sample_xml)  -> xxe
     for ep in eps:
         url = ep.get("url")
         if not url:
@@ -703,13 +703,26 @@ async def run_generalized_injection(
         if method == "GET":
             get_candidates.append((url, params))
         # XXE only where the endpoint plausibly parses XML: a body-carrying
-        # method whose path/keys hint at import/upload/xml/parse. Never spray XML
-        # at arbitrary JSON APIs.
+        # method whose path/keys hint at import/upload/xml/parse, whose content
+        # type is XML, or whose path looks like a stock/status check (the common
+        # real-world XML surface, e.g. ginandjuice.shop's /catalog/product/stock).
+        # Never spray XML at arbitrary JSON APIs.
+        ctype = str(ep.get("content_type") or "").lower()
         if method in ("POST", "PUT", "PATCH") and (
-            "xml" in path or any(k in path for k in ("import", "upload", "parse", "feed", "soap"))
+            "xml" in path or any(k in path for k in ("import", "upload", "parse", "feed", "soap", "stock", "check"))
             or any("xml" in str(k).lower() for k in body_keys)
+            or "xml" in ctype
         ):
-            xml_candidates.append((url, method))
+            # Reconstruct a schema-shaped sample from the discovered field names so
+            # the XXE oracle can target the app's OWN root+field, not a generic
+            # <osop><data> shape a schema-validating parser would reject.
+            sample_xml = None
+            if body_keys:
+                root = (path.rsplit("/", 1)[-1] or "request").replace("-", "").replace(".", "") or "request"
+                inner = "".join(f"<{k}>1</{k}>" for k in body_keys if str(k).isidentifier())
+                if inner:
+                    sample_xml = f'<?xml version="1.0"?><{root}>{inner}</{root}>'
+            xml_candidates.append((url, method, sample_xml))
         if len(get_candidates) + len(xml_candidates) >= MAX_CANDIDATES:
             break
 
@@ -756,9 +769,12 @@ async def run_generalized_injection(
                     continue
                 if ev:
                     await _persist(ev)
-        for url, method in xml_candidates:
+        for url, method, sample_xml in xml_candidates:
             try:
-                ev = await asyncio.wait_for(detect_xxe(c, url, method=method), timeout=per_check_timeout)
+                ev = await asyncio.wait_for(
+                    detect_xxe(c, url, method=method, sample_xml=sample_xml),
+                    timeout=per_check_timeout,
+                )
             except Exception:
                 continue
             if ev:
