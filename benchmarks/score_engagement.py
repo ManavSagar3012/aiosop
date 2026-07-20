@@ -132,13 +132,28 @@ _EVIDENCE_ALIASES: Dict[str, str] = {
     # Diff aliases
     "diff": "diff",
     "baseline_diff": "diff",
-    # Scanner-specific evidence keys that contribute to completeness
-    "callbacks": "response",
-    "proof_url": "response",
-    "accepted_fields": "response",
-    "techniques": "response",
-    "interaction": "response",
-    "tester_evidence": "response",
+    # Scanner-specific evidence keys that contribute to completeness.
+    #
+    # AIOSOP-SCORER-HONESTY-001 (2026-07-20): the prior alias map included
+    # ``techniques`` -> ``response`` and ``accepted_fields`` -> ``response``.
+    # That was wrong: a sqlmap evidence dict carries ``techniques`` (a list of
+    # injection class names like ["boolean-based blind", "time-based blind"])
+    # which is NOT a response artifact, and a mass-assignment dict carries
+    # ``accepted_fields`` (the field names the server reflected) which is also
+    # NOT a response. Aliasing them onto ``response`` let a finding that never
+    # captured a real HTTP response body be scored as evidence-complete,
+    # defeating the entire point of the ``evidence_completeness`` metric
+    # (the `test_stringified_evidence_registers_evidence_kinds` regression
+    # caught exactly this — the SQLi finding carried url+payloads+techniques
+    # but no response, yet was scored complete).
+    #
+    # Removed: techniques, accepted_fields, interaction, proof_url, callbacks.
+    # Each of those is a scanner-side summary, not a response capture. A
+    # response must come from a key that actually carries HTTP response bytes
+    # (``response``, ``resp``, ``http_response``, ``response_body``) or a
+    # field whose value is verifiably a response artifact. This makes
+    # ``evidence_completeness`` honest again.
+    "proof_url": "request",  # a URL that proves the request shape, not a response
 }
 
 
