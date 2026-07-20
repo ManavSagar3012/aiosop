@@ -115,6 +115,17 @@ async def detect_login_bypass(
                 "http_status": 200,
                 "proof": "server issued a session token for an injected identity with a bogus password",
                 "token_prefix": str(token)[:24] + "...",
+                # Phase-1 issue #8: full response body is required for the
+                # manual_replay ground-truth contract (ground_truth.py:182-188).
+                # The 24-char token_prefix alone made evidence_completeness
+                # 0.333 on the autonomous run; storing the full body lets the
+                # scorer register a real 'response' artifact and lets an
+                # operator reproduce the bypass without re-running the scan.
+                "response": (r.text or "")[:4096],
+                "request": (
+                    f"POST {url}  body={{{email_field!r}: {payload!r}, "
+                    f"{password_field!r}: 'oracle-not-a-real-pw'}}"
+                ),
                 "confidence": 1.0,
             }
     return None
@@ -146,6 +157,15 @@ async def detect_error_based(
                 "payload": payload,
                 "http_status": r.status_code,
                 "db_error_excerpt": body[:300],
+                # Phase-1 issue #8: the error-based oracle already captured the
+                # full response body (truncated to 1200 chars above) but only
+                # stored a 300-char excerpt, so the scorer saw 'response' as
+                # missing on the SQLi finding (autonomous_scorecard showed
+                # evidence_completeness=0.333). Store the full captured body
+                # under the 'response' key so the scorer registers a real
+                # response artifact and the finding is evidence-complete.
+                "response": body,
+                "request": f"GET {url}?{param}={payload}",
                 "confidence": 1.0,
             }
     return None

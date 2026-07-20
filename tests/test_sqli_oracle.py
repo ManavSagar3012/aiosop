@@ -59,6 +59,13 @@ async def test_login_bypass_confirms_when_token_issued():
     assert ev["confidence"] == 1.0
     assert ev["token_prefix"].endswith("...")
     assert "payload" in ev
+    # Phase-1 issue #8: full response body must be captured so the scorer can
+    # register a real 'response' artifact (was 0.333 evidence_completeness on
+    # autonomous run when only token_prefix was stored).
+    assert "response" in ev
+    assert "token" in ev["response"]
+    assert "request" in ev
+    assert "POST" in ev["request"]
 
 
 @pytest.mark.asyncio
@@ -127,6 +134,12 @@ async def test_error_based_confirms_on_sqlite_marker():
     assert ev["parameter"] == "q"
     assert ev["http_status"] == 500
     assert ev["confidence"] == 1.0
+    # Phase-1 issue #8: full response body must be captured so the scorer can
+    # register a real 'response' artifact for the SQLi finding.
+    assert "response" in ev
+    assert "SQLITE_ERROR" in ev["response"]
+    assert "request" in ev
+    assert "GET" in ev["request"]
 
 
 @pytest.mark.asyncio
