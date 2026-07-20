@@ -165,6 +165,16 @@ async def detect_error_based(
     q0 = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
     base_val = q0.get(param) or "1"
 
+    # Capture the baseline body once. Used only by the non-5xx marker path below
+    # to guarantee a DB-error string was INTRODUCED by the payload rather than
+    # already present in the page chrome (false-positive guard).
+    base_low = ""
+    try:
+        r_base = await client.get(_with_param(url, param, base_val))
+        base_low = (r_base.text or "")[:1200].lower()
+    except Exception:
+        pass
+
     for payload in _ERROR_PAYLOADS:
         try:
             r = await client.get(_with_param(url, param, payload))
@@ -172,7 +182,15 @@ async def detect_error_based(
             continue
         body = (r.text or "")[:1200]
         low = body.lower()
-        if r.status_code >= 500 and any(m in low for m in _SQL_ERROR_MARKERS):
+        present = [m for m in _SQL_ERROR_MARKERS if m in low]
+        # Path A (original): a 5xx carrying a raw DB parse error is proof on its
+        # own — the server crashed on our syntax break.
+        # Path B (new): many backends (PHP/MySQL, classic ASP) echo the error in
+        # a 200 body. Accept that too, but only for a marker the payload
+        # INTRODUCED (absent from the benign baseline) so page chrome that merely
+        # mentions SQL can't trigger a false positive.
+        introduced = [m for m in present if m not in base_low]
+        if (r.status_code >= 500 and present) or introduced:
             return {
                 "technique": "error_based",
                 "endpoint": url,
