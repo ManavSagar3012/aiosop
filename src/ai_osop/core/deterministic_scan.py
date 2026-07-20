@@ -152,16 +152,28 @@ async def run_generalized_sqli(
     graph_memory: Any,
     *,
     per_check_timeout: float = 20.0,
+    confirm_with_sqlmap: bool = False,
+    sqlmap_timeout: float = 240.0,
 ) -> Tuple[List[Vulnerability], int]:
     """Drive the general SQLi oracles off RECON-DISCOVERED endpoints (not hardcoded
     paths): error-based on GET endpoints carrying params or a search-like path,
     auth-bypass on login-like POST endpoints. This is the generalization seam —
     it makes detection work on any in-scope target, not just Juice Shop. Returns
     (persisted, endpoints_examined).
+
+    When ``confirm_with_sqlmap`` is set and a fast oracle flags an injection
+    point, sqlmap is run against that SAME point to escalate the finding to a
+    real, tool-demonstrated ``tool_source=sqlmap`` (``is_simulated()=False``)
+    result — deep/UNION coverage the in-band oracle cannot provide. Opt-in
+    because sqlmap is slow; the oracle path stays fast and hang-proof by default.
+    Confirmation is bounded (``sqlmap_timeout``) and targeted (one flagged point),
+    so it never sprays the target.
     """
     import httpx
 
     from ai_osop.core.sqli_oracle import detect_error_based, detect_login_bypass, detect_time_blind
+    if confirm_with_sqlmap:
+        from ai_osop.core.sqlmap_confirm import sqlmap_available, sqlmap_confirm
 
     eps = await _discovered_endpoints(graph_memory, engagement_id)
     persisted: List[Vulnerability] = []
@@ -225,23 +237,70 @@ async def run_generalized_sqli(
             if not ev:
                 continue
             technique = ev.get("technique", "sqli")
-            vuln = Vulnerability(
-                cwe="CWE-89",
-                vuln_type=VulnClass.SQLI,
-                severity=Severity.CRITICAL if technique == "auth_bypass" else Severity.HIGH,
-                title=f"SQL Injection ({technique}) at {ev['endpoint']}",
-                description=(
-                    f"Deterministic oracle confirmed SQL injection at {ev['endpoint']} via "
-                    f"{technique} — driven off a recon-discovered endpoint (payload: {ev['payload']!r})."
-                ),
-                evidence=[{"type": "sqli_oracle", "provenance": "http", "discovered": True, **ev}],
-                tool_source="deterministic_scan_generalized",
-                confidence=float(ev.get("confidence", 1.0)),
-                validated=True,
-                exploitability="high",
-                impact="high",
-                engagement_id=engagement_id,
-            )
+
+            # Optional escalation: confirm the SAME point with real sqlmap. On
+            # confirmation we mint a tool-demonstrated finding (tool_source=sqlmap,
+            # is_simulated()=False) that carries sqlmap's own techniques/DBMS as
+            # evidence — strictly stronger than the in-band oracle signal.
+            sqlmap_ev = None
+            if confirm_with_sqlmap and sqlmap_available():
+                inj_url = ev.get("endpoint", url)
+                sm_param = ev.get("parameter") or (params[0] if params else None)
+                try:
+                    sqlmap_ev = await sqlmap_confirm(
+                        inj_url,
+                        param=sm_param if not login_like else None,
+                        data=("email=test&password=test" if login_like else None),
+                        timeout=sqlmap_timeout,
+                    )
+                except Exception:
+                    sqlmap_ev = None
+
+            if sqlmap_ev and sqlmap_ev.get("injectable"):
+                vuln = Vulnerability(
+                    cwe="CWE-89",
+                    vuln_type=VulnClass.SQLI,
+                    severity=Severity.CRITICAL,
+                    title=f"SQL Injection in parameter '{sqlmap_ev.get('parameter') or technique}'",
+                    description=(
+                        f"sqlmap confirmed SQL injection at {ev['endpoint']} "
+                        f"(parameter: {sqlmap_ev.get('parameter') or 'n/a'}; back-end DBMS: "
+                        f"{sqlmap_ev.get('dbms') or 'unknown'}). Injection point was first flagged "
+                        f"by the in-band {technique} oracle, then demonstrated by sqlmap."
+                    ),
+                    evidence=[{
+                        "type": "sqlmap_injection", "provenance": "sqlmap",
+                        "url": ev["endpoint"], "parameter": sqlmap_ev.get("parameter", ""),
+                        "dbms": sqlmap_ev.get("dbms", ""),
+                        "techniques": sqlmap_ev.get("techniques", []),
+                        "payloads": sqlmap_ev.get("payloads", []),
+                        "oracle_prefilter": technique,
+                    }],
+                    tool_source="sqlmap",
+                    confidence=0.98,
+                    validated=True,
+                    exploitability="high",
+                    impact="high",
+                    engagement_id=engagement_id,
+                )
+            else:
+                vuln = Vulnerability(
+                    cwe="CWE-89",
+                    vuln_type=VulnClass.SQLI,
+                    severity=Severity.CRITICAL if technique == "auth_bypass" else Severity.HIGH,
+                    title=f"SQL Injection ({technique}) at {ev['endpoint']}",
+                    description=(
+                        f"Deterministic oracle confirmed SQL injection at {ev['endpoint']} via "
+                        f"{technique} — driven off a recon-discovered endpoint (payload: {ev['payload']!r})."
+                    ),
+                    evidence=[{"type": "sqli_oracle", "provenance": "http", "discovered": True, **ev}],
+                    tool_source="deterministic_scan_generalized",
+                    confidence=float(ev.get("confidence", 1.0)),
+                    validated=True,
+                    exploitability="high",
+                    impact="high",
+                    engagement_id=engagement_id,
+                )
             try:
                 await graph_memory.add_vulnerability(vuln)
                 persisted.append(vuln)
@@ -777,6 +836,73 @@ _COMMON_ENDPOINTS = [
 ]
 
 
+async def _crawl_param_links(c, base: str) -> List[Tuple[str, str, List[str], bool]]:
+    """Discover PARAMETRIZED links on the target — the real injectable surface for
+    non-API (server-rendered HTML) apps. The api-path crawler only finds /rest,/api
+    literals, so a classic app like ``/catalog?category=..`` or
+    ``/blog/post?postId=..`` was invisible. Scan the home page + one level of
+    same-origin links for ``href``/``action`` values that carry a query string, and
+    return them as GET endpoints with their param names. Target-agnostic: standard
+    link extraction. Returns [(path, "GET", [param,...], False)].
+    """
+    import re
+    from urllib.parse import urlparse as _up, parse_qsl
+
+    def _same_origin(href: str) -> Optional[str]:
+        # Return a root-relative path (with query) for same-origin links, else None.
+        if href.startswith(("mailto:", "javascript:", "#", "tel:")):
+            return None
+        if href.startswith(("http://", "https://")):
+            u = _up(href)
+            if u.netloc != _up(base).netloc:
+                return None
+            return (u.path or "/") + (("?" + u.query) if u.query else "")
+        if href.startswith("/"):
+            return href
+        if href.startswith("./"):
+            return "/" + href[2:]
+        return None
+
+    hrefs: set = set()
+    try:
+        html = (await c.get(base + "/")).text[:300000]
+    except Exception:
+        return []
+    hrefs.update(re.findall(r"""(?:href|action)=["']([^"']+)["']""", html))
+    # one level deeper: follow same-origin non-param links to find param links within
+    seed_pages = []
+    for h in list(hrefs)[:40]:
+        rp = _same_origin(h)
+        if rp and "?" not in rp and rp != "/":
+            seed_pages.append(rp)
+    for sp in seed_pages[:8]:
+        try:
+            sub = (await c.get(base + sp)).text[:200000]
+        except Exception:
+            continue
+        hrefs.update(re.findall(r"""(?:href|action)=["']([^"']+)["']""", sub))
+
+    seen: set = set()
+    out: List[Tuple[str, str, List[str], bool]] = []
+    for h in hrefs:
+        rp = _same_origin(h)
+        if not rp or "?" not in rp:
+            continue
+        path, _, query = rp.partition("?")
+        path = path.rstrip("/") or "/"
+        keys = [k for k, _v in parse_qsl(query, keep_blank_values=True)]
+        if not keys:
+            continue
+        shape = (path, tuple(sorted(keys)))
+        if shape in seen:
+            continue
+        seen.add(shape)
+        out.append((path, "GET", keys, False))
+        if len(out) >= 40:
+            break
+    return out
+
+
 async def _harvest_redirectors(c, base: str) -> List[Tuple[str, str, List[str]]]:
     """Target-agnostic discovery of open-redirect surfaces. Redirect endpoints
     frequently live OUTSIDE /rest and /api (e.g. /redirect, /out, /link) so the
@@ -1002,6 +1128,22 @@ async def bootstrap_discovery(
             if cp not in known:
                 probe.append((cp, *_infer_shape(cp)))
                 known.add(cp)
+        # parametrized HTML links — the injectable surface of classic server-rendered
+        # apps (e.g. /catalog?category=, /blog/post?postId=) that carry no /rest,/api
+        # prefix and return text/html. Without these, discovery only worked on API-
+        # style targets like Juice Shop.
+        try:
+            param_links = await _crawl_param_links(c, base)
+        except Exception:
+            param_links = []
+        for path, method, keys, has_body in param_links:
+            if path not in known:
+                probe.append((path, method, keys, has_body))
+                known.add(path)
+        # track which paths came in WITH query params so the seeding filter can keep
+        # a param-bearing HTML endpoint (a real testable surface) while still dropping
+        # the paramless SPA catch-all.
+        param_paths = {p for p, _m, k, _b in param_links if k}
         for path, method, keys, has_body in probe[:250]:
             url = base + path
             try:
@@ -1011,8 +1153,12 @@ async def bootstrap_discovery(
             if r.status_code == 404:
                 continue
             ct = (r.headers.get("content-type") or "").lower()
-            if not (path.startswith(("/rest", "/api")) or "json" in ct):
-                continue  # skip SPA catch-all HTML
+            has_params = bool(keys) or path in param_paths
+            # Keep an endpoint if it looks like an API (path/json) OR it carries query
+            # parameters (injectable regardless of content-type). Drop only paramless
+            # HTML — the SPA/marketing catch-all with no attack surface.
+            if not (path.startswith(("/rest", "/api")) or "json" in ct or has_params):
+                continue
             try:
                 await graph_memory.add_endpoint(Endpoint(
                     url=url, method=method, engagement_id=engagement_id, path=path, type="api",
