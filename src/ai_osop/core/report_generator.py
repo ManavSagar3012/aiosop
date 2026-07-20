@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+from ai_osop.core.bounty_report import finding_signature
 from ai_osop.core.finding_view import to_finding_view
 
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -77,8 +78,14 @@ def _render_finding(i: int, f: Dict[str, Any]) -> str:
     sev = (f.get("severity") or "unknown").upper()
     lines = [f"### {i}. [{sev}] {f.get('title', 'Untitled finding')}", ""]
     meta = []
-    if f.get("cwe"):
-        meta.append(f"**CWE:** {f['cwe']}")
+    cwe = view.get("cwe") or f.get("cwe")
+    if cwe:
+        meta.append(f"**CWE:** {cwe}")
+    if view.get("cvss_score"):
+        cvss = f"**CVSS:** {view['cvss_score']}"
+        if view.get("cvss_vector"):
+            cvss += f" `{view['cvss_vector']}`"
+        meta.append(cvss)
     if ev0.get("owasp"):
         meta.append(f"**OWASP:** {ev0['owasp']}")
     ep = view.get("url")
@@ -86,6 +93,9 @@ def _render_finding(i: int, f: Dict[str, Any]) -> str:
         meta.append(f"**Endpoint:** `{ep}`" + (f" ({view['method']} · {view['param']})" if view.get("param") else f" ({view['method']})"))
     if f.get("confidence") is not None:
         meta.append(f"**Confidence:** {f['confidence']}" + (" (validated)" if f.get("validated") else ""))
+    occ = f.get("_occurrences", 1)
+    if occ > 1:
+        meta.append(f"**Detections:** {occ}")
     if meta:
         lines += [" · ".join(meta), ""]
     if f.get("description"):
@@ -109,6 +119,20 @@ async def generate_bounty_report(engagement_id: str, graph_memory: Any, target: 
     """Render a markdown bounty report from an engagement's validated findings."""
     findings = await graph_memory.get_vulnerabilities_by_engagement(engagement_id)
     findings = [f for f in (findings or []) if f.get("validated")]
+
+    # Collapse identical findings (same class + endpoint path + injection point)
+    # to one representative, tracking how many raw detections it subsumes — a
+    # report with 6 duplicate SQLi rows is not submittable.
+    deduped: Dict[str, Dict[str, Any]] = {}
+    for f in findings:
+        sig = finding_signature(f)
+        if sig in deduped:
+            deduped[sig]["_occurrences"] = deduped[sig].get("_occurrences", 1) + 1
+        else:
+            g = dict(f)
+            g["_occurrences"] = 1
+            deduped[sig] = g
+    findings = list(deduped.values())
     findings.sort(key=lambda f: _SEV_ORDER.get((f.get("severity") or "").lower(), 9))
 
     counts: Dict[str, int] = {}
@@ -128,9 +152,10 @@ async def generate_bounty_report(engagement_id: str, graph_memory: Any, target: 
         "|---|----------|------|-----|-------|",
     ]
     for i, f in enumerate(findings, 1):
+        fv = to_finding_view(f)
         out.append(
             f"| {i} | {(f.get('severity') or '').upper()} | {f.get('vuln_type', '')} | "
-            f"{f.get('cwe', '')} | {f.get('title', '')} |"
+            f"{fv.get('cwe') or ''} | {f.get('title', '')} |"
         )
     out += ["", "---", ""]
     for i, f in enumerate(findings, 1):

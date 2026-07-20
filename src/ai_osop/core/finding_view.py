@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, TypedDict
 
+from ai_osop.core.vuln_taxonomy import taxon_for
+
 
 class FindingView(TypedDict, total=False):
     id: Any
@@ -20,6 +22,7 @@ class FindingView(TypedDict, total=False):
     severity: Any
     confidence: Any
     cwe: Any
+    cvss_vector: Optional[str]
     cvss_score: float
     description: Any
     evidence: List[Dict[str, Any]]
@@ -124,11 +127,20 @@ def to_finding_view(node: Any) -> FindingView:
     # 6. title
     title = node.get("title") or category or "Finding"
 
-    # 7. cvss_score: real value passes through; only derive when missing
+    # 7. cwe / cvss: real detector value always wins; otherwise backfill from
+    #    the canonical taxonomy (class-accurate); severity table is last resort.
+    taxon = taxon_for(category)
+    cwe = node.get("cwe") or (taxon.cwe if taxon else None)
+
+    cvss_vector = node.get("cvss_vector") or (taxon.cvss_vector if taxon else None)
+
     cvss_score = node.get("cvss_score")
     if cvss_score is None:
-        severity = str(node.get("severity") or "").lower()
-        cvss_score = _SEVERITY_TO_CVSS.get(severity, 0.0)  # derived, not real
+        if taxon is not None:
+            cvss_score = taxon.cvss_score  # class-accurate base score
+        else:
+            severity = str(node.get("severity") or "").lower()
+            cvss_score = _SEVERITY_TO_CVSS.get(severity, 0.0)  # crude fallback
 
     # 8. pass through remaining persisted keys as-is
     view: FindingView = dict(node)  # type: ignore[assignment]
@@ -138,6 +150,8 @@ def to_finding_view(node: Any) -> FindingView:
     view["param"] = param
     view["category"] = category
     view["title"] = title
+    view["cwe"] = cwe
+    view["cvss_vector"] = cvss_vector
     view["cvss_score"] = cvss_score
     return view
 
@@ -173,9 +187,24 @@ if __name__ == "__main__":
     view2 = to_finding_view(node_with_url)
     assert view2["url"] == "http://x/y", view2["url"]
 
-    node_no_cvss = {"id": "v3", "vuln_type": "xss", "severity": "high"}
+    # taxonomy backfill: unscored sqli node -> class-accurate cwe/cvss
+    node_no_cvss = {"id": "v3", "vuln_type": "sqli", "severity": "high"}
     view3 = to_finding_view(node_no_cvss)
-    assert view3["cvss_score"] == 7.5, view3["cvss_score"]
+    assert view3["cvss_score"] == 9.8, view3["cvss_score"]  # from taxonomy, not 7.5
+    assert view3["cwe"] == "CWE-89", view3["cwe"]
+    assert view3["cvss_vector"].startswith("CVSS:3.1/"), view3["cvss_vector"]
+
+    # real detector value wins over taxonomy
+    node_real = {"id": "v3b", "vuln_type": "sqli", "cvss_score": 5.0, "cwe": "CWE-999"}
+    view3b = to_finding_view(node_real)
+    assert view3b["cvss_score"] == 5.0, view3b["cvss_score"]
+    assert view3b["cwe"] == "CWE-999", view3b["cwe"]
+
+    # unmapped type -> no fabrication, falls back to severity table
+    node_unknown = {"id": "v3c", "vuln_type": "unknown", "severity": "low"}
+    view3c = to_finding_view(node_unknown)
+    assert view3c["cwe"] is None, view3c["cwe"]
+    assert view3c["cvss_score"] == 3.0, view3c["cvss_score"]
 
     # object input (attribute access, no .get) must coerce cleanly
     class _Obj:
