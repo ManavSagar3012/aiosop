@@ -465,6 +465,12 @@ class Settings(BaseSettings):
     postgres_task_retention_days: int = 90
     postgres_session_retention_days: int = 30
     postgres_approval_retention_days: int = 90
+    # Phase-1 issue #15: session-state retention was hardcoded to 7 days in
+    # retention_service._cleanup_postgres. Operator-tunable like every other
+    # retention window; default 30 days matches the session retention window.
+    session_state_retention_days: int = Field(
+        default=30, validation_alias="OSOP_SESSION_STATE_RETENTION_DAYS"
+    )
     redis_hot_ttl_hours: int = 168  # 7 days
     redis_session_ttl_hours: int = (
         2  # Sprint 0: reduced from 24h to 2h to prevent stale engagement accumulation; 2h is enough for most engagements

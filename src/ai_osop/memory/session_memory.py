@@ -84,6 +84,15 @@ class OutboxORM(Base):
     payload = Column(JSON)
     processed = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Phase-1 issue #12: outbox had no retry counter / DLQ path, so a
+    # perpetually-failing entry re-attempted forever. attempt_count tracks
+    # how many times this entry has been processed; once it exceeds
+    # MAX_ATTEMPTS (default 10) the entry is marked dlq=True and the next
+    # processor tick emits a single dlq_full alert instead of looping.
+    # Defaults to 0 for backward compat with rows written by older code.
+    attempt_count = Column(Integer, default=0)
+    dlq = Column(Boolean, default=False, index=True)
+    last_error = Column(String(512), nullable=True)
 
 class SessionStateORM(Base):
     __tablename__ = "session_states"
@@ -115,6 +124,15 @@ class AuditLogORM(Base):
     context = Column(JSON)
     integrity_hash = Column(String(128))
     engagement_id = Column(String(64), index=True)
+    # Phase-1 issue #15: audit logs are now SOFT-deleted (archived=True) by the
+    # retention service instead of hard-deleted at a 7-day window. This keeps
+    # the row queryable for compliance audits while excluding it from active
+    # queries via the archived flag. Defaults to False for backward compat
+    # with rows written by older code; archived_at records when the soft-delete
+    # happened so an auditor can prove the log was retained past its retention
+    # window.
+    archived = Column(Boolean, default=False, index=True)
+    archived_at = Column(DateTime, nullable=True)
 
 
 class DLQEntryORM(Base):
@@ -1315,10 +1333,19 @@ class SessionMemory:
             await self._pg_engine.dispose()
 
     async def update_agent_heartbeat(self, agent_id: str, data: Dict[str, Any]) -> None:
-        """Update agent heartbeat with ownership and state."""
+        """Update agent heartbeat with ownership and state.
+
+        Phase-1 issue #13: TTL MUST match HeartbeatManager's ttl=30
+        (memory/heartbeat.py:13). The prior ttl=60 created a split-brain
+        where whichever writer ran last set the TTL, so a crashed agent's
+        heartbeat lingered between 30-60s non-deterministically and
+        ``get_all_agents`` could report it as "alive" for up to twice the
+        intended window. Single source of truth: 30s, matching the
+        HeartbeatManager default.
+        """
         if "last_seen" not in data:
             data["last_seen"] = datetime.utcnow().isoformat()
-        await self.store_hot(f"agent:heartbeat:{agent_id}", data, ttl=60)
+        await self.store_hot(f"agent:heartbeat:{agent_id}", data, ttl=30)
 
     async def get_agent_heartbeat(self, agent_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve agent heartbeat."""
