@@ -73,20 +73,39 @@ def _vuln_node_to_finding(v: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def _finding_exists(session_id: str, finding_id: str) -> bool:
+async def _finding_exists(session_id: str, finding_id: str, id_forms: List[str] | None = None) -> bool:
+    forms = id_forms or [session_id]
     records = await state["orchestrator"].graph_memory.run_read_query(
-        "MATCH (v:Vulnerability {id: $fid}) WHERE v.engagement_id = $sid RETURN v.id LIMIT 1",
-        {"fid": finding_id, "sid": session_id},
+        "MATCH (v:Vulnerability {id: $fid}) WHERE v.engagement_id IN $ids RETURN v.id LIMIT 1",
+        {"fid": finding_id, "ids": forms},
     )
     return bool(records)
+
+
+def _engagement_id_forms(session: Any, session_id: str) -> List[str]:
+    """Return every id form an engagement's nodes may be keyed under.
+
+    The URL carries either the FULL session_id (eng-{ts}-{eid}) or the SHORT
+    operator engagement_id; writers persist under one or the other. Match both so
+    a read never misses findings due to an id-form mismatch (AIOSOP-FINDINGS-KEY).
+    """
+    forms = [session_id]
+    scope_eid = getattr(getattr(session, "scope", None), "engagement_id", None)
+    if scope_eid:
+        forms.append(scope_eid)
+    sess_id = getattr(session, "session_id", None)
+    if sess_id:
+        forms.append(sess_id)
+    return list(dict.fromkeys(f for f in forms if f))
 
 
 @router.get("/{session_id}/findings")
 async def get_findings(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """All Vulnerability nodes for an engagement, shaped for the UI."""
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
+    forms = _engagement_id_forms(session, session_id)
     vuln_nodes = await state["orchestrator"].graph_memory.get_vulnerabilities_by_engagement(
-        session_id
+        *forms
     )
     return [_vuln_node_to_finding(n) for n in vuln_nodes]
 
@@ -151,12 +170,13 @@ async def get_report(session_id: str, operator: Dict[str, Any] = Depends(verify_
 @router.get("/{session_id}/diff-auth")
 async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Differential-authorization findings for an engagement."""
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
+    forms = _engagement_id_forms(session, session_id)
     cypher = (
-        "MATCH (d:DiffAuthFinding) WHERE d.engagement_id = $sid RETURN d ORDER BY d.created_at DESC"
+        "MATCH (d:DiffAuthFinding) WHERE d.engagement_id IN $ids RETURN d ORDER BY d.created_at DESC"
     )
     diff_records = await state["orchestrator"].graph_memory.run_read_query(
-        cypher, {"sid": session_id}
+        cypher, {"ids": forms}
     )
     out: List[Dict[str, Any]] = []
     for record in diff_records:
@@ -224,8 +244,9 @@ async def verify_finding(
     operator: Dict[str, Any] = Depends(require_role("senior_operator")),
 ):
     """Operator force-verify: mark the vulnerability validated in the graph."""
-    await assert_engagement_access(operator, session_id)
-    if not await _finding_exists(session_id, finding_id):
+    session = await assert_engagement_access(operator, session_id)
+    forms = _engagement_id_forms(session, session_id)
+    if not await _finding_exists(session_id, finding_id, forms):
         raise HTTPException(status_code=404, detail="Finding not found for this engagement")
     await state["orchestrator"].graph_memory.validate_vulnerability(finding_id)
     return {"status": "verified", "finding_id": finding_id, "session_id": session_id}
@@ -252,8 +273,9 @@ async def replay_finding(
     operator: Dict[str, Any] = Depends(require_role("senior_operator")),
 ):
     """Queue an exploit-validation (replay) task for a finding."""
-    await assert_engagement_access(operator, session_id)
-    if not await _finding_exists(session_id, finding_id):
+    session = await assert_engagement_access(operator, session_id)
+    forms = _engagement_id_forms(session, session_id)
+    if not await _finding_exists(session_id, finding_id, forms):
         raise HTTPException(status_code=404, detail="Finding not found for this engagement")
     task = Task(
         type="validate_exploit",
@@ -271,10 +293,11 @@ async def get_finding_vault(
     session_id: str, finding_id: str, operator: Dict[str, Any] = Depends(verify_token)
 ):
     """Assemble the evidence package for a finding."""
-    await assert_engagement_access(operator, session_id)
-    vuln_q = "MATCH (v:Vulnerability) WHERE v.id = $fid AND v.engagement_id = $sid RETURN v LIMIT 1"
+    session = await assert_engagement_access(operator, session_id)
+    forms = _engagement_id_forms(session, session_id)
+    vuln_q = "MATCH (v:Vulnerability) WHERE v.id = $fid AND v.engagement_id IN $ids RETURN v LIMIT 1"
     ev_q = (
-        "MATCH (ev:Evidence) WHERE ev.engagement_id = $sid "
+        "MATCH (ev:Evidence) WHERE ev.engagement_id IN $ids "
         "RETURN ev ORDER BY ev.created_at DESC LIMIT 100"
     )
     raw_requests: List[str] = []
@@ -283,7 +306,7 @@ async def get_finding_vault(
     workflow_trace: List[Dict[str, Any]] = []
 
     vrecs = await state["orchestrator"].graph_memory.run_read_query(
-        vuln_q, {"fid": finding_id, "sid": session_id}
+        vuln_q, {"fid": finding_id, "ids": forms}
     )
     if not vrecs:
         raise HTTPException(status_code=404, detail="Finding not found for this engagement")
@@ -304,7 +327,7 @@ async def get_finding_vault(
         else:
             raw_requests.append(str(it))
 
-    ev_records = await state["orchestrator"].graph_memory.run_read_query(ev_q, {"sid": session_id})
+    ev_records = await state["orchestrator"].graph_memory.run_read_query(ev_q, {"ids": forms})
     for record in ev_records:
         ev = dict(record.get("ev", {}))
         etype = (ev.get("type") or "").lower()

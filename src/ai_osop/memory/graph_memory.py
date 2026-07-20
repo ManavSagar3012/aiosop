@@ -1024,19 +1024,35 @@ class GraphMemory:
                 record = await result.single()
                 return dict(record) if record else {}
 
-    async def get_vulnerabilities_by_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
-        """Fetch all Vulnerability nodes for a given engagement."""
+    async def get_vulnerabilities_by_engagement(
+        self, engagement_id: str, *aliases: str
+    ) -> List[Dict[str, Any]]:
+        """Fetch all Vulnerability nodes for a given engagement.
+
+        AIOSOP-FINDINGS-KEY-2026-07-20: an engagement is addressable by two id forms
+        — the SHORT operator-supplied ``engagement_id`` (juice-e2e-xxx) and the FULL
+        generated ``session_id`` (eng-{timestamp}-juice-e2e-xxx). Different writers
+        persist Vulnerability.engagement_id under different forms (deterministic scan
+        uses scope.engagement_id; some agents use ctx.session_id), so a reader that
+        matches only ONE form silently returns 0 findings even though they exist.
+        Match ANY provided id form so retrieval is robust regardless of which key the
+        writer used. This mirrors the dual-key match already used by the phase monitor
+        (orchestrator.is_phase_complete).
+        """
+        ids = [i for i in (engagement_id, *aliases) if i]
+        # de-dupe while preserving order
+        ids = list(dict.fromkeys(ids))
         cypher = """
         MATCH (v:Vulnerability)
-        WHERE v.engagement_id = $engagement_id
+        WHERE v.engagement_id IN $ids
         RETURN v
         """
         with trace_span(
             "graph_memory.get_vulnerabilities_by_engagement",
-            attributes={"engagement_id": engagement_id},
+            attributes={"engagement_id": engagement_id, "id_forms": len(ids)},
         ):
             async with self._driver.session() as session:
-                result = await session.run(cypher, {"engagement_id": engagement_id})
+                result = await session.run(cypher, {"ids": ids})
                 records = await result.data()
                 return [record["v"] for record in records]
 
