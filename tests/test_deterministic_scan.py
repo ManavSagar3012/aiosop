@@ -434,3 +434,47 @@ async def test_bootstrap_seeds_present_api_endpoints():
     assert count == 2
     paths = {e.path for e in seeded}
     assert paths == {"/api/users", "/rest/products/search"}
+
+
+@pytest.mark.asyncio
+async def test_crawl_param_links_extracts_href_and_string_literals():
+    """_crawl_param_links must find parametrized links exposed two ways:
+      (a) classic HTML href/action attributes, and
+      (b) quoted path+query STRING LITERALS embedded for a JS framework
+          (e.g. "Gin":"/catalog?category=Gin") — how ginandjuice.shop exposes
+          its injectable ?category= surface. An attribute-only crawler misses (b).
+    A quoted string that is NOT a path+query (plain text, a bare path) must be
+    ignored so the extractor doesn't manufacture phantom endpoints."""
+
+    home = """
+    <html><body>
+      <a href="/blog/post?postId=3">a post</a>
+      <script>window.__NAV__ = {
+        "Gin":"/catalog?category=Gin",
+        "Accessories":"/catalog?category=Accessories",
+        "label":"just some text, not a url",
+        "bare":"/about"
+      };</script>
+    </body></html>
+    """
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        # Home carries the links; any followed sub-page is empty.
+        if req.url.path in ("", "/"):
+            return httpx.Response(200, text=home,
+                                  headers={"content-type": "text/html"})
+        return httpx.Response(200, text="<html></html>",
+                              headers={"content-type": "text/html"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), follow_redirects=True
+    ) as c:
+        links = await ds._crawl_param_links(c, "http://t")
+
+    by_path = {p: keys for p, _m, keys, _b in links}
+    # href-based param link found
+    assert "/blog/post" in by_path and by_path["/blog/post"] == ["postId"]
+    # string-literal param link found (the React case)
+    assert "/catalog" in by_path and by_path["/catalog"] == ["category"]
+    # non-URL string and paramless path must NOT become endpoints
+    assert not any(p not in ("/blog/post", "/catalog") for p in by_path)

@@ -868,7 +868,23 @@ async def _crawl_param_links(c, base: str) -> List[Tuple[str, str, List[str], bo
         html = (await c.get(base + "/")).text[:300000]
     except Exception:
         return []
-    hrefs.update(re.findall(r"""(?:href|action)=["']([^"']+)["']""", html))
+    # Two extraction passes per page:
+    #   (a) HTML href/action attributes — classic server-rendered links.
+    #   (b) quoted path+query STRING LITERALS — React/Angular apps embed their
+    #       navigation targets as JSON/JS strings (e.g.
+    #       "Gin":"/catalog?category=Gin"), never as href attributes, so a
+    #       purely attribute-based crawler misses the entire filtered surface.
+    #       This is exactly how ginandjuice.shop's injectable ?category= param is
+    #       exposed. Matching quoted "/path?param=..." literals is target-agnostic.
+    _ATTR_RE = r"""(?:href|action)=["']([^"']+)["']"""
+    _STR_URL_RE = r"""["'](/[A-Za-z0-9_\-./]+\?[A-Za-z0-9_\-=&%]+)["']"""
+
+    def _extract_links(text: str) -> List[str]:
+        found = re.findall(_ATTR_RE, text)
+        found += re.findall(_STR_URL_RE, text)
+        return found
+
+    hrefs.update(_extract_links(html))
     # one level deeper: follow same-origin non-param links to find param links within
     seed_pages = []
     for h in list(hrefs)[:40]:
@@ -880,7 +896,7 @@ async def _crawl_param_links(c, base: str) -> List[Tuple[str, str, List[str], bo
             sub = (await c.get(base + sp)).text[:200000]
         except Exception:
             continue
-        hrefs.update(re.findall(r"""(?:href|action)=["']([^"']+)["']""", sub))
+        hrefs.update(_extract_links(sub))
 
     seen: set = set()
     out: List[Tuple[str, str, List[str], bool]] = []
