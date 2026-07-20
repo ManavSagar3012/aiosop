@@ -137,10 +137,20 @@ async def detect_open_redirect(
     url: str,
     *,
     params: Optional[List[str]] = None,
+    allowlist_hints: Optional[List[str]] = None,
+    **_ignore: Any,
 ) -> Optional[Dict[str, Any]]:
     """Inject an off-origin sentinel into redirect-like params. VALIDATED only if
     the server answers 3xx with a Location resolving to the sentinel host (not our
-    target) — proving the redirect target is attacker-controlled."""
+    target) — proving the redirect target is attacker-controlled.
+
+    ``allowlist_hints`` are allow-listed URLs harvested from the target itself
+    (e.g. redirect literals in its JS bundle). Many real redirectors guard the
+    param with a *substring* allow-list; smuggling a hint as a query suffix of the
+    sentinel (``https://<sentinel>/?x=<hint>``) passes the filter while the browser
+    still lands on the sentinel host — the canonical allow-list bypass. The oracle
+    only fires on a sentinel-host Location, so a hardened allow-list that truly
+    redirects to the hint's host produces no false positive."""
     q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
     candidate_params = list(params or []) or list(q)
     # Prefer redirect-named params; if none exist, still try any present param.
@@ -151,9 +161,18 @@ async def detect_open_redirect(
     if not ranked:
         return None
 
+    # Base payloads + allow-list-bypass variants built from harvested hints.
+    payloads = list(_REDIRECT_PAYLOADS)
+    for hint in (allowlist_hints or [])[:4]:
+        if not hint:
+            continue
+        payloads.append(f"{_REDIRECT_SENTINEL}?x={hint}")   # sentinel host, hint as suffix
+        payloads.append(f"https://{_REDIRECT_SENTINEL_HOST}/?x={hint}")
+        payloads.append(f"https://{_REDIRECT_SENTINEL_HOST}/{hint}")
+
     # Follow_redirects MUST be off so we can read the raw Location header.
     for param in ranked:
-        for payload in _REDIRECT_PAYLOADS:
+        for payload in payloads:
             try:
                 target = _with_param(url, param, payload)
                 r = await client.get(target, follow_redirects=False)

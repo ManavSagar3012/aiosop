@@ -536,9 +536,14 @@ async def run_generalized_idor(
         seen: set = set()
         for url in id_endpoints[:30]:
             tgt = _sub_last_id(url, vid)
-            if tgt in seen:
+            # Dedupe by object identity, case-insensitively: /api/Users/54 and
+            # /api/users/54 hit the SAME object on case-insensitive routers, so
+            # they collapse to one graph node on write. Counting both inflates
+            # the reported total (persisted > readback). Normalize the key.
+            dedup = tgt.lower()
+            if dedup in seen:
                 continue
-            seen.add(tgt)
+            seen.add(dedup)
             try:
                 owner = await c.get(tgt, headers={"Authorization": f"Bearer {tok_v}"})
                 atk = await c.get(tgt, headers={"Authorization": f"Bearer {tok_a}"})
@@ -700,7 +705,38 @@ async def run_generalized_injection(
             if ev:
                 await _persist(ev)
 
-    return persisted, len(get_candidates) + len(xml_candidates)
+        # Dedicated open-redirect pass: redirectors often live outside /rest,/api
+        # (so they never enter get_candidates) and are guarded by substring
+        # allow-lists. Harvest the endpoint+param+allow-listed values from the
+        # target itself, then let the oracle build the allow-list bypass. The
+        # oracle still only fires on a sentinel-host Location — no false positives.
+        redir_examined = 0
+        base = None
+        for ep in eps:
+            u = ep.get("url")
+            if u:
+                from urllib.parse import urlparse as _up
+                pu = _up(u)
+                base = f"{pu.scheme}://{pu.netloc}"
+                break
+        if base:
+            try:
+                redirectors = await _harvest_redirectors(c, base)
+            except Exception:
+                redirectors = []
+            for rurl, param, hints in redirectors:
+                redir_examined += 1
+                try:
+                    ev = await asyncio.wait_for(
+                        detect_open_redirect(c, rurl, params=[param], allowlist_hints=hints),
+                        timeout=per_check_timeout,
+                    )
+                except Exception:
+                    continue
+                if ev:
+                    await _persist(ev)
+
+    return persisted, len(get_candidates) + len(xml_candidates) + redir_examined
 
 
 async def run_generalized_scan(
@@ -739,6 +775,60 @@ _COMMON_ENDPOINTS = [
     ("/api/products", "GET", [], False),
     ("/rest/user/authentication-details", "GET", [], False),
 ]
+
+
+async def _harvest_redirectors(c, base: str) -> List[Tuple[str, str, List[str]]]:
+    """Target-agnostic discovery of open-redirect surfaces. Redirect endpoints
+    frequently live OUTSIDE /rest and /api (e.g. /redirect, /out, /link) so the
+    api-path crawler misses them. Scan the base page + JS bundles for
+    ``?<redirect-param>=<url>`` literals, which serve double duty: they reveal the
+    endpoint+param AND, when the app guards the param with a substring allow-list,
+    they ARE the allow-listed values — exactly the hints the oracle needs to build
+    a bypass. Returns [(endpoint_url, param, allowlist_hints)].
+    """
+    import re
+    from urllib.parse import urlparse as _up
+
+    _RP = ("url", "redirect", "redir", "next", "return", "returnto", "return_to",
+           "returnurl", "goto", "dest", "destination", "continue", "to", "out", "link")
+    # match  [./]path?param=http(s)://value   inside a quote. Minified bundles emit
+    # relative hrefs ("./redirect?to=...") as often as absolute ones, so accept an
+    # optional leading "." / "./" and normalize it to a root-absolute path below.
+    rx = re.compile(
+        r"""["'`](\.?/[A-Za-z0-9_\-./]*)\?([A-Za-z_]+)=(https?%3[Aa]//|https?://)([^"'`\s&\\]+)"""
+    )
+    texts: List[str] = []
+    try:
+        html = (await c.get(base + "/")).text[:200000]
+        texts.append(html)
+        srcs = re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html)[:6]
+        for src in srcs:
+            u = src if src.startswith("http") else base + "/" + src.lstrip("/")
+            try:
+                texts.append((await c.get(u)).text[:600000])
+            except Exception:
+                continue
+    except Exception:
+        return []
+
+    from urllib.parse import unquote
+    agg: dict[Tuple[str, str], set] = {}
+    for t in texts:
+        for path, param, scheme, val in rx.findall(t):
+            if param.lower() not in _RP:
+                continue
+            path = "/" + path.lstrip("./")  # normalize "./redirect" -> "/redirect"
+            full = unquote(scheme.replace("%3A", ":").replace("%3a", ":") + val)
+            if not full.startswith(("http://", "https://")):
+                continue
+            # keep only OFF-origin allow-listed hints (an allow-list bypass needs a
+            # host the filter trusts that isn't the target itself)
+            try:
+                if _up(full).netloc and _up(full).netloc != _up(base).netloc:
+                    agg.setdefault((path, param), set()).add(full)
+            except Exception:
+                continue
+    return [(base + p, param, sorted(h)) for (p, param), h in agg.items()][:10]
 
 
 async def _crawl_api_paths(c, base: str) -> set:
