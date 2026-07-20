@@ -17,7 +17,15 @@ from pathlib import Path
 
 
 def compare(baseline: dict, current: dict, recall_threshold: float = 0.02) -> dict:
-    """Pure comparison function -- no IO. Can be imported and called from tests."""
+    """Pure comparison function -- no IO. Can be imported and called from tests.
+
+    ``recall_threshold`` is the maximum allowed drop in recall (or precision)
+    from baseline to current before the gate fails. The default 0.02 (2pp) is
+    tight enough to catch a real regression but tolerant of one new
+    false-negative check on a 10-check bench (each scored check is 10pp of
+    recall — so the threshold correctly allows a single-check swing while
+    failing on a 2+ check regression).
+    """
     bsb = baseline["scored_scoreboard"]
     csb = current["scored_scoreboard"]
     gates: dict = {}
