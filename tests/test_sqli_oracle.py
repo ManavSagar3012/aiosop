@@ -225,6 +225,92 @@ async def test_error_based_infers_param_from_query_string():
     assert "q" in captured["params"]
 
 
+@pytest.mark.asyncio
+async def test_error_based_replaces_existing_param_value_not_appends():
+    """Regression: when the URL already carries the target param, the payload must
+    REPLACE its value, not append a second copy. Appending yields
+    ?category=Gifts&category=<payload>, and backends that read the first copy see
+    the valid value and never error — the bug that hid injection on any endpoint
+    discovered WITH its param value (e.g. ginandjuice.shop /catalog?category=)."""
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        # multi_items preserves repeated keys so we can assert only ONE remains.
+        vals = req.url.params.get_list("category")
+        seen["vals"] = vals
+        # Only error when the SOLE category value is the syntax-broken one.
+        if len(vals) == 1 and vals[0].endswith("'"):
+            return httpx.Response(500, text="sqlite_error: unrecognized token")
+        return httpx.Response(200, text="ok")
+
+    async with _client(handler) as c:
+        ev = await sqli_oracle.detect_error_based(
+            c, "http://t/catalog?category=Gifts", param="category"
+        )
+    assert ev is not None
+    assert seen["vals"] == [seen["vals"][0]]  # exactly one value, not appended
+    assert len(seen["vals"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_error_based_confirms_on_status_differential_without_marker():
+    """A realistic app returns a GENERIC 500 (no DB string). Injection still shows
+    the three-point signature: baseline 200, break('  )->500, repair('-- -)->200.
+    This is the signal that made detection generalize to ginandjuice.shop."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        val = req.url.params.get("category", "")
+        # comment-repaired payload parses fine -> 200; bare quote breaks -> 500.
+        if val.endswith("'-- -") or val.endswith("'-- -".replace(" ", "+")):
+            return httpx.Response(200, text="<html>catalog</html>")
+        if val.endswith("'"):
+            return httpx.Response(500, text="<html>Internal Server Error</html>")
+        return httpx.Response(200, text="<html>catalog</html>")
+
+    async with _client(handler) as c:
+        ev = await sqli_oracle.detect_error_based(
+            c, "http://t/catalog?category=Gifts", param="category"
+        )
+    assert ev is not None
+    assert ev["technique"] == "error_based"
+    assert "status-differential" in ev["db_error_excerpt"]
+    assert ev["confidence"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_error_based_differential_rejects_break_without_repair():
+    """FP safety: a param that rejects the quote with a 500 but ALSO 500s on the
+    comment-repaired payload is generic input rejection, NOT injection — the
+    repair step must restore the baseline status or we do not confirm."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        val = req.url.params.get("category", "")
+        # Both the quote AND the repaired payload error -> not injectable.
+        if "'" in val:
+            return httpx.Response(500, text="<html>Internal Server Error</html>")
+        return httpx.Response(200, text="<html>catalog</html>")
+
+    async with _client(handler) as c:
+        ev = await sqli_oracle.detect_error_based(
+            c, "http://t/catalog?category=Gifts", param="category"
+        )
+    assert ev is None
+
+
+@pytest.mark.asyncio
+async def test_error_based_differential_rejects_stable_status():
+    """FP safety: if the quote does not change status (stays 200), no injection."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>catalog</html>")
+
+    async with _client(handler) as c:
+        ev = await sqli_oracle.detect_error_based(
+            c, "http://t/catalog?category=Gifts", param="category"
+        )
+    assert ev is None
+
+
 # --------------------------------------------------------------------------- #
 # detect_time_blind                                                            #
 # --------------------------------------------------------------------------- #

