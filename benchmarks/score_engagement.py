@@ -515,6 +515,19 @@ def score_findings(
     evidence_complete_count = sum(1 for m in matched if m.evidence_complete)
     evidence_completeness = evidence_complete_count / tp if tp else None
 
+    # R6 (2026-07-20): mock-mode disclosure. ``OSOP_MOCK_LLM=true`` redirects
+    # LLM completion calls to simulated mock templates, so an autonomous run
+    # produced under that flag is not real end-to-end detection — its scorecard
+    # must not be committable as a "real" benchmark. The scorer itself can't
+    # read the env var of a remote process, so it stamps the flag onto every
+    # scorecard it emits; CI then asserts the committed baseline was produced
+    # without mocks (see tests/test_benchmark_gates.py). A scorecard WITHOUT
+    # the field is treated as ``unknown`` (callers predating R6); a scorecard
+    # WITH ``mock_llm=True`` is honest-but-flagged, never silently inflated.
+    import os as _os
+
+    mock_llm = _os.environ.get("OSOP_MOCK_LLM", "").lower() in {"1", "true", "yes", "on"}
+
     return {
         "summary": {
             "manifest_positives": len(positives),
@@ -530,6 +543,10 @@ def score_findings(
             "recall": recall,
             "coverage": coverage,
             "evidence_completeness": evidence_completeness,
+            # Explicit mock-mode stamp so a scorecard cannot masquerade as a
+            # real-autonomous run. CI fails if a committed baseline carries
+            # ``mock_llm=true``.
+            "mock_llm": mock_llm,
         },
         "matched": [m.__dict__ for m in matched],
         "false_negatives": false_negatives,

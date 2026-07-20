@@ -81,6 +81,27 @@ def test_perfect_recall_when_all_positives_matched():
     assert s["coverage"] == 1.0
 
 
+def test_mock_llm_mode_is_stamped_onto_scorecard(monkeypatch):
+    """R6 (2026-07-20): the scorer stamps ``OSOP_MOCK_LLM`` onto every scorecard
+    so a mock-produced run cannot masquerade as a real-autonomous baseline.
+    CI asserts a committed baseline carries ``mock_llm=False``."""
+    monkeypatch.setenv("OSOP_MOCK_LLM", "true")
+    manifest = [_gt("JS-001", "SQLi", "/rest/user/login")]
+    findings = [_finding("f1", "sqli", "/rest/user/login")]
+    card = score_findings(findings, manifest)
+    assert card["summary"]["mock_llm"] is True
+
+
+def test_mock_llm_mode_false_when_unset(monkeypatch):
+    """Default (env unset) stamps ``mock_llm=False`` so a clean run's scorecard
+    is committable as a real baseline."""
+    monkeypatch.delenv("OSOP_MOCK_LLM", raising=False)
+    manifest = [_gt("JS-001", "SQLi", "/rest/user/login")]
+    findings = [_finding("f1", "sqli", "/rest/user/login")]
+    card = score_findings(findings, manifest)
+    assert card["summary"]["mock_llm"] is False
+
+
 def test_missing_positive_is_false_negative():
     manifest = [
         _gt("JS-001", "SQLi", "/rest/user/login"),

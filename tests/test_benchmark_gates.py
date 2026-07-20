@@ -145,3 +145,23 @@ def test_generalization_gate():
         f"Only {total_scored} ground-truth positive entries (TP+FN); "
         f"need >= 5 for a meaningful recall score"
     )
+
+
+def test_latest_bench_not_produced_under_mock_llm():
+    """R6 (2026-07-20): a committed benchmark baseline must not have been
+    produced under ``OSOP_MOCK_LLM=true``. The scorer stamps the flag onto the
+    scorecard; if the latest result carries ``mock_llm=true`` CI fails so a
+    mock-produced run cannot masquerade as a real capability baseline. Older
+    baseline files predating R6 lack the field — those are accepted (the flag
+    was always conceptually false before R6 added it explicitly)."""
+    result = _latest()
+    if result is None:
+        pytest.skip("No benchmark result files found")
+    sb = result["scored_scoreboard"]
+    # Field absent => pre-R6 baseline, treat as not-mock for back-compat.
+    if "mock_llm" not in sb:
+        return
+    assert sb["mock_llm"] is False, (
+        "latest benchmark baseline was produced under OSOP_MOCK_LLM=true; "
+        "re-run with mocks disabled before committing as a real baseline."
+    )
