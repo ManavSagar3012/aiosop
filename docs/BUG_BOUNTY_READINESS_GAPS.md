@@ -1,6 +1,6 @@
 # AIOSOP — Bug-Bounty Readiness Gap Report
 
-_Re-audited 2026-07-21 against branch `fix/mock-findings-honest-stub-tool-guard` @ `5f1cd7a9`, with the full stack live (Neo4j/Postgres/Redis/API + Juice Shop)._
+_Re-audited 2026-07-21 against branch `fix/mock-findings-honest-stub-tool-guard`, with the full stack live (Neo4j/Postgres/Redis/API + Juice Shop). Fixes independently verified 2026-07-21 @ `fdf763af` — full suite green + live end-to-end proof (see "Independent Verification" below and "How to verify" at the end)._
 
 **Method.** Seven parallel deep-dive auditors (one per subsystem), each finding cited to `file:line`, then an **adversarial verify pass** that re-opened every cited location and tried to *refute* each blocker/major before it survived here. Two dimensions (detector-quality, reporting) failed to return and were audited inline instead. Where a verifier corrected a severity, this report uses the corrected one. This supersedes the previous report, which was written against an earlier tree — the codebase has since changed materially (M1 governance landed on the deterministic path; the SSTI/CSRF detectors were reworked; five new testers were added).
 
@@ -19,6 +19,22 @@ All blockers, majors, and minors identified in the initial audit have been fixed
 - ✅ **MCP-readiness gate fails closed** — An empty MCP registry raises `WorkflowException` during VULNERABILITY_DISCOVERY phase entry.
 - ✅ **Temporal executor persists to Neo4j** — `_execute_task_durable` writes task terminal status to graph memory on all paths.
 - ✅ **Bench scorecard gate fails on missing data** — CI emits a `::warning` and creates an empty scorecard if the findings file is untracked, rather than silently passing with `recall=None`.
+
+---
+
+## Independent Verification (2026-07-21)
+
+The "resolved" claims above were independently re-verified against the code and by execution. That pass **confirmed most fixes but caught four issues the original claims missed**, which have since been fixed (commits `ca22d851`, `dc8df8d9`, `9a750f18`, `fdf763af`):
+
+1. **BLK-2 was incomplete.** The claim "0 raw `httpx.AsyncClient()` remain in agent files" was false — 5 agents (`attack_chain`, `cloud` ×2, `js_analyzer`, `mobile`, `stateful_logic`) still built raw ungoverned clients. Now genuinely 0 (grep-verified); `cloud_agent`'s intentionally off-scope probes are gated behind the fail-closed external-egress policy.
+2. **A governance regression:** `get_governed_client` accessed `self.ctx.scope` directly, raising `AttributeError` on any context without a `scope` attr — this crashed governed egress on those paths and was silently failing the SSTI/CSRF honesty tests. Fixed to use `getattr`.
+3. **A real code bug:** `recon_agent._active_crawl_target` referenced an undefined `payload` (`NameError`) that would crash the live agent crawler on every run. Fixed to read `max_pages` defensively from the task context.
+4. **Two hanging tests** (`test_time_blind_treats_sleep_timeout_as_evidence`, `test_swarm_identity_crawling`) that stalled the whole suite past 900s — the first assumed httpx enforces timeouts against `MockTransport` (it doesn't); the second still mocked `aiohttp` after the httpx migration. Both fixed; the swarm test now genuinely exercises the governed httpx crawl.
+
+**After those fixes, verification is clean:**
+
+- **Full test suite: `1345 passed, 26 skipped, 0 failed` in ~116s** (previously hung indefinitely). No masking skips beyond the documented infra/real-LLM gates.
+- **Live end-to-end against Juice Shop** (`benchmarks/live_e2e_governed_scan.py`): governed discovery seeded **34 endpoints** → governed scan persisted **7 findings (6 validated)** → round-tripped from Neo4j → rendered a bounty report with real multi-class findings (CRITICAL SQLi auth-bypass, CRITICAL JWT `alg:none`, HIGH error-based SQLi, 2× HIGH IDOR, MEDIUM open redirect). Governance held throughout (scope fail-closed — no out-of-scope egress).
 
 ---
 
@@ -44,7 +60,7 @@ All blockers, majors, and minors identified in the initial audit have been fixed
 | ID | Description | Resolution | Verification |
 |---|---|---|---|
 | **BLK-1** | Autonomous pipeline broken (canonical-id vs session-id key mismatch in `_sessions`) | `SessionDict` subclass resolves lookups by both `session_id` and canonical `engagement_id` | `test_transition_phase_by_canonical_id` passes; `_sessions.get(task.engagement_id)` and `transition_phase` exit code paths both work |
-| **BLK-2** | Agent fleet fires ~30 ungoverned httpx clients | Replaced all raw `httpx.AsyncClient()` with `self.get_governed_client()` in `vuln_agent.py` (8), `ssrf_agent.py` (1), `csrf_agent.py`, `ssti_agent.py`, `saml_agent.py`, `takeover_agent.py`, `graphql_agent.py`, `race_scanner.py`, `pollution_scanner.py`, `upload_scanner.py`; added `import httpx` to `base.py` for type annotation | Code search confirms 0 raw `httpx.AsyncClient()` remain in agent files; `_validate_task` enforces scope check |
+| **BLK-2** | Agent fleet fires ~30 ungoverned httpx clients | Migrated **all** agents to `self.get_governed_client()`: `vuln_agent` (8), `ssrf`, `csrf`, `ssti`, `saml`, `takeover`, `graphql`, `race_scanner`, `pollution_scanner`, `upload_scanner` (prior commit) **plus** `attack_chain`, `js_analyzer`, `mobile`, `stateful_logic`, `cloud_agent` (`ca22d851`). `cloud_agent`'s off-scope IMDS/bucket probes are gated behind the fail-closed `allow_external_liveness_probing` policy. `get_governed_client` hardened to tolerate a ctx without `scope` (`dc8df8d9`). | **grep confirms 0 raw `httpx.AsyncClient()` in `src/ai_osop/agents/`**; `_validate_task` enforces scope; 41 agent tests pass; live e2e egressed only in-scope |
 | **BLK-3** | Recon crawler bypasses governance via raw aiohttp | Replaced all `aiohttp.ClientSession` with governed `httpx.AsyncClient` from `self.get_governed_client()`; removed unused `import aiohttp` | Code search confirms 0 aiohttp references remain; response properties correctly use httpx text/encoding |
 
 ### Majors (7/7 resolved)
@@ -89,9 +105,64 @@ All blockers, majors, and minors identified in the initial audit have been fixed
 
 ## Remaining hardening opportunities (non-critical)
 
-The following were assessed as non-blocking for autonomous production use but noted for future hardening:
+None block submittable, in-policy findings. Remaining items are quality/coverage:
 
-- **`test_autonomous_reasoning.py` test timeout** — the slowest tests in this file can time out under the 120s pytest-timeout. This is a pre-existing test infrastructure issue, not a code defect.
-- **Pydantic V2 deprecation** — `engagement_state.py:9` uses class-based `config` which is deprecated in Pydantic V2. Schedule a migration.
+- **Live autonomous run still unproven end-to-end.** BLK-1 (auto phase-advance) is unit-proven and the *governed deterministic* pipeline is live-proven (see Independent Verification), but a full **autonomous** engagement driving itself recon→report through the phase monitor against a live target has not been run. That's the last confidence check before turning it loose.
+- **Autonomous LLM planning is exercised only in a gated CI job**, never in the default local suite (it's one of the 26 skips). Consider a small always-on smoke of the planning-loop parse path.
+- **`tests/test_report_completeness.py` is untracked** in the working tree — review and commit or remove.
+- **Pydantic V2 deprecation** — `engagement_state.py:9` uses class-based `config`; schedule a migration.
 
-No items remain that block submittable, in-policy bug-bounty findings produced autonomously or semi-autonomously against a real program.
+---
+
+## How to verify the work is done
+
+Run these from the repo root (`C:/Users/HP/OneDrive/Desktop/burp_mcp/ai-osop`). All should pass on a clean checkout with the stack up.
+
+**0. Bring the stack up** (Neo4j/Postgres/Redis + Juice Shop target):
+```bash
+docker compose up -d
+docker start juice-shop || docker run --rm -d -p 3000:3000 --name juice-shop bkimminich/juice-shop
+```
+
+**1. Full test suite — must be green, no hangs** (~2 min):
+```bash
+./.venv/Scripts/python.exe -m pytest tests/ -q --no-cov --timeout=30 -p no:cacheprovider
+# expect: "1345 passed, 26 skipped" (0 failed), completes in ~116s
+```
+
+**2. BLK-2 — zero ungoverned agent egress** (must print 0 and 0):
+```bash
+grep -rc "httpx.AsyncClient(" src/ai_osop/agents/*.py | grep -v ":0" | wc -l   # -> 0
+grep -c "aiohttp" src/ai_osop/agents/recon_agent.py                            # -> 0
+```
+
+**3. Governance behavior — scope fail-closed, header + per-request rate** (unit):
+```bash
+./.venv/Scripts/python.exe -m pytest tests/test_governed_client.py -q --no-cov
+# 8 passed: out-of-scope raises before egress; research header injected; per-request throttle
+```
+
+**4. BLK-1 — autonomous phase auto-advance** (unit):
+```bash
+./.venv/Scripts/python.exe -m pytest tests/test_orchestrator.py -q --no-cov
+# includes test_auto_advance_from_initialized_to_recon (SessionDict canonical-id lookup)
+```
+
+**5. Detector honesty — evidence-gated, no reflection false positives**:
+```bash
+./.venv/Scripts/python.exe -m pytest tests/test_ssti_csrf_honesty.py tests/test_deterministic_scan.py -q --no-cov
+```
+
+**6. Live end-to-end — governed discovery → scan → persist → report vs Juice Shop** (the real proof):
+```bash
+./.venv/Scripts/python.exe benchmarks/live_e2e_governed_scan.py --target http://localhost:3000
+# expect: "LIVE E2E PASSED" — endpoints discovered, >=1 validated finding persisted,
+#         report renders with real multi-class findings; scope held (no out-of-scope egress)
+```
+
+**7. Live governed-client proof — real ScopeEnforcer allows in-scope, blocks out-of-scope**:
+```bash
+./.venv/Scripts/python.exe -m ai_osop.safety.governed_client   # self-check: "governed_client self-check passed"
+```
+
+Green across 1–7 means every blocker/major is closed **and demonstrated against a live target**, not just asserted. The one thing steps 1–7 do NOT prove is a fully autonomous recon→report run (see hardening item #1).
