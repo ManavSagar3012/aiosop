@@ -902,20 +902,33 @@ class Orchestrator:
         # durable pending tasks still exist. Union by task id; the durable record wins
         # for status so a not-yet-hydrated pending task still blocks completion.
         #
-        # engagement_id resolution: the session key in _sessions is the FULL form
-        # (eng-{timestamp}-juice-e2e-xxx) but scripts and API callers often create
-        # tasks with only the SHORT form (juice-e2e-xxx). Match BOTH so the phase
-        # monitor correctly tracks tasks regardless of which form they carry.
+        # engagement_id resolution: the phase monitor now passes the CANONICAL
+        # engagement id (scope.engagement_id) into _is_phase_complete, and every
+        # task writer has been migrated to that same canonical form
+        # (AIOSOP-FINDINGS-KEY, 2026-07-20). So tasks carry a SINGLE engagement_id
+        # and we match on it directly — no more dual-form comparison.
+        #
+        # The legacy dual-key match is kept as a fallback for tasks written by
+        # older code paths (or recovered from Postgres warm store) that may still
+        # carry the FULL session_id form. Once every writer is migrated, the
+        # fallback branch never matches and can be removed.
         _session = self._sessions.get(session_id)
         _short_eid = _session.scope.engagement_id if _session else session_id
+        _full_sid = _session.session_id if _session else None
         by_id: Dict[str, Task] = {
             t.id: t
             for t in list(self.state.get_all_tasks().values())
-            if t.engagement_id == session_id or t.engagement_id == _short_eid
+            if t.engagement_id == session_id
+            or t.engagement_id == _short_eid
+            or (_full_sid is not None and t.engagement_id == _full_sid)
         }
         try:
             for t in await self.session_memory.load_all_active_tasks():
-                if t.engagement_id == session_id:
+                if (
+                    t.engagement_id == session_id
+                    or t.engagement_id == _short_eid
+                    or (_full_sid is not None and t.engagement_id == _full_sid)
+                ):
                     by_id[t.id] = t  # durable active task overrides/augments memory
         except Exception as e:
             logger.warning("is_phase_complete_durable_read_failed", error=str(e))

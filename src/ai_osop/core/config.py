@@ -83,6 +83,13 @@ class VulnClass(str, Enum):
     EXPOSED_SECRET = "exposed_secret"
     RACE_CONDITION = "race_condition"
     REQUEST_SMUGGLING = "request_smuggling"
+    PROTOTYPE_POLLUTION = "prototype_pollution"
+    FILE_UPLOAD = "file_upload"
+    NOSQL_INJECTION = "nosql_injection"
+    CACHE_POISONING = "cache_poisoning"
+    OPEN_REDIRECT = "open_redirect"
+    AI_MCP_SECURITY = "ai_mcp_security"
+    CLOUD_MISCONFIG = "cloud_misconfig"
     VULN_SCAN = "vuln_scan"
     GRAPHQL_SECURITY = "graphql_security"
     SERVERLESS_SECURITY = "serverless_security"
@@ -92,8 +99,6 @@ class VulnClass(str, Enum):
     THREAT_HUNTING = "threat_hunting"
     FORENSICS = "forensics"
     SAST_SINK = "sast_sink"
-
-
 TASK_SKILL_MAP = {
     "full_recon": ["recon", "subdomain_enum", "osint_recon"],
     "dns_enumeration": ["subdomain_enum"],
@@ -326,6 +331,19 @@ class Settings(BaseSettings):
     )
     research_header_value: str = Field(
         default="", validation_alias="OSOP_RESEARCH_HEADER_VALUE"
+    )
+    # AIOSOP-GOVERNED-EGRESS-002 (B2): bounty-safe per-target request rate for the
+    # governed scan client. The orchestrator's task-admission limiter defaults to
+    # 10 req/s/target — fine for internal throughput, but reads as an automated
+    # attack against a real program. Scan egress uses a dedicated, politer limiter
+    # at these values. 2 req/s with a small burst keeps a scan defensibly
+    # "manual-paced" while staying usable; raise per engagement if the program's
+    # rules of engagement explicitly permit faster scanning.
+    scan_target_rate_per_second: float = Field(
+        default=2.0, validation_alias="OSOP_SCAN_TARGET_RATE_PER_SECOND"
+    )
+    scan_target_burst: int = Field(
+        default=4, validation_alias="OSOP_SCAN_TARGET_BURST"
     )
     # Nuclei template scans run for minutes; the 30s default silently times them
     # out to zero findings, so give them a dedicated generous bound.

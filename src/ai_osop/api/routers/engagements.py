@@ -176,65 +176,74 @@ async def deterministic_scan(
     )
 
     gm = state["orchestrator"].graph_memory
+
+    # M1 governed egress: build ONE governance hook for this engagement and thread
+    # it through every target-traffic path (discovery, suite, generalized — authed
+    # and unauthenticated). The hook scope-checks each request (out-of-scope host
+    # raises before egress), throttles it via a dedicated bounty-safe rate limiter
+    # (B2 — politer than the orchestrator's task-admission limiter), and stamps the
+    # program research header. This is the single chokepoint that makes the whole
+    # scan defensibly in-policy.
+    from ai_osop.core.config import settings
+    from ai_osop.safety.governed_client import (
+        governance_hook,
+        research_header_from_settings,
+    )
+    from ai_osop.safety.rate_limiter import RateLimiter
+    from ai_osop.safety.scope import ScopeEnforcer
+
+    ghook = governance_hook(
+        scope=ScopeEnforcer(session.scope),
+        rate_limiter=RateLimiter(
+            target_rate=settings.scan_target_rate_per_second,
+            target_capacity=settings.scan_target_burst,
+        ),
+        research_header=research_header_from_settings(),
+    )
+
     seeded = 0
     if discover:
-        seeded = await bootstrap_discovery(base, engagement_id, gm)
+        seeded = await bootstrap_discovery(
+            base, engagement_id, gm, governance_hook=ghook
+        )
     persisted: list = []
     validated: list = []
     expected = 0
     # suite   = benchmark-proven checks (juice-shop-tuned, recall-scored)
     # discovered = general oracles driven off recon-discovered endpoints (any target)
     if mode in ("suite", "both"):
-        p, validated, expected = await run_deterministic_scan(base, engagement_id, gm)
+        p, validated, expected = await run_deterministic_scan(
+            base, engagement_id, gm, governance_hook=ghook
+        )
         persisted += p
     authenticated_as = None
     if mode in ("discovered", "both"):
         # Auth passthrough: if an auth_user label is supplied and a session was
         # captured for it, drive the generalized surface oracles through that
-        # authenticated SessionClient. We own the client here (async with) — the
-        # scan functions never close a client they did not open. Any resolution
-        # failure degrades to an unauthenticated scan rather than erroring.
+        # authenticated SessionClient (which carries the SAME governance hook, so
+        # authed probes are governed too). Any resolution failure degrades to an
+        # unauthenticated scan rather than erroring.
         store = state.get("session_store")
         sess_client = None
         if auth_user and store is not None:
             try:
                 usersession = await store.get_session_or_none(engagement_id, auth_user)
                 if usersession is not None:
-                    sess_client = store.as_user(engagement_id, auth_user, base_url=base)
+                    sess_client = store.as_user(
+                        engagement_id, auth_user, base_url=base, governance_hook=ghook
+                    )
             except Exception:
                 sess_client = None
         if sess_client is not None:
             async with sess_client as client:
                 authenticated_as = auth_user
                 gp, _examined = await run_generalized_scan(
-                    engagement_id, gm, client=client
+                    engagement_id, gm, client=client, governance_hook=ghook
                 )
         else:
-            # M1 governed egress: the unauthenticated surface scan runs through a
-            # governed httpx client so every probe is scope-checked per request,
-            # rate-limited per request, and stamped with the program research
-            # header. Passed via the existing client= seam (governs the SQLi /
-            # mass-assignment / injection surface oracles).
-            # ponytail: JWT/IDOR sub-scans build their own clients and are not yet
-            # governed; SessionClient (authed path) governance is the next M1 slice.
-            from ai_osop.safety.governed_client import (
-                governed_client,
-                research_header_from_settings,
+            gp, _examined = await run_generalized_scan(
+                engagement_id, gm, governance_hook=ghook
             )
-            from ai_osop.safety.scope import ScopeEnforcer
-
-            rl = getattr(state.get("orchestrator"), "rate_limiter", None)
-            async with governed_client(
-                scope=ScopeEnforcer(session.scope),
-                rate_limiter=rl,
-                research_header=research_header_from_settings(),
-                verify=False,
-                follow_redirects=True,
-                timeout=15,
-            ) as gclient:
-                gp, _examined = await run_generalized_scan(
-                    engagement_id, gm, client=gclient
-                )
         persisted += gp
     return {
         "status": "success",

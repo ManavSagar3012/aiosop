@@ -34,40 +34,54 @@ class PollutionScanner(BaseVulnerabilityAgent):
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute Prototype Pollution scan task."""
-        target_url = task.payload.get("url")
-        self.logger.info(f"Starting Pollution scan for {target_url}")
+        target_url = task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        if not target_url:
+            return {"status": "failed", "error": "url parameter is required"}
 
-        # 1. Fetch pollution payloads
-        engine = AdaptivePayloadEngine()
-        payloads = engine.get_payloads(VulnClass.UNKNOWN)  # No specific VulnClass
+        self.logger.info(f"Starting Prototype Pollution scan for {target_url}")
 
-        # 2. Inject payloads (simplified)
-        for payload_data in payloads:
-            # Probe target
-            # ...
+        try:
+            from ai_osop.core.prototype_pollution_tester import PrototypePollutionTester
+            tester = PrototypePollutionTester(timeout_seconds=15.0)
+            findings = await tester.scan_endpoint(target_url)
 
-            # 3. Verify
-            if False:  # Placeholder
+            created_vulns = []
+            for f in findings:
                 vuln = Vulnerability(
-                    vuln_type=VulnClass.VULN_SCAN,
+                    vuln_type=VulnClass.PROTOTYPE_POLLUTION,
                     severity=Severity.HIGH,
-                    title=f"Prototype Pollution on {target_url}",
-                    description=f"Prototype pollution vulnerability detected at {target_url}.",
+                    title=f"Prototype Pollution ({f.technique}) on {target_url}",
+                    description=(
+                        f"Prototype pollution confirmed via {f.technique} technique at {target_url}. "
+                        f"Parameter '{f.parameter}' allowed mutation of Object.prototype."
+                    ),
                     evidence=[
                         {
                             "type": "prototype_pollution",
-                            "url": target_url,
-                            "payload": payload_data,
+                            "technique": f.technique,
+                            "parameter": f.parameter,
+                            "evidence": f.evidence,
                         }
                     ],
                     tool_source="pollution_scanner",
-                    confidence=0.8,
+                    confidence=0.95,
+                    validated=True,
                     engagement_id=task.engagement_id,
                 )
                 await self.persist_finding(vuln)
-                return {"status": "vulnerable", "vulnerability": vuln.model_dump()}
+                created_vulns.append(vuln.model_dump())
 
-        return {
-            "status": "success",
-            "message": "Pollution scan completed, no vulnerabilities found.",
-        }
+            if created_vulns:
+                return {
+                    "status": "vulnerable",
+                    "findings_count": len(created_vulns),
+                    "vulnerabilities": created_vulns,
+                }
+
+            return {
+                "status": "success",
+                "message": "Pollution scan completed, no prototype pollution vulnerabilities confirmed.",
+            }
+        except Exception as e:
+            self.logger.error("pollution_scan_failed", url=target_url, error=str(e))
+            return {"status": "failed", "error": str(e)}

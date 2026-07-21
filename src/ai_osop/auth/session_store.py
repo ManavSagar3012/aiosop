@@ -477,7 +477,10 @@ class SessionStore:
     # -- as_user context manager ----------------------------------------------
 
     @asynccontextmanager
-    async def as_user(self, engagement_id: str, user_label: str, *, base_url: str = ""):
+    async def as_user(
+        self, engagement_id: str, user_label: str, *, base_url: str = "",
+        governance_hook: Any = None,
+    ):
         """Yield a SessionClient pre-configured with the user's credentials.
 
         Usage:
@@ -487,6 +490,10 @@ class SessionStore:
         Auto-persists any new cookies the response Set-Cookie-d back to us.
         If the captured session includes a ``refresh_token``, the client will
         automatically attempt a credential refresh on 401/403 responses.
+
+        ``governance_hook`` (M1), when supplied, is attached to the yielded
+        client so every authenticated request is scope-checked, rate-limited,
+        and research-tagged.
         """
         from ai_osop.auth.session_client import SessionClient  # lazy to break cycle
 
@@ -520,6 +527,7 @@ class SessionStore:
             base_url=base_url,
             store=self,
             token_refresh_callback=callback if sess.refresh_token else None,
+            governance_hook=governance_hook,
         )
         try:
             yield client

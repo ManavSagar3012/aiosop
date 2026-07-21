@@ -90,7 +90,7 @@ async def test_cloud_agent_probe_metadata(agent) -> None:
 
     result = await agent._execute(task)
     assert result["status"] == "success"
-    assert "Metadata probing initialized" in result["msg"]
+    assert "Cloud metadata probing complete" in result["msg"]
 
 
 @pytest.mark.asyncio

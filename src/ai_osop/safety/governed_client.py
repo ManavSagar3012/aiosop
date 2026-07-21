@@ -68,26 +68,25 @@ def research_header_from_settings() -> Optional[Tuple[str, str]]:
     return (name, value)
 
 
-def governed_client(
+def governance_hook(
     *,
     scope: Optional[Any] = None,
     rate_limiter: Optional[Any] = None,
     research_header: Optional[Tuple[str, str]] = None,
     tool: str = "scan",
-    **httpx_kwargs: Any,
-) -> httpx.AsyncClient:
-    """Return an ``httpx.AsyncClient`` that enforces scope + rate + header + audit.
+):
+    """Build the async httpx request event-hook that enforces the four guarantees.
 
-    - ``scope``:          a ScopeEnforcer (anything with ``host_in_scope(host)->bool``).
-                          Out-of-scope host raises OutOfScopeError before egress.
-    - ``rate_limiter``:   anything with ``async acquire(target=, tool=)``. Called
+    Returned so it can be attached to ANY httpx client (the ``governed_client``
+    factory below, a ``SessionClient``'s internal client, a per-scan client built
+    inside the oracle path) — one hook, applied everywhere target traffic egresses.
+
+    - ``scope``:          object with ``host_in_scope(host)->bool``. Out-of-scope
+                          host raises OutOfScopeError before egress (fail closed).
+    - ``rate_limiter``:   object with ``async acquire(target=, tool=)``. Called
                           once per request (per-request throttle, not per-task).
     - ``research_header`` (name, value) injected on every request.
     - ``tool``:           label passed to the rate limiter for per-tool buckets.
-    - ``**httpx_kwargs``: passed straight to httpx.AsyncClient (verify, timeout, ...).
-
-    Any existing ``event_hooks={"request": [...]}`` the caller passes is preserved;
-    the governance hook is appended so caller hooks still run.
     """
 
     async def _govern_request(request: httpx.Request) -> None:
@@ -100,7 +99,7 @@ def governed_client(
                 host, request.method,
             )
             raise OutOfScopeError(
-                f"governed_client blocked out-of-scope host: {host!r} "
+                f"governed egress blocked out-of-scope host: {host!r} "
                 f"({request.method} {request.url})"
             )
 
@@ -121,12 +120,47 @@ def governed_client(
             rate_limiter is not None, research_header is not None,
         )
 
-    hooks = dict(httpx_kwargs.pop("event_hooks", {}) or {})
-    request_hooks = list(hooks.get("request", []))
-    request_hooks.append(_govern_request)
-    hooks["request"] = request_hooks
+    return _govern_request
 
-    return httpx.AsyncClient(event_hooks=hooks, **httpx_kwargs)
+
+def attach_governance(httpx_kwargs: dict, hook) -> dict:
+    """Return a copy of ``httpx_kwargs`` with ``hook`` appended to request hooks.
+
+    Small shared helper so every client-build site attaches governance the same
+    way (preserving any caller-supplied request hooks). ``hook=None`` is a no-op
+    passthrough, so call sites can attach unconditionally.
+    """
+    kwargs = dict(httpx_kwargs)
+    if hook is None:
+        return kwargs
+    hooks = dict(kwargs.pop("event_hooks", {}) or {})
+    request_hooks = list(hooks.get("request", []))
+    request_hooks.append(hook)
+    hooks["request"] = request_hooks
+    kwargs["event_hooks"] = hooks
+    return kwargs
+
+
+def governed_client(
+    *,
+    scope: Optional[Any] = None,
+    rate_limiter: Optional[Any] = None,
+    research_header: Optional[Tuple[str, str]] = None,
+    tool: str = "scan",
+    **httpx_kwargs: Any,
+) -> httpx.AsyncClient:
+    """Return an ``httpx.AsyncClient`` whose request hook enforces scope + rate +
+    header + audit. Drop-in for ``httpx.AsyncClient(...)``; with all guards omitted
+    it behaves identically, so migrating a call site is never a regression.
+
+    Any existing ``event_hooks={"request": [...]}`` the caller passes is preserved;
+    the governance hook is appended so caller hooks still run.
+    """
+    hook = governance_hook(
+        scope=scope, rate_limiter=rate_limiter,
+        research_header=research_header, tool=tool,
+    )
+    return httpx.AsyncClient(**attach_governance(httpx_kwargs, hook))
 
 
 if __name__ == "__main__":

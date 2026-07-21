@@ -34,40 +34,52 @@ class SmugglingScanner(BaseVulnerabilityAgent):
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute HTTP Request Smuggling scan task."""
-        target_url = task.payload.get("url")
-        self.logger.info(f"Starting Smuggling scan for {target_url}")
+        target_url = task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        if not target_url:
+            return {"status": "failed", "error": "url parameter is required"}
 
-        # 1. Fetch smuggling payloads
-        engine = AdaptivePayloadEngine()
-        payloads = engine.get_payloads(VulnClass.REQUEST_SMUGGLING)
+        self.logger.info(f"Starting Request Smuggling scan for {target_url}")
 
-        # 2. Inject payloads into URL parameters/POST bodies (simplified)
-        for payload_data in payloads:
-            # Probe target with payload_data
-            # ...
+        try:
+            from urllib.parse import urlparse
+            from ai_osop.core.smuggle_probe import probe_desync
 
-            # 3. Verify smuggling (simplified check)
-            if False:  # Placeholder for detection logic
+            parsed = urlparse(target_url)
+            host = parsed.hostname or target_url
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            use_tls = parsed.scheme == "https"
+            path = parsed.path or "/"
+
+            res = probe_desync(host=host, port=port, use_tls=use_tls, path=path)
+            if res.get("vulnerable"):
+                technique = res.get("technique", "HTTP Desync")
                 vuln = Vulnerability(
                     vuln_type=VulnClass.REQUEST_SMUGGLING,
                     severity=Severity.HIGH,
-                    title=f"HTTP Request Smuggling on {target_url}",
-                    description=f"HTTP Request Smuggling vulnerability detected at {target_url}.",
+                    title=f"HTTP Request Smuggling ({technique}) on {host}",
+                    description=f"HTTP Request Smuggling vulnerability confirmed via timing desync probe at {target_url}.",
                     evidence=[
                         {
                             "type": "request_smuggling",
-                            "url": target_url,
-                            "payload": payload_data,
+                            "technique": technique,
+                            "host": host,
+                            "baseline_ms": res.get("baseline_ms"),
+                            "probe_ms": res.get("probe_ms"),
                         }
                     ],
                     tool_source="smuggling_scanner",
-                    confidence=0.8,
+                    confidence=0.95,
+                    validated=True,
                     engagement_id=task.engagement_id,
                 )
                 await self.persist_finding(vuln)
-                return {"status": "vulnerable", "vulnerability": vuln.model_dump()}
+                return {"status": "vulnerable", "vulnerability": vuln.model_dump(), "probe_result": res}
 
-        return {
-            "status": "success",
-            "message": "Smuggling scan completed, no vulnerabilities found.",
-        }
+            return {
+                "status": "success",
+                "message": "Smuggling scan completed, no HTTP desync vulnerability detected.",
+                "probe_result": res,
+            }
+        except Exception as e:
+            self.logger.error("smuggling_scan_failed", url=target_url, error=str(e))
+            return {"status": "failed", "error": str(e)}

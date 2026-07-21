@@ -159,6 +159,16 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_ssrf_metadata_chain(payload)
         elif task_type == "request_smuggling_scan":
             return await self._execute_request_smuggling_scan(payload)
+        elif task_type == "oauth_reset_scan":
+            return await self._execute_oauth_reset_scan(payload)
+        elif task_type == "open_redirect_scan":
+            return await self._execute_open_redirect_scan(payload)
+        elif task_type == "nosql_scan":
+            return await self._execute_nosql_scan(payload)
+        elif task_type == "cache_poisoning_scan":
+            return await self._execute_cache_poisoning_scan(payload)
+        elif task_type == "ai_mcp_scan":
+            return await self._execute_ai_mcp_scan(payload)
         elif task_type == "correlate_findings":
             return await self._execute_correlation(payload)
         elif task_type == "triage_finding":
@@ -2099,6 +2109,198 @@ class VulnAnalysisAgent(BaseAgent):
             "findings": [v.model_dump() for v in minted],
         }
 
+    async def _execute_oauth_reset_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from ai_osop.core.oauth_reset_tester import OAuthResetTester
+        target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
+        if not target_url:
+            raise AgentException("oauth_reset_scan requires 'url' or 'target' in payload")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        )
+
+        tester = OAuthResetTester(timeout_seconds=15.0)
+        findings = []
+        if "oauth" in target_url.lower() or "authorize" in target_url.lower():
+            findings.extend(await tester.scan_oauth_endpoint(target_url))
+        else:
+            findings.extend(await tester.scan_password_reset_endpoint(target_url))
+
+        minted: List[Vulnerability] = []
+        for f in findings:
+            if not f.confirmed:
+                continue
+            vuln = Vulnerability(
+                vuln_type=VulnClass.OAUTH2 if "oauth" in f.vuln_type else VulnClass.BROKEN_ACCESS_CONTROL,
+                severity=Severity.HIGH if f.severity == "HIGH" else Severity.MEDIUM,
+                title=f.title,
+                description=f.description,
+                evidence=[f.evidence],
+                tool_source="oauth_reset_scan",
+                confidence=f.confidence,
+                validated=True,
+                engagement_id=engagement_id,
+            )
+            await self.persist_finding(vuln)
+            minted.append(vuln)
+
+        return {
+            "status": "success",
+            "tool": "oauth_reset_scan",
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
+    async def _execute_open_redirect_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from ai_osop.core.open_redirect_tester import OpenRedirectTester
+        target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
+        if not target_url:
+            raise AgentException("open_redirect_scan requires 'url' or 'target' in payload")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        )
+
+        tester = OpenRedirectTester(timeout_seconds=10.0)
+        results = await tester.scan_endpoint(target_url)
+
+        minted: List[Vulnerability] = []
+        for r in results:
+            if not r.confirmed:
+                continue
+            vuln = Vulnerability(
+                vuln_type=VulnClass.OPEN_REDIRECT,
+                severity=Severity.MEDIUM,
+                title=f"Open Redirect Vulnerability on param '{r.param}'",
+                description=f"Open redirect confirmed at {r.target_url}. Parameter '{r.param}' accepted '{r.payload}' and redirected to '{r.redirect_location}'.",
+                evidence=[r.evidence],
+                tool_source="open_redirect_scan",
+                confidence=0.95,
+                validated=True,
+                engagement_id=engagement_id,
+            )
+            await self.persist_finding(vuln)
+            minted.append(vuln)
+
+        return {
+            "status": "success",
+            "tool": "open_redirect_scan",
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
+    async def _execute_nosql_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from ai_osop.core.nosql_tester import NoSQLTester
+        target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
+        if not target_url:
+            raise AgentException("nosql_scan requires 'url' or 'target' in payload")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        )
+
+        tester = NoSQLTester(timeout_seconds=10.0)
+        json_body = payload.get("json_body") or payload.get("body")
+        results = await tester.scan_json_endpoint(target_url, json_body=json_body)
+
+        minted: List[Vulnerability] = []
+        for r in results:
+            if not r.confirmed:
+                continue
+            vuln = Vulnerability(
+                vuln_type=VulnClass.NOSQL_INJECTION,
+                severity=Severity.HIGH,
+                title=f"NoSQL Injection ({r.technique}) on param '{r.param}'",
+                description=f"NoSQL injection vulnerability confirmed at {r.target_url} using operator payload {r.payload}.",
+                evidence=[r.evidence],
+                tool_source="nosql_scan",
+                confidence=0.95,
+                validated=True,
+                engagement_id=engagement_id,
+            )
+            await self.persist_finding(vuln)
+            minted.append(vuln)
+
+        return {
+            "status": "success",
+            "tool": "nosql_scan",
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
+    async def _execute_cache_poisoning_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from ai_osop.core.cache_poisoning_tester import CachePoisoningTester
+        target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
+        if not target_url:
+            raise AgentException("cache_poisoning_scan requires 'url' or 'target' in payload")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        )
+
+        tester = CachePoisoningTester(timeout_seconds=10.0)
+        results = await tester.scan_cache_poisoning(target_url)
+        if payload.get("profile_url"):
+            results.extend(await tester.scan_cache_deception(payload["profile_url"]))
+
+        minted: List[Vulnerability] = []
+        for r in results:
+            if not r.confirmed:
+                continue
+            vuln = Vulnerability(
+                vuln_type=VulnClass.CACHE_POISONING,
+                severity=Severity.HIGH,
+                title=f"Web Cache Vulnerability ({r.technique}) at {target_url}",
+                description=f"Cache vulnerability ({r.technique}) confirmed at {r.target_url}.",
+                evidence=[r.evidence],
+                tool_source="cache_poisoning_scan",
+                confidence=0.95,
+                validated=True,
+                engagement_id=engagement_id,
+            )
+            await self.persist_finding(vuln)
+            minted.append(vuln)
+
+        return {
+            "status": "success",
+            "tool": "cache_poisoning_scan",
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
+    async def _execute_ai_mcp_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from ai_osop.core.ai_mcp_tester import AIMCPTester
+        target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
+        if not target_url:
+            raise AgentException("ai_mcp_scan requires 'url' or 'target' in payload")
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        )
+
+        tester = AIMCPTester(timeout_seconds=15.0)
+        results = await tester.scan_llm_endpoint(target_url, input_param=payload.get("input_param", "prompt"))
+
+        minted: List[Vulnerability] = []
+        for r in results:
+            if not r.confirmed:
+                continue
+            vuln = Vulnerability(
+                vuln_type=VulnClass.AI_MCP_SECURITY,
+                severity=Severity.HIGH,
+                title=f"AI Prompt Injection Vulnerability ({r.technique}) on {target_url}",
+                description=f"Prompt injection vulnerability confirmed at {target_url}. Canary marker '{r.canary_marker}' was reflected.",
+                evidence=[r.evidence],
+                tool_source="ai_mcp_scan",
+                confidence=0.98,
+                validated=True,
+                engagement_id=engagement_id,
+            )
+            await self.persist_finding(vuln)
+            minted.append(vuln)
+
+        return {
+            "status": "success",
+            "tool": "ai_mcp_scan",
+            "findings_count": len(minted),
+            "findings": [v.model_dump() for v in minted],
+        }
+
     async def _execute_websocket_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Confirm WebSocket flaws (CSWSH / missing-auth / cleartext) with
         WebSocketTester. Each oracle only confirms on objective server behaviour
@@ -2956,11 +3158,22 @@ class VulnAnalysisAgent(BaseAgent):
 
         matched_at = finding.get("matched-at") or finding.get("matched_at")
         extracted = finding.get("extracted-results") or finding.get("extracted_results")
+        tags_str = str(info.get("tags") or "").lower()
+        is_cve_template = template_id.lower().startswith("cve-") or "cve" in tags_str
+
+        calculated_severity = severity_map.get(severity_str, Severity.INFO)
+        calculated_confidence = 0.90 if finding.get("matcher-name") else 0.75
+
+        # Demote CVE templates out of the primary bounty path to eliminate duplicate noise
+        if is_cve_template:
+            calculated_confidence = min(calculated_confidence, 0.30)
+            if calculated_severity in (Severity.CRITICAL, Severity.HIGH):
+                calculated_severity = Severity.LOW
 
         return Vulnerability(
             cwe=cwe,
             vuln_type=vuln_type,
-            severity=severity_map.get(severity_str, Severity.INFO),
+            severity=calculated_severity,
             title=info.get("name", "Unknown"),
             description=info.get("description", ""),
             evidence=[
@@ -2972,12 +3185,14 @@ class VulnAnalysisAgent(BaseAgent):
                     "request": finding.get("request"),
                     "response": finding.get("response"),
                     "extracted_results": extracted,
+                    "cve_demoted": is_cve_template,
                 }
             ],
             tool_source="nuclei",
             endpoint_id=finding.get("endpoint_id"),
-            confidence=0.90 if finding.get("matcher-name") else 0.75,
-            exploitability="high" if severity_str in ("critical", "high") else "medium",
+            confidence=calculated_confidence,
+            validated=False,
+            exploitability="low" if is_cve_template else ("high" if severity_str in ("critical", "high") else "medium"),
             engagement_id="",
         )
 

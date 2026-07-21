@@ -216,7 +216,12 @@ class PhaseMonitor:
 
     async def _auto_advance_phase(self, session: SessionState) -> None:
         """Evaluate and advance the phase for a single session if tasks are complete."""
-        session_id = session.session_id
+        # AIOSOP-FINDINGS-KEY (2026-07-20): use the CANONICAL engagement id for
+        # all phase-tracking + task-keying. Tasks are now written under
+        # scope.engagement_id (see _on_phase_enter below), and _is_phase_complete
+        # matches on this single form, so the dual-key workaround in the
+        # orchestrator's phase gate is no longer exercised in the steady state.
+        session_id = session.canonical_engagement_id
         phase = EngagementPhase(session.phase)
         policy = self._orch.PHASE_POLICY.get(phase)
 
@@ -246,7 +251,7 @@ class PhaseMonitor:
                     priority=5,
                     agent_type=AgentType.RECON,
                     payload={"domain": domain, "scope": session.scope.model_dump()},
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                 )
                 await self._orch.task_scheduler.schedule_task(task)
 
@@ -285,12 +290,12 @@ class PhaseMonitor:
                         priority=5,
                         agent_type=AgentType.WORKFLOW,
                         payload={
-                            "engagement_id": session.session_id,
+                            "engagement_id": session.canonical_engagement_id,
                             "user_label": f"guest-{dom_slug}",
                             "url": surface_url,
                             "scope_hosts": scope_hosts,
                         },
-                        engagement_id=session.session_id,
+                        engagement_id=session.canonical_engagement_id,
                         timeout_seconds=300,
                     )
                     await self._orch.task_scheduler.schedule_task(xhr_task)
@@ -338,7 +343,7 @@ class PhaseMonitor:
                             priority=6,
                             agent_type=AgentType.WORKFLOW,
                             payload={
-                                "engagement_id": session.session_id,
+                                "engagement_id": session.canonical_engagement_id,
                                 "register_url": surface_url.rstrip("/") + "/#/register",
                                 "credentials": {
                                     "email": reg_email,
@@ -348,7 +353,7 @@ class PhaseMonitor:
                                 "user_label": f"recon-probe-{dom_slug}-{_suffix}",
                                 "scope_hosts": scope_hosts,
                             },
-                            engagement_id=session.session_id,
+                            engagement_id=session.canonical_engagement_id,
                             timeout_seconds=180,
                         )
                         await self._orch.task_scheduler.schedule_task(reg_task)
@@ -360,7 +365,7 @@ class PhaseMonitor:
                             priority=5,
                             agent_type=AgentType.WORKFLOW,
                             payload={
-                                "engagement_id": session.session_id,
+                                "engagement_id": session.canonical_engagement_id,
                                 "login_url": surface_url.rstrip("/") + "/#/login",
                                 "credentials": {
                                     "email": reg_email,
@@ -369,7 +374,7 @@ class PhaseMonitor:
                                 "user_label": f"recon-auth-{dom_slug}-{_suffix}",
                                 "scope_hosts": scope_hosts,
                             },
-                            engagement_id=session.session_id,
+                            engagement_id=session.canonical_engagement_id,
                             dependencies=[reg_task.id],
                             timeout_seconds=180,
                         )
@@ -380,7 +385,7 @@ class PhaseMonitor:
                 else None
             )
             await self._orch.engagement_manager.ensure_authenticated_discovery(
-                session.session_id, url_hint=url_hint
+                session.canonical_engagement_id, url_hint=url_hint
             )
 
         elif phase == EngagementPhase.VULNERABILITY_DISCOVERY:
@@ -396,7 +401,7 @@ class PhaseMonitor:
             assets: List[str] = []
             asset_records = await self._orch.graph_memory.run_read_query(
                 "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain",
-                {"sid": session.session_id},
+                {"sid": session.canonical_engagement_id},
             )
             for record in asset_records:
                 domain = record.get("domain")
@@ -409,7 +414,7 @@ class PhaseMonitor:
                     priority=7,
                     agent_type=AgentType.VULN_ANALYSIS,
                     payload={"url": self._orch.engagement_manager._domain_to_url(domain)},
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                     timeout_seconds=600,
                 )
                 await self._orch.task_scheduler.schedule_task(burp_task)
@@ -426,7 +431,7 @@ class PhaseMonitor:
                    WHERE e.status_code IS NOT NULL
                    RETURN e.url AS url, e.method AS method,
                           e.status_code AS status_code, e.technologies AS technologies""",
-                {"sid": session.session_id},
+                {"sid": session.canonical_engagement_id},
             )
             for r in endpoint_records:
                 if r.get("url"):
@@ -457,7 +462,7 @@ class PhaseMonitor:
                             "severity": "critical,high,medium",
                             "batch_index": i,
                         },
-                        engagement_id=session.session_id,
+                        engagement_id=session.canonical_engagement_id,
                         timeout_seconds=settings.nuclei_mcp_timeout + 120,
                     )
                     await self._orch.task_scheduler.schedule_task(nuclei_task)
@@ -471,7 +476,7 @@ class PhaseMonitor:
                             "targets": [self._orch.engagement_manager._domain_to_url(domain)],
                             "severity": "critical,high,medium",
                         },
-                        engagement_id=session.session_id,
+                        engagement_id=session.canonical_engagement_id,
                         timeout_seconds=settings.nuclei_mcp_timeout + 120,
                     )
                     await self._orch.task_scheduler.schedule_task(nuclei_task)
@@ -504,7 +509,7 @@ class PhaseMonitor:
                           coalesce(e.has_body, false) AS has_body,
                           coalesce(e.body_schema_keys, []) AS body_keys,
                           coalesce(e.content_type, '') AS content_type""",
-                {"sid": session.session_id},
+                {"sid": session.canonical_engagement_id},
             )
 
             # Build a mapping of url -> list of technologies
@@ -540,7 +545,7 @@ class PhaseMonitor:
                         action={"reason": "no_observed_query_parameters"},
                         result={"scheduled": 0},
                         context={"parametrized_endpoint_records": len(param_endpoint_records)},
-                        engagement_id=session.session_id,
+                        engagement_id=session.canonical_engagement_id,
                     )
                 )
 
@@ -606,7 +611,7 @@ class PhaseMonitor:
                     priority=8,
                     agent_type=AgentType.VULN_ANALYSIS,
                     payload=sqli_payload,
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                     timeout_seconds=self.SQLI_TASK_TIMEOUT_SECONDS,
                 )
                 await self._orch.task_scheduler.schedule_task(sqli_task)
@@ -616,7 +621,7 @@ class PhaseMonitor:
                     priority=8,
                     agent_type=AgentType.VULN_ANALYSIS,
                     payload={"url": target_url, "method": target_method},
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                     timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
                 )
                 await self._orch.task_scheduler.schedule_task(xss_task)
@@ -656,7 +661,7 @@ class PhaseMonitor:
                             priority=8,
                             agent_type=scanner_type,
                             payload={"url": target_url, "method": target_method},
-                            engagement_id=session.session_id,
+                            engagement_id=session.canonical_engagement_id,
                             timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
                         )
                         await self._orch.task_scheduler.schedule_task(task)
@@ -679,7 +684,7 @@ class PhaseMonitor:
                    RETURN e.url AS url, coalesce(e.method, 'POST') AS method,
                           coalesce(e.content_type, '') AS content_type,
                           coalesce(e.body_schema_keys, []) AS body_keys""",
-                {"sid": session.session_id},
+                {"sid": session.canonical_engagement_id},
             )
 
             _AUTH_PATH_TOKENS = ("login", "auth", "signin", "token", "session", "authenticate")
@@ -726,7 +731,7 @@ class PhaseMonitor:
                     ma_payload: Dict[str, Any] = {
                         "url": ma_target["url"],
                         "method": ma_target["method"],
-                        "engagement_id": session.session_id,
+                        "engagement_id": session.canonical_engagement_id,
                     }
                     if ma_target.get("base_body"):
                         ma_payload["base_body"] = ma_target["base_body"]
@@ -735,7 +740,7 @@ class PhaseMonitor:
                         priority=8,
                         agent_type=AgentType.VULN_ANALYSIS,
                         payload=ma_payload,
-                        engagement_id=session.session_id,
+                        engagement_id=session.canonical_engagement_id,
                         timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
                     )
                     await self._orch.task_scheduler.schedule_task(ma_task)
@@ -759,7 +764,7 @@ class PhaseMonitor:
             for _poll_attempt in range(12):
                 try:
                     jwt_sessions = await self._orch.session_store.list_sessions(
-                        session.session_id
+                        session.canonical_engagement_id
                     )
                     # Only accept sessions that actually carry a bearer token
                     jwt_sessions = [s for s in jwt_sessions if s.bearer_token]
@@ -793,9 +798,9 @@ class PhaseMonitor:
                         else None,
                         "user_label": jwt_label,
                         "method": "GET",
-                        "engagement_id": session.session_id,
+                        "engagement_id": session.canonical_engagement_id,
                     },
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                     timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
                 )
                 await self._orch.task_scheduler.schedule_task(jwt_task)
@@ -815,7 +820,7 @@ class PhaseMonitor:
             #    user_a / user_b / anonymous and flags cross-identity access;
             #    high-confidence findings are bridged to CONFIRMED vulnerabilities.
             try:
-                sessions = await self._orch.session_store.list_sessions(session.session_id)
+                sessions = await self._orch.session_store.list_sessions(session.canonical_engagement_id)
             except Exception as e:  # noqa: BLE001 - session lookup must not break phase entry
                 sessions = []
                 logger.warning(
@@ -834,7 +839,7 @@ class PhaseMonitor:
                     priority=8,
                     agent_type=AgentType.WORKFLOW,
                     payload={
-                        "engagement_id": session.session_id,
+                        "engagement_id": session.canonical_engagement_id,
                         "user_label": labels[0],
                         "url": (
                             self._orch.engagement_manager._domain_to_url(primary)
@@ -842,7 +847,7 @@ class PhaseMonitor:
                             else None
                         ),
                     },
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                     timeout_seconds=300,
                 )
                 await self._orch.task_scheduler.schedule_task(surface_task)
@@ -858,11 +863,11 @@ class PhaseMonitor:
                     priority=8,
                     agent_type=AgentType.WORKFLOW,
                     payload={
-                        "engagement_id": session.session_id,
+                        "engagement_id": session.canonical_engagement_id,
                         "user_a": user_a,
                         "user_b": user_b,
                     },
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                     dependencies=[surface_task.id],
                     timeout_seconds=300,
                 )
@@ -907,7 +912,7 @@ class PhaseMonitor:
                     priority=8,
                     agent_type=scanner_type,
                     payload={"url": target_url},
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                     timeout_seconds=self.ACTIVE_SCAN_TIMEOUT_SECONDS,
                 )
                 await self._orch.task_scheduler.schedule_task(task)
@@ -924,7 +929,7 @@ class PhaseMonitor:
                 "coalesce(v.confidence, 1.0) AS confidence"
             )
             vuln_records = await self._orch.graph_memory.run_read_query(
-                cypher, {"sid": session.session_id}
+                cypher, {"sid": session.canonical_engagement_id}
             )
             candidates = [
                 (
@@ -969,11 +974,11 @@ class PhaseMonitor:
                         "context": {
                             "target": endpoint_url,
                             "vulnerability_id": vid,
-                            "engagement_id": session.session_id,
+                            "engagement_id": session.canonical_engagement_id,
                         },
                         "count": 3,
                     },
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                 )
                 await self._orch.task_scheduler.schedule_task(payload_task)
 
@@ -990,7 +995,7 @@ class PhaseMonitor:
                         "operator_approved": False,
                         "vuln_class": vuln_type,
                     },
-                    engagement_id=session.session_id,
+                    engagement_id=session.canonical_engagement_id,
                 )
                 await self._orch.task_scheduler.schedule_task(validation_task)
                 await self._orch.task_scheduler._persist_task_dependency(
@@ -1002,7 +1007,7 @@ class PhaseMonitor:
                 priority=10,
                 agent_type=AgentType.REPORTING,
                 payload={"format": "markdown", "detail_level": "high"},
-                engagement_id=session.session_id,
+                engagement_id=session.canonical_engagement_id,
             )
             await self._orch.task_scheduler.schedule_task(task)
 

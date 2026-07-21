@@ -84,6 +84,7 @@ class SessionClient:
         verify: bool = True,
         follow_redirects: bool = True,
         token_refresh_callback: "Optional[TokenRefreshCallback]" = None,
+        governance_hook: Optional[Callable[..., Any]] = None,
     ):
         self.session = session
         self.store = store
@@ -116,7 +117,11 @@ class SessionClient:
         # Operator-supplied freeform headers win last
         headers.update(session.extra_headers or {})
 
-        self._client = httpx.AsyncClient(
+        # M1 governed egress: when a governance hook is supplied, attach it to the
+        # internal client so every authenticated probe is scope-checked, rate-
+        # limited, and research-tagged — same guarantees as the unauthenticated
+        # governed client, applied to the authed session path.
+        client_kwargs: Dict[str, Any] = dict(
             base_url=base_url,
             cookies=cookies,
             headers=headers,
@@ -124,6 +129,11 @@ class SessionClient:
             verify=verify,
             follow_redirects=follow_redirects,
         )
+        if governance_hook is not None:
+            from ai_osop.safety.governed_client import attach_governance
+
+            client_kwargs = attach_governance(client_kwargs, governance_hook)
+        self._client = httpx.AsyncClient(**client_kwargs)
 
     # -- lifecycle -------------------------------------------------------------
 

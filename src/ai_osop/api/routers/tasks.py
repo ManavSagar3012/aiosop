@@ -42,7 +42,10 @@ async def create_task(
 ):
     """Create and schedule a new task."""
     # Ownership check: operator must own the engagement they're creating a task for
-    await assert_engagement_access(operator, request.engagement_id)
+    # Returns the canonical (scope.engagement_id) form so the task is keyed
+    # consistently with the rest of the platform (AIOSOP-FINDINGS-KEY, 2026-07-20).
+    session = await assert_engagement_access(operator, request.engagement_id)
+    canonical_eid = session.canonical_engagement_id
 
     try:
         agent_type = AgentType(request.agent_type)
@@ -56,7 +59,7 @@ async def create_task(
         payload=request.payload,
         dependencies=request.dependencies,
         approval_required=request.approval_required,
-        engagement_id=request.engagement_id,
+        engagement_id=canonical_eid,
     )
 
     await state["orchestrator"].schedule_task(task)

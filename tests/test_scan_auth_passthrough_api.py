@@ -51,8 +51,9 @@ class _Store:
     async def get_session_or_none(self, engagement_id, label):
         return self._sessions.get(label)
 
-    def as_user(self, engagement_id, label, *, base_url=""):
+    def as_user(self, engagement_id, label, *, base_url="", governance_hook=None):
         self.as_user_calls.append((engagement_id, label, base_url))
+        self.last_governance_hook = governance_hook
         return self._client
 
 
@@ -85,8 +86,11 @@ async def test_auth_user_threads_client_and_reports_identity(monkeypatch):
 
     seen = {}
 
-    async def fake_generalized(engagement_id, gm, *, oast_registry=None, client=None):
+    async def fake_generalized(
+        engagement_id, gm, *, oast_registry=None, client=None, governance_hook=None
+    ):
         seen["client"] = client
+        seen["governance_hook"] = governance_hook
         return [], 0
 
     monkeypatch.setattr(ds, "run_generalized_scan", fake_generalized)
@@ -97,6 +101,10 @@ async def test_auth_user_threads_client_and_reports_identity(monkeypatch):
 
     # The exact client yielded by as_user() was threaded into the scan
     assert seen["client"] is client
+    # ...and the governance hook was threaded too (governs jwt/idor sub-scans)
+    assert seen["governance_hook"] is not None
+    # as_user received the same governance hook (so authed probes are governed)
+    assert store.last_governance_hook is not None
     # We opened AND closed it (caller owns the lifecycle)
     assert client.entered is True and client.closed is True
     assert store.as_user_calls == [("eng-1", "user_a", "http://target.test")]
@@ -111,8 +119,11 @@ async def test_unknown_auth_user_degrades_to_unauthenticated(monkeypatch):
 
     seen = {}
 
-    async def fake_generalized(engagement_id, gm, *, oast_registry=None, client=None):
+    async def fake_generalized(
+        engagement_id, gm, *, oast_registry=None, client=None, governance_hook=None
+    ):
         seen["client"] = client
+        seen["governance_hook"] = governance_hook
         return [], 0
 
     monkeypatch.setattr(ds, "run_generalized_scan", fake_generalized)
@@ -121,11 +132,10 @@ async def test_unknown_auth_user_degrades_to_unauthenticated(monkeypatch):
         "sess-1", mode="discovered", auth_user="ghost", operator={"role": "operator"}
     )
 
-    # No session -> unauthenticated scan: as_user() was never opened, and the
-    # scan now runs through a GOVERNED httpx client (M1), not a bare None. The
-    # governance (scope/rate/header) is applied by that client's request hook.
-    import httpx
-
+    # No session -> unauthenticated scan: as_user() was never opened, no injected
+    # client, but the governance hook IS threaded (M1) — the sub-scans build their
+    # own clients with it attached, so every probe is still scope/rate/header'd.
     assert client.entered is False and client.closed is False
-    assert isinstance(seen["client"], httpx.AsyncClient)
+    assert seen["client"] is None
+    assert seen["governance_hook"] is not None
     assert resp["authenticated_as"] is None

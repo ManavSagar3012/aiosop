@@ -72,6 +72,7 @@ async def run_deterministic_scan(
     graph_memory: Any,
     *,
     per_check_timeout: float = 45.0,
+    governance_hook: Any = None,
 ) -> Tuple[List[Vulnerability], List[str], int]:
     """Run the deterministic suite against ``base_url`` and persist validated
     findings via ``graph_memory``.
@@ -82,12 +83,17 @@ async def run_deterministic_scan(
     """
     import httpx
 
+    from ai_osop.safety.governed_client import attach_governance
+
     bench = _load_suite()
     expected = [m for m in bench.MANIFEST if m.expected and m.check_id in bench.CHECKS]
     validated: List[str] = []
     persisted: List[Vulnerability] = []
 
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as client:
+    _suite_kwargs = attach_governance(
+        {"verify": False, "follow_redirects": True, "timeout": 20}, governance_hook
+    )
+    async with httpx.AsyncClient(**_suite_kwargs) as client:
         target = bench.Target(base_url, client)
         for m in expected:
             try:
@@ -149,15 +155,16 @@ async def _discovered_endpoints(graph_memory: Any, engagement_id: str) -> List[d
 
 
 @asynccontextmanager
-async def _scan_client(client: Any = None):
+async def _scan_client(client: Any = None, governance_hook: Any = None):
     """Yield the HTTP client the generalized oracles should scan with.
 
     Auth passthrough seam: when ``client`` is supplied (e.g. an auth-aware
     ``SessionClient`` bound to a captured UserSession), it is yielded as-is and
     its lifecycle stays with the CALLER — we never close a client we did not
-    open. When it is ``None`` we build and own the historical cookie-less
-    ``httpx.AsyncClient`` (verify off, redirects followed), so the pre-auth
-    behavior is byte-for-byte unchanged.
+    open. The caller is responsible for governing an injected client (the authed
+    SessionClient carries the governance hook itself). When ``client`` is None we
+    build and own a cookie-less client, attaching ``governance_hook`` so every
+    probe is scope-checked, rate-limited, and research-tagged (M1).
 
     The oracles this feeds (SQLi / mass-assignment / injection) only ever call
     ``.get`` / ``.post`` / ``.request``, all of which SessionClient proxies, so
@@ -167,12 +174,15 @@ async def _scan_client(client: Any = None):
     """
     import httpx
 
+    from ai_osop.safety.governed_client import attach_governance
+
     if client is not None:
         yield client
         return
-    async with httpx.AsyncClient(
-        verify=False, follow_redirects=True, timeout=15
-    ) as owned:
+    kwargs = attach_governance(
+        {"verify": False, "follow_redirects": True, "timeout": 15}, governance_hook
+    )
+    async with httpx.AsyncClient(**kwargs) as owned:
         yield owned
 
 
@@ -184,6 +194,7 @@ async def run_generalized_sqli(
     confirm_with_sqlmap: bool = False,
     sqlmap_timeout: float = 240.0,
     client: Any = None,
+    governance_hook: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Drive the general SQLi oracles off RECON-DISCOVERED endpoints (not hardcoded
     paths): error-based on GET endpoints carrying params or a search-like path,
@@ -242,7 +253,7 @@ async def run_generalized_sqli(
         if len(candidates) >= MAX_CANDIDATES:
             break
 
-    async with _scan_client(client) as c:
+    async with _scan_client(client, governance_hook) as c:
         for url, params, get_like, login_like in candidates:
             ev = None
             try:
@@ -397,6 +408,7 @@ async def run_generalized_massassign(
     *,
     per_check_timeout: float = 20.0,
     client: Any = None,
+    governance_hook: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Drive the mass-assignment oracle off recon-discovered create-like endpoints.
 
@@ -428,7 +440,7 @@ async def run_generalized_massassign(
         if len(candidates) >= 40:
             break
 
-    async with _scan_client(client) as c:
+    async with _scan_client(client, governance_hook) as c:
         for url, method, body_keys in candidates:
             try:
                 ev = await asyncio.wait_for(
@@ -465,7 +477,11 @@ async def run_generalized_massassign(
 
 
 async def run_generalized_jwt(
-    engagement_id: str, graph_memory: Any, *, per_check_timeout: float = 30.0
+    engagement_id: str,
+    graph_memory: Any,
+    *,
+    per_check_timeout: float = 30.0,
+    governance_hook: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Drive real JWT forgery (alg:none / weak-secret / kid-injection) off
     recon-discovered endpoints. Needs a login endpoint (to mint a base token) and
@@ -503,8 +519,13 @@ async def run_generalized_jwt(
     if not (login_url and identity_url and base):
         return [], 0
 
+    from ai_osop.safety.governed_client import attach_governance
+
     persisted: List[Vulnerability] = []
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+    _jwt_kwargs = attach_governance(
+        {"verify": False, "follow_redirects": True, "timeout": 15}, governance_hook
+    )
+    async with httpx.AsyncClient(**_jwt_kwargs) as c:
         t = bench.Target(base, c)
         token = None
         try:
@@ -576,7 +597,11 @@ def _sub_last_id(url: str, new_id: Any) -> str:
 
 
 async def run_generalized_idor(
-    engagement_id: str, graph_memory: Any, *, per_check_timeout: float = 30.0
+    engagement_id: str,
+    graph_memory: Any,
+    *,
+    per_check_timeout: float = 30.0,
+    governance_hook: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Generalized IDOR / broken-object-level-authorization via the REAL
     DifferentialAuthEngine: register two identities, have the attacker read the
@@ -613,8 +638,13 @@ async def run_generalized_idor(
     if not (base and id_endpoints):
         return [], 0
 
+    from ai_osop.safety.governed_client import attach_governance
+
     persisted: List[Vulnerability] = []
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+    _idor_kwargs = attach_governance(
+        {"verify": False, "follow_redirects": True, "timeout": 15}, governance_hook
+    )
+    async with httpx.AsyncClient(**_idor_kwargs) as c:
         t = bench.Target(base, c)
         engine = DifferentialAuthEngine(session_memory=None)
         victim = f"osop_v_{os.urandom(4).hex()}@recon.test"
@@ -709,6 +739,7 @@ async def run_generalized_injection(
     per_check_timeout: float = 20.0,
     oast_registry: Any = None,
     client: Any = None,
+    governance_hook: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Drive the deterministic injection/redirection oracles (path traversal,
     open redirect, reflected SSRF, XXE) off recon-discovered endpoints. Every
@@ -815,7 +846,7 @@ async def run_generalized_injection(
         except Exception:
             pass
 
-    async with _scan_client(client) as c:
+    async with _scan_client(client, governance_hook) as c:
         for url, params in get_candidates:
             for oracle in (detect_path_traversal, detect_open_redirect, detect_ssrf_reflected):
                 try:
@@ -890,6 +921,7 @@ async def run_generalized_scan(
     *,
     oast_registry: Any = None,
     client: Any = None,
+    governance_hook: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
     """Combined generalized pass over recon-discovered endpoints: SQLi + mass
     assignment + JWT forgery + IDOR + injection/redirection (path traversal, open
@@ -907,17 +939,29 @@ async def run_generalized_scan(
     identities (JWT mints a token; IDOR needs the owner/attacker/anon triad via
     the DifferentialAuthEngine), and forcing a single shared session on them
     would collapse the very identity separation their oracles depend on. The
-    caller owns the client's lifecycle; these functions never close it."""
+    caller owns the client's lifecycle; these functions never close it.
+
+    ``governance_hook`` (M1) is threaded to EVERY sub-scan so all target traffic
+    is scope-checked, rate-limited, and research-tagged — including the JWT/IDOR
+    passes, which build their own (unauthenticated but governed) clients, and the
+    unauthenticated surface scans, whose clients ``_scan_client`` builds with the
+    hook attached. When ``client`` is an authed SessionClient it already carries
+    the hook itself, so the surface oracles are governed via that client."""
     sqli, examined = await run_generalized_sqli(
-        engagement_id, graph_memory, client=client
+        engagement_id, graph_memory, client=client, governance_hook=governance_hook
     )
     ma, _ = await run_generalized_massassign(
-        engagement_id, graph_memory, client=client
+        engagement_id, graph_memory, client=client, governance_hook=governance_hook
     )
-    jwt, _ = await run_generalized_jwt(engagement_id, graph_memory)
-    idor, _ = await run_generalized_idor(engagement_id, graph_memory)
+    jwt, _ = await run_generalized_jwt(
+        engagement_id, graph_memory, governance_hook=governance_hook
+    )
+    idor, _ = await run_generalized_idor(
+        engagement_id, graph_memory, governance_hook=governance_hook
+    )
     inj, _ = await run_generalized_injection(
-        engagement_id, graph_memory, oast_registry=oast_registry, client=client
+        engagement_id, graph_memory, oast_registry=oast_registry,
+        client=client, governance_hook=governance_hook,
     )
     return sqli + ma + jwt + idor + inj, examined
 
@@ -1212,7 +1256,12 @@ def _infer_shape(path: str):
 
 
 async def bootstrap_discovery(
-    base_url: str, engagement_id: str, graph_memory: Any, *, timeout: float = 10.0
+    base_url: str,
+    engagement_id: str,
+    graph_memory: Any,
+    *,
+    timeout: float = 10.0,
+    governance_hook: Any = None,
 ) -> int:
     """Content discovery: CRAWL the target (base page + JS bundles) for /rest//api/
     endpoints AND probe a common-path wordlist, persisting the live ones as
@@ -1220,14 +1269,21 @@ async def bootstrap_discovery(
     slower/flakier browser/orchestrator recon. A path counts as present if it does
     not 404 and looks like an API (/rest, /api, or JSON) — sidestepping SPA
     catch-all false positives. Returns the number of endpoints seeded.
+
+    Discovery traffic is target traffic, so it is governed too (M1): pass
+    ``governance_hook`` to scope-check + rate-limit + research-tag every probe.
     """
     import httpx
 
     from ai_osop.core.models import Endpoint
+    from ai_osop.safety.governed_client import attach_governance
 
     base = base_url.rstrip("/")
     seeded = 0
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
+    _disc_kwargs = attach_governance(
+        {"verify": False, "follow_redirects": True, "timeout": timeout}, governance_hook
+    )
+    async with httpx.AsyncClient(**_disc_kwargs) as c:
         # merge wordlist + crawled surface. Priority order:
         #   1. wordlist seeds (always probed)
         #   2. spec-derived entries (richest: real method+keys+body from OpenAPI)

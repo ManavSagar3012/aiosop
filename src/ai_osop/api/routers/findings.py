@@ -281,11 +281,14 @@ async def replay_finding(
     forms = _engagement_id_forms(session, session_id)
     if not await _finding_exists(session_id, finding_id, forms):
         raise HTTPException(status_code=404, detail="Finding not found for this engagement")
+    # AIOSOP-FINDINGS-KEY (2026-07-20): key the task under the CANONICAL engagement
+    # id (scope.engagement_id) so it matches the form every other writer uses and
+    # the phase monitor / findings read path finds it without a dual-key lookup.
     task = Task(
         type="validate_exploit",
         agent_type=AgentType.EXPLOIT_VALIDATION,
         payload={"finding_id": finding_id, "mode": "replay"},
-        engagement_id=session_id,
+        engagement_id=session.canonical_engagement_id,
         approval_required=True,
     )
     await state["orchestrator"].schedule_task(task)
@@ -372,12 +375,14 @@ async def generate_poc(
     operator: Dict[str, Any] = Depends(require_role("senior_operator")),
 ):
     """Queue a PoC-generation task for the ExploitAgent."""
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
+    # AIOSOP-FINDINGS-KEY (2026-07-20): canonical id so the task matches findings
+    # keying and the phase monitor without a dual-key lookup.
     task = Task(
         type="exploit_validation",
         agent_type=AgentType.EXPLOIT_VALIDATION,
         payload={"finding_id": finding_id, "generate_poc": True},
-        engagement_id=session_id,
+        engagement_id=session.canonical_engagement_id,
         approval_required=True,
     )
     await state["orchestrator"].schedule_task(task)
@@ -391,12 +396,14 @@ async def replay_workflow(
     operator: Dict[str, Any] = Depends(require_role("senior_operator")),
 ):
     """Queue a workflow replay (differential-auth re-run) for the WorkflowAgent."""
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
+    # AIOSOP-FINDINGS-KEY (2026-07-20): canonical id for the same reason as the
+    # replay/poc tasks above.
     task = Task(
         type="replay_for_diff_auth",
         agent_type=AgentType.WORKFLOW,
         payload={"workflow_id": workflow_id},
-        engagement_id=session_id,
+        engagement_id=session.canonical_engagement_id,
     )
     await state["orchestrator"].schedule_task(task)
     return {"status": "queued", "task_id": task.id, "workflow_id": workflow_id}

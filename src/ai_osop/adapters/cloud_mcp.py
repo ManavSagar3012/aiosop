@@ -51,3 +51,29 @@ class CloudMCPAdapter:
         if response.status != "success":
             raise MCPException(f"cloud-mcp discover_privesc failed: {response.error}")
         return response.result or {}
+
+    async def probe_cloud_metadata(
+        self,
+        target_url: str,
+        timeout_seconds: int = 60,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"target_url": target_url}
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "probe_cloud_metadata", params, timeout_override=timeout_seconds
+        )
+        if response.status != "success":
+            raise MCPException(f"cloud-mcp probe_metadata failed: {response.error}")
+        return response.result or {}
+
+    async def probe_storage_exposure(
+        self,
+        target: str,
+        timeout_seconds: int = 60,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"target": target}
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "probe_storage_exposure", params, timeout_override=timeout_seconds
+        )
+        if response.status != "success":
+            raise MCPException(f"cloud-mcp probe_storage failed: {response.error}")
+        return response.result or {}

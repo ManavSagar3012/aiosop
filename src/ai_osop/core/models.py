@@ -286,6 +286,34 @@ class SessionState(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    @property
+    def canonical_engagement_id(self) -> str:
+        """AIOSOP-FINDINGS-KEY (2026-07-20): the SINGLE id every writer MUST use
+        when keying graph nodes, audit events, tasks, and findings for this
+        engagement.
+
+        History: tasks/vulns/audit-events were keyed by whichever id the writer
+        had in hand — the orchestrator's phase monitor used ``session.session_id``
+        (eng-20260716-juice-e2e-xxx), the deterministic scan and audit log used
+        ``scope.engagement_id`` (juice-e2e-xxx), and API callers passed whichever
+        form the URL carried. Reads then missed writes whenever the forms
+        differed — the "7 findings persisted, 0 returned" disease — so a
+        dual-key ``WHERE engagement_id IN $ids`` read path was bolted on as a
+        patch over the symptom.
+
+        This property is the unification: the CANONICAL engagement id is the
+        operator-supplied ``scope.engagement_id``. It is stable across restarts
+        (no timestamp), human-readable in logs, and already what the deterministic
+        scan + audit log use. Migrating every writer to this id retires the
+        split-brain at the source instead of papering over it in every reader.
+
+        ``session_id`` remains the Redis/Postgres primary key for the session
+        record itself (it is unique per creation, which is the right property for
+        a session PK), but it is no longer used to key findings, tasks, audit
+        events, or graph nodes.
+        """
+        return self.scope.engagement_id
+
 
 class AuditEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: f"evt-{uuid.uuid4().hex[:12]}")

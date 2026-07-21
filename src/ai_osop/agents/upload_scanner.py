@@ -34,37 +34,54 @@ class UploadScanner(BaseVulnerabilityAgent):
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute Insecure File Upload scan task."""
-        target_url = task.payload.get("url")
+        target_url = task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        if not target_url:
+            return {"status": "failed", "error": "url parameter is required"}
+
         self.logger.info(f"Starting Upload scan for {target_url}")
 
-        # 1. Fetch upload payloads
-        engine = AdaptivePayloadEngine()
-        payloads = engine.get_payloads(VulnClass.UNKNOWN)  # No specific VulnClass for upload
+        try:
+            from ai_osop.core.file_upload_tester import FileUploadTester
+            tester = FileUploadTester(timeout_seconds=20.0)
+            findings = await tester.scan_endpoint(target_url)
 
-        # 2. Inject payloads (simplified)
-        for payload_data in payloads:
-            # Probe target
-            # ...
-
-            # 3. Verify
-            if False:  # Placeholder
+            created_vulns = []
+            for f in findings:
                 vuln = Vulnerability(
-                    vuln_type=VulnClass.VULN_SCAN,
+                    vuln_type=VulnClass.FILE_UPLOAD,
                     severity=Severity.HIGH,
-                    title=f"Insecure File Upload on {target_url}",
-                    description=f"Insecure file upload vulnerability detected at {target_url}.",
+                    title=f"Unrestricted File Upload ({f.technique}) on {target_url}",
+                    description=(
+                        f"Unrestricted file upload vulnerability confirmed at {target_url}. "
+                        f"Technique: {f.technique}. Uploaded file was served at {f.served_url} "
+                        f"with content-type '{f.content_type}'."
+                    ),
                     evidence=[
                         {
                             "type": "file_upload",
-                            "url": target_url,
-                            "payload": payload_data,
+                            "technique": f.technique,
+                            "filename": f.filename,
+                            "served_url": f.served_url,
+                            "content_type": f.content_type,
+                            "evidence": f.evidence,
                         }
                     ],
                     tool_source="upload_scanner",
-                    confidence=0.8,
+                    confidence=0.95,
+                    validated=True,
                     engagement_id=task.engagement_id,
                 )
                 await self.persist_finding(vuln)
-                return {"status": "vulnerable", "vulnerability": vuln.model_dump()}
+                created_vulns.append(vuln.model_dump())
 
-        return {"status": "success", "message": "Upload scan completed, no vulnerabilities found."}
+            if created_vulns:
+                return {
+                    "status": "vulnerable",
+                    "findings_count": len(created_vulns),
+                    "vulnerabilities": created_vulns,
+                }
+
+            return {"status": "success", "message": "Upload scan completed, no file upload vulnerabilities confirmed."}
+        except Exception as e:
+            self.logger.error("upload_scan_failed", url=target_url, error=str(e))
+            return {"status": "failed", "error": str(e)}

@@ -11,7 +11,11 @@ import httpx
 import pytest
 
 from ai_osop.core.exceptions import OutOfScopeError
-from ai_osop.safety.governed_client import governed_client, research_header_from_settings
+from ai_osop.safety.governed_client import (
+    governance_hook,
+    governed_client,
+    research_header_from_settings,
+)
 
 
 class _Scope:
@@ -131,3 +135,26 @@ def test_research_header_from_settings_builds_pair(monkeypatch):
     monkeypatch.setattr(config.settings, "research_header_name", "X-HackerOne-Research", raising=False)
     monkeypatch.setattr(config.settings, "research_header_value", "h1user", raising=False)
     assert research_header_from_settings() == ("X-HackerOne-Research", "h1user")
+
+
+@pytest.mark.asyncio
+async def test_session_client_authed_path_is_governed(monkeypatch):
+    """The authenticated SessionClient must apply the governance hook too: an
+    out-of-scope request through it raises before egress (no network needed — the
+    scope check fires in the request hook before any connection). This is the M1
+    guarantee for the authed scan path."""
+    from types import SimpleNamespace
+
+    from ai_osop.auth.session_client import SessionClient
+    from ai_osop.safety.governed_client import governance_hook
+
+    sess = SimpleNamespace(
+        cookies=[], bearer_token="", user_agent="", csrf_token="", extra_headers={}
+    )
+    hook = governance_hook(scope=_Scope("in.example.com"))
+    client = SessionClient(session=sess, governance_hook=hook)
+    try:
+        with pytest.raises(OutOfScopeError):
+            await client.get("https://evil.example.net/")
+    finally:
+        await client.aclose()
