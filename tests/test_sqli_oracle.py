@@ -383,8 +383,13 @@ async def test_time_blind_treats_sleep_timeout_as_evidence():
     async def handler(req: httpx.Request) -> httpx.Response:
         val = req.url.params.get("q", "")
         if "SLEEP" in val.upper() or "pg_sleep" in val or "WAITFOR" in val.upper() or "RANDOMBLOB(500000000)" in val:
-            await asyncio.sleep(30)  # will be cut off by the request timeout
-            return httpx.Response(200, text="late")
+            # Model the backend hanging on the injected sleep. NOTE: httpx does
+            # NOT enforce request_timeout against a MockTransport handler (the
+            # handler coroutine runs to completion), so an ``await asyncio.sleep``
+            # here would run unbounded and hang the suite. Raise the timeout the
+            # real client would raise when request_timeout elapses — exactly the
+            # signal the oracle treats as evidence.
+            raise httpx.ReadTimeout("simulated sleep timeout", request=req)
         return httpx.Response(200, text="ok")
 
     async with _client(handler) as c:
