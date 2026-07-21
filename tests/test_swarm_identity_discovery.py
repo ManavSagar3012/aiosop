@@ -49,51 +49,37 @@ async def test_swarm_identity_crawling():
         agent = ReconAgent(ctx)
         await agent.initialize()
 
-        active_headers = {}
+        # BLK-3 (2026-07-21): the recon crawler now issues requests through the
+        # governed httpx client (get_governed_client), not aiohttp. Serve the
+        # identity-specific pages via an httpx MockTransport that keys off the
+        # per-identity Authorization header the crawler sets (recon_agent.py:900
+        # passes headers=headers into get_governed_client, so the header rides on
+        # every request and the transport handler can read it).
+        import httpx
 
-        def get_mock_response(url, **kwargs):
-            # Inspect the headers of the active ClientSession
-            auth = active_headers.get("Authorization", "")
-
-            resp = AsyncMock()
-            resp.status = 200
-            resp.headers = {"Content-Type": "text/html"}
-
-            # Check the token to simulate different pages visible to different roles
+        def handler(request: httpx.Request) -> httpx.Response:
+            auth = request.headers.get("Authorization", "")
             if "token-user-a" in auth:
-                resp.url = "https://target.com/user_a_only"
-                resp.text = AsyncMock(
-                    return_value="<html><body><a href='/user_a_dashboard'>link</a></body></html>"
-                )
+                body = "<html><body><a href='/user_a_dashboard'>link</a></body></html>"
             elif "token-admin" in auth:
-                resp.url = "https://target.com/admin_only"
-                resp.text = AsyncMock(
-                    return_value="<html><body><a href='/admin_dashboard'>link</a></body></html>"
-                )
+                body = "<html><body><a href='/admin_dashboard'>link</a></body></html>"
             else:
-                resp.url = "https://target.com/anonymous_only"
-                resp.text = AsyncMock(
-                    return_value="<html><body><a href='/public_dashboard'>link</a></body></html>"
-                )
+                body = "<html><body><a href='/public_dashboard'>link</a></body></html>"
+            return httpx.Response(200, text=body, headers={"Content-Type": "text/html"})
 
-            resp.__aenter__.return_value = resp
-            resp.__aexit__ = AsyncMock()
-            return resp
+        def fake_governed_client(tool="scan", **httpx_kwargs):
+            # Mirror get_governed_client's contract: return a real httpx.AsyncClient
+            # carrying the caller's identity headers, but backed by MockTransport
+            # so no real network egress happens.
+            httpx_kwargs.pop("verify", None)
+            httpx_kwargs.pop("follow_redirects", None)
+            httpx_kwargs.pop("timeout", None)
+            return httpx.AsyncClient(transport=httpx.MockTransport(handler), **httpx_kwargs)
 
-        # Use MagicMock so calling get() returns the context manager directly without returning a coroutine
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(side_effect=get_mock_response)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock()
+        agent.get_governed_client = fake_governed_client  # type: ignore[assignment]
 
-        def mock_client_session_constructor(headers=None, **kwargs):
-            nonlocal active_headers
-            active_headers = headers or {}
-            return mock_session
-
-        with patch("aiohttp.ClientSession", side_effect=mock_client_session_constructor):
-            # Run the REAL _active_crawl_target method
-            discovered = await agent._active_crawl_target("target.com", session_store=mock_store)
+        # Run the REAL _active_crawl_target method through the governed (mocked) client.
+        discovered = await agent._active_crawl_target("target.com", session_store=mock_store)
 
         print("\nDISCOVERED ENDPOINTS IN TEST:")
         for e in discovered:

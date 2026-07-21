@@ -870,7 +870,12 @@ class ReconAgent(BaseAgent):
             # MIN-7 (2026-07-21): crawl budget configurable from task payload.
             # Previously hardcoded to 20; callers (phase_monitor, API) can now
             # pass max_pages in the task payload to adjust for large in-scope apps.
-            max_pages = int(payload.get("max_pages", 20))
+            # Read defensively from the bound task context — ``payload`` is not a
+            # local here (fixing a NameError that crashed the active crawler), and
+            # some contexts (tests, direct calls) have no current_task at all.
+            _task = getattr(self.ctx, "current_task", None)
+            _payload = getattr(_task, "payload", None)
+            max_pages = int(_payload.get("max_pages", 20)) if isinstance(_payload, dict) else 20
             pages_crawled = 0
 
             js_files = set()
