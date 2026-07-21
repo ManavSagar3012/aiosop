@@ -119,7 +119,13 @@ class CloudSpecialistAgent(BaseAgent):
             if not target_url:
                 urls_to_test = IMDS_TARGETS
 
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            # BLK-2 (2026-07-21): governed egress. An in-scope target_url is probed
+            # through the scope+rate+header hook; a direct IMDS_TARGETS probe (link-
+            # local 169.254.169.254) is out of engagement scope and is safely
+            # blocked+skipped by the per-request scope gate — direct scanner->IMDS
+            # probing tests the scanner's own host, not the target, so blocking it
+            # is the correct behavior (real metadata SSRF is proven via the target).
+            async with self.get_governed_client(tool="cloud_metadata", timeout=10.0) as client:
                 for u in urls_to_test:
                     if not u:
                         continue
@@ -192,7 +198,36 @@ class CloudSpecialistAgent(BaseAgent):
                 f"https://storage.googleapis.com/{clean_target}/",
                 f"https://{clean_target}.blob.core.windows.net/?comp=list",
             ]
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            # BLK-2 / GOV-6 (2026-07-21): bucket enumeration hits THIRD-PARTY cloud
+            # hosts (*.s3.amazonaws.com, storage.googleapis.com, *.blob.core.windows.net)
+            # that are by definition outside the engagement target scope. Governing
+            # with the target scope would block them entirely, so this off-scope
+            # external egress is gated behind the same fail-closed policy as the
+            # secret verifier and, when enabled, runs through a scope-less governed
+            # client that still rate-limits, injects the research header, and audits.
+            from ai_osop.core.config import settings as _settings
+            if not _settings.allow_external_liveness_probing:
+                return {
+                    "status": "skipped",
+                    "findings_count": 0,
+                    "findings": [],
+                    "msg": (
+                        "cloud storage enumeration probes third-party hosts; set "
+                        "OSOP_ALLOW_EXTERNAL_LIVENESS_PROBING=true to enable."
+                    ),
+                }
+            from ai_osop.safety.governed_client import (
+                governed_client,
+                research_header_from_settings,
+            )
+            async with governed_client(
+                scope=None,  # intentionally off-engagement-scope (third-party cloud hosts)
+                rate_limiter=getattr(self.ctx, "rate_limiter", None),
+                research_header=research_header_from_settings(),
+                tool="cloud_bucket",
+                timeout=10.0,
+                follow_redirects=True,
+            ) as client:
                 for url in urls:
                     try:
                         resp = await client.get(url)

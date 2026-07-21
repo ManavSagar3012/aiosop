@@ -276,8 +276,8 @@ class JSAnalyzerAgent(BaseAgent):
         if not self._in_scope(url):
             return None
         try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
+            async with self.get_governed_client(
+                tool="js_analyzer",
                 timeout=self.FETCH_TIMEOUT_SECONDS,
                 headers={"User-Agent": "AI-OSOP-JSAnalyzer/1.0"},
             ) as client:

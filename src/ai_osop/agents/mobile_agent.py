@@ -248,8 +248,8 @@ class MobileAnalysisAgent(BaseAgent):
         base_headers = {"User-Agent": "AI-OSOP-Mobile/1.0 (okhttp/4.12.0)"}
         if headers:
             base_headers.update(headers)
-        return httpx.AsyncClient(
-            follow_redirects=True,
+        return self.get_governed_client(
+            tool="mobile",
             timeout=self.HTTP_TIMEOUT_SECONDS,
             headers=base_headers,
         )

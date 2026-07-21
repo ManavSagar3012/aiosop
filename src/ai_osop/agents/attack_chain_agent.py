@@ -213,7 +213,7 @@ class AttackChainAgent(BaseAgent):
             import httpx
 
             try:
-                async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+                async with self.get_governed_client(tool="attack_chain", timeout=15) as c:
                     r = await c.get(
                         idor_url,
                         headers={"Authorization": f"Bearer {token}", "Cookie": f"token={token}"},

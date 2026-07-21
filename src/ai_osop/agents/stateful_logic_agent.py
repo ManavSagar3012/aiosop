@@ -194,7 +194,8 @@ class StatefulLogicAgent(BaseAgent):
 
         # Execute the REAL request.
         try:
-            async with httpx.AsyncClient(
+            async with self.get_governed_client(
+                tool="stateful_logic",
                 follow_redirects=False,
                 timeout=self.VIOLATION_TIMEOUT_SECONDS,
                 headers={"User-Agent": "AI-OSOP-StatefulLogic/1.0", **headers},
