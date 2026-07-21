@@ -41,12 +41,18 @@ class UploadScanner(BaseVulnerabilityAgent):
         self.logger.info(f"Starting Upload scan for {target_url}")
 
         try:
-            from ai_osop.core.file_upload_tester import FileUploadTester
-            tester = FileUploadTester(timeout_seconds=20.0)
-            findings = await tester.scan_endpoint(target_url)
+            gov_client = self.get_governed_client(tool="upload", timeout=20.0)
+            tester = FileUploadTester(
+                target_url,
+                client=gov_client,
+                timeout=20.0,
+            )
+            findings = await tester.run()
 
             created_vulns = []
             for f in findings:
+                if not f.confirmed:
+                    continue
                 vuln = Vulnerability(
                     vuln_type=VulnClass.FILE_UPLOAD,
                     severity=Severity.HIGH,
@@ -73,7 +79,6 @@ class UploadScanner(BaseVulnerabilityAgent):
                 )
                 await self.persist_finding(vuln)
                 created_vulns.append(vuln.model_dump())
-
             if created_vulns:
                 return {
                     "status": "vulnerable",

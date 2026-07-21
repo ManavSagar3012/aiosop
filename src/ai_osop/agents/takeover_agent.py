@@ -53,7 +53,7 @@ class TakeoverAgent(BaseVulnerabilityAgent):
             "This domain is not configured yet",
         ]
 
-        async with httpx.AsyncClient() as client:
+        async with self.get_governed_client(tool="takeover") as client:
             try:
                 response = await client.get(target_url)
                 for sig in signatures:

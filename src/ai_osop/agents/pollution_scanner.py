@@ -41,25 +41,32 @@ class PollutionScanner(BaseVulnerabilityAgent):
         self.logger.info(f"Starting Prototype Pollution scan for {target_url}")
 
         try:
-            from ai_osop.core.prototype_pollution_tester import PrototypePollutionTester
-            tester = PrototypePollutionTester(timeout_seconds=15.0)
-            findings = await tester.scan_endpoint(target_url)
+            gov_client = self.get_governed_client(tool="pollution", timeout=15.0)
+            tester = PrototypePollutionTester(
+                target_url,
+                client=gov_client,
+                timeout=15.0,
+            )
+            findings = await tester.run()
 
             created_vulns = []
             for f in findings:
+                if not f.confirmed:
+                    continue
                 vuln = Vulnerability(
                     vuln_type=VulnClass.PROTOTYPE_POLLUTION,
                     severity=Severity.HIGH,
                     title=f"Prototype Pollution ({f.technique}) on {target_url}",
                     description=(
                         f"Prototype pollution confirmed via {f.technique} technique at {target_url}. "
-                        f"Parameter '{f.parameter}' allowed mutation of Object.prototype."
+                        f"Gadget '{f.gadget}' allowed mutation of Object.prototype."
                     ),
                     evidence=[
                         {
                             "type": "prototype_pollution",
                             "technique": f.technique,
-                            "parameter": f.parameter,
+                            "gadget": f.gadget,
+                            "detail": f.detail,
                             "evidence": f.evidence,
                         }
                     ],

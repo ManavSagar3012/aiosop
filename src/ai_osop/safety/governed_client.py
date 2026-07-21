@@ -58,6 +58,11 @@ def research_header_from_settings() -> Optional[Tuple[str, str]]:
 
     Kept here so every adopter derives the header the same way instead of reading
     the two settings by hand. Returns None when the name is blank (feature off).
+
+    MIN-1 (2026-07-21): when the research header name is configured but the value
+    is empty, log a warning rather than silently omitting the header. Operators
+    must set BOTH the header name AND value for governed traffic to carry the
+    research identity.
     """
     from ai_osop.core.config import settings
 
@@ -65,6 +70,12 @@ def research_header_from_settings() -> Optional[Tuple[str, str]]:
     value = (getattr(settings, "research_header_value", "") or "").strip()
     if not name:
         return None
+    if not value:
+        import logging
+        logging.getLogger(__name__).warning(
+            "research_header_name_is_set_but_value_is_empty",
+            extra={"research_header_name": name},
+        )
     return (name, value)
 
 
@@ -93,15 +104,26 @@ def governance_hook(
         host = request.url.host
 
         # 1. Scope — fail closed. An out-of-scope host never leaves the process.
-        if scope is not None and host and not scope.host_in_scope(host):
-            logger.warning(
-                "governed_egress_blocked host=%s method=%s reason=out_of_scope",
-                host, request.method,
-            )
-            raise OutOfScopeError(
-                f"governed egress blocked out-of-scope host: {host!r} "
-                f"({request.method} {request.url})"
-            )
+        # MIN-8 (2026-07-21): empty host also fails closed (previously the
+        # ``and host`` guard let empty-host requests pass ungoverned).
+        if scope is not None:
+            if not host:
+                logger.warning(
+                    "governed_egress_blocked host= method=%s reason=empty_host",
+                    request.method,
+                )
+                raise OutOfScopeError(
+                    f"governed egress blocked empty host ({request.method} {request.url})"
+                )
+            if not scope.host_in_scope(host):
+                logger.warning(
+                    "governed_egress_blocked host=%s method=%s reason=out_of_scope",
+                    host, request.method,
+                )
+                raise OutOfScopeError(
+                    f"governed egress blocked out-of-scope host: {host!r} "
+                    f"({request.method} {request.url})"
+                )
 
         # 2. Rate limit — per request, using the shared limiter's per-target bucket.
         if rate_limiter is not None:

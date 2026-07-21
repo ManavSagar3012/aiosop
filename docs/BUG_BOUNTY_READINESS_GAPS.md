@@ -1,148 +1,98 @@
-# AIOSOP — Bug-Bounty Readiness Gap Analysis
+# AIOSOP — Bug-Bounty Readiness Gap Report
 
-_Audited 2026-07-20 against branch `fix/mock-findings-honest-stub-tool-guard` @ b068dd90._
+_Re-audited 2026-07-21 against branch `fix/mock-findings-honest-stub-tool-guard` @ `5f1cd7a9`, with the full stack live (Neo4j/Postgres/Redis/API + Juice Shop)._
 
-Scope of this audit: what stands between AIOSOP today and being trusted to
-produce **submittable, in-policy bug-bounty findings** — autonomously or
-semi-autonomously — against a real program (reference target: Syfe on HackerOne).
-
-Every item below was verified by reading the code first-hand and is cited with
-`file:line`. Four parallel deep-dive agents (orchestrator, reporting, coverage,
-test-honesty) were dispatched but died on an API quota limit before returning;
-those four areas are marked **(needs deeper audit)** where my own pass was
-shallower. Nothing here is assumed — unverified areas are labelled as such.
+**Method.** Seven parallel deep-dive auditors (one per subsystem), each finding cited to `file:line`, then an **adversarial verify pass** that re-opened every cited location and tried to *refute* each blocker/major before it survived here. Two dimensions (detector-quality, reporting) failed to return and were audited inline instead. Where a verifier corrected a severity, this report uses the corrected one. This supersedes the previous report, which was written against an earlier tree — the codebase has since changed materially (M1 governance landed on the deterministic path; the SSTI/CSRF detectors were reworked; five new testers were added).
 
 ---
 
-## What is genuinely SOLID (do not rebuild)
+## Bottom line
 
-- **Deterministic oracles** — SQLi (`core/sqli_oracle.py`), injection/traversal/
-  redirect/SSRF/XXE (`core/injection_oracles.py`), JWT forgery
-  (`core/jwt_tester.py`), IDOR via differential auth (`core/diff_auth_engine.py`).
-  Evidence-gated: a finding is validated only on an objective signal. These are
-  the real capability core and were live-proven against Juice Shop.
-- **Scope enforcement** (`safety/scope.py:33`) — exclusion-first, suffix match,
-  IP-range, non-recursive `host_in_scope` for hot loops. Good.
-- **Rate limiter** (`safety/rate_limiter.py:48`) — real token bucket, global/
-  target/tool tiers, hard acquire timeout.
-- **Docker sandbox** (`safety/scope.py:299`) — real per-engagement bridge network
-  + iptables egress, not a stub.
-- **API auth** (`api/deps.py:109`) — JWT or constant-time bearer, fail-closed
-  (dev fallback removed).
-- **Auth-passthrough scanning** — just landed + live-proven (`benchmarks/live_auth_passthrough.py`).
+The single most important finding is new and confirmed by runtime check: **the autonomous pipeline does not run end-to-end — it is broken, not merely unproven.** A canonical-id vs session-id key mismatch makes every automatic phase transition raise "Session not found", so an engagement never advances past its starting phase on its own. Everything downstream (recon → scan → report) only runs when a human hand-drives each phase via the API.
+
+Separately, the M1 governed-egress work is real and well-built, but it covers only **one of the two** live target-traffic paths. The autonomous agent fleet and the recon crawler — the *default* scan surface — still fire ungoverned traffic with no per-request scope check, no rate limit, and no research-identity header.
+
+The good news, and it's real: the two false-positive detectors from the last report (SSTI, CSRF) are now genuinely fixed, the deterministic detection core is production-quality, the reliability machinery is well-built, and the mock-finding guard holds. So the gaps are concentrated in **orchestration glue** and **governance coverage**, not in the detection engines.
+
+Until the blockers below land, AIOSOP remains **manual/scoped-assist only** — never turned loose autonomously on a live program.
 
 ---
 
-## BLOCKERS — must fix before ANY real-program traffic
+## SOLID — do NOT rebuild these
 
-### B1. Safety layer is bypassed by the actual scan path
-`core/deterministic_scan.py` oracles fire raw `httpx` at whatever URL is in the
-graph. There is **no per-request scope re-check** and **no rate-limiter call**
-inside the scan loop. Scope is validated once at engagement creation
-(`api/routers/engagements.py:37`), never per-request.
-- Risk: a mis-attributed / poisoned graph endpoint → out-of-scope request with
-  zero guard. On a real program that is an instant rules violation.
-- Fix: enforce `host_in_scope(url)` on every request and route every probe
-  through the rate limiter (see B2, B5).
-
-### B2. No per-request rate limiting on scan traffic
-`RateLimiter.acquire()` gates **task** admission (`agents/base.py:368`), not
-individual HTTP probes. One scan task = up to 60 candidates × N payloads, fired
-as fast as the event loop allows. Defaults are also throughput-tuned: 50 req/s
-global, 10 req/s per target (`safety/rate_limiter.py:56-59`).
-- Risk: reads as an automated attack / DoS — Syfe explicitly disqualifies "any
-  automated attack techniques on production" and DoS. This alone bars autonomous
-  use on that program.
-- Fix: per-request throttle on the egress path; bounty-safe defaults (≤~2 req/s
-  per target, configurable per engagement).
-
-### B3. Mandatory research header is not implemented anywhere
-Grep for `X-HackerOne-Research` / `wearehackerone` = **0 hits**. The program
-requires `X-HackerOne-Research: <username>` on prod traffic and a
-`@wearehackerone.com` signup email. AIOSOP cannot currently comply.
-- Fix: inject the header on every outbound request; carry it in engagement config.
-
-### B4. False-positive-prone detectors in the "breadth" agents
-Several non-core agents flag on weak heuristics, not confirmed exploitation:
-- **SSTI** (`agents/ssti_agent.py:56`) — `if template in response.text`: checks
-  the payload was **reflected**, not **evaluated**. `{{7*7}}` echoed back ≠ SSTI.
-  Pure false-positive generator.
-- **CSRF** (`agents/csrf_agent.py:80-87`) — flags "no CSRF token string in
-  response" as a potential vuln (`confirmed: False`), no working PoC, no check
-  that the endpoint is actually state-changing + cookie-authed.
-- Risk: submitting these = unreproducible reports = reputation/removal on H1.
-- Fix: gate every reportable finding behind a real oracle (evaluation proof for
-  SSTI, a working cross-site PoC for CSRF), or mark them lead-only and never
-  auto-submit. **(coverage of all ~20 agents needs the deeper audit that got
-  quota-killed — SSTI/CSRF are confirmed; others unverified.)**
+- **Governed egress hook** (`safety/governed_client.py:71-123`) — fail-closed scope, per-request rate limit, research header, audit, with a runnable self-check. Hooks httpx request events so no verb slips past; degrades to a plain client when guards are omitted.
+- **Deterministic scan path, end-to-end governed** (`api/routers/engagements.py:195-246` → `deterministic_scan.py` → oracles + authed `SessionClient`). This is the reference wiring every other path should copy.
+- **Deterministic discovery + oracles** — `bootstrap_discovery` (multi-source: wordlist + spec/robots/sitemap + JS-literal + param links, deduped, fully governed), `url_intelligence`, `openapi_ingest`, and the SQLi/injection/JWT/IDOR oracles remain evidence-gated (`deterministic_scan.py:1258`, `core/*oracle*.py`).
+- **SSTI + CSRF detectors — now fixed** (was B4 in the last report). SSTI uses an evaluation oracle (`{{7*7}}`→`49` with a control `{{7*8}}` that must NOT yield `49`, `ssti_agent.py:29-45`); CSRF now requires a cross-site state change to actually succeed with a foreign Origin/Referer (`csrf_agent.py:128-163`). No longer reflection/heuristic false-positive generators.
+- **Reliability machinery** (`SOLID-7`) — double-timeout stranding fixed at root (`base.py:388-404`), reaper excludes pending tasks (`recovery_service.py:54-85`), terminal-allowlist phase completion fails safe, no-vuln reroute terminates the mission instead of looping (`orchestrator.py:803-975`).
+- **Mock-finding guard** (`COV-5`) — every finding write funnels through `add_vulnerability`/`_batch`; `is_simulated()` is multi-signal and default-closed (`graph_memory.py:297,592`, `models.py:124-152`). Simulated findings genuinely cannot reach the graph on default config.
+- **Real-DB CI + tooling-reality gate** — CI stands up real Neo4j/Postgres/Redis; the `qualification/` suite hard-fails if an MCP server reverts to a stub (`tooling-reality.yml`).
+- **API auth** — fail-closed JWT/bearer (`api/deps.py`). Internal (non-target) clients correctly left un-scoped (`GOV-8`).
 
 ---
 
-## MAJOR — needed for trustworthy semi-autonomous operation
+## BLOCKERS — must fix before any autonomous or real-program use
 
-### M1. No central governed egress client
-42 separate `httpx.AsyncClient(...)` instantiations across agents/oracles, no
-single chokepoint. B1/B2/B3 cannot be fixed in one place — every call site is
-an independent egress.
-- Fix: one governed async client (scope + rate + research-header + audit) that
-  all agents and oracles must use. This is the enabling refactor for B1–B3.
+### BLK-1 — Autonomous pipeline is broken (canonical-id vs session-id key mismatch)
+`phase_monitor.py:224` passes `session.canonical_engagement_id` (the short `scope.engagement_id`) to `engagement_manager.transition_phase`, but `_sessions` is keyed by the **full** `session_id` (`eng-<ts>-<canonical>`, written at `engagement_manager.py:65,81` and `recovery_service.py:203`). The lookup misses, `transition_phase` raises "Session not found" (`engagement_manager.py:162-164`), the monitor records a failure and gives up after 5 attempts. **Runtime-verified.** PHASE_POLICY auto-advance (INITIALIZED→RECON→…→REPORTING) only schedules per-phase work from inside `transition_phase`, so the engagement never leaves its starting phase autonomously. This is exactly why `benchmarks/juiceshop/README.md` says the full pipeline is unproven and the memory note records "0 findings / stranded pipeline". The regression shipped green because the tests mock `transition_phase` and key `_sessions` by the wrong id (`TEST-3`, `test_engagement_id_unification.py:94,135,174`).
+**Fix:** resolve engagement_id→session before the `_sessions` lookup, or key `_sessions` by the canonical id consistently — small and localized. Add an integration test that creates an engagement the production way and asserts the monitor advances it.
 
-### M2. engagement_id / session_id split-brain
-`agents/base.py:330` aliases `session_id = task.engagement_id`, then findings are
-written with `session_id` as the `engagement_id` (base.py:757, 916, 934, +others).
-A recent commit added dual-key **reads** to compensate rather than unifying the
-ID — a patch over the symptom.
-- Risk: findings written under one key, searched under another → silently missing
-  findings in reports. (Prior observation #621: "graph is empty" symptom.)
-- Fix: unify on a single canonical id end-to-end; delete the dual-key workaround.
+### BLK-2 — Autonomous agent fleet fires ~30 ungoverned httpx clients (governance bypassed on the main scan path)
+`governance_hook` is threaded through exactly 5 non-test files; **zero** agents receive it (`api/main.py:560-627` registers the full fleet). Raw target-traffic clients: `ssrf_agent.py:75/81`, `vuln_agent.py:805,1148,1377,1596,2500,2602,2860,3052`, `csrf_agent.py:138`, `ssti_agent.py:100`, `saml_agent.py:52`, `takeover_agent.py:56`, `graphql_agent.py:109,216`, `race_scanner.py:53`, plus core testers (`jwt_tester`, `oauth_reset_tester`, `nosql_tester`, `cache_poisoning_tester`, `open_redirect_tester`, …). Worse, `base.py:368` rate-limits **per task** not per request (one token while a task fires dozens of probes), and `base.py:583-588` `_validate_task`'s scope check is a literal no-op (`pass`). So the entire autonomous scan surface egresses with no per-request scope recheck, no research header, and effectively no rate limit — the exact three disqualifying gaps M1 exists to fix, left unfixed on the larger path.
+**Fix:** give agents a governed client (a shared `SessionClient`/governed httpx built from the engagement scope + politeness limiter + research header), and make `_validate_task` actually enforce scope.
 
-### M3. Full autonomous pipeline is unproven (needs deeper audit)
-`benchmarks/juiceshop/README.md` states plainly the benchmark proves the engines
-in isolation and does NOT prove "the full autonomous pipeline (API + Neo4j +
-agents + LLM planning)". Recent commits reference findings "stranded" on 300s
-timeouts and a double-timeout race (base.py:388). Root-cause vs patched status of
-the orchestrator/scheduler/phase-monitor was the target of a dispatched agent
-that died on quota — **re-run that audit.**
-- Fix: an end-to-end scorecard run (`benchmarks/score_engagement.py`) of a real
-  orchestrated engagement, not just isolated oracles.
-
-### M4. No end-to-end LLM-planning test (needs deeper audit)
-Suspicion (unconfirmed — the test-honesty agent died): the suite mocks the LLM
-(`OSOP_MOCK_LLM`) everywhere, so the real planning loop may never be exercised in
-CI. If true, "autonomous" behavior is untested.
-- Fix: at least one gated integration test that drives a real (small) LLM through
-  a full plan→scan→report cycle.
-
-### M5. Reporting completeness unverified (needs deeper audit)
-`core/bounty_report.py` / `report_generator.py` / `poc_generator.py` produce
-reports, but completeness (working copy-pasteable PoC, real request/response
-evidence attached, CVSS computed vs hardcoded, evidence_vault real storage) was
-the reporting agent's remit — it died on quota. **Re-audit before trusting output
-for submission.**
+### BLK-3 — Recon crawler bypasses governance entirely (raw aiohttp) and is the *default* autonomous traffic
+`recon_agent._active_crawl_target` uses raw `aiohttp.ClientSession` (`recon_agent.py:893,902,1079`; also `:382` form-fetch, `:417` openapi ingest) — and `governance_hook` is httpx-only, so aiohttp cannot use it. `phase_monitor.py:249` schedules `full_recon` autonomously on RECON entry, so this ungoverned path sends the **first and broadest** wave of target traffic (page fetches, JS pulls, form GETs across up to 20 pages × N identities × M subdomains) with no rate limit and no research header.
+**Fix:** route the agent crawler through a governed client (either move it to the governed httpx seam, or add an aiohttp-level equivalent of the scope/rate/header trace).
 
 ---
 
-## MINOR / hygiene
+## MAJOR
 
-- `cli.py:65` `list_engagements` is a stub (`# This would query the API`).
-- 53 `placeholder`/`stub` markers across `src/` — triage which are load-bearing.
-- Rate-limiter defaults (M-adjacent) should ship bounty-safe, not throughput-safe.
-- N+1 persistence patterns in `vuln_agent.py` / `recon_agent.py` (perf, not
-  correctness; multiple prior observations).
+- **MAJ-1 (SEAM-2) — dead phase/task safety gate.** Same key mismatch: `task_scheduler.py:328,349` look up `_sessions.get(task.engagement_id)` with the short id → always `None` → `assert_task_allowed` (which restricts exploit-validation to the EXPLOITATION phase) never runs. Defense-in-depth that appears active in code is inert.
+- **MAJ-2 (SCOPE-1) — crawler scope filter bleeds to lookalike hosts + leaks creds.** `recon_agent.py:906,948,962` gate on `netloc.endswith(domain)`, so `evilsyfe.com`.endswith(`syfe.com`) is True — the crawler fetches the lookalike page *and* sends its injected auth cookies/bearer (`:884-891`) to it. The correct check (`ScopeEnforcer.host_in_scope`) exists but is applied only at persist time. Off-scope egress + credential leakage to attacker-glued hosts.
+- **MAJ-3 (COV-3) — bounty report silently merges distinct critical findings.** `finding_signature` (`bounty_report.py:84-93`) keys on `class|path|param`; url-less classes (confirmed: `exposed_secret`) collapse to `exposed_secret||` for every finding, so 3 distinct live credentials (AWS+Stripe+GitHub) become 1 report row with 2 CRITICALs dropped — even though persistence keeps them distinct (dashboard shows 3). Lost-income *and* correctness defect; invisible when compared against the dashboard.
+- **MAJ-4 (COV-PARAM-1) — no active parameter mining.** Discovery is passive-only (`url_intelligence.extract_params:197` reads existing query/path params; forms from static HTML). No Arjun/ParamMiner-style probing (grep for `arjun|paramspider|param.?fuzz` = 0 hits). Hidden `debug=`/`admin=`/`url=` params — where many real bounties live — are undiscoverable, and the oracles inherit the blind spot.
+- **MAJ-5 (COV-SPA-1) — no JS execution; richest paths never auto-scheduled.** Native crawlers do static parse + regex only. The JS-aware options (katana content_discovery, OpenAPI ingest) exist but `phase_monitor` never schedules them autonomously — only `full_recon` and a browser HAR capture. Modern SPA routes computed at runtime are systematically under-discovered.
+- **MAJ-6 (GOV-6) — secret_verifier auto-uses leaked creds against third-party APIs, ungoverned.** `secret_verifier.py:403-411` sends a discovered credential to its provider (github/aws/stripe/…) via an unthrottled, unaudited `httpx.AsyncClient` with no identity header. Correctly out-of-engagement-scope, but some programs forbid using found creds — needs an explicit policy gate + audit.
+- **MAJ-7 (COV-1, test) — autonomous LLM planning loop is never exercised in CI.** The only test that drives `think()→LLM→provider` (`test_real_llm_planning.py`) is skipped by default and in CI (no `OSOP_RUN_REAL_LLM`, no key). Prompt-format regressions, output-parse breakage, and provider drift all pass green. Combined with BLK-1, **no run — mock or real — has ever driven recon→report autonomously.**
+
+---
+
+## MINOR (hardening / hygiene)
+
+- **MIN-1 (GOV-5)** — research header is **off by default** (`config.py:329-334` empty); a default-config governed run still sends no `X-HackerOne-Research` header. Make it a hard pre-flight gate for programs that mandate it, not a silently-empty setting. _(Verifier downgraded from major: safe-by-default, fails safe.)_
+- **MIN-2 (COV-4, integrity)** — `is_simulated()` is enforced only at the persistence funnel; the report/metrics layers trust it blindly. If `OSOP_ALLOW_SIMULATED_FINDINGS` is ever set (self-test) or a future writer skips the funnel, simulated findings render into reports unmarked. Add a redundant report-layer skip.
+- **MIN-3 (COV-1, integrity)** — the engagement-id dual-key **read** workaround is applied to only 1 of 5 readers; the bounty-report generator, reporting agent, and benchmark export each read a single id form and can under-report if any writer keys under the other form. Root fix is one id at the source, not a dual-key read bolted onto some readers.
+- **MIN-4 (PERSIST-4)** — durable/Temporal executor marks tasks terminal but never writes that to Neo4j; the reaper reconciles once as a band-aid. The live agent path is fine — this bites only durable/recovered tasks.
+- **MIN-5 (GATE-5)** — the VULNERABILITY_DISCOVERY MCP-readiness gate degrades to advisory when the MCP registry is empty (`phase_monitor.py:196-198`), so a "hollow" discovery phase can look complete.
+- **MIN-6 (COV-3, test)** — the bug-finding capability gate (recall floor on Juice Shop) silently skips in CI because its result files are untracked; it only enforces where an operator ran `bench.py` first.
+- **MIN-7 (COV-BUDGET-1)** — crawl budgets are flat hard-coded constants (20 pages/identity, 8 seed pages) with no scope-configurable override; large in-scope apps are silently under-covered.
+- **MIN-8 (GOV-7)** — governed scope gate fails **open** on an empty request host (`governed_client.py:96`); low real-world exposure but should fail closed.
+- **MIN-9 (oauth_reset host-header)** — `oauth_reset_tester` marks host-header-poisoning `confirmed=True` on reflection of the poisoned Host (`:131-142`); accepted as a lead, but true confirmation needs the reset email, so it's a slightly generous "confirmed".
+
+---
+
+## How the previous report's items moved
+
+- **B1/B2/B3 (scope / rate / research-header on the scan path)** — *half-fixed.* The deterministic path is now fully governed and bounty-safe (2 req/s). The **agent fleet + recon crawler** are not (BLK-2, BLK-3) — the bigger, default traffic path.
+- **B4 (false-positive detectors)** — **resolved.** SSTI and CSRF are now evidence-gated; the new testers are evidence-dict based (one minor caveat, MIN-9).
+- **M1 (governed client)** — built and proven on the deterministic path; **incomplete** across agents/recon (that's BLK-2/BLK-3).
+- **M2 (engagement_id/session_id split-brain)** — now understood to be the **root cause of BLK-1** and MAJ-1; a partial "canonical id" migration left the `_sessions` registry key and several readers unmigrated.
+- **M3 (autonomous pipeline unproven)** — upgraded to **BLK-1: broken, not just unproven** (runtime-confirmed).
+- **M4 (LLM planning untested)** — **confirmed** (MAJ-7).
+- **M5 (reporting completeness)** — the reporting pipeline is largely complete (deterministic PoC, integrity hashing, simulated guard) but has the **report-dedup defect** (MAJ-3) and simulated-in-report gap (MIN-2).
 
 ---
 
 ## Recommended sequence
 
-1. **M1 (governed egress client)** first — it's the seam that makes B1/B2/B3
-   one-place fixes instead of 42.
-2. **B1 + B2 + B3** on top of M1 — this is the minimum to be *in-policy*.
-3. **B4** — gate or quarantine the false-positive detectors so nothing
-   unreproducible can auto-submit.
-4. **M2** — unify the id so findings actually survive to the report.
-5. Re-run the **quota-killed audits (M3/M4/M5)** — orchestrator maturity,
-   test honesty, reporting completeness — before claiming autonomous readiness.
+1. **BLK-1** — fix the `_sessions` keying so auto phase-advance works. Smallest change, unblocks *everything* autonomous, and re-enables MAJ-1's dead safety gate as a side effect. Add the missing integration test.
+2. **BLK-2 + BLK-3** — extend governance to the agent fleet and the recon crawler (shared governed client; make `_validate_task` enforce scope; govern aiohttp recon). This is what makes autonomous traffic in-policy.
+3. **MAJ-3** — fix the report-dedup signature so distinct url-less criticals aren't merged away (align it with the persistence dedup key).
+4. **MAJ-2** — route the crawler's fetch decisions through `host_in_scope` (stop the lookalike-host credential leak).
+5. **MAJ-4 / MAJ-5** — add active parameter mining and auto-schedule the JS-aware discovery paths (katana / OpenAPI) to close the real-world coverage gap.
+6. **MAJ-7 + MIN-6** — turn on a real-LLM planning test and the capability gate in CI so "autonomous" is actually regression-covered.
+7. Minors as hardening.
 
-Until B1–B4 land, AIOSOP should run **manual/scoped assist only** (individual
-oracles against operator-chosen endpoints), never autonomous against a live
-program.
+Until at least steps 1–2 land, AIOSOP should run **manual/scoped-assist only** — the individual (now-solid) oracles against operator-chosen endpoints — never autonomous against a live program.

@@ -160,7 +160,8 @@ class Orchestrator:
 
     @_sessions.setter
     def _sessions(self, value: Dict[str, SessionState]) -> None:
-        self.state.sessions = value
+        from ai_osop.orchestrator.state import SessionDict
+        self.state.sessions = SessionDict(value)
 
     @property
     def _agents(self) -> Dict[str, Any]:

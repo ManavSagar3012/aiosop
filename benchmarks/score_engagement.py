@@ -340,17 +340,34 @@ def _finding_type_str(f: Any) -> str:
 
 def _finding_is_simulated(f: Any) -> bool:
     # 1. Explicit boolean field (most authoritative).
-    explicit = _finding_field(f, "is_simulated", "simulated", default=None)
-    if explicit is not None:
+    # AIOSOP-SCORECARD-SIM-FIX (2026-07-20): ``_finding_field(f, "is_simulated",
+    # "simulated")`` looks up ``is_simulated`` FIRST, but on a Vulnerability
+    # model instance that is a bound METHOD (not the boolean field). The method
+    # is truthy, so bool(method)==True and EVERY model-instance finding was
+    # wrongly classified as simulated — the scorer silently dropped all real
+    # findings when called against live Vulnerability objects (only JSON dicts
+    # had ever been exercised in CI). Skip callables so only a real boolean
+    # field satisfies this check; the model's own ``is_simulated()`` method
+    # is consulted authoritatively in step 2 below.
+    for n in ("is_simulated", "simulated"):
+        v = _finding_field(f, n, default=None)
+        if v is None or callable(v):
+            continue
         try:
-            if bool(explicit):
+            if bool(v):
                 return True
         except Exception:
             pass
     # 2. Prefer the model's own authoritative check (uses heuristic fallback).
     if hasattr(f, "is_simulated"):
         try:
-            return bool(f.is_simulated())
+            result = f.is_simulated()
+            if callable(result):
+                # the attribute resolved to the method itself, not a boolean —
+                # skip and fall through to the duck-type checks below.
+                pass
+            else:
+                return bool(result)
         except Exception:
             pass
     # 3. Duck-type field check for raw dicts.

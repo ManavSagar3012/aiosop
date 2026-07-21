@@ -106,8 +106,8 @@ class GraphQLAgent(BaseAgent):
     async def _graphql_post(self, url: str, query: str) -> Dict[str, Any]:
         """POST a raw GraphQL query and return the parsed JSON (or {})."""
         try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
+            async with self.get_governed_client(
+                tool="graphql",
                 timeout=self.INTROSPECTION_TIMEOUT_SECONDS,
                 headers={"Content-Type": "application/json", "User-Agent": "AI-OSOP-GraphQL/1.0"},
             ) as client:
@@ -213,8 +213,8 @@ class GraphQLAgent(BaseAgent):
         """POST the introspection query. Returns the __schema dict, or None if
         introspection is disabled / endpoint is not GraphQL / unreachable."""
         try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
+            async with self.get_governed_client(
+                tool="graphql",
                 timeout=self.INTROSPECTION_TIMEOUT_SECONDS,
                 headers={
                     "Content-Type": "application/json",

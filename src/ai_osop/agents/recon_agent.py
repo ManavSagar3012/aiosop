@@ -379,7 +379,7 @@ class ReconAgent(BaseAgent):
         if not web_urls:
             return {}
 
-        async with aiohttp.ClientSession() as session:
+        async with self.get_governed_client(tool="recon") as session:
             tasks = []
             for url in web_urls:
                 tasks.append(self._fetch_single_url_forms(session, url))
@@ -389,12 +389,12 @@ class ReconAgent(BaseAgent):
                     form_params_by_url[url] = fields
         return form_params_by_url
 
-    async def _fetch_single_url_forms(self, session: aiohttp.ClientSession, url: str) -> List[str]:
+    async def _fetch_single_url_forms(self, session: Any, url: str) -> List[str]:
         try:
-            async with session.get(url, timeout=5) as resp:
-                if resp.status == 200:
-                    html = await resp.text()
-                    return extract_form_fields(html)
+            resp = await session.get(url, timeout=5.0)
+            if resp.status_code == 200:
+                html = resp.text
+                return extract_form_fields(html)
         except Exception:
             pass
         return []
@@ -414,7 +414,7 @@ class ReconAgent(BaseAgent):
         scope = ScopeEnforcer(self.ctx.scope) if getattr(self.ctx, "scope", None) else None
         spec = None
         found_url = ""
-        async with aiohttp.ClientSession() as session:
+        async with self.get_governed_client(tool="recon") as session:
             for cand in candidates:
                 if scope is not None:
                     try:
@@ -423,10 +423,10 @@ class ReconAgent(BaseAgent):
                     except Exception:
                         continue  # out of scope / invalid -> skip
                 try:
-                    async with session.get(cand, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                        if resp.status != 200:
-                            continue
-                        doc = await resp.json(content_type=None)
+                    resp = await session.get(cand, timeout=10.0)
+                    if resp.status_code != 200:
+                        continue
+                    doc = resp.json()
                 except Exception:
                     continue
                 if is_spec(doc):
@@ -890,7 +890,7 @@ class ReconAgent(BaseAgent):
                     for c in user_session.cookies:
                         cookies[c["name"]] = c["value"]
 
-            async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
+            async with self.get_governed_client(tool="recon", headers=headers, cookies=cookies) as session:
                 while urls_to_crawl and pages_crawled < max_pages:
                     url = urls_to_crawl.pop(0)
                     if url in visited_urls:
@@ -899,72 +899,104 @@ class ReconAgent(BaseAgent):
                     pages_crawled += 1
 
                     try:
-                        async with session.get(url, timeout=5, allow_redirects=True) as response:
-                            status = response.status
-                            content_type = response.headers.get("Content-Type", "")
-                            parsed_url = urlparse(str(response.url))
-                            if parsed_url.netloc.endswith(domain):
-                                # Check if already discovered
-                                is_new = str(response.url) not in self.endpoint_inventory
-                                # Set auth parameters based on identity context
-                                auth_req = (
-                                    user_label != "anonymous"
-                                    if is_new
-                                    else self.endpoint_inventory[str(response.url)].auth_required
-                                )
-                                final_label = (
-                                    user_label
-                                    if is_new
-                                    else self.endpoint_inventory[str(response.url)].user_label
-                                )
+                        response = await session.get(url, timeout=5.0)
+                        status = response.status_code
+                        content_type = response.headers.get("Content-Type", "")
+                        parsed_url = urlparse(str(response.url))
+                        # MAJ-2 (2026-07-21): use host_in_scope instead of
+                        # netloc.endswith(domain). endswith allows lookalike
+                        # hosts (e.g. evilsyfe.com.endswith('syfe.com') == True)
+                        # and leaks auth cookies/bearer to attacker-glued hosts.
+                        enforcer = getattr(self, "_ep_scope_enforcer", None)
+                        h = (parsed_url.hostname or "").lower().strip()
+                        _fallback_in_scope = (h == domain or h.endswith(f".{domain}"))
+                        _in_scope = (
+                            enforcer.host_in_scope(h)
+                            if enforcer is not None
+                            else _fallback_in_scope
+                        )
+                        if _in_scope:
+                            is_new = str(response.url) not in self.endpoint_inventory
+                            # Set auth parameters based on identity context
+                            auth_req = (
+                                user_label != "anonymous"
+                                if is_new
+                                else self.endpoint_inventory[str(response.url)].auth_required
+                            )
+                            final_label = (
+                                user_label
+                                if is_new
+                                else self.endpoint_inventory[str(response.url)].user_label
+                            )
+                            query_params = list(parse_qs(parsed_url.query).keys())
+                            if is_new:
+                                from ai_osop.core.url_intelligence import active_parameter_mine
+                                try:
+                                    mined_params = await active_parameter_mine(str(response.url), session)
+                                    if mined_params:
+                                        query_params = list(set(query_params + mined_params))
+                                        for p in mined_params:
+                                            parameters_found.add(p)
+                                except Exception:
+                                    pass
+                            ep = Endpoint(
+                                id=f"endpoint-{hashlib.md5(str(response.url).encode()).hexdigest()[:12]}",
+                                type="web",
+                                url=str(response.url),
+                                method="GET",
+                                confidence=0.9,
+                                engagement_id=self.ctx.current_task.engagement_id,
+                                source="active_crawl",
+                                status_code=status,
+                                status_codes_seen=[status],
+                                query_keys=query_params,
+                                auth_required=auth_req,
+                                user_label=final_label,
+                            )
+                            discovered_endpoints.append(ep)
+                            self.endpoint_inventory[str(response.url)] = ep
+                            if "text/html" in content_type:
+                                html_text = response.text
+                                parser = SimpleHTMLParser()
+                                parser.feed(html_text)
 
-                                query_params = list(parse_qs(parsed_url.query).keys())
-                                ep = Endpoint(
-                                    id=f"endpoint-{hashlib.md5(str(response.url).encode()).hexdigest()[:12]}",
-                                    type="web",
-                                    url=str(response.url),
-                                    method="GET",
-                                    confidence=0.9,
-                                    engagement_id=self.ctx.current_task.engagement_id,
-                                    source="active_crawl",
-                                    status_code=status,
-                                    status_codes_seen=[status],
-                                    query_keys=query_params,
-                                    auth_required=auth_req,
-                                    user_label=final_label,
-                                )
-                                discovered_endpoints.append(ep)
-                                self.endpoint_inventory[str(response.url)] = ep
-                                if "text/html" in content_type:
-                                    html_text = await response.text()
-                                    parser = SimpleHTMLParser()
-                                    parser.feed(html_text)
+                                # 1. Extract Links
+                                for href in parser.links:
+                                    link = urljoin(str(response.url), href)
+                                    parsed_link = urlparse(link)
+                                    # MAJ-2: use host_in_scope to prevent lookalike domain bleed
+                                    link_enforcer = getattr(self, "_ep_scope_enforcer", None)
+                                    lh = (parsed_link.hostname or "").lower().strip()
+                                    _link_fallback = (lh == domain or lh.endswith(f".{domain}"))
+                                    _link_in_scope = (
+                                        link_enforcer.host_in_scope(lh)
+                                        if link_enforcer is not None
+                                        else _link_fallback
+                                    )
+                                    if (
+                                        _link_in_scope
+                                        and link not in visited_urls
+                                    ):
+                                        urls_to_crawl.append(link)
 
-                                    # 1. Extract Links
-                                    for href in parser.links:
-                                        link = urljoin(str(response.url), href)
-                                        parsed_link = urlparse(link)
-                                        if (
-                                            parsed_link.netloc.endswith(domain)
-                                            and link not in visited_urls
-                                        ):
-                                            urls_to_crawl.append(link)
-
-                                    # 1b. Extract routes embedded in inline JS / raw HTML
-                                    #     (SPA route tables, category/filter menus) that are
-                                    #     NOT <a href> anchors. Without this the injectable
-                                    #     ?category= surface on targets like ginandjuice.shop
-                                    #     is never discovered, so no scanner ever tests it.
-                                    for raw_route in inline_route_pattern.findall(html_text):
-                                        link = urljoin(str(response.url), raw_route)
-                                        parsed_link = urlparse(link)
-                                        if (
-                                            parsed_link.netloc.endswith(domain)
-                                            and link not in visited_urls
-                                            and link not in urls_to_crawl
-                                        ):
-                                            urls_to_crawl.append(link)
-
+                                # 1b. Extract routes embedded in inline JS / raw HTML
+                                for raw_route in inline_route_pattern.findall(html_text):
+                                    link = urljoin(str(response.url), raw_route)
+                                    parsed_link = urlparse(link)
+                                    inline_enforcer = getattr(self, "_ep_scope_enforcer", None)
+                                    ilh = (parsed_link.hostname or "").lower().strip()
+                                    _inline_fallback = (ilh == domain or ilh.endswith(f".{domain}"))
+                                    _inline_in_scope = (
+                                        inline_enforcer.host_in_scope(ilh)
+                                        if inline_enforcer is not None
+                                        else _inline_fallback
+                                    )
+                                    if (
+                                        _inline_in_scope
+                                        and link not in visited_urls
+                                        and link not in urls_to_crawl
+                                    ):
+                                        urls_to_crawl.append(link)
                                     # 2. Extract Forms & Parameters
                                     for form in parser.forms:
                                         form_url = urljoin(str(response.url), form["action"])
@@ -1017,15 +1049,20 @@ class ReconAgent(BaseAgent):
                                             else domain
                                         )
 
-                                        # Allow same subdomain, same root domain, relative paths, or Webflow assets (for Webflow targets)
-                                        is_valid = (
-                                            script_host == ""
-                                            or script_host.endswith(domain)
-                                            or script_host.endswith(root_domain)
-                                            or "website-files.com" in script_host
-                                            or "webflow" in script_host
+                                        sh = script_host.lower().strip()
+                                        _fallback_valid = (
+                                            sh == ""
+                                            or sh == domain or sh.endswith(f".{domain}")
+                                            or sh == root_domain or sh.endswith(f".{root_domain}")
+                                            or "website-files.com" in sh
+                                            or "webflow" in sh
                                         )
 
+                                        is_valid = (
+                                            link_enforcer.host_in_scope(sh)
+                                            if link_enforcer is not None
+                                            else _fallback_valid
+                                        )
                                         # Ignore common global trackers to avoid noise
                                         ignore_trackers = [
                                             "google-analytics",
@@ -1076,49 +1113,47 @@ class ReconAgent(BaseAgent):
                 )
                 for js_url in sorted(list(js_files))[:10]:
                     try:
-                        async with session.get(js_url, timeout=5) as js_response:
-                            if js_response.status == 200:
-                                js_text = await js_response.text()
+                        js_response = await session.get(js_url, timeout=5.0)
+                        if js_response.status_code == 200:
+                            js_text = js_response.text
+                            routes = js_route_pattern.findall(js_text)
+                            params = param_pattern.findall(js_text)
 
-                                routes = js_route_pattern.findall(js_text)
-                                params = param_pattern.findall(js_text)
+                            for route in routes:
+                                api_routes.add(route)
+                                full_api_url = urljoin(f"https://{domain}/", route)
 
-                                for route in routes:
-                                    api_routes.add(route)
-                                    full_api_url = urljoin(f"https://{domain}/", route)
+                                is_api_new = full_api_url not in self.endpoint_inventory
+                                api_auth_req = (
+                                    user_label != "anonymous"
+                                    if is_api_new
+                                    else self.endpoint_inventory[full_api_url].auth_required
+                                )
+                                api_final_label = (
+                                    user_label
+                                    if is_api_new
+                                    else self.endpoint_inventory[full_api_url].user_label
+                                )
 
-                                    is_api_new = full_api_url not in self.endpoint_inventory
-                                    api_auth_req = (
-                                        user_label != "anonymous"
-                                        if is_api_new
-                                        else self.endpoint_inventory[full_api_url].auth_required
-                                    )
-                                    api_final_label = (
-                                        user_label
-                                        if is_api_new
-                                        else self.endpoint_inventory[full_api_url].user_label
-                                    )
+                                api_ep = Endpoint(
+                                    id=f"endpoint-{hashlib.md5(full_api_url.encode()).hexdigest()[:12]}",
+                                    type="api",
+                                    url=full_api_url,
+                                    method="GET",
+                                    confidence=0.85,
+                                    engagement_id=self.ctx.current_task.engagement_id,
+                                    source="js_route_extraction",
+                                    path=route,
+                                    auth_required=api_auth_req,
+                                    user_label=api_final_label,
+                                    query_keys=list(set(params)),
+                                    parameters=list(set(params)),
+                                )
+                                discovered_endpoints.append(api_ep)
+                                self.endpoint_inventory[full_api_url] = api_ep
 
-                                    api_ep = Endpoint(
-                                        id=f"endpoint-{hashlib.md5(full_api_url.encode()).hexdigest()[:12]}",
-                                        type="api",
-                                        url=full_api_url,
-                                        method="GET",
-                                        confidence=0.85,
-                                        engagement_id=self.ctx.current_task.engagement_id,
-                                        source="js_route_extraction",
-                                        path=route,
-                                        auth_required=api_auth_req,
-                                        user_label=api_final_label,
-                                        query_keys=list(set(params)),
-                                        parameters=list(set(params)),
-                                    )
-                                    discovered_endpoints.append(api_ep)
-                                    self.endpoint_inventory[full_api_url] = api_ep
-
-                                for param in params:
-                                    parameters_found.add(param)
-
+                            for param in params:
+                                parameters_found.add(param)
                     except Exception as e:
                         logger.debug(
                             f"JS route extraction failed for {js_url} under {user_label}: {e}"

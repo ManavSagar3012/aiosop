@@ -149,21 +149,34 @@ class OAuthResetTester:
                     body = resp.text
 
                     if p_host in body or p_host in str(resp.headers):
+                        # MIN-9 (2026-07-21): downgraded from confirmed=True to
+                        # confirmed=False + lead-only marker. The poisoned Host header
+                        # being reflected in the RESPONSE BODY proves reflection but
+                        # does NOT prove the reset EMAIL was sent to an attacker-controlled
+                        # domain (the actual ATO vector). True confirmation requires
+                        # observing the email delivery side-channel. Marking as a lead
+                        # prevents false-positive submissions while preserving the signal
+                        # for the triager or a subsequent deep-verify pass.
                         findings.append(
                             OAuthFinding(
                                 vuln_type="host_header_poisoning_reset",
                                 title=f"Host Header Poisoning Password Reset on {parsed.netloc}",
                                 description=(
                                     f"Password reset endpoint {target_url} reflected poisoned Host header '{p_host}' "
-                                    "in the response/email template, enabling password reset link hijacking & ATO."
+                                    "in the response body. NOTE: this is a LEAD only — the reflection proves the "
+                                    "header is accepted but does NOT confirm the reset email link was poisoned. "
+                                    "Manual verification of the email delivery side-channel is required before "
+                                    "treating this as a confirmed host-header poisoning (ATO)."
                                 ),
-                                severity="HIGH",
-                                confidence=0.95,
-                                confirmed=True,
+                                severity="MEDIUM",
+                                confidence=0.60,
+                                confirmed=False,
                                 evidence={
                                     "poison_host": p_host,
                                     "status_code": resp.status_code,
                                     "body_snippet": body[:300],
+                                    "lead": True,
+                                    "lead_reason": "reflection_proven_but_email_delivery_not_verified",
                                 },
                             )
                         )

@@ -306,6 +306,119 @@ class UrlIntel:
         }
 
 
+import urllib.parse
+import httpx
+
+COMMON_MINING_PARAMS = [
+    "debug", "admin", "test", "dev", "config", "file", "page", "url", "ip",
+    "redirect", "path", "source", "view", "template", "profile", "user",
+    "id", "uuid", "key", "token", "auth", "secret", "pass", "role", "priv"
+]
+
+async def active_parameter_mine(
+    url: str,
+    client: httpx.AsyncClient,
+    timeout: float = 8.0,
+) -> List[str]:
+    """Active parameter fuzzer/miner (COV-PARAM-1).
+
+    Appends a batch of common hidden parameters. If the response status, length,
+    or reflection changes, binary-searches the batch to isolate the active param.
+    """
+    from urllib.parse import urlparse, parse_qs, urlunparse
+
+    mined: List[str] = []
+    parsed = urlparse(url)
+    # Drop existing query parameters to isolate new ones
+    base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+    try:
+        # 1. Baseline
+        resp_base = await client.get(base_url, timeout=timeout)
+        base_status = resp_base.status_code
+        base_len = len(resp_base.text)
+    except Exception:
+        return []
+
+    # 2. Batch check
+    marker = "osopval"
+    params = {p: marker for p in COMMON_MINING_PARAMS}
+    try:
+        resp_batch = await client.get(base_url, params=params, timeout=timeout)
+        batch_status = resp_batch.status_code
+        batch_len = len(resp_batch.text)
+        batch_text = resp_batch.text
+    except Exception:
+        return []
+
+    # Detection criteria: status change, significant body length change (>20 bytes), or reflection
+    has_change = (
+        batch_status != base_status
+        or abs(batch_len - base_len) > 20
+        or marker in batch_text
+    )
+
+    if not has_change:
+        return []
+
+    # 3. Divide and conquer to isolate the exact parameter(s)
+    async def _probe_subset(subset: List[str]) -> List[str]:
+        if not subset:
+            return []
+        if len(subset) == 1:
+            # Confirm single parameter
+            p = subset[0]
+            try:
+                r = await client.get(base_url, params={p: marker}, timeout=timeout)
+                if (
+                    r.status_code != base_status
+                    or abs(len(r.text) - base_len) > 20
+                    or marker in r.text
+                ):
+                    return [p]
+            except Exception:
+                pass
+            return []
+
+        mid = len(subset) // 2
+        left = subset[:mid]
+        right = subset[mid:]
+
+        # Check left half
+        left_params = {p: marker for p in left}
+        try:
+            r_left = await client.get(base_url, params=left_params, timeout=timeout)
+            left_changed = (
+                r_left.status_code != base_status
+                or abs(len(r_left.text) - base_len) > 20
+                or marker in r_left.text
+            )
+        except Exception:
+            left_changed = False
+
+        found = []
+        if left_changed:
+            found.extend(await _probe_subset(left))
+
+        # Check right half
+        right_params = {p: marker for p in right}
+        try:
+            r_right = await client.get(base_url, params=right_params, timeout=timeout)
+            right_changed = (
+                r_right.status_code != base_status
+                or abs(len(r_right.text) - base_len) > 20
+                or marker in r_right.text
+            )
+        except Exception:
+            right_changed = False
+
+        if right_changed:
+            found.extend(await _probe_subset(right))
+        return found
+
+    return await _probe_subset(COMMON_MINING_PARAMS)
+
+
 def mine_urls(urls: Iterable[str]) -> UrlIntel:
     """Aggregate a URL set into deduplicated endpoints + parameter intelligence."""
     intel = UrlIntel()

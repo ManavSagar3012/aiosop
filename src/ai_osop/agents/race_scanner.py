@@ -50,7 +50,7 @@ class RaceScanner(BaseVulnerabilityAgent):
             headers = task.payload.get("headers", {})
             body = task.payload.get("body", {})
 
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            async with self.get_governed_client(tool="race", timeout=10.0, follow_redirects=False) as client:
                 async def make_req():
                     try:
                         if method.upper() == "POST":

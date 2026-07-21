@@ -97,7 +97,7 @@ class SSTIAgent(BaseVulnerabilityAgent):
 
         findings: List[Vulnerability] = []
 
-        async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15.0) as client:
+        async with self.get_governed_client(tool="ssti", verify=False, follow_redirects=True, timeout=15.0) as client:
             for syntax_name, payload, expected, control_payload in _SSTI_PROBES:
                 try:
                     eval_resp = await self._send(

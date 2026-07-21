@@ -135,7 +135,7 @@ class CSRFAgent(BaseVulnerabilityAgent):
         }
 
         try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=False, timeout=15.0) as c:
+            async with self.get_governed_client(tool="csrf", verify=False, follow_redirects=False, timeout=15.0) as c:
                 if isinstance(body, (dict, list)):
                     resp = await c.request(method, target_url, json=body, headers=headers)
                 else:
@@ -143,7 +143,6 @@ class CSRFAgent(BaseVulnerabilityAgent):
         except Exception as e:
             self.logger.error(f"Error scanning {target_url}: {e}")
             return {"status": "error", "tool": "csrf_scan", "error": str(e)}
-
         accepted = resp.status_code in ok_statuses
         if not accepted:
             self.logger.info(

@@ -255,6 +255,15 @@ class PhaseMonitor:
                 )
                 await self._orch.task_scheduler.schedule_task(task)
 
+                # Auto-schedule OpenAPI/Swagger ingestion to discover spec-defined routes
+                openapi_task = Task(
+                    type="openapi_ingest",
+                    priority=4,
+                    agent_type=AgentType.RECON,
+                    payload={"url": self._orch.engagement_manager._domain_to_url(domain)},
+                    engagement_id=session.canonical_engagement_id,
+                )
+                await self._orch.task_scheduler.schedule_task(openapi_task)
                 # Browser-driven XHR/API discovery (AIOSOP-SPA-XHR-RECON). The GET
                 # link crawler above never observes a SPA's client-side XHR/fetch
                 # calls (Angular /rest, /api), so the entire API surface of an app

@@ -404,9 +404,28 @@ async def verify_secret(
     url = base.rstrip("/") + provider["path"]
     headers = _auth_headers(provider, secret)
 
+    from ai_osop.core.config import settings
+    if not settings.allow_external_liveness_probing:
+        return {
+            "provider": provider_name,
+            "classified": True,
+            "live": False,
+            "status": 0,
+            "detail": "external liveness probing disabled by policy settings",
+        }
+
     own_client = client is None
     if own_client:
-        client = httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout)
+        from ai_osop.safety.governed_client import governed_client, research_header_from_settings
+        client = governed_client(
+            scope=None,
+            rate_limiter=None,
+            research_header=research_header_from_settings(),
+            tool="secret_verification",
+            verify=False,
+            follow_redirects=True,
+            timeout=timeout,
+        )
     try:
         resp = await client.request(provider["method"], url, headers=headers)
         live = resp.status_code in provider["live_codes"]

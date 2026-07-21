@@ -66,12 +66,13 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
     # capture + TWO register+login identity probes (a/b) so diff-auth can run a
     # user_a-vs-user_b IDOR test (AIOSOP-SPA-XHR-RECON / AIOSOP-REG-PROBE-001 /
     # AIOSOP-DIFFAUTH-2IDENTITY-001).
-    assert len(mock_orchestrator._tasks) == 6
+    assert len(mock_orchestrator._tasks) == 7
     by_type = {}
     for t in mock_orchestrator._tasks.values():
         by_type.setdefault(t.type, []).append(t)
     assert set(by_type) == {
         "full_recon",
+        "openapi_ingest",
         "capture_authenticated_surface",
         "register",
         "authenticate",
@@ -89,6 +90,29 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
     reg_ids = {r.id for r in by_type["register"]}
     for login in by_type["authenticate"]:
         assert len(login.dependencies) == 1 and login.dependencies[0] in reg_ids
+
+
+@pytest.mark.asyncio
+async def test_transition_phase_by_canonical_id(mock_orchestrator, dummy_scope):
+    # Setup session with full session_id
+    session = SessionState(
+        session_id="eng-123456-test-eng",
+        scope=dummy_scope,
+        roe={},
+        phase=EngagementPhase.INITIALIZED.value,
+        agents={},
+        checkpoint_id=None,
+        audit_log_position="0",
+    )
+    mock_orchestrator._sessions["eng-123456-test-eng"] = session
+
+    # Transition to recon using the canonical engagement id "test-eng"
+    updated_session = await mock_orchestrator.transition_phase(
+        "test-eng", EngagementPhase.RECONNAISSANCE
+    )
+
+    assert updated_session.phase == EngagementPhase.RECONNAISSANCE.value
+    assert updated_session.session_id == "eng-123456-test-eng"
 
 
 @pytest.mark.asyncio

@@ -49,7 +49,7 @@ class SAMLAgent(BaseVulnerabilityAgent):
 
         templates = PayloadTemplateLibrary.get_templates(VulnClass.UNKNOWN, context="saml")
 
-        async with httpx.AsyncClient() as client:
+        async with self.get_governed_client(tool="saml") as client:
             for template in templates:
                 # Assuming POST request for SAML assertion
                 response = await client.post(target_url, data={"SAMLResponse": template})

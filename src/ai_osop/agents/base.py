@@ -116,6 +116,35 @@ class BaseAgent(ABC):
         # recorded, so coverage can be extended to every agent without double-counting
         # for agents (recon/vuln) that also resolve skills inside _execute.
         self._activated_tasks: set = set()
+    def get_governed_client(self, tool: str = "scan", **httpx_kwargs) -> httpx.AsyncClient:
+        """Build and return a governed httpx.AsyncClient for agent HTTP egress.
+
+        Enforces scope checks, rate limits, and research headers based on
+        engagement context.
+        """
+        from ai_osop.safety.governed_client import governed_client, research_header_from_settings
+        from ai_osop.safety.scope import ScopeEnforcer
+
+        scope_enforcer = None
+        if self.ctx.scope is not None:
+            scope_enforcer = ScopeEnforcer(self.ctx.scope)
+
+        rate_limiter = getattr(self.ctx, "rate_limiter", None)
+        research_hdr = research_header_from_settings()
+
+        kwargs = dict(httpx_kwargs)
+        kwargs.setdefault("verify", False)
+        kwargs.setdefault("follow_redirects", True)
+        kwargs.setdefault("timeout", 20.0)
+
+        return governed_client(
+            scope=scope_enforcer,
+            rate_limiter=rate_limiter,
+            research_header=research_hdr,
+            tool=tool,
+            **kwargs,
+        )
+
     def safe_path(self, path: str) -> str:
         """Enforce file access within the agent's sandbox directory."""
         # Agent workspace directory
@@ -583,9 +612,48 @@ class BaseAgent(ABC):
     async def _validate_task(self, task: Task) -> None:
         """Validate task before execution."""
         # Check scope if required
-        if task.scope_check:
-            # Scope validation logic here
-            pass
+        if task.scope_check and self.ctx.scope is not None:
+            from ai_osop.safety.scope import ScopeEnforcer
+            enforcer = ScopeEnforcer(self.ctx.scope)
+            
+            payload = task.payload or {}
+            targets_to_check = []
+            
+            for key in ("url", "target", "target_url", "domain", "host"):
+                val = payload.get(key)
+                if val and isinstance(val, str):
+                    targets_to_check.append(val)
+                    
+            for key in ("urls", "targets", "hosts", "domains"):
+                val = payload.get(key)
+                if val and isinstance(val, list):
+                    for item in val:
+                        if isinstance(item, str):
+                            targets_to_check.append(item)
+                            
+            def _collect_strings(data: Any):
+                if isinstance(data, dict):
+                    for v in data.values():
+                        _collect_strings(v)
+                elif isinstance(data, list):
+                    for item in data:
+                        _collect_strings(item)
+                elif isinstance(data, str):
+                    if data.startswith(("http://", "https://")) or "." in data:
+                        targets_to_check.append(data)
+            
+            _collect_strings(payload)
+            
+            for target in set(targets_to_check):
+                clean_target = target
+                if target.startswith(("http://", "https://")):
+                    from urllib.parse import urlparse
+                    try:
+                        parsed = urlparse(target)
+                        clean_target = parsed.netloc.split(":")[0] or parsed.path
+                    except Exception:
+                        pass
+                enforcer.validate_target(clean_target)
 
         # Check dependencies
         for dep_id in task.dependencies:
