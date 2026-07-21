@@ -186,16 +186,21 @@ class PhaseMonitor:
     def _assert_vulnerability_mcp_ready(self) -> None:
         """Fail phase entry when a configured critical scanner is not usable.
 
-        An empty registry is tolerated for isolated unit tests and deployments
-        which intentionally run without MCP scanners.  Once MCP connections are
-        registered, though, silently proceeding with an open/uninitialized
-        nuclei or Burp connection would create a hollow discovery phase.
+        MIN-5 (2026-07-21): fail-closed on an empty MCP registry. An empty
+        registry means no scanners are connected — the vulnerability_discovery
+        phase would be hollow with zero real scan capability and would appear
+        complete without having performed any detection. Previously tolerated
+        for unit tests; callers that need an empty registry during tests can
+        mock or bypass this method directly.
         """
         registry = self._orch.mcp_registry
         servers = getattr(registry, "_servers", {})
         if not servers:
-            logger.warning("vuln_mcp_readiness_skipped_no_registered_servers")
-            return
+            detail = "no MCP servers are registered; vulnerability_discovery cannot proceed"
+            logger.error("vuln_mcp_readiness_failed_empty_registry")
+            raise WorkflowException(
+                "Cannot enter vulnerability_discovery; " + detail
+            )
 
         unavailable: List[str] = []
         for server_id in self._CRITICAL_VULN_MCP_SERVERS:

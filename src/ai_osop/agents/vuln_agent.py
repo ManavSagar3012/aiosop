@@ -802,7 +802,7 @@ class VulnAnalysisAgent(BaseAgent):
         verbatim in the HTTP response body (i.e. the app did not entity-encode it).
         Catches classic reflected XSS that never reaches a browser sink."""
         try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as client:
+            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=20) as client:
                 resp = await client.get(url)
                 body = resp.text
         except Exception as e:
@@ -1145,7 +1145,7 @@ class VulnAnalysisAgent(BaseAgent):
 
         readback_url = payload.get("readback_url")
         try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
+            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=20) as c:
                 # 1. CONTROL — a legitimate request WITHOUT the injected privileged
                 #    fields, with a FRESH unique identity so a uniqueness-constrained
                 #    create accepts it. Anything already present here is a server
@@ -1374,7 +1374,7 @@ class VulnAnalysisAgent(BaseAgent):
             "Content-Type": payload.get("content_type", "application/json"),
         }
         try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=False, timeout=20) as c:
+            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=False, timeout=20) as c:
                 if isinstance(body, (dict, list)):
                     resp = await c.request(method, url, json=body, headers=headers)
                 else:
@@ -1593,7 +1593,7 @@ class VulnAnalysisAgent(BaseAgent):
         base_body = cfg.get("base_body", {})
         headers = cfg.get("headers", {})
         try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
+            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=15) as c:
                 if body_field:
                     body = {**base_body, body_field: metadata_url}
                     if body_format == "form":
@@ -2497,7 +2497,7 @@ class VulnAnalysisAgent(BaseAgent):
         body = ""
         for scheme in ("https", "http"):
             try:
-                async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=12) as c:
+                async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=12) as c:
                     resp = await c.get(f"{scheme}://{host}/")
                     body = resp.text
                     if body:
@@ -2599,7 +2599,7 @@ class VulnAnalysisAgent(BaseAgent):
         """Persist a payload into a stored sink as the attacker (best-effort)."""
         body = {**base, field: value}
         try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
+            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=20) as c:
                 if fmt == "form":
                     await c.request(method, store_url, data=body, headers=headers)
                 else:
@@ -2857,7 +2857,7 @@ class VulnAnalysisAgent(BaseAgent):
         # Trigger the sink. A connection error here does NOT abort the scan — the
         # OAST callback is the signal, not this response.
         try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as c:
+            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=20) as c:
                 if body_field:
                     body = {**base_body, body_field: callback_url}
                     if body_format == "form":
@@ -3049,8 +3049,8 @@ class VulnAnalysisAgent(BaseAgent):
         statuses: List[int] = []
         lengths: List[int] = []
         try:
-            async with httpx.AsyncClient(
-                timeout=10.0, follow_redirects=True, verify=False
+            async with self.get_governed_client(
+                tool="vuln", timeout=10.0, follow_redirects=True, verify=False
             ) as client:
                 for u in probes:
                     try:

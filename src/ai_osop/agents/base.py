@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
+import httpx
 import structlog
 
 from ai_osop.core.config import AgentType, settings

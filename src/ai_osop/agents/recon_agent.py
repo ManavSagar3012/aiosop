@@ -11,7 +11,6 @@ from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urljoin, urlparse
 
-import aiohttp
 import structlog
 
 from ai_osop.adapters.recon_mcp import ReconMCPAdapter
@@ -868,7 +867,10 @@ class ReconAgent(BaseAgent):
             visited_urls = set()
             urls_to_crawl = sorted(list(set(initial_urls)))
 
-            max_pages = 20  # Limit per identity to stay within budget
+            # MIN-7 (2026-07-21): crawl budget configurable from task payload.
+            # Previously hardcoded to 20; callers (phase_monitor, API) can now
+            # pass max_pages in the task payload to adjust for large in-scope apps.
+            max_pages = int(payload.get("max_pages", 20))
             pages_crawled = 0
 
             js_files = set()

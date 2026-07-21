@@ -277,6 +277,15 @@ class TaskScheduler:
                         record_stage(
                             task, ExecutionStage.TASK_COMPLETED, metadata={"status": "completed"}
                         )
+                    # MIN-4 (2026-07-21): write terminal status to Neo4j so the
+                    # task node reflects completion (previously only session_memory
+                    # / Redis-Postgres was updated, leaving tasks shown as 'running'
+                    # in the graph). The agent's own finally block in
+                    # BaseAgent.execute_task already writes to Neo4j for the agent
+                    # path; this is the durable/Temporal executor path's own write.
+                    await self._orch.graph_memory.upsert_task(
+                        task, result_summary=result if isinstance(result, dict) else None
+                    )
                     await self._orch.session_memory.store_task(task)
                     return task.result
                 except Exception as e:
@@ -285,6 +294,10 @@ class TaskScheduler:
                     task.error = str(e)
                     record_failure(
                         task, FailureCategory.SCANNER, str(e), component=agent.ctx.agent_id
+                    )
+                    # MIN-4: write terminal failure to Neo4j
+                    await self._orch.graph_memory.upsert_task(
+                        task, result_summary={"error": str(e)[:300]}
                     )
                     await self._orch.session_memory.store_task(task)
                     return task.result
@@ -299,6 +312,10 @@ class TaskScheduler:
                     FailureCategory.QUEUE,
                     "Timeout waiting for agent",
                     component="task_scheduler",
+                )
+                # MIN-4: write terminal timeout to Neo4j
+                await self._orch.graph_memory.upsert_task(
+                    task, result_summary={"error": "Timeout waiting for agent"}
                 )
                 await self._orch.session_memory.store_task(task)
                 return task.result

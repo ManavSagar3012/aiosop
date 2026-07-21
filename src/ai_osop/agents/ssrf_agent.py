@@ -72,13 +72,14 @@ class SSRFAgent(BaseVulnerabilityAgent):
 
         templates = PayloadTemplateLibrary.get_templates(VulnClass.SSRF)
 
-        async with httpx.AsyncClient() as client:
+        # BLK-2 (2026-07-21): use governed client for SSRF probe egress
+        async with self.get_governed_client(tool="ssrf", timeout=10.0) as client:
             for template in templates:
                 payload = template.replace("{{OAST_CALLBACK}}", callback_url)
                 try:
                     # Simplistic injection: assuming SSRF via a 'url' param
                     params = {"url": payload}
-                    await client.get(target_url, params=params, timeout=5.0)
+                    await client.get(target_url, params=params)
                 except Exception:
                     pass
 

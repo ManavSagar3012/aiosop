@@ -15,13 +15,14 @@ def mock_orchestrator():
     session_memory = AsyncMock()
     graph_memory = AsyncMock()
     mcp_registry = AsyncMock()
-    # PhaseMonitor._assert_vulnerability_mcp_ready inspects the registry's
-    # synchronous `_servers` mapping and treats an empty one as "no MCP scanners
-    # registered" — the documented tolerated path for isolated unit tests. A bare
-    # AsyncMock would expose a truthy child-mock `_servers`, tripping the readiness
-    # gate on a coroutine. Pin it to an empty dict so these tests exercise the
-    # scheduling logic, not MCP readiness.
-    mcp_registry._servers = {}
+    # MIN-5 (2026-07-21): the MCP readiness gate now fails closed when no servers
+    # are registered. Register dummy critical MCP connections so the gate passes.
+    from unittest.mock import MagicMock
+    _mock_conn = MagicMock()
+    _mock_conn.get_circuit_state.return_value = "closed"
+    _mock_conn._initialized = True
+    mcp_registry._servers = {"nuclei-mcp": _mock_conn, "burp-mcp": _mock_conn}
+    mcp_registry.get_server = lambda sid: _mock_conn if sid in ("nuclei-mcp", "burp-mcp") else None
     llm_client = AsyncMock()
 
     orch = Orchestrator(session_memory, graph_memory, mcp_registry, llm_client)
