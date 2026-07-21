@@ -10,7 +10,7 @@ from ai_osop.orchestrator.orchestrator import EngagementPhase, Orchestrator
 
 
 @pytest.fixture
-def mock_orchestrator():
+async def mock_orchestrator():
     session_memory = AsyncMock()
     graph_memory = AsyncMock()
     mcp_registry = AsyncMock()
@@ -19,7 +19,24 @@ def mock_orchestrator():
     orch = Orchestrator(session_memory, graph_memory, mcp_registry, llm_client)
     orch.rate_limiter = AsyncMock()
     graph_memory.run_read_query = AsyncMock(return_value=[])
-    return orch
+
+    # Short-circuit the 60-second JWT polling loop in _on_phase_enter(VULNERABILITY_DISCOVERY).
+    # Must return a session with bearer_token so the poll loop breaks on first iteration.
+    _mock_session = MagicMock()
+    _mock_session.bearer_token = "mock-jwt-token"
+    _mock_session.user_label = "mock-user"
+    orch.session_store.list_sessions = AsyncMock(return_value=[_mock_session])
+
+    yield orch
+
+    # Cleanup: stop background tasks to prevent inter-test interference
+    orch._running = False
+    if orch._phase_monitor_task and not orch._phase_monitor_task.done():
+        orch._phase_monitor_task.cancel()
+        try:
+            await orch._phase_monitor_task
+        except asyncio.CancelledError:
+            pass
 
 
 @pytest.fixture
@@ -113,6 +130,45 @@ async def test_transition_phase_by_canonical_id(mock_orchestrator, dummy_scope):
 
     assert updated_session.phase == EngagementPhase.RECONNAISSANCE.value
     assert updated_session.session_id == "eng-123456-test-eng"
+
+
+@pytest.mark.asyncio
+async def test_auto_advance_from_initialized_to_recon(mock_orchestrator, dummy_scope):
+    """AIOSOP-AUTO-INTEGRATION-001: create an engagement and verify the phase
+    monitor auto-advances it from INITIALIZED to RECONNAISSANCE.
+
+    This is the minimal end-to-end test for BLK-1: the SessionDict fix must
+    let the monitor look up a session by its canonical engagement_id and
+    successfully advance the phase. The _on_phase_enter dispatch is mocked to
+    avoid requiring the full Neo4j/Postgres/Redis stack for unit testing.
+    """
+    session = await mock_orchestrator.create_engagement(dummy_scope, {})
+    eid = session.canonical_engagement_id
+    assert session.phase == EngagementPhase.INITIALIZED.value
+
+    # Mock phase_monitor._on_phase_enter to avoid dispatching real tasks.
+    # NOTE: engagement_manager.transition_phase calls
+    # self._orch.phase_monitor._on_phase_enter(session, new_phase) directly,
+    # NOT self._orch._on_phase_enter() (which delegates to phase_monitor).
+    # The mock must be on phase_monitor to intercept.
+    mock_orchestrator.phase_monitor._on_phase_enter = AsyncMock()
+
+    # _is_phase_complete for INITIALIZED returns True immediately
+    # _resolve_auto_next should return RECONNAISSANCE
+    # _auto_transition_ready should return True (first attempt)
+    # transition_phase should be called and succeed
+
+    await mock_orchestrator.phase_monitor._auto_advance_phase(session)
+
+    updated = mock_orchestrator._sessions[eid]
+    assert updated.phase == EngagementPhase.RECONNAISSANCE.value
+    mock_orchestrator.phase_monitor._on_phase_enter.assert_awaited_once()
+
+    # Verify the session can be looked up by either id form
+    by_canonical = mock_orchestrator._sessions[eid]
+    by_full = mock_orchestrator._sessions[session.session_id]
+    assert by_canonical is by_full
+    assert by_canonical.phase == EngagementPhase.RECONNAISSANCE.value
 
 
 @pytest.mark.asyncio

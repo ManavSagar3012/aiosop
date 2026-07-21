@@ -11,7 +11,7 @@ from ai_osop.orchestrator.task_scheduler import TaskScheduler
 
 
 @pytest.fixture
-def mock_orchestrator():
+async def mock_orchestrator():
     session_memory = AsyncMock()
     graph_memory = AsyncMock()
     mcp_registry = AsyncMock()
@@ -32,7 +32,26 @@ def mock_orchestrator():
     # Mock coordination_bus publish
     orch.coordination_bus = AsyncMock()
 
-    return orch
+    # Short-circuit the 60-second JWT polling loop in _on_phase_enter(VULNERABILITY_DISCOVERY).
+    # Must return a session with bearer_token so the poll loop breaks on the first
+    # iteration; returning [] causes 12 x 5s sleeps = 60s per test call.
+    _mock_session = MagicMock()
+    _mock_session.bearer_token = "mock-jwt-token"
+    _mock_session.user_label = "mock-user"
+    orch.session_store.list_sessions = AsyncMock(return_value=[_mock_session])
+
+    yield orch
+
+    # Cleanup: stop background tasks to prevent inter-test interference
+    # (the Orchestrator __init__ starts a _phase_monitor task when a running
+    # event loop is detected, which loops forever on asyncio.sleep(5)).
+    orch._running = False
+    if orch._phase_monitor_task and not orch._phase_monitor_task.done():
+        orch._phase_monitor_task.cancel()
+        try:
+            await orch._phase_monitor_task
+        except asyncio.CancelledError:
+            pass
 
 
 @pytest.fixture
@@ -95,9 +114,12 @@ async def test_phase_monitor_schedules_tech_specific_scanners(mock_orchestrator,
     assert "csrf_scan" in task_types
     assert "pollution_scan" in task_types
 
-    # Should not schedule SSRF or JWT for Django since they are not recommended
+    # Should not schedule SSRF for Django (not recommended for Django).
+    # jwt_scan IS scheduled because the fixture provides a mock session with
+    # bearer_token, which triggers JWT scanning after the polling loop
+    # breaks on the first iteration.
     assert "ssrf_scan" not in task_types
-    assert "jwt_scan" not in task_types
+    assert "jwt_scan" in task_types
 
 
 @pytest.mark.asyncio
