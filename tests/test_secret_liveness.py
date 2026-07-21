@@ -98,7 +98,12 @@ def test_structural_only_provider_never_confirms_even_with_probe():
 
 
 # --------------------------------------------------- (d) probe + downgrade gate
-def test_probe_authenticates_marks_confirmed_live():
+def test_probe_authenticates_marks_confirmed_live(monkeypatch):
+    # GOV-6 (2026-07-21): external liveness probing is now fail-closed by policy.
+    # This test verifies the probe MECHANISM (a live 200 -> confirmed_live), so it
+    # must opt into the policy the same way a real engagement would.
+    from ai_osop.core import config as _config
+    monkeypatch.setattr(_config.settings, "allow_external_liveness_probing", True, raising=False)
     client = _FakeClient(200)
     verdict = asyncio.run(
         assess_secret(

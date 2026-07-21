@@ -127,8 +127,12 @@ class BaseAgent(ABC):
         from ai_osop.safety.scope import ScopeEnforcer
 
         scope_enforcer = None
-        if self.ctx.scope is not None:
-            scope_enforcer = ScopeEnforcer(self.ctx.scope)
+        # Use getattr: some contexts (tests, minimal runtime ctxs) don't set a
+        # ``scope`` attribute at all. Accessing self.ctx.scope directly raised
+        # AttributeError and crashed every governed egress on those paths.
+        _scope = getattr(self.ctx, "scope", None)
+        if _scope is not None:
+            scope_enforcer = ScopeEnforcer(_scope)
 
         rate_limiter = getattr(self.ctx, "rate_limiter", None)
         research_hdr = research_header_from_settings()
