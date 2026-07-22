@@ -47,7 +47,11 @@ def _agent(execution_confirms, oast, captured):
     async def _confirm(url, token, engagement_id):
         return execution_confirms
 
+    async def _store(url, method, field, value, base, fmt, headers):
+        pass  # No-op — don't make HTTP requests to http://t/store
+
     a._confirm_xss_execution = _confirm
+    a._store_payload = _store
     return a
 
 

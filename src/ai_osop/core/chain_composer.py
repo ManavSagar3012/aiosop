@@ -31,6 +31,7 @@ from typing import Dict, List
 
 import structlog
 
+from ai_osop.core.evidence_vault import EvidenceVaultService
 from ai_osop.core.models import (
     AttackChain,
     ChainStatus,
@@ -320,11 +321,23 @@ class ChainComposer:
             provenance=EvidenceProvenance.LIVE,
         )
 
+        # V6.2: compute and pin the integrity hash so the audit trail is tamper-evident.
+        try:
+            vault = EvidenceVaultService()
+            pkg.integrity_hash = vault.generate_package_hash(pkg)
+        except Exception as e:  # noqa: BLE001 - hash is best-effort
+            logger.warning(
+                "evidence_hash_failed",
+                chain_id=chain.id,
+                error=str(e),
+            )
+
         logger.info(
             "evidence_package_built",
             chain_id=chain.id,
             raw_requests=len(raw_requests),
             raw_responses=len(raw_responses),
             has_replay=bool(chain.poc_script),
+            integrity_hash=pkg.integrity_hash[:16] if pkg.integrity_hash else None,
         )
         return pkg

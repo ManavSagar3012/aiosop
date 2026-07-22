@@ -11,7 +11,8 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ai_osop.core.config import AgentType, EngagementPhase, VulnClass, settings
+from ai_osop.core.config import settings
+from ai_osop.core.enums import AgentType, EngagementPhase, VulnClass
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.knowledge_engine import get_knowledge_engine
 from ai_osop.core.models import AuditEvent, SessionState, Task
@@ -198,9 +199,7 @@ class PhaseMonitor:
         if not servers:
             detail = "no MCP servers are registered; vulnerability_discovery cannot proceed"
             logger.error("vuln_mcp_readiness_failed_empty_registry")
-            raise WorkflowException(
-                "Cannot enter vulnerability_discovery; " + detail
-            )
+            raise WorkflowException("Cannot enter vulnerability_discovery; " + detail)
 
         unavailable: List[str] = []
         for server_id in self._CRITICAL_VULN_MCP_SERVERS:
@@ -804,12 +803,12 @@ class PhaseMonitor:
                     priority=8,
                     agent_type=AgentType.VULN_ANALYSIS,
                     payload={
-                        "url": f"{domain_base.rstrip('/')}/rest/user/whoami"
-                        if domain_base
-                        else None,
-                        "verify_url": f"{domain_base.rstrip('/')}/rest/user/whoami"
-                        if domain_base
-                        else None,
+                        "url": (
+                            f"{domain_base.rstrip('/')}/rest/user/whoami" if domain_base else None
+                        ),
+                        "verify_url": (
+                            f"{domain_base.rstrip('/')}/rest/user/whoami" if domain_base else None
+                        ),
                         "user_label": jwt_label,
                         "method": "GET",
                         "engagement_id": session.canonical_engagement_id,
@@ -822,9 +821,9 @@ class PhaseMonitor:
                     "jwt_scan_dispatched",
                     session_id=session.session_id,
                     user_label=jwt_label,
-                    verify_url=f"{domain_base.rstrip('/')}/rest/user/whoami"
-                    if domain_base
-                    else None,
+                    verify_url=(
+                        f"{domain_base.rstrip('/')}/rest/user/whoami" if domain_base else None
+                    ),
                 )
 
             # 3) Autonomous authenticated authorization testing — IDOR / BOLA /
@@ -834,7 +833,9 @@ class PhaseMonitor:
             #    user_a / user_b / anonymous and flags cross-identity access;
             #    high-confidence findings are bridged to CONFIRMED vulnerabilities.
             try:
-                sessions = await self._orch.session_store.list_sessions(session.canonical_engagement_id)
+                sessions = await self._orch.session_store.list_sessions(
+                    session.canonical_engagement_id
+                )
             except Exception as e:  # noqa: BLE001 - session lookup must not break phase entry
                 sessions = []
                 logger.warning(

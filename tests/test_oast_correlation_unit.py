@@ -7,7 +7,7 @@ probes hit by a single backend.
 
 import asyncio
 
-from ai_osop.core.config import VulnClass
+from ai_osop.core.enums import VulnClass
 from ai_osop.core.oast_correlation import OASTCorrelationRegistry, OASTProbe, build_findings
 
 

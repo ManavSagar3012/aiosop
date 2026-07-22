@@ -85,9 +85,7 @@ async def test_real_llm_planning_loop_round_trip():
         ]
         # Bound the call so a stalled provider fails the test fast instead of
         # hanging the suite.
-        text = await client.complete(
-            messages, max_tokens=settings.llm_reasoning_max_tokens
-        )
+        text = await client.complete(messages, max_tokens=settings.llm_reasoning_max_tokens)
     finally:
         settings.mock_llm = original_mock
 

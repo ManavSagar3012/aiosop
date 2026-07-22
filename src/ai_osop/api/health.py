@@ -230,7 +230,7 @@ async def _check_tool_reality() -> Dict[str, Any]:
     async def probe(name: str, host: str, port: int) -> None:
         base = f"http://{host}:{port}"
         entry: Dict[str, Any] = {"endpoint": f"{host}:{port}"}
-        
+
         headers = {}
         if name == "burp-mcp":
             if settings.burp_api_key:

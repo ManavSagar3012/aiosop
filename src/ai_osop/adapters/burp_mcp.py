@@ -7,7 +7,7 @@ scanner issue correlation, and proxy history management.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.enums import Severity, VulnClass
 from ai_osop.core.exceptions import MCPException
 from ai_osop.core.models import Endpoint, ScopeDefinition, Vulnerability
 from ai_osop.mcp.protocol import MCPExecuteResponse, MCPRegistry
@@ -46,12 +46,12 @@ class BurpMCPAdapter:
         """
         if response.error:
             return response.error
-        
+
         # Burp Montoya MCP can return null result on failure
         result = response.result
         if result is None:
             return "Burp Montoya MCP returned null result"
-            
+
         if isinstance(result, dict):
             for key in ("error", "error_message", "message", "detail", "reason"):
                 val = result.get(key)
@@ -106,7 +106,9 @@ class BurpMCPAdapter:
         self._check_response(response, "scan_target")
         return response
 
-    async def get_proxy_history(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def get_proxy_history(
+        self, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Retrieve captured proxy traffic with optional filtering."""
         params = {"filters": filters or {}, "limit": 1000, "offset": 0}
         response = await self.registry.execute_tool(self.SERVER_ID, "get_proxy_history", params)
@@ -248,7 +250,7 @@ class BurpMCPAdapter:
             requires_auth=issue.get("requires_auth", False),
             exploitability="high" if burp_severity == "High" else "medium",
             engagement_id=issue.get("engagement_id", ""),
-            cvss_score=None
+            cvss_score=None,
         )
 
     def _map_burp_issue_type(self, issue_type: str) -> VulnClass:

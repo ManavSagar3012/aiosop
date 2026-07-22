@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import ScopeDefinition, SessionState, Task
 from ai_osop.orchestrator.orchestrator import EngagementPhase, Orchestrator
 

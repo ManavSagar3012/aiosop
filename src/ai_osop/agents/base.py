@@ -16,7 +16,8 @@ from typing import Any, Callable, Dict, List, Optional
 import httpx
 import structlog
 
-from ai_osop.core.config import AgentType, settings
+from ai_osop.core.config import settings
+from ai_osop.core.enums import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.execution_trace import (
     ExecutionStage,
@@ -26,11 +27,7 @@ from ai_osop.core.execution_trace import (
 )
 from ai_osop.core.models import AuditEvent, ScopeDefinition, Task
 from ai_osop.core.observability import record_task
-from ai_osop.core.telemetry import (
-    RequestContext,
-    extract_trace_context,
-    reset_mcp_latency,
-)
+from ai_osop.core.telemetry import RequestContext, extract_trace_context, reset_mcp_latency
 from ai_osop.core.tracing import trace_span_with_parent
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
@@ -117,6 +114,7 @@ class BaseAgent(ABC):
         # recorded, so coverage can be extended to every agent without double-counting
         # for agents (recon/vuln) that also resolve skills inside _execute.
         self._activated_tasks: set = set()
+
     def get_governed_client(self, tool: str = "scan", **httpx_kwargs) -> httpx.AsyncClient:
         """Build and return a governed httpx.AsyncClient for agent HTTP egress.
 
@@ -155,7 +153,7 @@ class BaseAgent(ABC):
         # Agent workspace directory
         sandbox_dir = os.path.abspath(f"/tmp/agent-{self.ctx.agent_id}")
         os.makedirs(sandbox_dir, exist_ok=True)
-        
+
         # Join and check if the resulting path is still inside the sandbox
         # Use abspath to normalize and prevent traversal
         safe_path = os.path.abspath(os.path.join(sandbox_dir, path))
@@ -476,9 +474,9 @@ class BaseAgent(ABC):
                 end_time = time.monotonic()
                 if target:
                     self.ctx.rate_limiter.record_backpressure(
-                        target, 
-                        status_code=result.get("status_code"), 
-                        response_time=end_time - start_time
+                        target,
+                        status_code=result.get("status_code"),
+                        response_time=end_time - start_time,
                     )
 
                 # Post-execution validation
@@ -619,23 +617,24 @@ class BaseAgent(ABC):
         # Check scope if required
         if task.scope_check and self.ctx.scope is not None:
             from ai_osop.safety.scope import ScopeEnforcer
+
             enforcer = ScopeEnforcer(self.ctx.scope)
-            
+
             payload = task.payload or {}
             targets_to_check = []
-            
+
             for key in ("url", "target", "target_url", "domain", "host"):
                 val = payload.get(key)
                 if val and isinstance(val, str):
                     targets_to_check.append(val)
-                    
+
             for key in ("urls", "targets", "hosts", "domains"):
                 val = payload.get(key)
                 if val and isinstance(val, list):
                     for item in val:
                         if isinstance(item, str):
                             targets_to_check.append(item)
-                            
+
             def _collect_strings(data: Any):
                 if isinstance(data, dict):
                     for v in data.values():
@@ -646,13 +645,14 @@ class BaseAgent(ABC):
                 elif isinstance(data, str):
                     if data.startswith(("http://", "https://")) or "." in data:
                         targets_to_check.append(data)
-            
+
             _collect_strings(payload)
-            
+
             for target in set(targets_to_check):
                 clean_target = target
                 if target.startswith(("http://", "https://")):
                     from urllib.parse import urlparse
+
                     try:
                         parsed = urlparse(target)
                         clean_target = parsed.netloc.split(":")[0] or parsed.path
@@ -701,10 +701,7 @@ class BaseAgent(ABC):
 
         # Contract (2): at least one finding with real evidence.
         findings = result.get("findings") or []
-        if findings and any(
-            (f.get("evidence") if isinstance(f, dict) else None)
-            for f in findings
-        ):
+        if findings and any((f.get("evidence") if isinstance(f, dict) else None) for f in findings):
             return result
 
         # Contract (3): a raw tool result was returned.
@@ -869,7 +866,9 @@ class BaseAgent(ABC):
                         msg="suppressing further heartbeat errors until recovery",
                     )
             # Exponential backoff: 5s → 10s → 20s → 40s → 60s cap
-            _sleep = min(5 * (2 ** _consecutive_failures), _MAX_BACKOFF) if _consecutive_failures else 5
+            _sleep = (
+                min(5 * (2**_consecutive_failures), _MAX_BACKOFF) if _consecutive_failures else 5
+            )
             try:
                 await asyncio.sleep(_sleep)
             except (asyncio.CancelledError, RuntimeError):
@@ -942,7 +941,6 @@ class BaseAgent(ABC):
             )
         except Exception:
             pass
-
 
         try:
             await asyncio.wait_for(
@@ -1077,7 +1075,7 @@ class BaseAgent(ABC):
         """
         import os
 
-        from ai_osop.core.config import TASK_SKILL_MAP
+        from ai_osop.core.task_skills import TASK_SKILL_MAP
 
         engine = getattr(self.ctx, "skill_engine", None)
 

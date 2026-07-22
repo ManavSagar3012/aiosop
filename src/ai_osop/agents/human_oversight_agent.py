@@ -6,7 +6,7 @@ Manages approval flows, risk translation, and operator communication.
 from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Task
 

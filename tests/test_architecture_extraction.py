@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
-from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.enums import AgentType, EngagementPhase
 from ai_osop.core.models import ApprovalRequest, SessionState, Task
 from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
 from ai_osop.orchestrator.engagement_manager import EngagementManager

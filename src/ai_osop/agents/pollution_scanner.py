@@ -6,9 +6,8 @@ Specialized agent for Prototype Pollution detection.
 from typing import Any, Dict
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
-from ai_osop.payload_engine.engine import AdaptivePayloadEngine
 
 
 class PollutionScanner(BaseVulnerabilityAgent):
@@ -34,7 +33,9 @@ class PollutionScanner(BaseVulnerabilityAgent):
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute Prototype Pollution scan task."""
-        target_url = task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        target_url = (
+            task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        )
         if not target_url:
             return {"status": "failed", "error": "url parameter is required"}
 

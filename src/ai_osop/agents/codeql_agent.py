@@ -7,7 +7,7 @@ import json
 from typing import Any, Dict, List
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Severity, Task, Vulnerability
 
 
@@ -97,7 +97,6 @@ class CodeQLAgent(BaseAgent):
         """
         mapped_count = 0
         import uuid
-
 
         for finding in self.findings_cache:
             file_path = finding["file_path"]

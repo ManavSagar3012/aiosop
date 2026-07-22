@@ -5,7 +5,7 @@ import pytest
 
 from ai_osop.agents.recon_agent import ReconAgent
 from ai_osop.auth.session_store import UserSession
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Endpoint, Task
 
 

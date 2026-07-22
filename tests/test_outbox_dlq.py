@@ -44,7 +44,7 @@ class _FakeSession:
     def __init__(self, rows):
         self._rows = rows
         self.executes = []  # list of (statement, kwargs)
-        self.updates = []   # list of dict values passed to update()
+        self.updates = []  # list of dict values passed to update()
 
     async def __aenter__(self):
         return self
@@ -74,16 +74,17 @@ class _FakeSession:
         pass
 
 
-def _make_outbox_row(*, entity_type="task", payload=None, attempts=0, dlq=False,
-                     entity_id="eid-1", row_id=1):
+def _make_outbox_row(
+    *, entity_type="task", payload=None, attempts=0, dlq=False, entity_id="eid-1", row_id=1
+):
     """Build a real OutboxORM instance (in-memory, not persisted)."""
     return OutboxORM(
         id=row_id,
         entity_type=entity_type,
         entity_id=entity_id,
         action="upsert",
-        payload=payload or {"id": "task-1", "type": "test",
-                            "agent_type": "recon", "engagement_id": "eng-1"},
+        payload=payload
+        or {"id": "task-1", "type": "test", "agent_type": "recon", "engagement_id": "eng-1"},
         processed=False,
         attempt_count=attempts,
         dlq=dlq,
@@ -122,8 +123,9 @@ async def test_successful_task_entry_marked_processed():
 
     gm.upsert_task.assert_awaited_once()
     # At least one UPDATE statement was issued to mark processed=True.
-    update_executes = [e for e in sm._fake_session.executes
-                       if str(e[0]).strip().lower().startswith("update")]
+    update_executes = [
+        e for e in sm._fake_session.executes if str(e[0]).strip().lower().startswith("update")
+    ]
     assert len(update_executes) >= 1
 
 
@@ -140,8 +142,9 @@ async def test_failing_entry_increments_attempt_and_retries():
     await proc.process_batch()
 
     # The failure path issues an UPDATE setting attempt_count=1, dlq=False.
-    update_executes = [e for e in sm._fake_session.executes
-                       if str(e[0]).strip().lower().startswith("update")]
+    update_executes = [
+        e for e in sm._fake_session.executes if str(e[0]).strip().lower().startswith("update")
+    ]
     assert len(update_executes) >= 1
 
 
@@ -159,8 +162,9 @@ async def test_entry_over_cap_is_marked_dlq():
 
     # An UPDATE was issued. The processor's code sets dlq=True when
     # attempt >= MAX_ATTEMPTS; we verify by inspecting the compiled statement.
-    update_executes = [e for e in sm._fake_session.executes
-                       if str(e[0]).strip().lower().startswith("update")]
+    update_executes = [
+        e for e in sm._fake_session.executes if str(e[0]).strip().lower().startswith("update")
+    ]
     assert len(update_executes) >= 1
     # Compile the UPDATE to verify it sets dlq=True.
     stmt_str = str(update_executes[0][0].compile())
@@ -202,8 +206,9 @@ async def test_unknown_entity_type_increments_attempt():
     # upsert_task was never called (entity_type != "task").
     upsert_mock.assert_not_awaited()
     # But an UPDATE was issued to record attempt_count=1 and last_error.
-    update_executes = [e for e in sm._fake_session.executes
-                       if str(e[0]).strip().lower().startswith("update")]
+    update_executes = [
+        e for e in sm._fake_session.executes if str(e[0]).strip().lower().startswith("update")
+    ]
     assert len(update_executes) >= 1
 
 

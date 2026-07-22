@@ -14,7 +14,7 @@ from ai_osop.api.deps import (
     state,
     verify_token,
 )
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -64,6 +64,7 @@ async def create_task(
 
     await state["orchestrator"].schedule_task(task)
     from ai_osop.celery_app import execute_task_celery
+
     execute_task_celery.delay(task.model_dump())
     return task
 

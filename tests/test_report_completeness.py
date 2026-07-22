@@ -32,7 +32,7 @@ from typing import Any, Dict, List
 import pytest
 
 from ai_osop.core.bounty_report import finding_signature, render_bounty_report
-from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.enums import Severity, VulnClass
 from ai_osop.core.models import Vulnerability
 
 
@@ -59,7 +59,11 @@ def _vuln(
                 "dbms": "SQLite",
                 "payloads": ["' OR 1=1--"],
                 "techniques": ["boolean-blind"],
-                "request": {"method": "POST", "url": "/rest/user/login", "body": "email=x&password=y"},
+                "request": {
+                    "method": "POST",
+                    "url": "/rest/user/login",
+                    "body": "email=x&password=y",
+                },
                 "response": {"status": 200, "body_snippet": "...authenticated..."},
             }
         ]
@@ -113,38 +117,83 @@ def test_validated_finding_renders_all_triager_sections():
     "vtype,cwe,evidence",
     [
         (
-            VulnClass.SQLI, "CWE-89",
-            [{"type": "sqlmap_injection", "provenance": "sqlmap",
-              "url": "http://t.test/api/login", "parameter": "email",
-              "dbms": "SQLite", "payloads": ["' OR 1=1--"]}],
+            VulnClass.SQLI,
+            "CWE-89",
+            [
+                {
+                    "type": "sqlmap_injection",
+                    "provenance": "sqlmap",
+                    "url": "http://t.test/api/login",
+                    "parameter": "email",
+                    "dbms": "SQLite",
+                    "payloads": ["' OR 1=1--"],
+                }
+            ],
         ),
         (
-            VulnClass.XSS, "CWE-79",
-            [{"type": "xss_execution", "provenance": "browser",
-              "url": "http://t.test/search", "parameter": "q",
-              "method": "browser-eval", "payload": "<script>alert(1)</script>"}],
+            VulnClass.XSS,
+            "CWE-79",
+            [
+                {
+                    "type": "xss_execution",
+                    "provenance": "browser",
+                    "url": "http://t.test/search",
+                    "parameter": "q",
+                    "method": "browser-eval",
+                    "payload": "<script>alert(1)</script>",
+                }
+            ],
         ),
         (
-            VulnClass.SSRF, "CWE-918",
-            [{"type": "ssrf_oast", "provenance": "oast",
-              "url": "http://t.test/fetch", "injection": "url",
-              "interaction": {"method": "GET", "path": "/probe"}}],
+            VulnClass.SSRF,
+            "CWE-918",
+            [
+                {
+                    "type": "ssrf_oast",
+                    "provenance": "oast",
+                    "url": "http://t.test/fetch",
+                    "injection": "url",
+                    "interaction": {"method": "GET", "path": "/probe"},
+                }
+            ],
         ),
         (
-            VulnClass.JWT_ABUSE, "CWE-347",
-            [{"type": "jwt_forgery", "provenance": "jwt_tester",
-              "url": "http://t.test/me", "technique": "alg_none",
-              "victim": "admin@target.test"}],
+            VulnClass.JWT_ABUSE,
+            "CWE-347",
+            [
+                {
+                    "type": "jwt_forgery",
+                    "provenance": "jwt_tester",
+                    "url": "http://t.test/me",
+                    "technique": "alg_none",
+                    "victim": "admin@target.test",
+                }
+            ],
         ),
         (
-            VulnClass.MASS_ASSIGNMENT, "CWE-915",
-            [{"type": "mass_assignment", "provenance": "http",
-              "url": "http://t.test/api/Users", "accepted_fields": {"role": "admin"}}],
+            VulnClass.MASS_ASSIGNMENT,
+            "CWE-915",
+            [
+                {
+                    "type": "mass_assignment",
+                    "provenance": "http",
+                    "url": "http://t.test/api/Users",
+                    "accepted_fields": {"role": "admin"},
+                }
+            ],
         ),
         (
-            VulnClass.RACE_CONDITION, "CWE-362",
-            [{"type": "race_limit", "provenance": "turbo_intruder",
-              "url": "http://t.test/api/basket", "limit": 1, "observed_successes": 20}],
+            VulnClass.RACE_CONDITION,
+            "CWE-362",
+            [
+                {
+                    "type": "race_limit",
+                    "provenance": "turbo_intruder",
+                    "url": "http://t.test/api/basket",
+                    "limit": 1,
+                    "observed_successes": 20,
+                }
+            ],
         ),
     ],
 )
@@ -197,35 +246,56 @@ def test_simulated_finding_renders_placeholder_not_report():
     cannot reach a triager."""
     sim = _vuln(simulated=True)
     report = render_bounty_report(sim)
-    assert "SIMULATED" in report.upper(), (
-        "simulated finding must render the SIMULATED placeholder, not a report"
-    )
+    assert (
+        "SIMULATED" in report.upper()
+    ), "simulated finding must render the SIMULATED placeholder, not a report"
     # And the placeholder must NOT contain the triager sections — it's not a
     # submittable report.
-    assert "## Steps to Reproduce" not in report, (
-        "simulated placeholder must not contain triager sections"
-    )
+    assert (
+        "## Steps to Reproduce" not in report
+    ), "simulated placeholder must not contain triager sections"
 
 
 def test_finding_signature_is_stable_and_distinct():
     """The dedup signature must be stable for the same finding and distinct
     for different endpoints/params — otherwise dup suppression (the #1
     reason good bugs pay $0) fails."""
-    v1 = _vuln(evidence=[{
-        "type": "sqlmap_injection", "provenance": "sqlmap",
-        "url": "http://target.test/rest/user/login", "parameter": "email",
-        "payloads": ["x"], "dbms": "SQLite",
-    }])
-    v2 = _vuln(evidence=[{
-        "type": "sqlmap_injection", "provenance": "sqlmap",
-        "url": "http://target.test/rest/user/login", "parameter": "email",
-        "payloads": ["x"], "dbms": "SQLite",
-    }])
-    v3 = _vuln(evidence=[{
-        "type": "sqlmap_injection", "provenance": "sqlmap",
-        "url": "http://target.test/rest/products/search", "parameter": "q",
-        "payloads": ["x"], "dbms": "SQLite",
-    }])
+    v1 = _vuln(
+        evidence=[
+            {
+                "type": "sqlmap_injection",
+                "provenance": "sqlmap",
+                "url": "http://target.test/rest/user/login",
+                "parameter": "email",
+                "payloads": ["x"],
+                "dbms": "SQLite",
+            }
+        ]
+    )
+    v2 = _vuln(
+        evidence=[
+            {
+                "type": "sqlmap_injection",
+                "provenance": "sqlmap",
+                "url": "http://target.test/rest/user/login",
+                "parameter": "email",
+                "payloads": ["x"],
+                "dbms": "SQLite",
+            }
+        ]
+    )
+    v3 = _vuln(
+        evidence=[
+            {
+                "type": "sqlmap_injection",
+                "provenance": "sqlmap",
+                "url": "http://target.test/rest/products/search",
+                "parameter": "q",
+                "payloads": ["x"],
+                "dbms": "SQLite",
+            }
+        ]
+    )
     sig1 = finding_signature(v1)
     sig2 = finding_signature(v2)
     sig3 = finding_signature(v3)

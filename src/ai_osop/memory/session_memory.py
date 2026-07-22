@@ -73,7 +73,6 @@ class TaskORM(Base):
     assigned_agent_id = Column(String(64), nullable=True)
 
 
-
 class OutboxORM(Base):
     __tablename__ = "outbox"
 
@@ -93,6 +92,7 @@ class OutboxORM(Base):
     attempt_count = Column(Integer, default=0)
     dlq = Column(Boolean, default=False, index=True)
     last_error = Column(String(512), nullable=True)
+
 
 class SessionStateORM(Base):
     __tablename__ = "session_states"
@@ -1215,7 +1215,7 @@ class SessionMemory:
             result = await session.execute(select(TaskORM).where(TaskORM.id == task_id))
             orm = result.scalar_one_or_none()
             if orm:
-                from ai_osop.core.config import AgentType
+                from ai_osop.core.enums import AgentType
 
                 return Task(
                     id=orm.id,
@@ -1241,7 +1241,7 @@ class SessionMemory:
 
     async def load_all_active_tasks(self) -> List[Task]:
         """Load all non-completed tasks from warm tier for recovery."""
-        from ai_osop.core.config import AgentType
+        from ai_osop.core.enums import AgentType
 
         # AIOSOP-RECOVERY-AGE-001: bound resurrection to recent tasks. Without this,
         # an abandoned engagement's non-terminal tasks are re-queued on EVERY restart

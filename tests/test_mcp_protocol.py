@@ -10,6 +10,7 @@ from ai_osop.mcp.protocol import (
     MCPInitializeRequest,
     MCPRegistry,
 )
+from tests._mocks import stub_aiohttp_response, stub_async_context_manager
 
 
 @pytest.fixture
@@ -19,72 +20,63 @@ def mock_aiohttp_session():
         session_instance.closed = False
         session_instance.close = AsyncMock()
         mock_session_class.return_value = session_instance
-        # Mock get as a method that returns an async context manager
-        mock_get_ctx = MagicMock()
-        session_instance.get.return_value = mock_get_ctx
-
+        session_instance.get.return_value = stub_async_context_manager(AsyncMock(status=200))
         yield session_instance
 
 
 @pytest.mark.asyncio
 async def test_mcp_connection_connect(mock_aiohttp_session):
     conn = MCPConnection("test-mcp", "localhost", 8080)
-
-    # Mock response
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-
-    # Mock context manager for .get()
-    mock_get_ctx = MagicMock()
-    mock_get_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_get_ctx.__aexit__ = AsyncMock()
-
     conn._session = mock_aiohttp_session
-    mock_aiohttp_session.get.return_value = mock_get_ctx
 
     await conn.connect()
     assert conn._session is not None
     mock_aiohttp_session.get.assert_called_once()
 
 
+def _stub_tool(name: str = "test_tool", timeout: int = 30) -> MagicMock:
+    tool = MagicMock()
+    tool.name = name
+    tool.timeout_seconds = timeout
+    return tool
+
+
+def _init_json_resp(data: dict):
+    return stub_aiohttp_response(json_data=data)
+
+
+def _stub_post_ctx(mock_aiohttp_session, json_data: dict):
+    ctx = stub_async_context_manager(_init_json_resp(json_data))
+    mock_aiohttp_session.post.return_value = ctx
+    return ctx
+
+
 @pytest.mark.asyncio
 async def test_mcp_connection_initialize(mock_aiohttp_session):
-    # Mock response
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_get_ctx = MagicMock()
-    mock_get_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_get_ctx.__aexit__ = AsyncMock()
-    mock_aiohttp_session.get.return_value = mock_get_ctx
-
     conn = MCPConnection("test-mcp", "localhost", 8080)
     conn._session = mock_aiohttp_session
     await conn.connect()
 
-    mock_response = AsyncMock()
-    mock_response.json.return_value = {
-        "server_id": "test-mcp",
-        "version": "1.0",
-        "capabilities": ["scan"],
-        "tools": [
-            {
-                "name": "test_tool",
-                "description": "test",
-                "parameters": [],
-                "returns": {},
-                "timeout_seconds": 30,
-                "requires_approval": False,
-                "scope_check": False,
-            }
-        ],
-        "status": "ready",
-    }
-
-    # Mock context manager for aiohttp.post
-    mock_post_ctx = MagicMock()
-    mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
-    mock_post_ctx.__aexit__ = AsyncMock()
-    mock_aiohttp_session.post.return_value = mock_post_ctx
+    _stub_post_ctx(
+        mock_aiohttp_session,
+        {
+            "server_id": "test-mcp",
+            "version": "1.0",
+            "capabilities": ["scan"],
+            "tools": [
+                {
+                    "name": "test_tool",
+                    "description": "test",
+                    "parameters": [],
+                    "returns": {},
+                    "timeout_seconds": 30,
+                    "requires_approval": False,
+                    "scope_check": False,
+                }
+            ],
+            "status": "ready",
+        },
+    )
 
     req = MCPInitializeRequest(scope={}, auth_credentials={}, session_id="test")
     resp = await conn.initialize(req)
@@ -96,36 +88,21 @@ async def test_mcp_connection_initialize(mock_aiohttp_session):
 
 @pytest.mark.asyncio
 async def test_mcp_connection_execute(mock_aiohttp_session):
-    # Mock response
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_get_ctx = MagicMock()
-    mock_get_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_get_ctx.__aexit__ = AsyncMock()
-    mock_aiohttp_session.get.return_value = mock_get_ctx
-
     conn = MCPConnection("test-mcp", "localhost", 8080)
     conn._session = mock_aiohttp_session
     await conn.connect()
 
-    # Manually initialize
     conn._initialized = True
-    tool_mock = MagicMock()
-    tool_mock.name = "test_tool"
-    tool_mock.timeout_seconds = 30
-    conn._tools["test_tool"] = tool_mock
+    conn._tools["test_tool"] = _stub_tool()
 
-    mock_response = AsyncMock()
-    mock_response.json.return_value = {
-        "request_id": "req-1",
-        "status": "success",
-        "result": {"output": "done"},
-    }
-
-    mock_post_ctx = MagicMock()
-    mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
-    mock_post_ctx.__aexit__ = AsyncMock()
-    mock_aiohttp_session.post.return_value = mock_post_ctx
+    _stub_post_ctx(
+        mock_aiohttp_session,
+        {
+            "request_id": "req-1",
+            "status": "success",
+            "result": {"output": "done"},
+        },
+    )
 
     req = MCPExecuteRequest(tool_name="test_tool", parameters={})
     resp = await conn.execute(req)
@@ -136,41 +113,24 @@ async def test_mcp_connection_execute(mock_aiohttp_session):
 
 @pytest.mark.asyncio
 async def test_mcp_registry_register_and_execute(mock_aiohttp_session):
-    # Mock response
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_get_ctx = MagicMock()
-    mock_get_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_get_ctx.__aexit__ = AsyncMock()
-    mock_aiohttp_session.get.return_value = mock_get_ctx
-
     registry = MCPRegistry()
 
-    # Register server
     conn = await registry.register_server("test-mcp", "localhost", 8080)
-    # Patch the session created by register_server
     conn._session = mock_aiohttp_session
 
     assert "test-mcp" in registry._servers
 
-    # Manually initialize the connection for the registry
     conn._initialized = True
-    tool_mock = MagicMock()
-    tool_mock.name = "test_tool"
-    tool_mock.timeout_seconds = 30
-    conn._tools["test_tool"] = tool_mock
+    conn._tools["test_tool"] = _stub_tool()
 
-    mock_response = AsyncMock()
-    mock_response.json.return_value = {
-        "request_id": "req-1",
-        "status": "success",
-        "result": {"data": "registry"},
-    }
-
-    mock_post_ctx = MagicMock()
-    mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
-    mock_post_ctx.__aexit__ = AsyncMock()
-    mock_aiohttp_session.post.return_value = mock_post_ctx
+    _stub_post_ctx(
+        mock_aiohttp_session,
+        {
+            "request_id": "req-1",
+            "status": "success",
+            "result": {"data": "registry"},
+        },
+    )
 
     resp = await registry.execute_tool("test-mcp", "test_tool", {})
     assert resp.status == "success"
@@ -179,14 +139,6 @@ async def test_mcp_registry_register_and_execute(mock_aiohttp_session):
 
 @pytest.mark.asyncio
 async def test_mcp_registry_broadcast(mock_aiohttp_session):
-    # Mock response
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_get_ctx = MagicMock()
-    mock_get_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_get_ctx.__aexit__ = AsyncMock()
-    mock_aiohttp_session.get.return_value = mock_get_ctx
-
     registry = MCPRegistry()
 
     conn1 = await registry.register_server("test-mcp-1", "localhost", 8080)
@@ -194,25 +146,21 @@ async def test_mcp_registry_broadcast(mock_aiohttp_session):
     conn2 = await registry.register_server("test-mcp-2", "localhost", 8081)
     conn2._session = mock_aiohttp_session
 
-    # Initialize conn1 with the tool
     conn1._initialized = True
-    tool_mock = MagicMock()
-    tool_mock.name = "test_tool"
-    tool_mock.timeout_seconds = 30
-    conn1._tools["test_tool"] = tool_mock
+    conn1._tools["test_tool"] = _stub_tool()
 
-    # Initialize conn2 without the tool
     conn2._initialized = True
 
-    mock_response = AsyncMock()
-    mock_response.json.return_value = {"request_id": "req-1", "status": "success", "result": {}}
-    mock_post_ctx = MagicMock()
-    mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
-    mock_post_ctx.__aexit__ = AsyncMock()
-    mock_aiohttp_session.post.return_value = mock_post_ctx
+    _stub_post_ctx(
+        mock_aiohttp_session,
+        {
+            "request_id": "req-1",
+            "status": "success",
+            "result": {},
+        },
+    )
 
     results = await registry.broadcast_execute("test_tool", {})
 
-    # Should only execute on conn1 since it has the tool
     assert "test-mcp-1" in results
     assert "test-mcp-2" not in results

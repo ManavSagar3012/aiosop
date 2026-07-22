@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-
 PROMPT_INJECTION_PROBES = [
     (
         "system_override",

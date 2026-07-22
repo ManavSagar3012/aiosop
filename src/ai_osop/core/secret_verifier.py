@@ -405,6 +405,7 @@ async def verify_secret(
     headers = _auth_headers(provider, secret)
 
     from ai_osop.core.config import settings
+
     if not settings.allow_external_liveness_probing:
         return {
             "provider": provider_name,
@@ -417,6 +418,7 @@ async def verify_secret(
     own_client = client is None
     if own_client:
         from ai_osop.safety.governed_client import governed_client, research_header_from_settings
+
         client = governed_client(
             scope=None,
             rate_limiter=None,

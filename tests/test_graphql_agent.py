@@ -14,7 +14,7 @@ import pytest
 
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.graphql_agent import GraphQLAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 
 # A realistic introspection __schema payload (shape a real server returns).

@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import sys
+
 from fastapi.testclient import TestClient
 
 # Set token in environment before importing/executing the module
@@ -9,6 +10,7 @@ os.environ["OSOP_ENV"] = "test"
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 from ai_osop.core.config import settings
+
 settings.api_token = "test-token"
 
 _PATH = os.path.join(os.path.dirname(__file__), "..", "mcp-servers", "python", "oast_mcp.py")

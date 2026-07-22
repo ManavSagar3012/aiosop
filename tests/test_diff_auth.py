@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock
 import pytest
 
 import ai_osop.orchestrator.orchestrator as om
-from ai_osop.core.config import AgentType
 from ai_osop.core.diff_auth_analyzer import (
     DiffAuthAnalyzer,
     _classify_body,
     _jaccard,
     _size_similar,
 )
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 from ai_osop.orchestrator.orchestrator import Orchestrator
 
@@ -132,7 +132,9 @@ async def test_analyze_persists_and_flags():
     )
     data = _result(200, keys=["id", "email"], sensitive=["email"], owner=["id", "email"])
     an._replay_user = AsyncMock(side_effect=lambda eng, label, m, u: dict(data))
-    an._replay_anonymous = AsyncMock(return_value=dict(data))  # anonymous sees the identical public response
+    an._replay_anonymous = AsyncMock(
+        return_value=dict(data)
+    )  # anonymous sees the identical public response
 
     out = await an.analyze("e", "wf", "user_a", "user_b")
 

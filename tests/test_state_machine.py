@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from ai_osop.core.config import EngagementPhase
 from ai_osop.core.engagement_state import EngagementState
+from ai_osop.core.enums import EngagementPhase
 from ai_osop.orchestrator.state_machine import EngagementStateMachine
 
 

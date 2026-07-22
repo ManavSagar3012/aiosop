@@ -25,10 +25,10 @@ applied to the standalone agent so the two paths agree.
 
 from typing import Any, Dict
 
-import httpx
+import httpx  # noqa: F401
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
 
 
@@ -78,9 +78,7 @@ class CSRFAgent(BaseVulnerabilityAgent):
             VulnClass.CSRF, task.payload, user_sessions=sessions
         )
         if not app_check["applicable"]:
-            self.logger.info(
-                f"csrf_scan_skipped: reason={app_check['reason']} url={target_url}"
-            )
+            self.logger.info(f"csrf_scan_skipped: reason={app_check['reason']} url={target_url}")
             await self.ctx.graph_memory.log_skipped_scan(
                 task_id=task.id,
                 vuln_class="csrf",
@@ -135,7 +133,9 @@ class CSRFAgent(BaseVulnerabilityAgent):
         }
 
         try:
-            async with self.get_governed_client(tool="csrf", verify=False, follow_redirects=False, timeout=15.0) as c:
+            async with self.get_governed_client(
+                tool="csrf", verify=False, follow_redirects=False, timeout=15.0
+            ) as c:
                 if isinstance(body, (dict, list)):
                     resp = await c.request(method, target_url, json=body, headers=headers)
                 else:

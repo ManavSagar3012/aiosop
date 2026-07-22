@@ -185,10 +185,7 @@ async def deterministic_scan(
     # program research header. This is the single chokepoint that makes the whole
     # scan defensibly in-policy.
     from ai_osop.core.config import settings
-    from ai_osop.safety.governed_client import (
-        governance_hook,
-        research_header_from_settings,
-    )
+    from ai_osop.safety.governed_client import governance_hook, research_header_from_settings
     from ai_osop.safety.rate_limiter import RateLimiter
     from ai_osop.safety.scope import ScopeEnforcer
 
@@ -203,9 +200,7 @@ async def deterministic_scan(
 
     seeded = 0
     if discover:
-        seeded = await bootstrap_discovery(
-            base, engagement_id, gm, governance_hook=ghook
-        )
+        seeded = await bootstrap_discovery(base, engagement_id, gm, governance_hook=ghook)
     persisted: list = []
     validated: list = []
     expected = 0
@@ -241,9 +236,7 @@ async def deterministic_scan(
                     engagement_id, gm, client=client, governance_hook=ghook
                 )
         else:
-            gp, _examined = await run_generalized_scan(
-                engagement_id, gm, governance_hook=ghook
-            )
+            gp, _examined = await run_generalized_scan(engagement_id, gm, governance_hook=ghook)
         persisted += gp
     return {
         "status": "success",

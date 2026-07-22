@@ -54,9 +54,7 @@ _MAX_TOKEN_REFRESH_RETRIES = 2
 # returns updated credentials: {"bearer_token": str, "cookies": list}.
 # Implementations typically call the IdP's refresh endpoint using the session's
 # refresh_token, then return the new access token + any rotated cookies.
-TokenRefreshCallback = Callable[
-    [Dict[str, Any]], Coroutine[Any, Any, Dict[str, Any]]
-]
+TokenRefreshCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, Dict[str, Any]]]
 
 
 class SessionClient:
@@ -199,7 +197,9 @@ class SessionClient:
                 self._refresh_retries[url] = retries + 1
                 logger.info(
                     "session_token_refresh_attempt url=%s status=%s attempt=%d",
-                    url, response.status_code, retries + 1,
+                    url,
+                    response.status_code,
+                    retries + 1,
                 )
                 try:
                     updated = await self.token_refresh_callback(self.session.to_dict())
@@ -217,12 +217,14 @@ class SessionClient:
                         self._absorb_set_cookies(response)
                         logger.info(
                             "session_token_refresh_success url=%s new_status=%d",
-                            url, response.status_code,
+                            url,
+                            response.status_code,
                         )
                 except Exception as e:
                     logger.warning(
                         "session_token_refresh_failed url=%s error=%s",
-                        url, e,
+                        url,
+                        e,
                     )
 
         return response

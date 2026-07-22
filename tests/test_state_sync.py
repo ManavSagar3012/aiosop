@@ -7,25 +7,32 @@ import pytest
 from ai_osop.auth.session_store import SessionStore, UserSession
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
+from tests._mocks import stub_async_session_maker
+
+
+def _stub_session_memory(redis_setex=True, redis_delete=True) -> MagicMock:
+    """Create a mocked SessionMemory with minimal wiring for the session store tests."""
+    db_mock = MagicMock()
+    db_mock.execute = AsyncMock()
+    db_mock.commit = AsyncMock()
+
+    mock_sm = MagicMock(spec=SessionMemory)
+    mock_sm._async_session = stub_async_session_maker(db_mock)
+
+    redis_mock = MagicMock()
+    if redis_setex:
+        redis_mock.setex = AsyncMock()
+    if redis_delete:
+        redis_mock.delete = AsyncMock()
+    mock_sm._redis = redis_mock
+
+    return mock_sm, db_mock
 
 
 @pytest.mark.asyncio
 async def test_session_store_save_session_syncs_to_graph():
     """Verify that save_session awaits GraphMemory.sync_user_session with correct session DTO."""
-    db_mock = MagicMock()
-    db_mock.execute = AsyncMock()
-    db_mock.commit = AsyncMock()
-
-    async_session_mock = MagicMock()
-    async_session_mock.__aenter__ = AsyncMock(return_value=db_mock)
-    async_session_mock.__aexit__ = AsyncMock(return_value=False)
-
-    mock_sm = MagicMock(spec=SessionMemory)
-    mock_sm._async_session = MagicMock(return_value=async_session_mock)
-
-    redis_mock = MagicMock()
-    redis_mock.setex = AsyncMock()
-    mock_sm._redis = redis_mock
+    mock_sm, _ = _stub_session_memory()
 
     mock_gm = MagicMock(spec=GraphMemory)
     mock_gm.sync_user_session = AsyncMock()
@@ -47,22 +54,8 @@ async def test_session_store_save_session_syncs_to_graph():
 @pytest.mark.asyncio
 async def test_session_store_delete_session_syncs_to_graph():
     """Verify that delete_session awaits GraphMemory.delete_user_session_node."""
-    db_mock = MagicMock()
-    result_mock = MagicMock()
-    result_mock.rowcount = 1
-    db_mock.execute = AsyncMock(return_value=result_mock)
-    db_mock.commit = AsyncMock()
-
-    async_session_mock = MagicMock()
-    async_session_mock.__aenter__ = AsyncMock(return_value=db_mock)
-    async_session_mock.__aexit__ = AsyncMock(return_value=False)
-
-    mock_sm = MagicMock(spec=SessionMemory)
-    mock_sm._async_session = MagicMock(return_value=async_session_mock)
-
-    redis_mock = MagicMock()
-    redis_mock.delete = AsyncMock()
-    mock_sm._redis = redis_mock
+    mock_sm, db_mock = _stub_session_memory(redis_setex=False)
+    db_mock.execute.return_value = MagicMock(rowcount=1)
 
     mock_gm = MagicMock(spec=GraphMemory)
     mock_gm.delete_user_session_node = AsyncMock()
@@ -78,33 +71,16 @@ async def test_session_store_delete_session_syncs_to_graph():
 @pytest.mark.asyncio
 async def test_session_store_no_graph_memory_no_crash():
     """Verify that omitting GraphMemory allows operations to complete successfully without crash."""
-    db_mock = MagicMock()
-    result_mock = MagicMock()
-    result_mock.rowcount = 1
-    db_mock.execute = AsyncMock(return_value=result_mock)
-    db_mock.commit = AsyncMock()
-
-    async_session_mock = MagicMock()
-    async_session_mock.__aenter__ = AsyncMock(return_value=db_mock)
-    async_session_mock.__aexit__ = AsyncMock(return_value=False)
-
-    mock_sm = MagicMock(spec=SessionMemory)
-    mock_sm._async_session = MagicMock(return_value=async_session_mock)
-
-    redis_mock = MagicMock()
-    redis_mock.setex = AsyncMock()
-    redis_mock.delete = AsyncMock()
-    mock_sm._redis = redis_mock
+    mock_sm, db_mock = _stub_session_memory(redis_setex=True, redis_delete=True)
+    db_mock.execute.return_value = MagicMock(rowcount=1)
 
     store = SessionStore(session_memory=mock_sm, graph_memory=None)
 
-    # save_session should complete normally
     sess = await store.save_session(
         engagement_id="eng-123", user_label="admin-user", bearer_token="some-token"
     )
     assert sess.engagement_id == "eng-123"
 
-    # delete_session should complete normally
     deleted = await store.delete_session("eng-123", "admin-user")
     assert deleted is True
 
@@ -112,23 +88,8 @@ async def test_session_store_no_graph_memory_no_crash():
 @pytest.mark.asyncio
 async def test_session_store_graph_sync_failure_is_suppressed(caplog):
     """Verify that graph sync failures are caught, logged, and don't block the caller."""
-    db_mock = MagicMock()
-    result_mock = MagicMock()
-    result_mock.rowcount = 1
-    db_mock.execute = AsyncMock(return_value=result_mock)
-    db_mock.commit = AsyncMock()
-
-    async_session_mock = MagicMock()
-    async_session_mock.__aenter__ = AsyncMock(return_value=db_mock)
-    async_session_mock.__aexit__ = AsyncMock(return_value=False)
-
-    mock_sm = MagicMock(spec=SessionMemory)
-    mock_sm._async_session = MagicMock(return_value=async_session_mock)
-
-    redis_mock = MagicMock()
-    redis_mock.setex = AsyncMock()
-    redis_mock.delete = AsyncMock()
-    mock_sm._redis = redis_mock
+    mock_sm, db_mock = _stub_session_memory()
+    db_mock.execute.return_value = MagicMock(rowcount=1)
 
     mock_gm = MagicMock(spec=GraphMemory)
     mock_gm.sync_user_session = AsyncMock(side_effect=Exception("Neo4j database connection lost"))
@@ -139,7 +100,6 @@ async def test_session_store_graph_sync_failure_is_suppressed(caplog):
     store = SessionStore(session_memory=mock_sm, graph_memory=mock_gm)
 
     with caplog.at_level(logging.ERROR):
-        # save_session doesn't throw and logs error
         sess = await store.save_session(
             engagement_id="eng-123", user_label="admin-user", bearer_token="some-token"
         )
@@ -149,7 +109,6 @@ async def test_session_store_graph_sync_failure_is_suppressed(caplog):
     caplog.clear()
 
     with caplog.at_level(logging.ERROR):
-        # delete_session doesn't throw and logs error
         deleted = await store.delete_session("eng-123", "admin-user")
         assert deleted is True
         assert any(

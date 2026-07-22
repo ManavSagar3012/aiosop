@@ -45,9 +45,7 @@ async def test_login_bypass_confirms_when_token_issued():
         body = json.loads(req.content.decode() or "{}")
         # Accept the classic tautology payloads.
         if body.get("password") == "oracle-not-a-real-pw":
-            return httpx.Response(
-                200, json={"authentication": {"token": "tok-abcdef0123456789"}}
-            )
+            return httpx.Response(200, json={"authentication": {"token": "tok-abcdef0123456789"}})
         return httpx.Response(401, json={})
 
     async with _client(handler) as c:
@@ -71,6 +69,7 @@ async def test_login_bypass_confirms_when_token_issued():
 @pytest.mark.asyncio
 async def test_login_bypass_rejects_200_without_token():
     """A 200 that does not issue a token is NOT injection confirmation."""
+
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"error": "invalid credentials"})
 
@@ -322,7 +321,12 @@ def _sleep_handler(sleep_for: float, control_status: int = 200, sleep_status: in
 
     async def handler(req: httpx.Request) -> httpx.Response:
         val = req.url.params.get("q", "")
-        if "SLEEP" in val.upper() or "pg_sleep" in val or "WAITFOR" in val.upper() or "RANDOMBLOB(500000000)" in val:
+        if (
+            "SLEEP" in val.upper()
+            or "pg_sleep" in val
+            or "WAITFOR" in val.upper()
+            or "RANDOMBLOB(500000000)" in val
+        ):
             await asyncio.sleep(sleep_for)
             return httpx.Response(sleep_status, text="ok")
         return httpx.Response(control_status, text="ok")
@@ -369,9 +373,7 @@ async def test_time_blind_rejects_404_control():
         return httpx.Response(404, text="not found")
 
     async with _client(handler) as c:
-        ev = await sqli_oracle.detect_time_blind(
-            c, "http://t/search", param="q", min_delta=1.0
-        )
+        ev = await sqli_oracle.detect_time_blind(c, "http://t/search", param="q", min_delta=1.0)
     assert ev is None
 
 
@@ -382,7 +384,12 @@ async def test_time_blind_treats_sleep_timeout_as_evidence():
 
     async def handler(req: httpx.Request) -> httpx.Response:
         val = req.url.params.get("q", "")
-        if "SLEEP" in val.upper() or "pg_sleep" in val or "WAITFOR" in val.upper() or "RANDOMBLOB(500000000)" in val:
+        if (
+            "SLEEP" in val.upper()
+            or "pg_sleep" in val
+            or "WAITFOR" in val.upper()
+            or "RANDOMBLOB(500000000)" in val
+        ):
             # Model the backend hanging on the injected sleep. NOTE: httpx does
             # NOT enforce request_timeout against a MockTransport handler (the
             # handler coroutine runs to completion), so an ``await asyncio.sleep``
@@ -414,14 +421,26 @@ async def test_scan_sqli_runs_both_oracles_for_base_url(monkeypatch):
 
     async def fake_login(c, url, **kw):
         calls["login"] += 1
-        return {"technique": "auth_bypass", "endpoint": url, "payload": "x",
-                "http_status": 200, "token_prefix": "tok...", "confidence": 1.0}
+        return {
+            "technique": "auth_bypass",
+            "endpoint": url,
+            "payload": "x",
+            "http_status": 200,
+            "token_prefix": "tok...",
+            "confidence": 1.0,
+        }
 
     async def fake_error(c, url, **kw):
         calls["error"] += 1
-        return {"technique": "error_based", "endpoint": url, "parameter": "q",
-                "payload": "'", "http_status": 500, "db_error_excerpt": "...",
-                "confidence": 1.0}
+        return {
+            "technique": "error_based",
+            "endpoint": url,
+            "parameter": "q",
+            "payload": "'",
+            "http_status": 500,
+            "db_error_excerpt": "...",
+            "confidence": 1.0,
+        }
 
     async def fake_time(c, url, **kw):
         calls["time"] += 1
@@ -451,10 +470,19 @@ async def test_scan_sqli_runs_time_blind_only_when_error_based_misses(monkeypatc
 
     async def fake_time(c, url, **kw):
         calls["time"] += 1
-        return {"technique": "time_blind", "endpoint": url, "dbms": "sqlite",
-                "payload": "x", "control_payload": "y", "parameter": "q",
-                "control_latency": 0.1, "sleep_latency": 5.0,
-                "delta_seconds": 4.9, "min_delta": 3.0, "confidence": 1.0}
+        return {
+            "technique": "time_blind",
+            "endpoint": url,
+            "dbms": "sqlite",
+            "payload": "x",
+            "control_payload": "y",
+            "parameter": "q",
+            "control_latency": 0.1,
+            "sleep_latency": 5.0,
+            "delta_seconds": 4.9,
+            "min_delta": 3.0,
+            "confidence": 1.0,
+        }
 
     async def fake_login(c, url, **kw):
         return None
@@ -463,9 +491,7 @@ async def test_scan_sqli_runs_time_blind_only_when_error_based_misses(monkeypatc
     monkeypatch.setattr(sqli_oracle, "detect_error_based", fake_error)
     monkeypatch.setattr(sqli_oracle, "detect_time_blind", fake_time)
 
-    res = await sqli_oracle.scan_sqli(
-        "http://localhost:3000", include_time_blind=True, timeout=2.0
-    )
+    res = await sqli_oracle.scan_sqli("http://localhost:3000", include_time_blind=True, timeout=2.0)
     techniques = {r["technique"] for r in res}
     assert "time_blind" in techniques
     assert calls["time"] == 1

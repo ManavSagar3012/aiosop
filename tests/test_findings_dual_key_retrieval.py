@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.enums import Severity, VulnClass
 from ai_osop.core.models import Vulnerability
 from ai_osop.memory.graph_memory import GraphMemory
 

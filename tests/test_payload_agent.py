@@ -4,7 +4,7 @@ import pytest
 
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.payload_agent import PayloadMutationAgent
-from ai_osop.core.config import AgentType, VulnClass
+from ai_osop.core.enums import AgentType, VulnClass
 from ai_osop.core.models import Payload, Task
 
 

@@ -1,11 +1,8 @@
 from celery import Celery
+
 from ai_osop.core.config import settings
 
-celery_app = Celery(
-    "ai_osop",
-    broker=settings.redis_uri,
-    backend=settings.redis_uri
-)
+celery_app = Celery("ai_osop", broker=settings.redis_uri, backend=settings.redis_uri)
 
 celery_app.conf.update(
     task_serializer="json",
@@ -14,6 +11,7 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
 
 @celery_app.task
 def execute_task_celery(task_dict: dict):

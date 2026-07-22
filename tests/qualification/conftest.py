@@ -45,6 +45,7 @@ ENDPOINTS = {
 
 def get_auth_headers() -> Dict[str, str]:
     import os
+
     token = None
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     env_path = os.path.join(root, ".env")
@@ -58,7 +59,9 @@ def get_auth_headers() -> Dict[str, str]:
                     parts = line.split("=", 1)
                     if len(parts) == 2:
                         k, v = parts[0].strip(), parts[1].strip()
-                        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                        if (v.startswith('"') and v.endswith('"')) or (
+                            v.startswith("'") and v.endswith("'")
+                        ):
                             v = v[1:-1]
                         if k == "OSOP_API_TOKEN":
                             token = v
@@ -72,6 +75,7 @@ def get_auth_headers() -> Dict[str, str]:
     if not token:
         try:
             from ai_osop.core.config import settings
+
             token = settings.api_token
         except Exception:  # noqa: BLE001
             pass
@@ -102,9 +106,9 @@ def mcp_initialize(base: str) -> Dict[str, Any]:
             "engagement_id": "api-bootstrap",
             "domains": ["example.com", "target.local", "127.0.0.1", "10.255.255.1"],
             "ips": ["127.0.0.1", "10.255.255.1"],
-            "exclusions": []
+            "exclusions": [],
         },
-        "session_id": "api-bootstrap"
+        "session_id": "api-bootstrap",
     }
     try:
         r = httpx.post(f"{base}/mcp/initialize", json=body, headers=get_auth_headers(), timeout=6.0)
@@ -130,6 +134,7 @@ def mcp_execute(
         body.get("status") == "success"
     ), f"{tool} execute status={body.get('status')} body={body}"
     return body.get("result", {})
+
 
 class _FixtureHandler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802

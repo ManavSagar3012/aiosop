@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ai_osop.core.config import VulnClass
+from ai_osop.core.enums import VulnClass
 from ai_osop.core.knowledge_engine import SecurityKnowledgeEngine
 from ai_osop.memory.graph_memory import GraphMemory
 

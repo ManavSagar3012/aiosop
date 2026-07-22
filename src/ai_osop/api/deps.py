@@ -123,6 +123,7 @@ async def _authenticate(presented: Optional[str]) -> Dict[str, Any]:
 
     if settings.jwt_secret:
         from jose import ExpiredSignatureError, JWTError, jwt
+
         decode_kwargs: Dict[str, Any] = {
             "key": settings.jwt_secret,
             "algorithms": [settings.jwt_algorithm],

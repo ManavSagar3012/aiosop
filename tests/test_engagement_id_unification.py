@@ -27,14 +27,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.config import AgentType, EngagementPhase
-from ai_osop.core.models import (
-    ScopeDefinition,
-    SessionState,
-    Task,
-    Vulnerability,
-)
-from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.enums import AgentType, EngagementPhase, Severity, VulnClass
+from ai_osop.core.models import ScopeDefinition, SessionState, Task, Vulnerability
 
 
 def _session(short="juice-e2e-abc", full="eng-20260721-juice-e2e-abc"):
@@ -103,9 +97,9 @@ async def test_phase_monitor_uses_canonical_id_for_phase_completion():
     pm._tick = 1
 
     await pm._auto_advance_phase(session)
-    assert captured["session_id"] == "juice-e2e-abc", (
-        f"phase monitor must key on canonical id; got {captured['session_id']!r}"
-    )
+    assert (
+        captured["session_id"] == "juice-e2e-abc"
+    ), f"phase monitor must key on canonical id; got {captured['session_id']!r}"
     assert captured["phase"] == EngagementPhase.RECONNAISSANCE
 
 
@@ -207,7 +201,8 @@ async def test_findings_router_replay_task_uses_canonical_id(monkeypatch):
     monkeypatch.setattr(findings_router, "_finding_exists", _finding_exists)
     # Patch the orchestrator on the shared state dict directly (dict, not obj).
     monkeypatch.setitem(
-        findings_router.state, "orchestrator",
+        findings_router.state,
+        "orchestrator",
         SimpleNamespace(schedule_task=_fake_schedule),
     )
 
@@ -217,9 +212,9 @@ async def test_findings_router_replay_task_uses_canonical_id(monkeypatch):
         operator={"sub": "op", "role": "senior_operator"},
     )
     assert scheduled, "task was not scheduled"
-    assert scheduled[0].engagement_id == "juice-e2e-abc", (
-        f"replay task must be keyed canonically; got {scheduled[0].engagement_id!r}"
-    )
+    assert (
+        scheduled[0].engagement_id == "juice-e2e-abc"
+    ), f"replay task must be keyed canonically; got {scheduled[0].engagement_id!r}"
 
 
 @pytest.mark.asyncio
@@ -239,6 +234,7 @@ async def test_sessions_router_save_uses_canonical_id(monkeypatch):
             # Return a real UserSession so the router's _session_response mapper
             # finds every attribute it touches.
             from ai_osop.auth.session_store import UserSession
+
             return UserSession(
                 engagement_id=engagement_id,
                 user_label=user_label,
@@ -267,8 +263,14 @@ async def test_sessions_router_save_uses_canonical_id(monkeypatch):
 
     body = SimpleNamespace(
         user_label="alice",
-        cookies=[], bearer_token="", local_storage={}, session_storage={},
-        csrf_token="", extra_headers={}, user_agent="", metadata={},
+        cookies=[],
+        bearer_token="",
+        local_storage={},
+        session_storage={},
+        csrf_token="",
+        extra_headers={},
+        user_agent="",
+        metadata={},
     )
     await sessions_router.put_user_session(
         session_id="eng-20260721-juice-e2e-abc",
@@ -276,6 +278,6 @@ async def test_sessions_router_save_uses_canonical_id(monkeypatch):
         body=body,
         operator={"sub": "op", "role": "operator"},
     )
-    assert saved["engagement_id"] == "juice-e2e-abc", (
-        f"UserSession must be saved under canonical id; got {saved['engagement_id']!r}"
-    )
+    assert (
+        saved["engagement_id"] == "juice-e2e-abc"
+    ), f"UserSession must be saved under canonical id; got {saved['engagement_id']!r}"

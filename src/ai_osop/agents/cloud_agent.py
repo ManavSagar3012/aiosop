@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 
 logger = logging.getLogger(__name__)
@@ -109,11 +109,11 @@ class CloudSpecialistAgent(BaseAgent):
 
         findings = []
         try:
-            import httpx
-            from ai_osop.core.cloud_metadata import IMDS_TARGETS, extract_credentials
-            from ai_osop.core.config import Severity, VulnClass
-            from ai_osop.core.models import Vulnerability
             import uuid
+
+            from ai_osop.core.cloud_metadata import IMDS_TARGETS, extract_credentials
+            from ai_osop.core.enums import Severity, VulnClass
+            from ai_osop.core.models import Vulnerability
 
             urls_to_test = [target_url] if target_url else []
             if not target_url:
@@ -157,7 +157,13 @@ class CloudSpecialistAgent(BaseAgent):
                                     validated=True,
                                     tool_source="cloud_agent",
                                     engagement_id=self.ctx.session_id,
-                                    evidence=[{"type": "cloud_metadata", "url": u, "redacted": c["redacted"]}],
+                                    evidence=[
+                                        {
+                                            "type": "cloud_metadata",
+                                            "url": u,
+                                            "redacted": c["redacted"],
+                                        }
+                                    ],
                                 )
                                 try:
                                     await self.ctx.graph_memory.add_vulnerability(vuln)
@@ -187,12 +193,14 @@ class CloudSpecialistAgent(BaseAgent):
 
         findings = []
         try:
-            import httpx
-            from ai_osop.core.config import Severity, VulnClass
-            from ai_osop.core.models import Vulnerability
             import uuid
 
-            clean_target = target.replace("http://", "").replace("https://", "").strip("/").split("/")[0]
+            from ai_osop.core.enums import Severity, VulnClass
+            from ai_osop.core.models import Vulnerability
+
+            clean_target = (
+                target.replace("http://", "").replace("https://", "").strip("/").split("/")[0]
+            )
             urls = [
                 f"https://{clean_target}.s3.amazonaws.com/",
                 f"https://storage.googleapis.com/{clean_target}/",
@@ -206,6 +214,7 @@ class CloudSpecialistAgent(BaseAgent):
             # secret verifier and, when enabled, runs through a scope-less governed
             # client that still rate-limits, injects the research header, and audits.
             from ai_osop.core.config import settings as _settings
+
             if not _settings.allow_external_liveness_probing:
                 return {
                     "status": "skipped",
@@ -220,6 +229,7 @@ class CloudSpecialistAgent(BaseAgent):
                 governed_client,
                 research_header_from_settings,
             )
+
             async with governed_client(
                 scope=None,  # intentionally off-engagement-scope (third-party cloud hosts)
                 rate_limiter=getattr(self.ctx, "rate_limiter", None),
@@ -231,7 +241,9 @@ class CloudSpecialistAgent(BaseAgent):
                 for url in urls:
                     try:
                         resp = await client.get(url)
-                        if resp.status_code == 200 and ("<ListBucketResult" in resp.text or "<EnumerationResults" in resp.text):
+                        if resp.status_code == 200 and (
+                            "<ListBucketResult" in resp.text or "<EnumerationResults" in resp.text
+                        ):
                             f_data = {
                                 "bucket": clean_target,
                                 "url": url,
@@ -254,7 +266,13 @@ class CloudSpecialistAgent(BaseAgent):
                                 validated=True,
                                 tool_source="cloud_agent",
                                 engagement_id=self.ctx.session_id,
-                                evidence=[{"type": "storage_exposure", "url": url, "status_code": resp.status_code}],
+                                evidence=[
+                                    {
+                                        "type": "storage_exposure",
+                                        "url": url,
+                                        "status_code": resp.status_code,
+                                    }
+                                ],
                             )
                             try:
                                 await self.ctx.graph_memory.add_vulnerability(vuln)

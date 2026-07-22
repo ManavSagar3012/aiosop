@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from tests._mocks import stub_async_context_manager
+
 # Mock dependencies BEFORE importing app to prevent early connection attempts if any
 with (
     patch("ai_osop.memory.session_memory.SessionMemory"),
@@ -12,14 +14,6 @@ with (
     patch("ai_osop.orchestrator.orchestrator.Orchestrator.initialize", new_callable=AsyncMock),
 ):
     from ai_osop.api.main import app
-
-
-def _async_ctx(return_value):
-    """Build a MagicMock usable as an async context manager."""
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=return_value)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    return ctx
 
 
 @pytest.fixture
@@ -37,12 +31,6 @@ def client():
         patch("ai_osop.api.main.Orchestrator") as mock_orch,
         patch("ai_osop.api.deps.settings.api_token", "dev-test-token"),
         patch("ai_osop.api.deps.settings.jwt_secret", None),
-        # Hermetic startup: the lifespan's run_startup_self_test does real
-        # dependency probes. With backends mocked those probes are meaningless,
-        # and when live services happen to be up they add ~15-20s of latency and
-        # make the suite hang. Stub it to a healthy result so this unit-level API
-        # test never depends on live-service state (integration probes live in
-        # the /health/* endpoint tests, not here).
         patch(
             "ai_osop.api.main.run_startup_self_test",
             new_callable=AsyncMock,
@@ -53,17 +41,17 @@ def client():
         # --- SessionMemory: Redis ping + Postgres session-recovery query ---
         sess = mock_session.return_value
         sess.connect = AsyncMock()
-        sess._redis = AsyncMock()  # ._redis.ping() awaitable
+        sess._redis = AsyncMock()
         pg_conn = AsyncMock()
         pg_conn.execute = AsyncMock(return_value=MagicMock(fetchall=MagicMock(return_value=[])))
         sess._pg_engine = MagicMock()
-        sess._pg_engine.connect = MagicMock(return_value=_async_ctx(pg_conn))
+        sess._pg_engine.connect = MagicMock(return_value=stub_async_context_manager(pg_conn))
 
         # --- GraphMemory: connect + driver.session() RETURN 1 ---
         graph = mock_graph.return_value
         graph.connect = AsyncMock()
         graph._driver = MagicMock()
-        graph._driver.session = MagicMock(return_value=_async_ctx(AsyncMock()))
+        graph._driver.session = MagicMock(return_value=stub_async_context_manager(AsyncMock()))
 
         # --- VectorMemory ---
         mock_vector.return_value.connect = AsyncMock()
@@ -87,15 +75,12 @@ def client():
         orch_instance.shutdown = AsyncMock()
         orch_instance.recover_state = AsyncMock(return_value={})
         orch_instance.mcp_registry = mcp_inst
-
-        # session_memory used by the websocket endpoint
         orch_instance.session_memory = sess
-
         orch_instance._sessions = {}
         orch_instance._agents = {}
 
         with TestClient(app) as c:
-            c.orch = orch_instance  # Attach for inspection
+            c.orch = orch_instance
             yield c
 
 
@@ -166,3 +151,75 @@ def test_websocket_endpoint(client):
         assert data is not None
         assert data["type"] == "status"
         assert data["session_id"] == "test-session"
+
+
+@pytest.mark.asyncio
+async def test_submit_finding_endpoint_success(client, monkeypatch):
+    """Verify that POST /engagements/{session_id}/findings/{finding_id}/submit
+    triggers BugBountyAdapter and updates Neo4j on success."""
+    from ai_osop.api import deps
+
+    # Mock senior operator verification
+    mock_operator = {"sub": "operator-1", "role": "senior_operator"}
+
+    async def fake_verify(token=None):
+        return mock_operator
+
+    monkeypatch.setattr(deps, "verify_token", fake_verify)
+
+    # Mock assert_engagement_access on the findings router to return a mock session
+    session_mock = MagicMock()
+    session_mock.canonical_engagement_id = "juice-e2e-canonical"
+    monkeypatch.setattr(
+        "ai_osop.api.routers.findings.assert_engagement_access",
+        AsyncMock(return_value=session_mock),
+    )
+
+    # Mock BugBountyAdapter
+    mock_adapter_instance = MagicMock()
+    mock_adapter_instance.submit_finding = AsyncMock(
+        return_value={"status": "submitted", "external_id": "H1-12345", "platform": "h1"}
+    )
+    monkeypatch.setattr(
+        "ai_osop.adapters.bug_bounty_adapter.BugBountyAdapter",
+        MagicMock(return_value=mock_adapter_instance),
+    )
+
+    # Mock GraphMemory get_node_details and session.run
+    gm = client.orch.graph_memory
+    gm.get_node_details = AsyncMock(
+        return_value={
+            "id": "vuln-1",
+            "title": "SQL Injection",
+            "severity": "critical",
+            "description": "test sqli",
+        }
+    )
+
+    mock_session = AsyncMock()
+    gm._driver.session.return_value.__aenter__.return_value = mock_session
+
+    # Act
+    headers = {"Authorization": "Bearer dev-test-token"}
+    response = client.post(
+        "/engagements/test-session/findings/vuln-1/submit?platform=h1", headers=headers
+    )
+
+    # Assert
+    assert response.status_code == 200
+    res = response.json()
+    assert res["status"] == "submitted"
+    assert res["external_id"] == "H1-12345"
+
+    # Check adapter was called with correct parameters
+    mock_adapter_instance.submit_finding.assert_called_once()
+    called_args, called_kwargs = mock_adapter_instance.submit_finding.call_args
+    assert called_args[0]["id"] == "vuln-1"
+    assert called_kwargs["live_submit_approved"] is True
+
+    # Check database update query was executed
+    mock_session.run.assert_called_once()
+    run_args, run_kwargs = mock_session.run.call_args
+    assert "SET v.external_id = $ext_id" in run_args[0]
+    assert run_kwargs["fid"] == "vuln-1"
+    assert run_kwargs["ext_id"] == "H1-12345"

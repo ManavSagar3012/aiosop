@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.models import Task, Vulnerability
 
-
 # Max chars of an HTTP response body persisted as finding evidence. Bounds graph
 # storage and avoids dumping unbounded/PII-heavy bodies while keeping enough of
 # the response to demonstrate the vulnerability.
@@ -75,7 +74,9 @@ class BaseVulnerabilityAgent(BaseAgent):
             evidence["response"] = {
                 "status": response_details.get("status", 0),
                 "headers": response_details.get("headers", {}),
-                "body_snippet": (body if isinstance(body, str) else str(body))[:_EVIDENCE_BODY_SNIPPET],
+                "body_snippet": (body if isinstance(body, str) else str(body))[
+                    :_EVIDENCE_BODY_SNIPPET
+                ],
             }
         if payload:
             evidence["payload"] = payload

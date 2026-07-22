@@ -3,12 +3,9 @@ import logging
 from datetime import datetime
 from typing import Any, Optional
 
-from ai_osop.core.config import AgentState, settings
-from ai_osop.core.metrics import (
-    AGENT_RECOVERIES_TOTAL,
-    AGENT_TIMEOUTS_TOTAL,
-    TASK_REQUEUES_TOTAL,
-)
+from ai_osop.core.config import settings
+from ai_osop.core.enums import AgentState
+from ai_osop.core.metrics import AGENT_RECOVERIES_TOTAL, AGENT_TIMEOUTS_TOTAL, TASK_REQUEUES_TOTAL
 from ai_osop.core.models import AuditEvent
 from ai_osop.orchestrator.state_machine import EngagementStateMachine
 

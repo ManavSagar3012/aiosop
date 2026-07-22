@@ -10,7 +10,7 @@ import os
 from typing import Any, Dict, List
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import CriticalOperation, Task, VisualAnalysis
 
 logger = logging.getLogger(__name__)

@@ -54,6 +54,7 @@ def _two_most_recent() -> tuple[dict, dict] | None:
 # Gate tests
 # ---------------------------------------------------------------------------
 
+
 def test_latest_bench_meets_recall_gate():
     result = _latest()
     if result is None:
@@ -100,7 +101,8 @@ def test_latest_bench_stable():
     # stability. The gate only cares about *scored* checks timing out.
     per_check = result.get("per_check", {})
     scored_timeouts = [
-        cid for cid, v in per_check.items()
+        cid
+        for cid, v in per_check.items()
         if v.get("scored", True) and v.get("status") == "TIMEOUT"
     ]
     assert scored_timeouts == [], (
@@ -129,7 +131,9 @@ def test_regression_vs_previous():
     assert not regressions, f"Per-check regression(s) vs previous run: {regressions}"
     for gate in ("precision", "false_positive"):
         g = report["gates"][gate]
-        assert g["passed"], f"{gate} regression: baseline={g.get('baseline')} current={g.get('current')}"
+        assert g[
+            "passed"
+        ], f"{gate} regression: baseline={g.get('baseline')} current={g.get('current')}"
 
 
 def test_generalization_gate():

@@ -1,7 +1,7 @@
 """Regression tests for scan-result and Nuclei false-positive guards."""
 
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.orchestrator.task_scheduler import TaskScheduler

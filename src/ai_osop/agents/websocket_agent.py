@@ -6,7 +6,7 @@ Specialized agent for WebSocket vulnerability detection.
 from typing import Any, Dict
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
 from ai_osop.core.websocket_tester import WebSocketTester
 
@@ -72,6 +72,7 @@ class WebSocketAgent(BaseVulnerabilityAgent):
                 tool_source="websocket_scanner",
                 confidence=0.95,
                 engagement_id=task.engagement_id,
+                validated=True,
             )
             await self.persist_finding(vuln)
             return {"status": "vulnerable", "finding": finding.description}

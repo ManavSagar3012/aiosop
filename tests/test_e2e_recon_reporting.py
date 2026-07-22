@@ -7,7 +7,8 @@ from datetime import datetime
 import pytest
 
 from ai_osop.agents.reporting_agent import ReportingAgent
-from ai_osop.core.config import AgentType, settings
+from ai_osop.core.config import settings
+from ai_osop.core.enums import AgentType
 from ai_osop.core.llm_client import LiteLLMClient
 from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, SessionState, Task
 from ai_osop.memory.graph_memory import GraphMemory

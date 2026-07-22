@@ -12,7 +12,6 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-
 COMMON_REDIRECT_PARAMS = (
     "url",
     "redirect",
@@ -70,7 +69,9 @@ class OpenRedirectTester:
 
         test_params = params_to_test or list(params.keys()) or list(COMMON_REDIRECT_PARAMS)
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds, follow_redirects=False
+        ) as client:
             for param in test_params:
                 for payload in BYPASS_PAYLOADS:
                     # Construct URL with parameter

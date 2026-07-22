@@ -8,7 +8,7 @@ never ran. A present `data` body is an injectable vector regardless of verb.
 from __future__ import annotations
 
 from ai_osop.core.applicability import ApplicabilityEngine
-from ai_osop.core.config import VulnClass
+from ai_osop.core.enums import VulnClass
 
 
 def test_sqli_with_post_body_data_is_applicable_without_method():

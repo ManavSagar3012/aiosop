@@ -11,17 +11,11 @@ import structlog
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.chain_composer import ChainComposer
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import AgentException, OutOfScopeError, ScopeValidationError
 from ai_osop.core.goal_planner import GoalAction, GoalPlanner, GoalState
 from ai_osop.core.knowledge_engine import get_knowledge_engine
-from ai_osop.core.models import (
-    AttackPath,
-    PrimitiveLedger,
-    PrimitiveType,
-    Task,
-    Vulnerability,
-)
+from ai_osop.core.models import AttackPath, PrimitiveLedger, PrimitiveType, Task, Vulnerability
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)
@@ -210,8 +204,6 @@ class AttackChainAgent(BaseAgent):
             logger.warning("ato_idor_out_of_scope", url=idor_url)
             idor_url = None
         if idor_url:
-            import httpx
-
             try:
                 async with self.get_governed_client(tool="attack_chain", timeout=15) as c:
                     r = await c.get(

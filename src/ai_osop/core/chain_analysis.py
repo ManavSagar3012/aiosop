@@ -26,6 +26,7 @@ import structlog
 
 from ai_osop.core.chain_composer import ChainComposer
 from ai_osop.core.escalation_engine import EscalationEngine
+from ai_osop.core.evidence_vault import EvidenceVaultService
 from ai_osop.core.models import (
     AttackChain,
     ChainStatus,
@@ -256,11 +257,24 @@ def evidence_from_primitive(primitive: PrimitiveLedger) -> Optional[EvidencePack
     captured = raw.get("evidence") or []
     if not captured:
         return None
-    return EvidencePackage(
+    pkg = EvidencePackage(
         finding_id=primitive.finding_id or primitive.id,
         engagement_id=primitive.engagement_id,
         raw_responses=list(captured),
     )
+
+    # V6.2: compute and pin the integrity hash so the audit trail is tamper-evident.
+    try:
+        vault = EvidenceVaultService()
+        pkg.integrity_hash = vault.generate_package_hash(pkg)
+    except Exception as e:  # noqa: BLE001 - hash is best-effort
+        logger.warning(
+            "evidence_hash_failed",
+            finding_id=pkg.finding_id,
+            error=str(e),
+        )
+
+    return pkg
 
 
 def primitive_from_node(node: Dict[str, Any]) -> PrimitiveLedger:

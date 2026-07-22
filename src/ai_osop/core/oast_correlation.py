@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Set
 import structlog
 from pydantic import BaseModel, Field
 
-from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.enums import Severity, VulnClass
 from ai_osop.core.models import Observation, Vulnerability
 
 logger = structlog.get_logger(__name__)

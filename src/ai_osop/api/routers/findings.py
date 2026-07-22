@@ -5,18 +5,19 @@ Dashboard endpoints for vulnerability findings, diff-auth, evidence vault, and a
 
 import hashlib
 import json
+from datetime import datetime
 from typing import Any, Dict, List
 
 import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from ai_osop.api.deps import assert_engagement_access, require_role, state, verify_token
-from ai_osop.core.findings_quality import FindingConversionEngine
 from ai_osop.core.finding_view import to_finding_view
+from ai_osop.core.findings_quality import FindingConversionEngine
 
 logger = structlog.get_logger("ai_osop.findings")
 
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 
 router = APIRouter(prefix="/engagements", tags=["findings"])
@@ -77,7 +78,9 @@ def _vuln_node_to_finding(v: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def _finding_exists(session_id: str, finding_id: str, id_forms: List[str] | None = None) -> bool:
+async def _finding_exists(
+    session_id: str, finding_id: str, id_forms: List[str] | None = None
+) -> bool:
     forms = id_forms or [session_id]
     records = await state["orchestrator"].graph_memory.run_read_query(
         "MATCH (v:Vulnerability {id: $fid}) WHERE v.engagement_id IN $ids RETURN v.id LIMIT 1",
@@ -108,9 +111,7 @@ async def get_findings(session_id: str, operator: Dict[str, Any] = Depends(verif
     """All Vulnerability nodes for an engagement, shaped for the UI."""
     session = await assert_engagement_access(operator, session_id)
     forms = _engagement_id_forms(session, session_id)
-    vuln_nodes = await state["orchestrator"].graph_memory.get_vulnerabilities_by_engagement(
-        *forms
-    )
+    vuln_nodes = await state["orchestrator"].graph_memory.get_vulnerabilities_by_engagement(*forms)
     return [_vuln_node_to_finding(n) for n in vuln_nodes]
 
 
@@ -176,12 +177,8 @@ async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Dep
     """Differential-authorization findings for an engagement."""
     session = await assert_engagement_access(operator, session_id)
     forms = _engagement_id_forms(session, session_id)
-    cypher = (
-        "MATCH (d:DiffAuthFinding) WHERE d.engagement_id IN $ids RETURN d ORDER BY d.created_at DESC"
-    )
-    diff_records = await state["orchestrator"].graph_memory.run_read_query(
-        cypher, {"ids": forms}
-    )
+    cypher = "MATCH (d:DiffAuthFinding) WHERE d.engagement_id IN $ids RETURN d ORDER BY d.created_at DESC"
+    diff_records = await state["orchestrator"].graph_memory.run_read_query(cypher, {"ids": forms})
     out: List[Dict[str, Any]] = []
     for record in diff_records:
         d = record.get("d")
@@ -302,7 +299,9 @@ async def get_finding_vault(
     """Assemble the evidence package for a finding."""
     session = await assert_engagement_access(operator, session_id)
     forms = _engagement_id_forms(session, session_id)
-    vuln_q = "MATCH (v:Vulnerability) WHERE v.id = $fid AND v.engagement_id IN $ids RETURN v LIMIT 1"
+    vuln_q = (
+        "MATCH (v:Vulnerability) WHERE v.id = $fid AND v.engagement_id IN $ids RETURN v LIMIT 1"
+    )
     ev_q = (
         "MATCH (ev:Evidence) WHERE ev.engagement_id IN $ids "
         "RETURN ev ORDER BY ev.created_at DESC LIMIT 100"
@@ -407,3 +406,61 @@ async def replay_workflow(
     )
     await state["orchestrator"].schedule_task(task)
     return {"status": "queued", "task_id": task.id, "workflow_id": workflow_id}
+
+
+@router.post("/{session_id}/findings/{finding_id}/submit")
+async def submit_finding_to_bounty(
+    session_id: str,
+    finding_id: str,
+    platform: str = Query("h1", description="Bounty platform to submit to: h1 | bc"),
+    operator: Dict[str, Any] = Depends(require_role("senior_operator")),
+):
+    """Submit a verified finding to an external bug bounty platform (HackerOne)."""
+    session = await assert_engagement_access(operator, session_id)
+    gm = state["orchestrator"].graph_memory
+
+    # Retrieve the raw finding details from Neo4j
+    finding_node = await gm.get_node_details(finding_id)
+    if not finding_node:
+        raise HTTPException(status_code=404, detail=f"Finding {finding_id} not found in graph")
+
+    # Map Neo4j node properties to the standard finding dictionary format expected by the adapter
+    finding_dict = {
+        "id": finding_node.get("id"),
+        "title": finding_node.get("title")
+        or finding_node.get("vuln_type")
+        or "Vulnerability Report",
+        "description": finding_node.get("description") or "",
+        "impact": finding_node.get("impact") or "Not specified",
+        "severity": finding_node.get("severity") or "low",
+        "program_handle": finding_node.get("program_handle") or "security",
+    }
+
+    # Execute the submission via BugBountyAdapter with explicit operator approval
+    from ai_osop.adapters.bug_bounty_adapter import BugBountyAdapter
+
+    adapter = BugBountyAdapter()
+
+    res = await adapter.submit_finding(
+        finding_dict,
+        platform=platform,
+        live_submit_approved=True,  # Explicit operator decision (AIOSOP-BB-SAFETY-001)
+    )
+
+    if res.get("status") == "submitted":
+        # Record the external ID directly on the Vulnerability node in Neo4j
+        ext_id = res.get("external_id")
+        cypher = """
+        MATCH (v:Vulnerability {id: $fid})
+        SET v.external_id = $ext_id, v.submitted_at = $now, v.submission_status = 'submitted'
+        RETURN v
+        """
+        async with gm._driver.session() as s:
+            await s.run(
+                cypher,
+                fid=finding_id,
+                ext_id=ext_id,
+                now=datetime.utcnow().isoformat(),
+            )
+
+    return res

@@ -14,9 +14,10 @@ schema drift is detected at runtime, not only by a manual CLI run. The
 report is intentionally a typed dict (``IntegrityReport``) so callers can
 assert on it in tests without parsing stdout.
 """
+
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, Optional, TypedDict
 
 from ai_osop.memory.graph_memory import GraphMemory
 
@@ -164,7 +165,9 @@ async def run_integrity_check(
 
     # Sum only non-negative counts so a -1 (query failure) does not subtract
     # from the total — it surfaces in its own field instead.
-    total = sum(v for k, v in report.items() if k != "archived_node_groups" and isinstance(v, int) and v > 0)
+    total = sum(
+        v for k, v in report.items() if k != "archived_node_groups" and isinstance(v, int) and v > 0
+    )
     report["total_issues"] = total
 
     if emit_prints:

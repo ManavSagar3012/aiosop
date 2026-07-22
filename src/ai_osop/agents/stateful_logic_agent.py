@@ -6,10 +6,10 @@ Analyzes business process state machines and identifies invalid transition paths
 import logging
 from typing import Any, Dict, List, Optional
 
-import httpx
+import httpx  # noqa: F401
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import OutOfScopeError, ScopeValidationError
 from ai_osop.core.governance import BusinessLogicEngine
 from ai_osop.core.models import ProcessState, Task, Vulnerability

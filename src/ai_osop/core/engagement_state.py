@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ai_osop.core.config import EngagementPhase
+from ai_osop.core.enums import EngagementPhase
 
 
 class EngagementState(BaseModel):

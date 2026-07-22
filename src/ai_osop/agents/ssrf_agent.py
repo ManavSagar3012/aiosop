@@ -6,11 +6,9 @@ Specialized agent for Server-Side Request Forgery detection.
 import asyncio
 from typing import Any, Dict
 
-import httpx
-
 from ai_osop.adapters.oast_mcp import OASTAdapter
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
 from ai_osop.payload_engine.engine import PayloadTemplateLibrary
 
@@ -83,9 +81,15 @@ class SSRFAgent(BaseVulnerabilityAgent):
                 except Exception:
                     pass
 
-        # Wait for callbacks
-        await asyncio.sleep(5)  # Simple wait
-        callbacks = await oast_adapter.poll(token)
+        # Wait for callbacks with adaptive polling (LLM-API-2026-07-22).
+        # Previously a hardcoded asyncio.sleep(5) that always waited 5s even if
+        # the callback arrived in 500ms, and missed callbacks that took >5s.
+        # Now uses exponential intervals (0.5s → 1s → 2s → 2s → 2s) with a
+        # configurable total timeout (default 30s), returning as soon as any
+        # callback is detected. The slow-path reconciler (OASTCorrelationRegistry)
+        # catches any callbacks that land after the inline window closes.
+        _callback_timeout = task.payload.get("oast_poll_timeout", 30.0)
+        callbacks = await _poll_oast_with_timeout(oast_adapter, token, timeout=_callback_timeout)
 
         if callbacks:
             vuln = Vulnerability(
@@ -103,7 +107,46 @@ class SSRFAgent(BaseVulnerabilityAgent):
                 tool_source="ssrf_scanner",
                 confidence=0.95,
                 engagement_id=task.engagement_id,
+                validated=True,
             )
             await self.persist_finding(vuln)
 
         return {"status": "success", "message": f"SSRF scan completed for {target_url}"}
+
+
+async def _poll_oast_with_timeout(
+    oast_adapter: OASTAdapter,
+    token: str,
+    *,
+    timeout: float = 30.0,
+    initial_interval: float = 0.5,
+    max_interval: float = 2.0,
+) -> list[dict[str, Any]]:
+    """Poll an OAST token with exponential backoff, returning as soon as
+    callbacks are detected or the timeout expires.
+
+    Intervals: 0.5s, 1.0s, 2.0s, 2.0s, 2.0s, ... up to ``timeout`` total.
+    The first probe sends immediately (no initial sleep), so a fast callback
+    on a warm OAST server resolves in ~500ms instead of 5s.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    interval = initial_interval
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            callbacks = await oast_adapter.poll(token)
+        except Exception:
+            callbacks = None
+        if callbacks:
+            return callbacks
+        next_sleep = min(interval, remaining)
+        if next_sleep > 0:
+            await asyncio.sleep(next_sleep)
+        interval = min(interval * 2, max_interval)
+    # Final poll after timeout in case a callback arrived during the last sleep.
+    try:
+        return await oast_adapter.poll(token) or []
+    except Exception:
+        return []

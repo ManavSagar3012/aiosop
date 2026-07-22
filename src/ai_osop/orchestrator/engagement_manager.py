@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 import structlog
 
-from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.enums import AgentType, EngagementPhase
 from ai_osop.core.exceptions import WorkflowException, WorkflowTransitionError
 from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.core.observability import record_engagement_halted, record_engagement_started

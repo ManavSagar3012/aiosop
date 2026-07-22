@@ -17,10 +17,10 @@ Discipline:
     non-zero exit, a timeout, or a "not injectable" result yields injectable=False
     (never an assumed positive).
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import shutil
@@ -67,15 +67,21 @@ async def sqlmap_confirm(
     out_dir = tempfile.mkdtemp(prefix="osop-sqlmap-")
     argv: List[str] = [
         "sqlmap",
-        "-u", url,
-        "--batch",                 # never prompt
-        "--level", str(int(level)),
-        "--risk", str(int(risk)),
-        "--technique", "BEUST",    # all techniques except stacked/inline for speed/safety
-        "--threads", "4",
+        "-u",
+        url,
+        "--batch",  # never prompt
+        "--level",
+        str(int(level)),
+        "--risk",
+        str(int(risk)),
+        "--technique",
+        "BEUST",  # all techniques except stacked/inline for speed/safety
+        "--threads",
+        "4",
         "--disable-coloring",
-        "--flush-session",         # deterministic: don't reuse a prior verdict
-        "--output-dir", out_dir,
+        "--flush-session",  # deterministic: don't reuse a prior verdict
+        "--output-dir",
+        out_dir,
     ]
     if data:
         argv += ["--data", data]

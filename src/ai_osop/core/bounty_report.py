@@ -37,6 +37,19 @@ _IMPACT = {
     "associated service.",
     "race_condition": "An attacker can bypass once-only limits (double-spend, coupon "
     "reuse), causing direct financial loss.",
+    "dom_xss": "An attacker can execute arbitrary JavaScript in a victim's browser "
+    "by sending a link with a crafted URL parameter or fragment. No server-side "
+    "reflection is needed — the payload runs purely in client-side code.",
+    "ssti": "An attacker can execute arbitrary code on the server by injecting "
+    "template directives, leading to full server compromise, data exfiltration, or "
+    "lateral movement.",
+    "xxe": "An attacker can read arbitrary files on the server, perform SSRF to "
+    "internal services, or trigger denial of service via XML entity expansion.",
+    "command_injection": "An attacker can execute arbitrary operating system commands "
+    "on the server, leading to full server compromise and data exfiltration.",
+    "open_redirect": "An attacker can redirect victims to phishing pages that appear "
+    "to be part of the legitimate application, enabling credential theft and malware "
+    "distribution.",
 }
 _REMEDIATION = {
     "ssrf": "Validate and allow-list outbound URLs; block link-local/metadata ranges; "
@@ -52,6 +65,16 @@ _REMEDIATION = {
     "exposed_secret": "Revoke and rotate the credential immediately; remove it from "
     "client-side code; use a secrets manager.",
     "race_condition": "Use atomic operations / row locks / idempotency keys on once-only actions.",
+    "dom_xss": "Avoid writing untrusted data to DOM sinks (innerHTML, document.write, eval). "
+    "Use textContent, safe framework APIs, and a strict CSP with nonce-based script hashes.",
+    "ssti": "Use sandboxed template engines that disable arbitrary code execution; never "
+    "allow users to control template content; apply contextual output encoding.",
+    "xxe": "Disable external entity resolution in XML parsers; use less complex data "
+    "formats (JSON); apply input validation on XML content type endpoints.",
+    "command_injection": "Use parameterized APIs instead of shell execution; validate and "
+    "sanitize all input against an allow-list; apply strict input length limits.",
+    "open_redirect": "Validate redirect URLs against an allow-list of approved domains; "
+    "use relative redirects when possible; require cryptographic signatures on redirect targets.",
 }
 _CVSS = {  # rough representative vectors for the report header
     "critical": "9.8 (Critical)",
@@ -87,6 +110,18 @@ def _vt(view: FindingView) -> str:
 def _sev(view: FindingView) -> str:
     s = view.get("severity")
     return (s.value if hasattr(s, "value") else str(s)).lower()
+
+
+def _mitre_line(view: FindingView) -> str:
+    """Render a MITRE ATT&CK reference line, if available."""
+    mid = view.get("mitre_technique_id")
+    if not mid:
+        return ""
+    label = f"MITRE ATT&CK: [{mid}](https://attack.mitre.org/techniques/{mid.replace('.', '/')}/)"
+    tactic = view.get("mitre_tactic")
+    if tactic:
+        label += f" — {tactic}"
+    return f"{label}  \n"
 
 
 def finding_signature(vuln: Union[Vulnerability, Dict[str, Any]]) -> str:
@@ -176,6 +211,40 @@ def _repro_steps(view: FindingView) -> List[str]:
             f"Observe {ev.get('success_count')} successes on a once-only action "
             f"(limit {ev.get('expected_max')}) - double-spend confirmed.",
         ]
+    if vt == "dom_xss":
+        return [
+            f"Navigate to `{ev.get('injection_mechanism') == 'fragment' and ep.split('#')[0] or ep}` "
+            f"with a URL parameter `{ev.get('injection_point')}` set to a JavaScript probe.",
+            f"Observe the probe executes in the browser DOM — the page contains client-side "
+            f"JavaScript that reads unsanitized data from the URL and writes it to a DOM sink "
+            f"(innerHTML, document.write, eval, etc.).",
+        ]
+    if vt == "ssti":
+        return [
+            f"Submit the template injection payload `{ev.get('payload') or '{{7*7}}'}` to `{ep}` "
+            f"via parameter `{ev.get('parameter') or 'the vulnerable input'}`.",
+            f"Observe the server evaluates the expression — the result (e.g. '49' for {{7*7}})"
+            f"appears in the response, confirming server-side template injection.",
+        ]
+    if vt == "xxe":
+        return [
+            f"Send a request to `{ep}` with an XML body containing an external entity "
+            f"that reads `/etc/passwd` or makes a server-side request.",
+            f"Observe the entity content reflected in the response, proving the parser "
+            f"resolved the external entity.",
+        ]
+    if vt == "command_injection":
+        return [
+            f"Inject the command `{ev.get('payload') or ';id'}` into the vulnerable parameter "
+            f"at `{ev.get('parameter') or ep}`.",
+            f"Observe the command output in the response, confirming arbitrary command execution.",
+        ]
+    if vt == "open_redirect":
+        return [
+            f"Send a GET request to `{ep}` with the redirect parameter set to "
+            f"`https://attacker-controlled.com/`.",
+            f"Observe the server redirects to the attacker-controlled domain without validation.",
+        ]
     return [f"Reproduce the confirmed condition at `{ep}` using the evidence below."]
 
 
@@ -216,8 +285,29 @@ def render_bounty_report(vuln: Union[Vulnerability, Dict[str, Any]], program: st
         f"(CVSS ~{_CVSS.get(sev,'N/A')})  \n"
         f"**Weakness:** {view.get('cwe') or 'N/A'}  \n"
         f"**Dedup signature:** `{sig}`  \n"
-        f"**Status:** {'Validated (active confirmation)' if view.get('validated') else 'Unconfirmed'}\n\n"
+        f"{_mitre_line(view)}"
+        f"**Status:** {'Validated (active confirmation)' if view.get('validated') else 'Unconfirmed'}\n"
     )
+
+    # MANUAL-CONFIRM-001: Prominent warning when a finding is not validated
+    # (reflection-only XSS, echoed-only mass assignment, etc.). These findings
+    # are strong leads, not confirmed vulnerabilities, and must be clearly
+    # labelled so a triager does not mistake them for validated reports.
+    # Using ``validated`` instead of ``manual_confirm_required`` (which lives
+    # only in evidence dicts) covers ALL unvalidated findings regardless of
+    # how they signal manual confirmation, and is future-proof for any new
+    # scanners producing unvalidated results.
+    if not view.get("validated"):
+        header += (
+            "> ⚠️ **MANUAL CONFIRMATION REQUIRED**  \n"
+            "> This finding was detected as a **strong lead** but was not "
+            "fully validated by an automated probe (e.g. XSS reflection "
+            "was observed but browser DOM execution was not confirmed, or "
+            "a mass-assignment field was echoed but not independently "
+            "read-back). A human operator must manually verify this before "
+            "submission.  \n"
+        )
+    header += "\n"
     body = (
         f"## Summary\n{view.get('description')}\n\n"
         f"## Steps to Reproduce\n{steps}\n\n"

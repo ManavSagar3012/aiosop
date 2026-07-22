@@ -28,7 +28,6 @@ import pytest
 from ai_osop.core import deterministic_scan as ds
 from ai_osop.core.models import Vulnerability
 
-
 # --------------------------------------------------------------------------- #
 # Test doubles                                                                 #
 # --------------------------------------------------------------------------- #
@@ -50,8 +49,7 @@ class _FakeGraph:
 
 
 class _CheckResult:
-    def __init__(self, validated: bool, evidence: dict | None = None,
-                 confidence: float = 1.0):
+    def __init__(self, validated: bool, evidence: dict | None = None, confidence: float = 1.0):
         self.validated = validated
         self.evidence = evidence or {}
         self.confidence = confidence
@@ -84,13 +82,16 @@ def _fake_bench(expected_total: int = 3):
     async def _check_fn_factory(check_id):
         async def _fn(target):
             return results[check_id]
+
         return _fn
 
     fake = SimpleNamespace(
         MANIFEST=entries,
-        CHECKS={e.check_id: asyncio.coroutine(lambda cid=e.check_id: None) for e in entries}
-        if False
-        else None,
+        CHECKS=(
+            {e.check_id: asyncio.coroutine(lambda cid=e.check_id: None) for e in entries}
+            if False
+            else None
+        ),
         Target=_Target,
     )
     # CHECKS cannot use comprehension binding cleanly; build explicitly.
@@ -169,7 +170,9 @@ async def test_suite_times_out_instead_of_hanging(monkeypatch):
         await _asyncio.sleep(60)
 
     fake = SimpleNamespace(
-        MANIFEST=[SimpleNamespace(check_id="hang", name="hang", owasp="A", cwe="CWE-89", expected=True)],
+        MANIFEST=[
+            SimpleNamespace(check_id="hang", name="hang", owasp="A", cwe="CWE-89", expected=True)
+        ],
         CHECKS={"hang": _hang},
         Target=lambda b, c: SimpleNamespace(),
     )
@@ -240,28 +243,39 @@ async def test_generalized_drives_time_blind_when_error_based_misses(monkeypatch
     async def fake_time(c, url, *, param=None, **kw):
         calls["time"] += 1
         return {
-            "technique": "time_blind", "endpoint": url, "parameter": "q",
-            "dbms": "postgres", "payload": "1'; SELECT pg_sleep(5)--",
+            "technique": "time_blind",
+            "endpoint": url,
+            "parameter": "q",
+            "dbms": "postgres",
+            "payload": "1'; SELECT pg_sleep(5)--",
             "control_payload": "1'; SELECT pg_sleep(0)--",
-            "control_latency": 0.1, "sleep_latency": 5.0,
-            "delta_seconds": 4.9, "min_delta": 3.0, "confidence": 1.0,
+            "control_latency": 0.1,
+            "sleep_latency": 5.0,
+            "delta_seconds": 4.9,
+            "min_delta": 3.0,
+            "confidence": 1.0,
         }
 
     monkeypatch.setattr(sqli_oracle, "detect_error_based", fake_error)
     monkeypatch.setattr(sqli_oracle, "detect_login_bypass", fake_login)
     monkeypatch.setattr(sqli_oracle, "detect_time_blind", fake_time)
 
-    eps = [{"url": "http://t/search", "method": "GET", "path": "/search",
-            "query_keys": ["q"], "has_body": False}]
+    eps = [
+        {
+            "url": "http://t/search",
+            "method": "GET",
+            "path": "/search",
+            "query_keys": ["q"],
+            "has_body": False,
+        }
+    ]
     gm = _graph_with_endpoints(eps)
 
-    persisted, examined = await ds.run_generalized_sqli(
-        "eng-test", gm, per_check_timeout=5.0
-    )
+    persisted, examined = await ds.run_generalized_sqli("eng-test", gm, per_check_timeout=5.0)
 
     assert calls["error"] == 1
     assert calls["login"] == 0  # not login_like
-    assert calls["time"] == 1   # new on this branch
+    assert calls["time"] == 1  # new on this branch
     assert len(persisted) == 1
     v = persisted[0]
     assert v.vuln_type.value == "sqli"
@@ -281,9 +295,15 @@ async def test_generalized_skips_time_blind_after_error_based_confirms(monkeypat
 
     async def fake_error(c, url, *, param=None):
         calls["error"] += 1
-        return {"technique": "error_based", "endpoint": url, "parameter": "q",
-                "payload": "'", "http_status": 500, "db_error_excerpt": "...",
-                "confidence": 1.0}
+        return {
+            "technique": "error_based",
+            "endpoint": url,
+            "parameter": "q",
+            "payload": "'",
+            "http_status": 500,
+            "db_error_excerpt": "...",
+            "confidence": 1.0,
+        }
 
     async def fake_time(c, url, **kw):
         calls["time"] += 1
@@ -296,8 +316,15 @@ async def test_generalized_skips_time_blind_after_error_based_confirms(monkeypat
     monkeypatch.setattr(sqli_oracle, "detect_login_bypass", fake_login)
     monkeypatch.setattr(sqli_oracle, "detect_time_blind", fake_time)
 
-    eps = [{"url": "http://t/search", "method": "GET", "path": "/search",
-            "query_keys": ["q"], "has_body": False}]
+    eps = [
+        {
+            "url": "http://t/search",
+            "method": "GET",
+            "path": "/search",
+            "query_keys": ["q"],
+            "has_body": False,
+        }
+    ]
     gm = _graph_with_endpoints(eps)
 
     persisted, _ = await ds.run_generalized_sqli("eng-test", gm, per_check_timeout=5.0)
@@ -329,8 +356,13 @@ async def test_generalized_dedupes_by_shape(monkeypatch):
 
     # Five endpoints with identical (method, path, params) — must dedupe to 1.
     eps = [
-        {"url": f"http://t/search?x={i}", "method": "GET", "path": "/search",
-         "query_keys": ["q"], "has_body": False}
+        {
+            "url": f"http://t/search?x={i}",
+            "method": "GET",
+            "path": "/search",
+            "query_keys": ["q"],
+            "has_body": False,
+        }
         for i in range(5)
     ]
     gm = _graph_with_endpoints(eps)
@@ -362,8 +394,13 @@ async def test_generalized_caps_at_sixty_candidates(monkeypatch):
     monkeypatch.setattr(sqli_oracle, "detect_time_blind", fake_time)
 
     eps = [
-        {"url": f"http://t/path{i}/search", "method": "GET", "path": f"/path{i}/search",
-         "query_keys": ["q"], "has_body": False}
+        {
+            "url": f"http://t/path{i}/search",
+            "method": "GET",
+            "path": f"/path{i}/search",
+            "query_keys": ["q"],
+            "has_body": False,
+        }
         for i in range(100)
     ]
     gm = _graph_with_endpoints(eps)
@@ -390,16 +427,17 @@ async def test_bootstrap_seeds_present_api_endpoints():
     def handler(req: httpx.Request) -> httpx.Response:
         path = req.url.path
         if path == "/api/users":
-            return httpx.Response(200, text='[{"id":1}]',
-                                  headers={"content-type": "application/json"})
+            return httpx.Response(
+                200, text='[{"id":1}]', headers={"content-type": "application/json"}
+            )
         if path == "/rest/products/search":
-            return httpx.Response(200, text='{"data":[]}',
-                                  headers={"content-type": "application/json"})
+            return httpx.Response(
+                200, text='{"data":[]}', headers={"content-type": "application/json"}
+            )
         if path == "/missing":
             return httpx.Response(404, text="not found")
         # SPA catch-all HTML
-        return httpx.Response(200, text="<html></html>",
-                              headers={"content-type": "text/html"})
+        return httpx.Response(200, text="<html></html>", headers={"content-type": "text/html"})
 
     # Patch the module's _COMMON_ENDPOINTS to include only the test paths so
     # we don't depend on the production list.
@@ -414,6 +452,7 @@ async def test_bootstrap_seeds_present_api_endpoints():
         # Patch httpx.AsyncClient globally for this test so bootstrap_discovery
         # uses our MockTransport-backed client without a real network call.
         import httpx as _httpx_mod
+
         orig_async_client = _httpx_mod.AsyncClient
 
         class _MockClient(_httpx_mod.AsyncClient):
@@ -423,9 +462,7 @@ async def test_bootstrap_seeds_present_api_endpoints():
 
         _httpx_mod.AsyncClient = _MockClient
         try:
-            count = await ds.bootstrap_discovery(
-                "http://t", "eng-test", _GM(), timeout=2.0
-            )
+            count = await ds.bootstrap_discovery("http://t", "eng-test", _GM(), timeout=2.0)
         finally:
             _httpx_mod.AsyncClient = orig_async_client
     finally:
@@ -461,10 +498,8 @@ async def test_crawl_param_links_extracts_href_and_string_literals():
     def handler(req: httpx.Request) -> httpx.Response:
         # Home carries the links; any followed sub-page is empty.
         if req.url.path in ("", "/"):
-            return httpx.Response(200, text=home,
-                                  headers={"content-type": "text/html"})
-        return httpx.Response(200, text="<html></html>",
-                              headers={"content-type": "text/html"})
+            return httpx.Response(200, text=home, headers={"content-type": "text/html"})
+        return httpx.Response(200, text="<html></html>", headers={"content-type": "text/html"})
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler), follow_redirects=True
@@ -564,8 +599,15 @@ async def test_generalized_sqli_threads_injected_client_to_oracles(monkeypatch):
     monkeypatch.setattr(sqli_oracle, "detect_login_bypass", fake_login)
     monkeypatch.setattr(sqli_oracle, "detect_time_blind", fake_time)
 
-    eps = [{"url": "http://t/search", "method": "GET", "path": "/search",
-            "query_keys": ["q"], "has_body": False}]
+    eps = [
+        {
+            "url": "http://t/search",
+            "method": "GET",
+            "path": "/search",
+            "query_keys": ["q"],
+            "has_body": False,
+        }
+    ]
     gm = _graph_with_endpoints(eps)
     sentinel = _SentinelClient()
 
@@ -618,3 +660,46 @@ async def test_generalized_scan_threads_client_only_to_surface_oracles(monkeypat
     # identity-managing oracles are called WITHOUT a client kwarg
     assert got["jwt_has_client"] is False
     assert got["idor_has_client"] is False
+
+
+@pytest.mark.asyncio
+async def test_generalized_sqli_scans_post_body_parameters(monkeypatch):
+    """Verify that run_generalized_sqli extracts body parameters and passes them
+    to the error-based and time-blind oracles with the correct POST method."""
+    from ai_osop.core import sqli_oracle
+
+    calls = []
+
+    async def fake_error(c, url, *, param=None, method="GET", body_keys=None):
+        calls.append(("error", method, body_keys))
+        return None
+
+    async def fake_time(c, url, *, param=None, request_timeout=None, method="GET", body_keys=None):
+        calls.append(("time", method, body_keys))
+        return None
+
+    async def fake_login(c, url, **kw):
+        return None
+
+    monkeypatch.setattr(sqli_oracle, "detect_error_based", fake_error)
+    monkeypatch.setattr(sqli_oracle, "detect_login_bypass", fake_login)
+    monkeypatch.setattr(sqli_oracle, "detect_time_blind", fake_time)
+
+    # Create a POST candidate with body_schema_keys representing parameters in body
+    eps = [
+        {
+            "url": "http://t/api/update",
+            "method": "POST",
+            "path": "/api/update",
+            "body_schema_keys": ["username", "address"],
+            "has_body": True,
+        }
+    ]
+    gm = _graph_with_endpoints(eps)
+    sentinel = _SentinelClient()
+
+    await ds.run_generalized_sqli("eng-test", gm, per_check_timeout=5.0, client=sentinel)
+
+    # Check that error-based and time-blind oracles were called for the POST body
+    assert ("error", "POST", ["username", "address"]) in calls
+    assert ("time", "POST", ["username", "address"]) in calls

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ai_osop.agents.reporting_agent import ReportingAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 from ai_osop.reporting.exporters import ReportExporter
 
@@ -144,7 +144,7 @@ async def test_finding_certification_engine():
     """
     Guards FindingCertificationEngine and MISSION_QUALITY_CERTIFICATE.md generation.
     """
-    from ai_osop.core.config import Severity, VulnClass
+    from ai_osop.core.enums import Severity, VulnClass
     from ai_osop.core.findings_quality import FindingCertificationEngine
     from ai_osop.core.models import Vulnerability
 

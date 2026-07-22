@@ -86,9 +86,7 @@ def test_upgrade_backfills_existing_rows_to_match_hotpath_predicates():
             "SELECT archived, archived_at FROM audit_logs WHERE id='a1'"
         ).fetchone()
         n_outbox = c.exec_driver_sql("SELECT COUNT(*) FROM outbox WHERE dlq = 0").scalar()
-        n_audit = c.exec_driver_sql(
-            "SELECT COUNT(*) FROM audit_logs WHERE archived = 0"
-        ).scalar()
+        n_audit = c.exec_driver_sql("SELECT COUNT(*) FROM audit_logs WHERE archived = 0").scalar()
     assert tuple(ob) == (0, 0)
     assert al[0] == 0 and al[1] is None
     # Backfilled rows are matched by the hot-path predicates (not NULL-skipped).
@@ -120,9 +118,7 @@ def test_upgrade_noop_when_columns_already_present():
     m = _load()
     engine = sa.create_engine("sqlite://")
     with engine.begin() as c:
-        c.exec_driver_sql(
-            "CREATE TABLE outbox (id TEXT PRIMARY KEY, attempt_count INT, dlq INT)"
-        )
+        c.exec_driver_sql("CREATE TABLE outbox (id TEXT PRIMARY KEY, attempt_count INT, dlq INT)")
         c.exec_driver_sql("CREATE INDEX ix_outbox_dlq ON outbox(dlq)")
         c.exec_driver_sql(
             "CREATE TABLE audit_logs (id TEXT PRIMARY KEY, archived INT, archived_at TIMESTAMP)"

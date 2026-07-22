@@ -20,10 +20,11 @@ fields, parameter entities refused), so the only proof is the out-of-band hit.
 A blind SSRF that only performs an out-of-band request is likewise reported as a
 lead unless an OAST callback confirms it.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qsl, urlparse, urlencode, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
@@ -44,18 +45,37 @@ _TRAVERSAL_PAYLOADS = (
 # Signatures that only appear in the real target file — objective proof the
 # traversal resolved and the file was served back.
 _TRAVERSAL_MARKERS = (
-    "root:x:0:0",           # /etc/passwd first line
+    "root:x:0:0",  # /etc/passwd first line
     "root:x:0:0:root",
-    "daemon:x:1:1",         # /etc/passwd second line (defends against a partial
-    "[extensions]",         # win.ini
-    "[fonts]",              # win.ini
+    "daemon:x:1:1",  # /etc/passwd second line (defends against a partial
+    "[extensions]",  # win.ini
+    "[fonts]",  # win.ini
     "; for 16-bit app support",  # win.ini header comment
 )
 # Params that commonly name a file/path — used to prioritise, not restrict.
 _FILE_PARAM_HINTS = (
-    "file", "path", "page", "doc", "document", "name", "filename", "template",
-    "download", "load", "read", "dir", "folder", "url", "src", "img", "image",
-    "attachment", "report", "view", "include", "resource",
+    "file",
+    "path",
+    "page",
+    "doc",
+    "document",
+    "name",
+    "filename",
+    "template",
+    "download",
+    "load",
+    "read",
+    "dir",
+    "folder",
+    "url",
+    "src",
+    "img",
+    "image",
+    "attachment",
+    "report",
+    "view",
+    "include",
+    "resource",
 )
 
 
@@ -114,6 +134,8 @@ async def detect_path_traversal(
                     "file_excerpt": body[:200],
                     "proof": "response returned the contents of a system file outside the web root",
                     "confidence": 1.0,
+                    "request": f"GET {target}",
+                    "response": (r.text or "")[:4096],
                 }
     return None
 
@@ -132,9 +154,25 @@ _REDIRECT_PAYLOADS = (
     "/\\osop-redirect-sentinel.example.net/pwn",
 )
 _REDIRECT_PARAM_HINTS = (
-    "url", "redirect", "redir", "next", "return", "returnto", "return_to",
-    "returnurl", "goto", "dest", "destination", "continue", "to", "out",
-    "target", "link", "forward", "callback", "redirect_uri",
+    "url",
+    "redirect",
+    "redir",
+    "next",
+    "return",
+    "returnto",
+    "return_to",
+    "returnurl",
+    "goto",
+    "dest",
+    "destination",
+    "continue",
+    "to",
+    "out",
+    "target",
+    "link",
+    "forward",
+    "callback",
+    "redirect_uri",
 )
 
 
@@ -172,7 +210,7 @@ async def detect_open_redirect(
     for hint in (allowlist_hints or [])[:4]:
         if not hint:
             continue
-        payloads.append(f"{_REDIRECT_SENTINEL}?x={hint}")   # sentinel host, hint as suffix
+        payloads.append(f"{_REDIRECT_SENTINEL}?x={hint}")  # sentinel host, hint as suffix
         payloads.append(f"https://{_REDIRECT_SENTINEL_HOST}/?x={hint}")
         payloads.append(f"https://{_REDIRECT_SENTINEL_HOST}/{hint}")
 
@@ -187,8 +225,12 @@ async def detect_open_redirect(
             if r.status_code not in (301, 302, 303, 307, 308):
                 continue
             loc = r.headers.get("location") or r.headers.get("Location") or ""
-            host = urlparse(loc if "://" in loc else "http:" + loc if loc.startswith("//") else loc).netloc.lower()
-            if _REDIRECT_SENTINEL_HOST in loc.lower() and _REDIRECT_SENTINEL_HOST in (host or loc.lower()):
+            host = urlparse(
+                loc if "://" in loc else "http:" + loc if loc.startswith("//") else loc
+            ).netloc.lower()
+            if _REDIRECT_SENTINEL_HOST in loc.lower() and _REDIRECT_SENTINEL_HOST in (
+                host or loc.lower()
+            ):
                 return {
                     "technique": "open_redirect",
                     "endpoint": url,
@@ -198,6 +240,8 @@ async def detect_open_redirect(
                     "location": loc[:300],
                     "proof": "server issued a 3xx redirect to an attacker-controlled off-origin host",
                     "confidence": 1.0,
+                    "request": f"GET {target}",
+                    "response": f"HTTP {r.status_code} Location: {loc}",
                 }
     return None
 
@@ -214,9 +258,31 @@ _SSRF_PROBES = (
     ("file:///c:/windows/win.ini", ("[extensions]", "[fonts]")),
 )
 _SSRF_PARAM_HINTS = (
-    "url", "uri", "link", "src", "source", "target", "dest", "fetch", "load",
-    "image", "img", "avatar", "callback", "webhook", "feed", "proxy", "path",
-    "download", "remote", "endpoint", "host", "site", "domain", "next", "data",
+    "url",
+    "uri",
+    "link",
+    "src",
+    "source",
+    "target",
+    "dest",
+    "fetch",
+    "load",
+    "image",
+    "img",
+    "avatar",
+    "callback",
+    "webhook",
+    "feed",
+    "proxy",
+    "path",
+    "download",
+    "remote",
+    "endpoint",
+    "host",
+    "site",
+    "domain",
+    "next",
+    "data",
 )
 
 
@@ -251,14 +317,11 @@ async def detect_ssrf_reflected(
                     "http_status": r.status_code,
                     "proof": "server fetched an attacker-supplied URI and reflected its contents",
                     "confidence": 1.0,
+                    "request": f"GET {target}",
+                    "response": (r.text or "")[:4096],
                 }
-    return None
 
 
-# ---------------------------------------------------------------------------
-# XXE (CWE-611) — reflected file-read class only
-# ---------------------------------------------------------------------------
-# Classic external-entity file read. VALIDATED only if the parsed entity's file
 # content comes back in the response. Only ever sent to endpoints that advertise
 # XML handling (accepts/returns xml) so we do not spray XML at JSON APIs.
 _XXE_FILES = (
@@ -327,7 +390,9 @@ async def detect_xxe(
     for body, markers, root, field in attempts:
         try:
             r = await client.request(
-                method, url, content=body,
+                method,
+                url,
+                content=body,
                 headers={"Content-Type": "application/xml", "Accept": "application/xml, */*"},
             )
         except Exception:
@@ -344,6 +409,8 @@ async def detect_xxe(
                     f"file (schema <{root}><{field}>)"
                 ),
                 "confidence": 1.0,
+                "request": f"{method} {url} body={body}",
+                "response": (r.text or "")[:4096],
             }
     return None
 
@@ -420,14 +487,14 @@ async def plant_blind_xxe(
                 continue
             # Rebuild the body with the real callback URL now that we have it.
             body = next(
-                b for lb, b in _blind_xxe_bodies(probe.callback_url, root, field)
-                if lb == label
+                b for lb, b in _blind_xxe_bodies(probe.callback_url, root, field) if lb == label
             )
             try:
                 await client.request(
-                    method, url, content=body,
-                    headers={"Content-Type": "application/xml",
-                             "Accept": "application/xml, */*"},
+                    method,
+                    url,
+                    content=body,
+                    headers={"Content-Type": "application/xml", "Accept": "application/xml, */*"},
                 )
                 planted += 1
             except Exception:
@@ -445,6 +512,10 @@ if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:3000"
 
     async def _main():
+        # MAJ-4 (2026-07-22): the self-check builds its own raw client (it's a
+        # standalone __main__ probe, not the scan path). The REAL scan path passes
+        # a governed client into these oracles — they all accept ``client`` as
+        # their first arg and never build their own httpx client.
         async with httpx.AsyncClient(verify=False, timeout=10) as c:
             for name, coro in (
                 ("path_traversal", detect_path_traversal(c, target + "/ftp/quarantine")),

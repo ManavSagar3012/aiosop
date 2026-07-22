@@ -30,7 +30,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ai_osop.adapters.threat_intel_mcp import ThreatIntelAdapter
-from ai_osop.api.deps import require_role, state, verify_token, verify_ws_token
+from ai_osop.api.deps import require_role, state, verify_ws_token
 from ai_osop.api.health import router as health_router
 from ai_osop.api.health import run_startup_self_test
 
@@ -450,183 +450,23 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"SandboxManager initialization failed: {e}")
 
-        # 9. Register Agents
+            # 9. Register Agents
         try:
-            await orch.initialize()
+            from ai_osop.orchestrator.agent_registry import register_all_agents
 
-            # Instantiate and register the 11 core agents + 9 experimental agents
-            from ai_osop.agents.attack_chain_agent import AttackChainAgent
-            from ai_osop.agents.base import AgentContext
-            from ai_osop.agents.chain_composer_agent import ChainComposerAgent
-            from ai_osop.agents.cloud_agent import CloudSpecialistAgent
-            from ai_osop.agents.codeql_agent import CodeQLAgent
-            from ai_osop.agents.concurrency_agent import ConcurrencyAgent
-            from ai_osop.agents.context_manager_agent import ContextManagerAgent
-            from ai_osop.agents.csrf_agent import CSRFAgent
-            from ai_osop.agents.exploit_agent import ExploitValidationAgent
-            from ai_osop.agents.graphql_agent import GraphQLAgent
-            from ai_osop.agents.human_oversight_agent import HumanOversightAgent
-            from ai_osop.agents.js_analyzer_agent import JSAnalyzerAgent
-            from ai_osop.agents.jwt_agent import JWTAgent
-            from ai_osop.agents.mobile_agent import MobileAnalysisAgent
-            from ai_osop.agents.nextjs_agent import NextJSSpecialistAgent
-            from ai_osop.agents.payload_agent import PayloadMutationAgent
-            from ai_osop.agents.pollution_scanner import PollutionScanner
-            from ai_osop.agents.race_scanner import RaceScanner
-            from ai_osop.agents.react_agent import ReactSpecialistAgent
-            from ai_osop.agents.recon_agent import ReconAgent
-            from ai_osop.agents.reporting_agent import ReportingAgent
-            from ai_osop.agents.saml_agent import SAMLAgent
-            from ai_osop.agents.smuggling_scanner import SmugglingScanner
-            from ai_osop.agents.ssrf_agent import SSRFAgent
-            from ai_osop.agents.ssti_agent import SSTIAgent
-            from ai_osop.agents.stack_profiler_agent import StackProfilerAgent
-            from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
-            from ai_osop.agents.takeover_agent import TakeoverAgent
-            from ai_osop.agents.upload_scanner import UploadScanner
-            from ai_osop.agents.visual_agent import VisualContextAgent
-            from ai_osop.agents.vuln_agent import VulnAnalysisAgent
-            from ai_osop.agents.websocket_agent import WebSocketAgent
-            from ai_osop.agents.workflow_agent import PlaywrightAgent
-            from ai_osop.core.config import AgentType
-
-            bootstrap_session_id = "api-bootstrap"
-            # AIOSOP-CONCURRENCY-001 (2026-07-09): scale agent pool to prevent
-            # task queue bottlenecks. With only 2 vuln agents and 1 recon agent,
-            # 48 tasks took >180s — 97.9% remained pending. Each agent processes
-            # one task at a time, so more instances = more parallel slots.
-            # Platform-wide ceiling: settings.max_concurrent_agents (default 50).
-            # AIOSOP-CONCURRENCY-002 (2026-07-11): benchmark showed 96/103 tasks
-            # pending after 600s because 9 scanner agents were saturated. Doubling
-            # the pool sizes to handle the 25-target injection load.
-            _VULN_WORKERS = 10
-            _RECON_WORKERS = 4
-            _EXPLOIT_WORKERS = 3
-            _SSTI_WORKERS = 3
-            _SSRF_WORKERS = 3
-            _CSRF_WORKERS = 3
-            _JWT_WORKERS = 3
-            _SMUGGLING_WORKERS = 3
-            _RACE_WORKERS = 3
-            _UPLOAD_WORKERS = 3
-            _POLLUTION_WORKERS = 3
-            _WEBSOCKET_WORKERS = 3
-            _SAML_WORKERS = 3
-            _TAKEOVER_WORKERS = 3
-
-            agents_to_register = [
-                (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
-                (ChainComposerAgent, AgentType.ATTACK_CHAIN, "chain-composer-agent-001"),
-            ]
-
-            # Recon workers (default 3)
-            for i in range(1, _RECON_WORKERS + 1):
-                agents_to_register.append((ReconAgent, AgentType.RECON, f"recon-agent-{i:03d}"))
-
-            # Vuln-analysis workers (default 5)
-            for i in range(1, _VULN_WORKERS + 1):
-                agents_to_register.append(
-                    (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, f"vuln-agent-{i:03d}")
-                )
-
-            # Exploit workers (default 2)
-            for i in range(1, _EXPLOIT_WORKERS + 1):
-                agents_to_register.append(
-                    (ExploitValidationAgent, AgentType.EXPLOIT_VALIDATION, f"exploit-agent-{i:03d}")
-                )
-
-            # Specialised single-instance agents
-            agents_to_register.extend(
-                [
-                    (HumanOversightAgent, AgentType.HUMAN_OVERSIGHT, "human-oversight-agent-001"),
-                    (PayloadMutationAgent, AgentType.PAYLOAD_MUTATION, "payload-agent-001"),
-                    (ReportingAgent, AgentType.REPORTING, "reporting-agent-001"),
-                    (ContextManagerAgent, AgentType.CONTEXT_MANAGER, "context-manager-agent-001"),
-                    (ConcurrencyAgent, AgentType.CONCURRENCY, "concurrency-agent-001"),
-                    (StackProfilerAgent, AgentType.CONTEXT_MANAGER, "stack-profiler-agent-001"),
-                    # 3 WORKFLOW (browser) agents: RECON dispatches 2 browser tasks
-                    # per domain (guest capture + login-probe) and now waits for them;
-                    # a single agent serialized them and tripped the starvation warning.
-                    # (AIOSOP-WORKFLOW-POOL)
-                    (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-001"),
-                    (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-002"),
-                    (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-003"),
-                    (CloudSpecialistAgent, AgentType.CLOUD_SPECIALIST, "cloud-agent-001"),
-                    (CodeQLAgent, AgentType.SAST_ANALYSIS, "codeql-agent-001"),
-                    (GraphQLAgent, AgentType.VULN_ANALYSIS, "graphql-agent-001"),
-                    (JSAnalyzerAgent, AgentType.VULN_ANALYSIS, "js-analyzer-agent-001"),
-                    (MobileAnalysisAgent, AgentType.VULN_ANALYSIS, "mobile-agent-001"),
-                    (NextJSSpecialistAgent, AgentType.NEXTJS_SPECIALIST, "nextjs-agent-001"),
-                    (ReactSpecialistAgent, AgentType.REACT_SPECIALIST, "react-agent-001"),
-                    (StatefulLogicAgent, AgentType.STATEFUL_LOGIC, "stateful-logic-agent-001"),
-                    (VisualContextAgent, AgentType.VISUAL_CONTEXT, "visual-agent-001"),
-                ]
+            await register_all_agents(
+                orch=orch,
+                session_memory=session_memory,
+                graph_memory=graph_memory,
+                vector_memory=vector_memory,
+                llm_client=llm_client,
+                mcp_registry=mcp_registry,
+                rate_limiter=rate_limiter,
+                threat_intel_adapter=threat_intel_adapter,
+                state=state,
             )
-
-            # Scanner workers: scale bottleneck scanners to 2 instances each
-            for i in range(1, _SSTI_WORKERS + 1):
-                agents_to_register.append(
-                    (SSTIAgent, AgentType.SSTI_SCANNER, f"ssti-agent-{i:03d}")
-                )
-            for i in range(1, _SSRF_WORKERS + 1):
-                agents_to_register.append(
-                    (SSRFAgent, AgentType.SSRF_SCANNER, f"ssrf-agent-{i:03d}")
-                )
-            for i in range(1, _CSRF_WORKERS + 1):
-                agents_to_register.append(
-                    (CSRFAgent, AgentType.CSRF_SCANNER, f"csrf-agent-{i:03d}")
-                )
-            for i in range(1, _JWT_WORKERS + 1):
-                agents_to_register.append((JWTAgent, AgentType.JWT_SCANNER, f"jwt-agent-{i:03d}"))
-            for i in range(1, _SMUGGLING_WORKERS + 1):
-                agents_to_register.append(
-                    (SmugglingScanner, AgentType.SMUGGLING_SCANNER, f"smuggling-agent-{i:03d}")
-                )
-            for i in range(1, _RACE_WORKERS + 1):
-                agents_to_register.append(
-                    (RaceScanner, AgentType.RACE_SCANNER, f"race-agent-{i:03d}")
-                )
-            for i in range(1, _UPLOAD_WORKERS + 1):
-                agents_to_register.append(
-                    (UploadScanner, AgentType.UPLOAD_SCANNER, f"upload-agent-{i:03d}")
-                )
-            for i in range(1, _POLLUTION_WORKERS + 1):
-                agents_to_register.append(
-                    (PollutionScanner, AgentType.POLLUTION_SCANNER, f"pollution-agent-{i:03d}")
-                )
-            for i in range(1, _WEBSOCKET_WORKERS + 1):
-                agents_to_register.append(
-                    (WebSocketAgent, AgentType.WEBSOCKET_SCANNER, f"websocket-agent-{i:03d}")
-                )
-            for i in range(1, _SAML_WORKERS + 1):
-                agents_to_register.append(
-                    (SAMLAgent, AgentType.SAML_SCANNER, f"saml-agent-{i:03d}")
-                )
-            for i in range(1, _TAKEOVER_WORKERS + 1):
-                agents_to_register.append(
-                    (TakeoverAgent, AgentType.TAKEOVER_SCANNER, f"takeover-agent-{i:03d}")
-                )
-
-            for agent_cls, agent_type, agent_id in agents_to_register:
-                ctx = AgentContext(
-                    agent_id=agent_id,
-                    agent_type=agent_type,
-                    session_id=bootstrap_session_id,
-                    session_memory=session_memory,
-                    graph_memory=graph_memory,
-                    vector_memory=vector_memory,
-                    llm_client=llm_client,
-                    mcp_registry=mcp_registry,
-                    rate_limiter=rate_limiter,
-                    threat_intel_adapter=threat_intel_adapter,
-                    audit_callback=orch._audit_log,
-                    coordination_bus=orch.coordination_bus,
-                )
-                ctx.skill_engine = state.get("skill_engine")
-                agent_inst = agent_cls(ctx)
-                await orch.register_agent(agent_inst)
         except Exception as e:
-            logger.error(f"Orchestrator initialization/agent registration failed: {e}")
+            logger.error(f"Agent registration failed: {e}")
 
         # 10. Bind to shared state dict so routers see the live values
         logger.info(

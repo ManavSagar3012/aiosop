@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ai_osop.core.config import VulnClass
+from ai_osop.core.enums import VulnClass
 
 logger = logging.getLogger(__name__)
 

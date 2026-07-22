@@ -3,36 +3,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.orchestrator.orchestrator import Orchestrator
-
-
-class SharedFakeSessionMemory:
-    """Shared session memory mock that simulates global Redis distributed locks."""
-
-    def __init__(self):
-        self.active_locks = {}
-
-    async def acquire_lock(self, lock_key: str, lock_value: str, ttl_seconds: int = 30) -> bool:
-        if lock_key in self.active_locks:
-            return False
-        self.active_locks[lock_key] = lock_value
-        return True
-
-    async def release_lock(self, lock_key: str, lock_value: str) -> bool:
-        if self.active_locks.get(lock_key) == lock_value:
-            self.active_locks.pop(lock_key, None)
-            return True
-        return False
+from tests._mocks import FakeSessionMemory, stub_agent_mock
 
 
 @pytest.mark.asyncio
 async def test_multi_orchestrator_agent_locking():
     """Verify that multiple orchestrators cannot claim the same agent concurrently."""
-    shared_mem = SharedFakeSessionMemory()
+    shared_mem = FakeSessionMemory()
 
-    # Orchestrator 1 setup
-    mem1 = MagicMock()
+    # Orchestrator 1 setup: wire real lock methods from shared_mem
+    mem1 = AsyncMock()
     mem1.acquire_lock = AsyncMock(side_effect=shared_mem.acquire_lock)
     mem1.release_lock = AsyncMock(side_effect=shared_mem.release_lock)
     mem1.add_busy_agent = AsyncMock()
@@ -40,20 +22,16 @@ async def test_multi_orchestrator_agent_locking():
     orch1 = Orchestrator(mem1, AsyncMock(), AsyncMock(), AsyncMock())
 
     # Orchestrator 2 setup
-    mem2 = MagicMock()
+    mem2 = AsyncMock()
     mem2.acquire_lock = AsyncMock(side_effect=shared_mem.acquire_lock)
     mem2.release_lock = AsyncMock(side_effect=shared_mem.release_lock)
     mem2.add_busy_agent = AsyncMock()
     mem2.remove_busy_agent = AsyncMock()
     orch2 = Orchestrator(mem2, AsyncMock(), AsyncMock(), AsyncMock())
 
-    # Mock agent
+    # Use shared stub for the agent mock (reduces inline wiring)
     agent_id = "agent-recon-1"
-    agent_mock = MagicMock()
-    agent_mock.ctx.agent_id = agent_id
-    agent_mock.ctx.agent_type = AgentType.RECON
-    agent_mock.ctx.status = "idle"
-    agent_mock.supports_task_type.return_value = True
+    agent_mock = stub_agent_mock(agent_id=agent_id, agent_type=AgentType.RECON)
 
     # Register same agent ID to both orchestrators (simulating registration in cluster)
     orch1._agents[agent_id] = agent_mock
@@ -65,18 +43,18 @@ async def test_multi_orchestrator_agent_locking():
     assert claimed_agent1.ctx.agent_id == agent_id
 
     # Lock is now held globally in shared_mem
-    assert f"lock:agent:{agent_id}" in shared_mem.active_locks
+    assert shared_mem.is_locked(f"lock:agent:{agent_id}")
 
     # 2. Orchestrator 2 tries to claim the SAME agent concurrently
     claimed_agent2 = await orch2._find_available_agent(AgentType.RECON, "recon")
     # Should be rejected because the Redis lock is already held by Orch 1!
     assert claimed_agent2 is None
 
-    # 3. Orchestrator 1 releases the agent (now an async method)
+    # 3. Orchestrator 1 releases the agent
     await orch1._release_agent(agent_id)
 
     # Lock should be released
-    assert f"lock:agent:{agent_id}" not in shared_mem.active_locks
+    assert not shared_mem.is_locked(f"lock:agent:{agent_id}")
 
     # 4. Now Orchestrator 2 should be able to claim the agent successfully
     claimed_agent2_after = await orch2._find_available_agent(AgentType.RECON, "recon")

@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -6,7 +7,7 @@ from ai_osop.agents.graphql_agent import GraphQLAgent
 from ai_osop.agents.js_analyzer_agent import JSAnalyzerAgent
 from ai_osop.agents.mobile_agent import MobileAnalysisAgent
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 from ai_osop.orchestrator.task_scheduler import TaskScheduler
 
@@ -16,6 +17,30 @@ class MockAgentContext:
         self.agent_id = agent_id
         self.agent_type = agent_type
         self.status = status
+
+
+@pytest.mark.asyncio
+async def test_scheduler_awaits_async_capability_predicate() -> None:
+    """An async adapter capability check must not be treated as truthy by identity."""
+    supports_task_type = AsyncMock(return_value=False)
+    agent = SimpleNamespace(
+        ctx=MockAgentContext("recon-agent-001", AgentType.RECON),
+        supports_task_type=supports_task_type,
+    )
+    mock_orch = MagicMock()
+    mock_orch._agents = {"recon-agent-001": agent}
+    mock_orch.session_memory.acquire_lock = AsyncMock(return_value=True)
+    mock_orch.session_memory.add_busy_agent = AsyncMock()
+
+    scheduler = TaskScheduler(mock_orch)
+
+    assert await scheduler._find_available_agent(AgentType.RECON, "full_recon") is None
+    supports_task_type.assert_awaited_once_with("full_recon")
+    mock_orch.session_memory.acquire_lock.assert_not_awaited()
+
+    supports_task_type.return_value = True
+    assert await scheduler._find_available_agent(AgentType.RECON, "full_recon") is agent
+    assert supports_task_type.await_count == 2
 
 
 @pytest.mark.asyncio

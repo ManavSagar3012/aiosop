@@ -6,11 +6,13 @@ Specialized agent for vulnerability scanning, correlation, and validation.
 import asyncio
 import json
 import uuid
+import warnings
+
+import httpx  # noqa: F401
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
-import httpx
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -22,15 +24,81 @@ from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.adapters.turbo_intruder_mcp import TurboIntruderMCPAdapter
 from ai_osop.agents.base import BaseAgent
 from ai_osop.auth.session_store import SessionStore
-from ai_osop.core.config import NUCLEI_SCAN_PROFILES, AgentType, Severity, VulnClass, settings
+from ai_osop.core.config import settings
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, Vulnerability
 from ai_osop.core.oast_correlation import OASTCorrelationRegistry, OASTProbe
+from ai_osop.core.task_skills import NUCLEI_SCAN_PROFILES
 
 # Max chars of an HTTP response body persisted as finding evidence. Bounds graph
 # storage and avoids dumping unbounded/PII-heavy bodies while keeping enough of
 # the response to demonstrate the vulnerability.
 _EVIDENCE_BODY_SNIPPET = 2048
+
+# JavaScript probe that scans a page in the headless browser for DOM-based XSS
+# sinks. Checks all inline scripts, element attributes, and URL sources for
+# dangerous patterns (innerHTML, document.write, eval, etc.). The result array
+# is stored on window.__osopxss_dom_probe and read back via the browser adapter.
+_DOM_XSS_SCAN_JS = """
+(() => {
+    const sinks = [];
+    const mark = `__osopxss_dom_probe`;
+
+    // 1. Check all script elements for inline dangerous patterns.
+    for (const script of document.scripts) {
+        const code = script.textContent || '';
+        const patterns = [
+            /innerHTML\\s*=/g, /outerHTML\\s*=/g,
+            /document\\.write\\s*\\(/g, /document\\.writeln\\s*\\(/g,
+            /eval\\s*\\(/g, /setTimeout\\s*\\(/g, /setInterval\\s*\\(/g,
+            /location\\./g, /location\\s*=/g,
+            /insertAdjacentHTML\\s*\\(/g,
+            /srcdoc\\s*=/g,
+        ];
+        for (const pat of patterns) {
+            const matches = code.match(pat);
+            if (matches) {
+                const lines = code.substr(0, code.indexOf(matches[0])).split('\\n');
+                sinks.push({
+                    sink: pat.source,
+                    line: lines.length,
+                    preview: code.substr(Math.max(0, code.indexOf(matches[0]) - 30), 100),
+                });
+            }
+        }
+    }
+
+    // 2. Check for event handlers in DOM that reference DOM sinks.
+    const allElements = document.querySelectorAll('*');
+    for (const el of allElements) {
+        for (const attr of el.attributes || []) {
+            const val = (attr.value || '').toLowerCase();
+            if (/innerHTML|outerHTML|eval\\s*\(|document\\.write/.test(val)) {
+                sinks.push({
+                    sink: attr.name,
+                    preview: (attr.value || '').substr(0, 120),
+                    tag: el.tagName,
+                });
+            }
+        }
+    }
+
+    // 3. Check window.location/URLSearchParams usage patterns.
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlHash = window.location.hash;
+    if (urlParams.toString() || urlHash) {
+        sinks.push({
+            sink: 'URL_source_available',
+            params: Array.from(urlParams.keys()),
+            hash: urlHash ? 'present' : 'none',
+        });
+    }
+
+    window[mark] = sinks;
+    return sinks;
+})();
+"""
 
 
 class VulnAnalysisAgent(BaseAgent):
@@ -131,33 +199,108 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_sqli_scan(payload)
         elif task_type == "xss_scan":
             return await self._execute_xss_scan(payload)
+        elif task_type == "dom_xss_scan":
+            return await self._execute_dom_xss_scan(payload)
         elif task_type == "jwt_scan":
+            warnings.warn(
+                "jwt_scan dispatched to VulnAnalysisAgent — JWTAgent exists. "
+                "Route to AgentType.JWT_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_jwt_scan(payload)
         elif task_type == "mass_assignment_scan":
             return await self._execute_mass_assignment_scan(payload)
+        # NOTE [DUAL-PATH]: The scheduler routes these task types to DEDICATED
+        # agent files (csrf_agent.py, ssrf_agent.py, takeover_agent.py, etc.)
+        # via their specific AgentType. These handlers in vuln_agent.py are
+        # NEVER REACHED from the scheduler path but are kept because:
+        #  - Tests call them directly (test fixtures)
+        #  - External CLI/API code may dispatch tasks with agent_type=VULN_ANALYSIS
+        # See AGENT_CLASSIFICATION.md for the full dual-path audit.
         elif task_type == "csrf_scan":
+            warnings.warn(
+                "csrf_scan dispatched to VulnAnalysisAgent — CSRFAgent exists. "
+                "Route to AgentType.CSRF_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_csrf_scan(payload)
         elif task_type == "ssrf_scan":
+            warnings.warn(
+                "ssrf_scan dispatched to VulnAnalysisAgent — SSRFAgent exists. "
+                "Route to AgentType.SSRF_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_ssrf_scan(payload)
+        elif task_type == "subdomain_takeover_scan":
+            warnings.warn(
+                "subdomain_takeover_scan dispatched to VulnAnalysisAgent — TakeoverAgent exists. "
+                "Route to AgentType.TAKEOVER_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return await self._execute_subdomain_takeover_scan(payload)
+        # NOTE [AUTHORITATIVE]: No dedicated agent exists for stored_xss_scan or
+        # secret_liveness_scan — these handlers are the SOLE code path.
         elif task_type == "stored_xss_scan":
             return await self._execute_stored_xss_scan(payload)
-        elif task_type == "subdomain_takeover_scan":
-            return await self._execute_subdomain_takeover_scan(payload)
         elif task_type == "secret_liveness_scan":
             return await self._execute_secret_liveness_scan(payload)
+        # DUAL-PATH: dispatched to upload_scanner.py
         elif task_type == "file_upload_scan":
+            warnings.warn(
+                "file_upload_scan dispatched to VulnAnalysisAgent — UploadScanner exists. "
+                "Route to AgentType.UPLOAD_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_file_upload_scan(payload)
+        # DUAL-PATH: dispatched to pollution_scanner.py
         elif task_type == "prototype_pollution_scan":
+            warnings.warn(
+                "prototype_pollution_scan dispatched to VulnAnalysisAgent — PollutionScanner exists. "
+                "Route to AgentType.POLLUTION_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_prototype_pollution_scan(payload)
+        # NOTE [DUAL-PATH continued]: The remaining handlers below also have
+        # dedicated agent files and are never reached from the scheduler path.
         elif task_type == "websocket_scan":
+            warnings.warn(
+                "websocket_scan dispatched to VulnAnalysisAgent — WebSocketAgent exists. "
+                "Route to AgentType.WEBSOCKET_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_websocket_scan(payload)
         elif task_type == "saml_scan":
+            warnings.warn(
+                "saml_scan dispatched to VulnAnalysisAgent — SAMLAgent exists. "
+                "Route to AgentType.SAML_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_saml_scan(payload)
         elif task_type == "race_limit_scan":
+            warnings.warn(
+                "race_limit_scan dispatched to VulnAnalysisAgent — RaceScanner exists. "
+                "Route to AgentType.RACE_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_race_limit_scan(payload)
         elif task_type == "ssrf_metadata_chain":
             return await self._execute_ssrf_metadata_chain(payload)
         elif task_type == "request_smuggling_scan":
+            warnings.warn(
+                "request_smuggling_scan dispatched to VulnAnalysisAgent — SmugglingScanner exists. "
+                "Route to AgentType.SMUGGLING_SCANNER instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return await self._execute_request_smuggling_scan(payload)
         elif task_type == "oauth_reset_scan":
             return await self._execute_oauth_reset_scan(payload)
@@ -620,7 +763,13 @@ class VulnAnalysisAgent(BaseAgent):
             from ai_osop.core.sqli_oracle import scan_sqli
 
             try:
-                hits = await scan_sqli(url, data=payload.get("data"))
+                hits = await scan_sqli(
+                    url,
+                    data=payload.get("data"),
+                    second_order_store_url=payload.get("second_order_store_url"),
+                    second_order_read_url=payload.get("second_order_read_url"),
+                    second_order_field=payload.get("second_order_field", "comment"),
+                )
             except Exception as e:  # never crash the agent on a probe error
                 logger.warning("sqli_oracle_failed", url=url, error=str(e))
                 return {"status": "error", "tool": "sqli_oracle", "target": url, "error": str(e)}
@@ -635,7 +784,9 @@ class VulnAnalysisAgent(BaseAgent):
                         f"Deterministic oracle confirmed SQL injection at {h['endpoint']} "
                         f"via {h['technique']} (payload: {h['payload']!r}). {h.get('proof', '')}"
                     ),
-                    evidence=[{"type": "sqli_oracle", "provenance": "http", "url": h["endpoint"], **h}],
+                    evidence=[
+                        {"type": "sqli_oracle", "provenance": "http", "url": h["endpoint"], **h}
+                    ],
                     tool_source="sqli_oracle",
                     confidence=float(h.get("confidence", 1.0)),
                     validated=True,
@@ -802,7 +953,9 @@ class VulnAnalysisAgent(BaseAgent):
         verbatim in the HTTP response body (i.e. the app did not entity-encode it).
         Catches classic reflected XSS that never reaches a browser sink."""
         try:
-            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=20) as client:
+            async with self.get_governed_client(
+                tool="vuln", verify=False, follow_redirects=True, timeout=20
+            ) as client:
                 resp = await client.get(url)
                 body = resp.text
         except Exception as e:
@@ -951,6 +1104,234 @@ class VulnAnalysisAgent(BaseAgent):
             "confirmed": True,
             "method": method,
             "manual_confirm_required": manual_confirm,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
+
+    async def _execute_dom_xss_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Detect DOM-based XSS by scanning client-side JavaScript for dangerous
+        DOM sinks that can be reached via URL parameters or fragment identifiers.
+
+        Uses the module-level ``_DOM_XSS_SCAN_JS`` probe to enumerate sinks,
+        then tests each sink via the existing ``_confirm_xss_execution`` mechanism.
+
+        Unlike reflected XSS (server echoes payload in HTTP response) or stored XSS
+        (payload persisted server-side), DOM XSS exists entirely in client-side JS
+        where untrusted data from the URL flows into sinks like ``innerHTML``,
+        ``document.write()``, ``eval()``, ``setTimeout()`` with a string argument,
+        ``location.href`` setters, ``URLSearchParams`` -> ``.value`` assignment, etc.
+
+        This method:
+          1. Navigates the headless browser to the target URL.
+          2. Executes JavaScript that enumerates all script and DOM elements,
+             searching for known dangerous sink patterns.
+          3. For each sink found, attempts to reach it via URL query params
+             and the URL fragment.
+          4. Confirms execution via the existing _confirm_xss_execution() probe.
+
+        Payload:
+            url            target page to scan for DOM-based XSS sinks
+            param          optional parameter name to inject into (default: all params)
+            engagement_id  injected by _execute
+        """
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("dom_xss_scan: cannot determine engagement_id")
+
+        from ai_osop.core.applicability import ApplicabilityEngine
+
+        app_check = ApplicabilityEngine.is_applicable(VulnClass.XSS, payload)
+        if not app_check["applicable"]:
+            logger.info("dom_xss_scan_skipped", reason=app_check["reason"], url=payload.get("url"))
+            await self.ctx.graph_memory.log_skipped_scan(
+                task_id=self.ctx.current_task.id if self.ctx.current_task else "unknown",
+                vuln_class="dom_xss",
+                endpoint_url=payload.get("url") or "unknown",
+                reason=app_check["reason"],
+                confidence=0.9,
+                evidence=[app_check["reason"]],
+                engagement_id=engagement_id or "unknown",
+            )
+            return {
+                "status": "success",
+                "tool": "dom_xss_scan",
+                "target": payload.get("url"),
+                "confirmed": False,
+                "reason": app_check["reason"],
+                "findings_count": 0,
+            }
+
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException(
+                "dom_xss_scan task requires one of 'url', 'target_url', or 'target' in payload"
+            )
+
+        # Initialize browser connection.
+        session = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
+        if session:
+            try:
+                await self.browser_adapter.initialize(session.scope, session.session_id)
+            except Exception as e:
+                logger.warning("dom_xss_browser_init_failed", url=url, error=str(e))
+
+        # Step 1: Navigate to the target and enumerate DOM sinks.
+        token = f"OSOPDOM{uuid.uuid4().hex[:10]}"
+        findings: List[Dict[str, Any]] = []
+
+        try:
+            await self.browser_adapter.navigate(
+                url, user_label="guest", engagement_id=engagement_id
+            )
+            probe_result = await self.browser_adapter.execute_action(
+                "eval",
+                {"expression": _DOM_XSS_SCAN_JS},
+                user_label="guest",
+                engagement_id=engagement_id,
+            )
+        except Exception as e:
+            logger.warning("dom_xss_scan_sink_discovery_failed", url=url, error=str(e))
+            return {
+                "status": "error",
+                "tool": "dom_xss_scan",
+                "target": url,
+                "error": f"DOM sink discovery failed: {e}",
+                "findings_count": 0,
+            }
+
+        sinks_discovered = (probe_result or {}).get("result") or []
+        if not sinks_discovered:
+            logger.info("dom_xss_scan_no_sinks_found", url=url)
+            return {
+                "status": "success",
+                "tool": "dom_xss_scan",
+                "target": url,
+                "confirmed": False,
+                "reason": "No DOM sinks detected on the target page.",
+                "sinks_found": 0,
+                "findings_count": 0,
+            }
+
+        logger.info("dom_xss_scan_sinks_found", url=url, sink_count=len(sinks_discovered))
+
+        # Step 2: For each sink, attempt to inject via URL params and fragment.
+        # Use the existing execution confirmation mechanism with the proven
+        # exec_payload pattern from _execute_xss_scan (single-escaped quotes).
+        param = payload.get("param")
+        exec_payload = f"<img src=x onerror=\"window.__osopxss='{token}'\">"
+
+        # Try injecting into each discovered parameter, plus common ones.
+        test_params = [
+            "q",
+            "s",
+            "search",
+            "query",
+            "page",
+            "id",
+            "url",
+            "redirect",
+            "next",
+            "return",
+        ]
+        discovered_params = set()
+        for sink in sinks_discovered:
+            if isinstance(sink, dict) and sink.get("params"):
+                discovered_params.update(sink["params"])
+
+        if param:
+            test_params = [param] + [p for p in test_params if p != param]
+        test_params = list(dict.fromkeys(list(discovered_params) + test_params))[:10]
+
+        executed = False
+        injection_point = None
+        for test_param in test_params:
+            inject_url = self._inject_payload(url, exec_payload, test_param)
+            executed = await self._confirm_xss_execution(inject_url, token, engagement_id)
+            if executed:
+                injection_point = test_param
+                break
+
+        # Also try fragment injection for SPA routes.
+        if not executed and "#" in url:
+            frag_url = url.split("#")[0] + "#" + exec_payload
+            executed = await self._confirm_xss_execution(frag_url, token, engagement_id)
+            if executed:
+                injection_point = "fragment"
+
+        if not executed:
+            logger.info(
+                "dom_xss_scan_sinks_found_but_unreachable",
+                url=url,
+                sink_count=len(sinks_discovered),
+            )
+            return {
+                "status": "success",
+                "tool": "dom_xss_scan",
+                "target": url,
+                "confirmed": False,
+                "reason": f"{len(sinks_discovered)} DOM sink(s) found but none were reachable from URL parameters or fragment.",
+                "sinks_found": len(sinks_discovered),
+                "sinks": sinks_discovered,
+                "findings_count": 0,
+            }
+
+        # Confirmed DOM XSS — mint a validated finding.
+        vuln = Vulnerability(
+            cwe="CWE-79",
+            vuln_type=VulnClass.XSS,
+            severity=Severity.HIGH,
+            title=f"DOM-based Cross-Site Scripting via parameter '{injection_point}'",
+            description=(
+                f"DOM-based XSS confirmed at {url}. The page contains client-side "
+                f"JavaScript sink(s) that execute unsanitized data originating from "
+                f"the URL parameter '{injection_point}'. The injected payload was "
+                f"confirmed to execute in a real browser DOM. {len(sinks_discovered)} "
+                f"potential sink(s) were discovered on the page."
+            ),
+            evidence=[
+                {
+                    "type": "dom_xss_confirmation",
+                    "provenance": "browser",
+                    "url": url,
+                    "injection_point": injection_point,
+                    "injection_mechanism": (
+                        "query_param" if injection_point != "fragment" else "fragment"
+                    ),
+                    "token": token,
+                    "sinks_discovered": sinks_discovered,
+                    "sink_count": len(sinks_discovered),
+                    "executed": True,
+                }
+            ],
+            tool_source="dom_xss_scan",
+            confidence=0.95,
+            validated=True,
+            exploitability="high",
+            impact="medium",
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("dom_xss_scan_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        logger.info(
+            "dom_xss_scan_confirmed",
+            url=url,
+            injection_point=injection_point,
+            sink_count=len(sinks_discovered),
+        )
+        return {
+            "status": "success",
+            "tool": "dom_xss_scan",
+            "target": url,
+            "confirmed": True,
+            "injection_point": injection_point,
+            "sinks_found": len(sinks_discovered),
+            "sinks": sinks_discovered,
             "findings_count": 1,
             "findings": [vuln.model_dump()],
         }
@@ -1145,7 +1526,9 @@ class VulnAnalysisAgent(BaseAgent):
 
         readback_url = payload.get("readback_url")
         try:
-            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=20) as c:
+            async with self.get_governed_client(
+                tool="vuln", verify=False, follow_redirects=True, timeout=20
+            ) as c:
                 # 1. CONTROL — a legitimate request WITHOUT the injected privileged
                 #    fields, with a FRESH unique identity so a uniqueness-constrained
                 #    create accepts it. Anything already present here is a server
@@ -1374,7 +1757,9 @@ class VulnAnalysisAgent(BaseAgent):
             "Content-Type": payload.get("content_type", "application/json"),
         }
         try:
-            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=False, timeout=20) as c:
+            async with self.get_governed_client(
+                tool="vuln", verify=False, follow_redirects=False, timeout=20
+            ) as c:
                 if isinstance(body, (dict, list)):
                     resp = await c.request(method, url, json=body, headers=headers)
                 else:
@@ -1593,7 +1978,9 @@ class VulnAnalysisAgent(BaseAgent):
         base_body = cfg.get("base_body", {})
         headers = cfg.get("headers", {})
         try:
-            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=15) as c:
+            async with self.get_governed_client(
+                tool="vuln", verify=False, follow_redirects=True, timeout=15
+            ) as c:
                 if body_field:
                     body = {**base_body, body_field: metadata_url}
                     if body_format == "form":
@@ -2111,6 +2498,7 @@ class VulnAnalysisAgent(BaseAgent):
 
     async def _execute_oauth_reset_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from ai_osop.core.oauth_reset_tester import OAuthResetTester
+
         target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
         if not target_url:
             raise AgentException("oauth_reset_scan requires 'url' or 'target' in payload")
@@ -2130,7 +2518,9 @@ class VulnAnalysisAgent(BaseAgent):
             if not f.confirmed:
                 continue
             vuln = Vulnerability(
-                vuln_type=VulnClass.OAUTH2 if "oauth" in f.vuln_type else VulnClass.BROKEN_ACCESS_CONTROL,
+                vuln_type=(
+                    VulnClass.OAUTH2 if "oauth" in f.vuln_type else VulnClass.BROKEN_ACCESS_CONTROL
+                ),
                 severity=Severity.HIGH if f.severity == "HIGH" else Severity.MEDIUM,
                 title=f.title,
                 description=f.description,
@@ -2152,6 +2542,7 @@ class VulnAnalysisAgent(BaseAgent):
 
     async def _execute_open_redirect_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from ai_osop.core.open_redirect_tester import OpenRedirectTester
+
         target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
         if not target_url:
             raise AgentException("open_redirect_scan requires 'url' or 'target' in payload")
@@ -2189,6 +2580,7 @@ class VulnAnalysisAgent(BaseAgent):
 
     async def _execute_nosql_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from ai_osop.core.nosql_tester import NoSQLTester
+
         target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
         if not target_url:
             raise AgentException("nosql_scan requires 'url' or 'target' in payload")
@@ -2227,6 +2619,7 @@ class VulnAnalysisAgent(BaseAgent):
 
     async def _execute_cache_poisoning_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from ai_osop.core.cache_poisoning_tester import CachePoisoningTester
+
         target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
         if not target_url:
             raise AgentException("cache_poisoning_scan requires 'url' or 'target' in payload")
@@ -2266,6 +2659,7 @@ class VulnAnalysisAgent(BaseAgent):
 
     async def _execute_ai_mcp_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from ai_osop.core.ai_mcp_tester import AIMCPTester
+
         target_url = payload.get("url") or payload.get("target") or payload.get("target_url")
         if not target_url:
             raise AgentException("ai_mcp_scan requires 'url' or 'target' in payload")
@@ -2274,7 +2668,9 @@ class VulnAnalysisAgent(BaseAgent):
         )
 
         tester = AIMCPTester(timeout_seconds=15.0)
-        results = await tester.scan_llm_endpoint(target_url, input_param=payload.get("input_param", "prompt"))
+        results = await tester.scan_llm_endpoint(
+            target_url, input_param=payload.get("input_param", "prompt")
+        )
 
         minted: List[Vulnerability] = []
         for r in results:
@@ -2497,7 +2893,9 @@ class VulnAnalysisAgent(BaseAgent):
         body = ""
         for scheme in ("https", "http"):
             try:
-                async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=12) as c:
+                async with self.get_governed_client(
+                    tool="vuln", verify=False, follow_redirects=True, timeout=12
+                ) as c:
                     resp = await c.get(f"{scheme}://{host}/")
                     body = resp.text
                     if body:
@@ -2599,7 +2997,9 @@ class VulnAnalysisAgent(BaseAgent):
         """Persist a payload into a stored sink as the attacker (best-effort)."""
         body = {**base, field: value}
         try:
-            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=20) as c:
+            async with self.get_governed_client(
+                tool="vuln", verify=False, follow_redirects=True, timeout=20
+            ) as c:
                 if fmt == "form":
                     await c.request(method, store_url, data=body, headers=headers)
                 else:
@@ -2857,7 +3257,9 @@ class VulnAnalysisAgent(BaseAgent):
         # Trigger the sink. A connection error here does NOT abort the scan — the
         # OAST callback is the signal, not this response.
         try:
-            async with self.get_governed_client(tool="vuln", verify=False, follow_redirects=True, timeout=20) as c:
+            async with self.get_governed_client(
+                tool="vuln", verify=False, follow_redirects=True, timeout=20
+            ) as c:
                 if body_field:
                     body = {**base_body, body_field: callback_url}
                     if body_format == "form":
@@ -3036,7 +3438,7 @@ class VulnAnalysisAgent(BaseAgent):
         from urllib.parse import urlparse
 
         try:
-            import httpx
+            import httpx  # noqa: F401
         except Exception:  # pragma: no cover - httpx is a hard dep at runtime
             return {"is_catch_all": False}
 
@@ -3192,7 +3594,11 @@ class VulnAnalysisAgent(BaseAgent):
             endpoint_id=finding.get("endpoint_id"),
             confidence=calculated_confidence,
             validated=False,
-            exploitability="low" if is_cve_template else ("high" if severity_str in ("critical", "high") else "medium"),
+            exploitability=(
+                "low"
+                if is_cve_template
+                else ("high" if severity_str in ("critical", "high") else "medium")
+            ),
             engagement_id="",
         )
 

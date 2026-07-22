@@ -11,7 +11,8 @@ import sqlalchemy.exc
 import structlog
 
 from ai_osop.auth.session_store import SessionStore
-from ai_osop.core.config import AgentType, settings
+from ai_osop.core.config import settings
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
@@ -34,7 +35,7 @@ from ai_osop.safety.rate_limiter import RateLimiter
 
 logger = structlog.get_logger("ai_osop.orchestrator")
 from ai_osop.core.config import VALID_TRANSITIONS as _CONFIG_VALID_TRANSITIONS
-from ai_osop.core.config import EngagementPhase
+from ai_osop.core.enums import EngagementPhase
 from ai_osop.orchestrator.state import OrchestrationState
 
 
@@ -161,6 +162,7 @@ class Orchestrator:
     @_sessions.setter
     def _sessions(self, value: Dict[str, SessionState]) -> None:
         from ai_osop.orchestrator.state import SessionDict
+
         self.state.sessions = SessionDict(value)
 
     @property

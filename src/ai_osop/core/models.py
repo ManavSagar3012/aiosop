@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 
 # ================= ID HELPERS =================
 
@@ -100,6 +100,8 @@ class Endpoint(BaseModel):
 class Vulnerability(BaseModel):
     id: str = Field(default_factory=lambda: f"vuln-{uuid.uuid4().hex[:12]}")
     cwe: Optional[str] = None
+    mitre_technique_id: Optional[str] = None
+    mitre_tactic: Optional[str] = None
     vuln_type: VulnClass
     severity: Severity
     cvss_score: Optional[float] = Field(None, ge=0.0, le=10.0)

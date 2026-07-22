@@ -25,7 +25,7 @@ class _ConcreteAgent(BaseAgent):
 
     @property
     def agent_type(self):
-        from ai_osop.core.config import AgentType
+        from ai_osop.core.enums import AgentType
 
         return AgentType.VULN_ANALYSIS
 

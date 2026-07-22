@@ -8,10 +8,8 @@ Deterministic, active verification for:
 
 from __future__ import annotations
 
-import math
-import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -85,7 +83,9 @@ class OAuthResetTester:
             "https://target.com/oauth/callback/../../redirect?to=https://attacker.com",
         ]
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds, follow_redirects=False
+        ) as client:
             for payload in bypass_payloads:
                 # Rebuild query with manipulated redirect_uri
                 query_dict = {k: v[0] for k, v in params.items()}
@@ -97,7 +97,11 @@ class OAuthResetTester:
                     resp = await client.get(test_url)
                     loc = resp.headers.get("location", "")
                     # Confirmed if redirected to payload domain OR 200 with code/token sent to payload domain
-                    if (resp.status_code in (301, 302, 303, 307, 308) and "evil.com" in loc or "attacker.com" in loc):
+                    if (
+                        resp.status_code in (301, 302, 303, 307, 308)
+                        and "evil.com" in loc
+                        or "attacker.com" in loc
+                    ):
                         findings.append(
                             OAuthFinding(
                                 vuln_type="oauth_redirect_bypass",
@@ -134,7 +138,9 @@ class OAuthResetTester:
 
         poison_hosts = ["attacker-reset.com", "evil-host.org"]
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds, follow_redirects=False
+        ) as client:
             for p_host in poison_hosts:
                 try:
                     # Test 1: X-Forwarded-Host / Host header override

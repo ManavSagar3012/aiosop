@@ -132,7 +132,9 @@ def test_research_header_from_settings_disabled_when_name_blank(monkeypatch):
 def test_research_header_from_settings_builds_pair(monkeypatch):
     from ai_osop.core import config
 
-    monkeypatch.setattr(config.settings, "research_header_name", "X-HackerOne-Research", raising=False)
+    monkeypatch.setattr(
+        config.settings, "research_header_name", "X-HackerOne-Research", raising=False
+    )
     monkeypatch.setattr(config.settings, "research_header_value", "h1user", raising=False)
     assert research_header_from_settings() == ("X-HackerOne-Research", "h1user")
 

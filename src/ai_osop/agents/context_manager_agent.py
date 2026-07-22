@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.hypothesis_engine import HypothesisEngine
 from ai_osop.core.models import Task
@@ -51,7 +51,9 @@ class ContextManagerAgent(BaseAgent):
 
         recent_state = {}
         try:
-            recent_state = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
+            recent_state = await self.ctx.session_memory.get_session_state_by_engagement_id(
+                engagement_id
+            )
         except Exception:
             recent_state = {}
 

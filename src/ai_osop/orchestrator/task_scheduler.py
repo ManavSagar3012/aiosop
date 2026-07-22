@@ -8,14 +8,13 @@ and passes itself as context so the scheduler can access it.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from ai_osop.core.config import AgentType, EngagementPhase, VulnClass
-
 import structlog
 
-from ai_osop.core.config import AgentType, EngagementPhase, VulnClass
+from ai_osop.core.enums import AgentType, EngagementPhase, VulnClass
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.execution_trace import (
     ExecutionStage,
@@ -581,7 +580,10 @@ class TaskScheduler:
             # actively drowned real diagnostics during live triage.
             if str(agent.ctx.agent_type) == str(agent_type) and agent.ctx.status == "idle":
                 if task_type and hasattr(agent, "supports_task_type"):
-                    if not agent.supports_task_type(task_type):
+                    supports_task_type = agent.supports_task_type(task_type)
+                    if inspect.isawaitable(supports_task_type):
+                        supports_task_type = await supports_task_type
+                    if not supports_task_type:
                         continue
 
                 # Acquire distributed lock to prevent multi-orchestrator collisions
@@ -749,9 +751,7 @@ class TaskScheduler:
         # simply say so honestly via ``status`` rather than ``status=success``
         # with an empty findings list.
         findings = result.get("findings") or []
-        if findings and any(
-            (f.get("evidence") if isinstance(f, dict) else None) for f in findings
-        ):
+        if findings and any((f.get("evidence") if isinstance(f, dict) else None) for f in findings):
             return None
 
         if is_tool_bound:

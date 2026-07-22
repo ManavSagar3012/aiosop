@@ -12,7 +12,6 @@ from urllib.parse import urlparse
 
 import httpx
 
-
 UNKEYED_HEADERS = [
     ("X-Forwarded-Host", "cache-poison-test.com"),
     ("X-Host", "cache-poison-test.com"),
@@ -43,13 +42,15 @@ class CachePoisoningTester:
         findings: List[CacheFinding] = []
         parsed = urlparse(target_url)
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds, follow_redirects=False
+        ) as client:
             for header_name, header_val in UNKEYED_HEADERS:
                 try:
                     # Probe 1: Send request with unkeyed header
                     headers = {header_name: header_val}
                     resp1 = await client.get(target_url, headers=headers)
-                    
+
                     # Check if header value is reflected in response body or headers
                     reflected = header_val in resp1.text or header_val in str(resp1.headers)
 
@@ -92,15 +93,23 @@ class CachePoisoningTester:
         clean_url = profile_url.rstrip("/")
         deception_url = f"{clean_url}/nonexistent_script.css"
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds, follow_redirects=False
+        ) as client:
             try:
                 resp = await client.get(deception_url)
                 # If authenticated content is returned under .css path AND cached
                 cache_control = resp.headers.get("Cache-Control", "").lower()
                 cache_status = resp.headers.get("X-Cache") or resp.headers.get("CF-Cache-Status")
 
-                if resp.status_code == 200 and ("public" in cache_control or "max-age" in cache_control or cache_status):
-                    if "email" in resp.text.lower() or "user" in resp.text.lower() or "id" in resp.text.lower():
+                if resp.status_code == 200 and (
+                    "public" in cache_control or "max-age" in cache_control or cache_status
+                ):
+                    if (
+                        "email" in resp.text.lower()
+                        or "user" in resp.text.lower()
+                        or "id" in resp.text.lower()
+                    ):
                         findings.append(
                             CacheFinding(
                                 technique="web_cache_deception",

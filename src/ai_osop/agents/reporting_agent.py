@@ -11,7 +11,8 @@ from typing import Any, Dict
 import structlog
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType, settings
+from ai_osop.core.config import settings
+from ai_osop.core.enums import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Task
 from ai_osop.reporting.exporters import ReportExporter

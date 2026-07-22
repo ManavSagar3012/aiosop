@@ -6,6 +6,7 @@ directly on the node (url/method/param) via the evidence[0] fallback chain,
 plus a couple of display-friendly derived fields (title, category,
 cvss_score).
 """
+
 from __future__ import annotations
 
 import json
@@ -22,6 +23,8 @@ class FindingView(TypedDict, total=False):
     severity: Any
     confidence: Any
     cwe: Any
+    mitre_technique_id: Optional[str]
+    mitre_tactic: Optional[str]
     cvss_vector: Optional[str]
     cvss_score: float
     description: Any
@@ -40,8 +43,15 @@ class FindingView(TypedDict, total=False):
 
 
 _URL_FALLBACK_KEYS = (
-    "matched_at", "url", "verify_url", "store_url", "host",
-    "render_url", "request_url", "target", "uri",
+    "matched_at",
+    "url",
+    "verify_url",
+    "store_url",
+    "host",
+    "render_url",
+    "request_url",
+    "target",
+    "uri",
 )
 _PARAM_FALLBACK_KEYS = ("parameter", "injection", "store_field", "accepted_fields")
 
@@ -142,7 +152,11 @@ def to_finding_view(node: Any) -> FindingView:
             severity = str(node.get("severity") or "").lower()
             cvss_score = _SEVERITY_TO_CVSS.get(severity, 0.0)  # crude fallback
 
-    # 8. pass through remaining persisted keys as-is
+    # 8. mitre: real detector value always wins; otherwise backfill from taxonomy
+    mitre_technique_id = node.get("mitre_technique_id") or (taxon.mitre_id if taxon else None)
+    mitre_tactic = node.get("mitre_tactic") or None
+
+    # 9. pass through remaining persisted keys as-is
     view: FindingView = dict(node)  # type: ignore[assignment]
     view["evidence"] = ev
     view["url"] = url
@@ -151,6 +165,8 @@ def to_finding_view(node: Any) -> FindingView:
     view["category"] = category
     view["title"] = title
     view["cwe"] = cwe
+    view["mitre_technique_id"] = mitre_technique_id
+    view["mitre_tactic"] = mitre_tactic
     view["cvss_vector"] = cvss_vector
     view["cvss_score"] = cvss_score
     return view
@@ -161,17 +177,21 @@ if __name__ == "__main__":
         "id": "v1",
         "vuln_type": "sqli",
         "severity": "high",
-        "evidence": json.dumps([{
-            "type": "sqli_oracle",
-            "provenance": "http",
-            "url": "http://localhost:3000/rest/user/login",
-            "technique": "auth_bypass",
-            "endpoint": "http://localhost:3000/rest/user/login",
-            "payload": "' OR 1=1--",
-            "http_status": 200,
-            "proof": "...",
-            "confidence": 1.0,
-        }]),
+        "evidence": json.dumps(
+            [
+                {
+                    "type": "sqli_oracle",
+                    "provenance": "http",
+                    "url": "http://localhost:3000/rest/user/login",
+                    "technique": "auth_bypass",
+                    "endpoint": "http://localhost:3000/rest/user/login",
+                    "payload": "' OR 1=1--",
+                    "http_status": 200,
+                    "proof": "...",
+                    "confidence": 1.0,
+                }
+            ]
+        ),
     }
     view1 = to_finding_view(orphaned_sqli_node)
     assert view1["url"] == "http://localhost:3000/rest/user/login", view1["url"]
@@ -213,6 +233,7 @@ if __name__ == "__main__":
             self.vuln_type = "ssrf"
             self.severity = "high"
             self.evidence = [{"url": "http://obj/target"}]
+
     view4 = to_finding_view(_Obj())
     assert view4["url"] == "http://obj/target", view4["url"]
     assert view4["category"] == "ssrf", view4["category"]

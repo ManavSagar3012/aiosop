@@ -4,7 +4,7 @@ import pytest
 
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.context_manager_agent import ContextManagerAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 
 

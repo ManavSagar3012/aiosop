@@ -13,6 +13,7 @@ ponytail: checks are juice-shop-tuned (reused from the benchmark suite). The
 generalization to arbitrary recon-discovered endpoints is the next step; this
 module is the seam it plugs into.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,7 +21,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, List, Optional, Tuple
 
-from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.enums import Severity, VulnClass
 from ai_osop.core.models import Vulnerability
 
 # check_id -> platform taxonomy / default severity. Unmapped -> UNKNOWN / HIGH.
@@ -55,9 +56,7 @@ def _load_suite():
     import problem can only fail an actual scan call, never API startup."""
     import sys
 
-    bench_dir = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "benchmarks", "juiceshop"
-    )
+    bench_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "benchmarks", "juiceshop")
     bench_dir = os.path.abspath(bench_dir)
     if bench_dir not in sys.path:
         sys.path.insert(0, bench_dir)
@@ -97,7 +96,9 @@ async def run_deterministic_scan(
         target = bench.Target(base_url, client)
         for m in expected:
             try:
-                res = await asyncio.wait_for(bench.CHECKS[m.check_id](target), timeout=per_check_timeout)
+                res = await asyncio.wait_for(
+                    bench.CHECKS[m.check_id](target), timeout=per_check_timeout
+                )
             except Exception:
                 continue
             if not getattr(res, "validated", False):
@@ -216,6 +217,7 @@ async def run_generalized_sqli(
     cookie-less client is used and pre-auth behavior is unchanged.
     """
     from ai_osop.core.sqli_oracle import detect_error_based, detect_login_bypass, detect_time_blind
+
     if confirm_with_sqlmap:
         from ai_osop.core.sqlmap_confirm import sqlmap_available, sqlmap_confirm
 
@@ -236,6 +238,7 @@ async def run_generalized_sqli(
             continue
         method = (ep.get("method") or "GET").upper()
         params = list(ep.get("query_keys") or []) + list(ep.get("parameters") or [])
+        body_keys = list(ep.get("body_schema_keys") or [])
         path = (ep.get("path") or "").lower()
         get_like = method == "GET" and (
             params or any(s in path for s in ("search", "find", "query", "filter"))
@@ -243,18 +246,20 @@ async def run_generalized_sqli(
         login_like = (ep.get("has_body") or method == "POST") and any(
             k in path for k in ("login", "signin", "authenticate", "session")
         )
-        if not (get_like or login_like):
+        post_like = method in ("POST", "PUT", "PATCH") and body_keys and not login_like
+
+        if not (get_like or login_like or post_like):
             continue
-        shape = (method, path, tuple(sorted(params)))
+        shape = (method, path, tuple(sorted(params)), tuple(sorted(body_keys)))
         if shape in shapes:
             continue
         shapes.add(shape)
-        candidates.append((url, params, get_like, login_like))
+        candidates.append((url, params, body_keys, method, get_like, login_like, post_like))
         if len(candidates) >= MAX_CANDIDATES:
             break
 
     async with _scan_client(client, governance_hook) as c:
-        for url, params, get_like, login_like in candidates:
+        for url, params, body_keys, method, get_like, login_like, post_like in candidates:
             ev = None
             try:
                 if get_like:
@@ -262,26 +267,46 @@ async def run_generalized_sqli(
                         detect_error_based(c, url, param=(params[0] if params else None)),
                         timeout=per_check_timeout,
                     )
+                elif post_like:
+                    ev = await asyncio.wait_for(
+                        detect_error_based(c, url, method=method, body_keys=body_keys),
+                        timeout=per_check_timeout,
+                    )
                 if not ev and login_like:
-                    ev = await asyncio.wait_for(detect_login_bypass(c, url), timeout=per_check_timeout)
+                    ev = await asyncio.wait_for(
+                        detect_login_bypass(c, url), timeout=per_check_timeout
+                    )
                 # Error-based and auth-bypass leak a signal (5xx error / session
                 # token). If neither fired, run the time-blind oracle: a blind
                 # injection that leaks NOTHING still sleeps measurably when
                 # injected a SLEEP() — covers the largest real-world blind class.
-                if not ev and get_like:
-                    ev = await asyncio.wait_for(
-                        detect_time_blind(
-                            c, url, param=(params[0] if params else None),
-                            request_timeout=per_check_timeout,
-                        ),
-                        timeout=per_check_timeout,
-                    )
+                if not ev:
+                    if get_like:
+                        ev = await asyncio.wait_for(
+                            detect_time_blind(
+                                c,
+                                url,
+                                param=(params[0] if params else None),
+                                request_timeout=per_check_timeout,
+                            ),
+                            timeout=per_check_timeout,
+                        )
+                    elif post_like:
+                        ev = await asyncio.wait_for(
+                            detect_time_blind(
+                                c,
+                                url,
+                                request_timeout=per_check_timeout,
+                                method=method,
+                                body_keys=body_keys,
+                            ),
+                            timeout=per_check_timeout,
+                        )
             except Exception:
                 continue
             if not ev:
                 continue
             technique = ev.get("technique", "sqli")
-
             # Optional escalation: confirm the SAME point with real sqlmap. On
             # confirmation we mint a tool-demonstrated finding (tool_source=sqlmap,
             # is_simulated()=False) that carries sqlmap's own techniques/DBMS as
@@ -312,14 +337,18 @@ async def run_generalized_sqli(
                         f"{sqlmap_ev.get('dbms') or 'unknown'}). Injection point was first flagged "
                         f"by the in-band {technique} oracle, then demonstrated by sqlmap."
                     ),
-                    evidence=[{
-                        "type": "sqlmap_injection", "provenance": "sqlmap",
-                        "url": ev["endpoint"], "parameter": sqlmap_ev.get("parameter", ""),
-                        "dbms": sqlmap_ev.get("dbms", ""),
-                        "techniques": sqlmap_ev.get("techniques", []),
-                        "payloads": sqlmap_ev.get("payloads", []),
-                        "oracle_prefilter": technique,
-                    }],
+                    evidence=[
+                        {
+                            "type": "sqlmap_injection",
+                            "provenance": "sqlmap",
+                            "url": ev["endpoint"],
+                            "parameter": sqlmap_ev.get("parameter", ""),
+                            "dbms": sqlmap_ev.get("dbms", ""),
+                            "techniques": sqlmap_ev.get("techniques", []),
+                            "payloads": sqlmap_ev.get("payloads", []),
+                            "oracle_prefilter": technique,
+                        }
+                    ],
                     tool_source="sqlmap",
                     confidence=0.98,
                     validated=True,
@@ -337,7 +366,9 @@ async def run_generalized_sqli(
                         f"Deterministic oracle confirmed SQL injection at {ev['endpoint']} via "
                         f"{technique} — driven off a recon-discovered endpoint (payload: {ev['payload']!r})."
                     ),
-                    evidence=[{"type": "sqli_oracle", "provenance": "http", "discovered": True, **ev}],
+                    evidence=[
+                        {"type": "sqli_oracle", "provenance": "http", "discovered": True, **ev}
+                    ],
                     tool_source="deterministic_scan_generalized",
                     confidence=float(ev.get("confidence", 1.0)),
                     validated=True,
@@ -365,7 +396,7 @@ async def _detect_mass_assignment(client, url: str, body_keys: list, method: str
 
     def _valid_body():
         b = {}
-        for k in (body_keys or []):
+        for k in body_keys or []:
             kl = str(k).lower()
             if "email" in kl or kl in ("mail", "e-mail"):
                 b[k] = f"osop-ma-{_uuid.uuid4().hex[:10]}@recon.test"
@@ -387,7 +418,11 @@ async def _detect_mass_assignment(client, url: str, body_keys: list, method: str
         inj = await client.request(method, url, json={**_valid_body(), **inject})
     except Exception:
         return None
-    accepted = {k: v for k, v in inject.items() if _reflects(inj.text, k, v) and not _reflects(ctrl.text, k, v)}
+    accepted = {
+        k: v
+        for k, v in inject.items()
+        if _reflects(inj.text, k, v) and not _reflects(ctrl.text, k, v)
+    }
     if not accepted:
         return None
     return {
@@ -460,7 +495,9 @@ async def run_generalized_massassign(
                     f"{ev['accepted_fields']} absent from a baseline control — driven off a "
                     f"recon-discovered endpoint. Confirm persistence via read-back before submitting."
                 ),
-                evidence=[{"type": "mass_assignment", "provenance": "http", "discovered": True, **ev}],
+                evidence=[
+                    {"type": "mass_assignment", "provenance": "http", "discovered": True, **ev}
+                ],
                 tool_source="deterministic_scan_generalized",
                 confidence=float(ev.get("confidence", 0.5)),
                 validated=False,  # reflected-only -> manual-confirm; not asserted validated
@@ -542,7 +579,9 @@ async def run_generalized_jwt(
         if not token:
             return [], 0
         try:
-            tester = JWTTester(verify_url=identity_url, base_token=token, method="GET", timeout=15.0)
+            tester = JWTTester(
+                verify_url=identity_url, base_token=token, method="GET", timeout=15.0
+            )
             findings = await asyncio.wait_for(tester.run(), timeout=per_check_timeout)
         except Exception:
             return [], 0
@@ -588,9 +627,7 @@ def _sub_last_id(url: str, new_id: Any) -> str:
     u = urlparse(url)
     parts = u.path.rstrip("/").split("/")
     if parts and (
-        parts[-1].isdigit()
-        or "id" in parts[-1].lower()
-        or parts[-1].startswith(("{", ":"))
+        parts[-1].isdigit() or "id" in parts[-1].lower() or parts[-1].startswith(("{", ":"))
     ):
         parts[-1] = str(new_id)
     return urlunparse(u._replace(path="/".join(parts)))
@@ -682,8 +719,12 @@ async def run_generalized_idor(
                 ev_atk["user_label"] = "attacker"
                 ev_anon = bench._resp_evidence(anon)
                 resource = Resource(
-                    id=f"res:{vid}", type="object", value=str(vid),
-                    owner_identity_id=victim, metadata={}, engagement_id=engagement_id,
+                    id=f"res:{vid}",
+                    type="object",
+                    value=str(vid),
+                    owner_identity_id=victim,
+                    metadata={},
+                    engagement_id=engagement_id,
                 )
                 finding = await asyncio.wait_for(
                     engine.compare(
@@ -710,13 +751,18 @@ async def run_generalized_idor(
                     f"confidence {getattr(finding, 'confidence', 0)}). Driven off a recon-discovered "
                     f"id-bearing endpoint with anonymous-baseline FP suppression."
                 ),
-                evidence=[{
-                    "type": "idor", "provenance": "diff_auth", "discovered": True,
-                    "endpoint": tgt, "category": getattr(finding, "category", ""),
-                    "diff": getattr(finding, "evidence_diff", ""),
-                    "attacker_status": ev_atk.get("status_code"),
-                    "anon_status": ev_anon.get("status_code"),
-                }],
+                evidence=[
+                    {
+                        "type": "idor",
+                        "provenance": "diff_auth",
+                        "discovered": True,
+                        "endpoint": tgt,
+                        "category": getattr(finding, "category", ""),
+                        "diff": getattr(finding, "evidence_diff", ""),
+                        "attacker_status": ev_atk.get("status_code"),
+                        "anon_status": ev_anon.get("status_code"),
+                    }
+                ],
                 tool_source="deterministic_scan_generalized",
                 confidence=float(getattr(finding, "confidence", 0.9)),
                 validated=True,
@@ -795,7 +841,10 @@ async def run_generalized_injection(
         # Never spray XML at arbitrary JSON APIs.
         ctype = str(ep.get("content_type") or "").lower()
         if method in ("POST", "PUT", "PATCH") and (
-            "xml" in path or any(k in path for k in ("import", "upload", "parse", "feed", "soap", "stock", "check"))
+            "xml" in path
+            or any(
+                k in path for k in ("import", "upload", "parse", "feed", "soap", "stock", "check")
+            )
             or any("xml" in str(k).lower() for k in body_keys)
             or "xml" in ctype
         ):
@@ -804,7 +853,9 @@ async def run_generalized_injection(
             # <osop><data> shape a schema-validating parser would reject.
             sample_xml = None
             if body_keys:
-                root = (path.rsplit("/", 1)[-1] or "request").replace("-", "").replace(".", "") or "request"
+                root = (path.rsplit("/", 1)[-1] or "request").replace("-", "").replace(
+                    ".", ""
+                ) or "request"
                 inner = "".join(f"<{k}>1</{k}>" for k in body_keys if str(k).isidentifier())
                 if inner:
                     sample_xml = f'<?xml version="1.0"?><{root}>{inner}</{root}>'
@@ -850,7 +901,9 @@ async def run_generalized_injection(
         for url, params in get_candidates:
             for oracle in (detect_path_traversal, detect_open_redirect, detect_ssrf_reflected):
                 try:
-                    ev = await asyncio.wait_for(oracle(c, url, params=params), timeout=per_check_timeout)
+                    ev = await asyncio.wait_for(
+                        oracle(c, url, params=params), timeout=per_check_timeout
+                    )
                 except Exception:
                     continue
                 if ev:
@@ -872,8 +925,11 @@ async def run_generalized_injection(
                 try:
                     await asyncio.wait_for(
                         plant_blind_xxe(
-                            c, url, oast_registry=oast_registry,
-                            engagement_id=engagement_id, method=method,
+                            c,
+                            url,
+                            oast_registry=oast_registry,
+                            engagement_id=engagement_id,
+                            method=method,
                             sample_xml=sample_xml,
                         ),
                         timeout=per_check_timeout,
@@ -892,6 +948,7 @@ async def run_generalized_injection(
             u = ep.get("url")
             if u:
                 from urllib.parse import urlparse as _up
+
                 pu = _up(u)
                 base = f"{pu.scheme}://{pu.netloc}"
                 break
@@ -953,15 +1010,16 @@ async def run_generalized_scan(
     ma, _ = await run_generalized_massassign(
         engagement_id, graph_memory, client=client, governance_hook=governance_hook
     )
-    jwt, _ = await run_generalized_jwt(
-        engagement_id, graph_memory, governance_hook=governance_hook
-    )
+    jwt, _ = await run_generalized_jwt(engagement_id, graph_memory, governance_hook=governance_hook)
     idor, _ = await run_generalized_idor(
         engagement_id, graph_memory, governance_hook=governance_hook
     )
     inj, _ = await run_generalized_injection(
-        engagement_id, graph_memory, oast_registry=oast_registry,
-        client=client, governance_hook=governance_hook,
+        engagement_id,
+        graph_memory,
+        oast_registry=oast_registry,
+        client=client,
+        governance_hook=governance_hook,
     )
     return sqli + ma + jwt + idor + inj, examined
 
@@ -999,7 +1057,8 @@ async def _crawl_param_links(c, base: str) -> List[Tuple[str, str, List[str], bo
     link extraction. Returns [(path, "GET", [param,...], False)].
     """
     import re
-    from urllib.parse import urlparse as _up, parse_qsl
+    from urllib.parse import parse_qsl
+    from urllib.parse import urlparse as _up
 
     def _same_origin(href: str) -> Optional[str]:
         # Return a root-relative path (with query) for same-origin links, else None.
@@ -1084,8 +1143,23 @@ async def _harvest_redirectors(c, base: str) -> List[Tuple[str, str, List[str]]]
     import re
     from urllib.parse import urlparse as _up
 
-    _RP = ("url", "redirect", "redir", "next", "return", "returnto", "return_to",
-           "returnurl", "goto", "dest", "destination", "continue", "to", "out", "link")
+    _RP = (
+        "url",
+        "redirect",
+        "redir",
+        "next",
+        "return",
+        "returnto",
+        "return_to",
+        "returnurl",
+        "goto",
+        "dest",
+        "destination",
+        "continue",
+        "to",
+        "out",
+        "link",
+    )
     # match  [./]path?param=http(s)://value   inside a quote. Minified bundles emit
     # relative hrefs ("./redirect?to=...") as often as absolute ones, so accept an
     # optional leading "." / "./" and normalize it to a root-absolute path below.
@@ -1107,6 +1181,7 @@ async def _harvest_redirectors(c, base: str) -> List[Tuple[str, str, List[str]]]
         return []
 
     from urllib.parse import unquote
+
     agg: dict[Tuple[str, str], set] = {}
     for t in texts:
         for path, param, scheme, val in rx.findall(t):
@@ -1152,9 +1227,17 @@ async def _crawl_api_paths(c, base: str) -> set:
 
 
 _SPEC_LOCATIONS = (
-    "/openapi.json", "/swagger.json", "/api-docs", "/api-docs/swagger.json",
-    "/v2/api-docs", "/v3/api-docs", "/swagger/v1/swagger.json", "/api/swagger.json",
-    "/openapi.yaml", "/swagger.yaml", "/.well-known/openapi.json",
+    "/openapi.json",
+    "/swagger.json",
+    "/api-docs",
+    "/api-docs/swagger.json",
+    "/v2/api-docs",
+    "/v3/api-docs",
+    "/swagger/v1/swagger.json",
+    "/api/swagger.json",
+    "/openapi.yaml",
+    "/swagger.yaml",
+    "/.well-known/openapi.json",
 )
 
 
@@ -1164,7 +1247,6 @@ async def _crawl_spec_paths(c, base: str) -> list:
     parameter names + whether a body is expected — no shape *inference* needed.
     Returns a list of (path, method, keys, has_body) tuples. Target-agnostic: this
     is standard content-discovery, not juice-shop-specific."""
-    import json as _json
     import re
 
     out: list = []
@@ -1195,7 +1277,7 @@ async def _crawl_spec_paths(c, base: str) -> list:
                 keys: list = []
                 has_body = False
                 if isinstance(op, dict):
-                    for p in (op.get("parameters") or []):
+                    for p in op.get("parameters") or []:
                         if isinstance(p, dict) and p.get("name"):
                             keys.append(p["name"])
                     body = op.get("requestBody") or {}
@@ -1328,7 +1410,9 @@ async def bootstrap_discovery(
         for path, method, keys, has_body in probe[:250]:
             url = base + path
             try:
-                r = await c.get(url)  # GET probes existence for GET and POST alike (405/401/400 == present)
+                r = await c.get(
+                    url
+                )  # GET probes existence for GET and POST alike (405/401/400 == present)
             except Exception:
                 continue
             if r.status_code == 404:
@@ -1341,12 +1425,18 @@ async def bootstrap_discovery(
             if not (path.startswith(("/rest", "/api")) or "json" in ct or has_params):
                 continue
             try:
-                await graph_memory.add_endpoint(Endpoint(
-                    url=url, method=method, engagement_id=engagement_id, path=path, type="api",
-                    query_keys=(keys if method == "GET" else []),
-                    has_body=has_body,
-                    body_schema_keys=(keys if has_body else []),
-                ))
+                await graph_memory.add_endpoint(
+                    Endpoint(
+                        url=url,
+                        method=method,
+                        engagement_id=engagement_id,
+                        path=path,
+                        type="api",
+                        query_keys=(keys if method == "GET" else []),
+                        has_body=has_body,
+                        body_schema_keys=(keys if has_body else []),
+                    )
+                )
                 seeded += 1
             except Exception:
                 pass

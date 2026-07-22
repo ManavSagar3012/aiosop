@@ -9,7 +9,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from ai_osop.core.config import VulnClass
+from ai_osop.core.enums import VulnClass
 
 logger = logging.getLogger("ai_osop.applicability")
 

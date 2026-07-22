@@ -7,7 +7,7 @@ import pytest
 
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.visual_agent import VisualContextAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 
 

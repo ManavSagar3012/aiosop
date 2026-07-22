@@ -19,7 +19,7 @@ import pytest
 
 import ai_osop.core.smuggle_probe as smuggle_probe
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
-from ai_osop.core.config import Severity
+from ai_osop.core.enums import Severity
 from tests._mocks import stub_session_memory
 
 

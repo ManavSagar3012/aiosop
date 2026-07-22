@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from ai_osop.core.config import AgentType, scope_signing_key
+from ai_osop.core.config import scope_signing_key
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import ApprovalRequest, ScopeDefinition, Task
 from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
 from ai_osop.orchestrator.recovery_service import RecoveryService
@@ -51,7 +52,7 @@ class _Orch:
         # Inject a mock state_machine to avoid NoneType errors in task assignment
         from unittest.mock import MagicMock
 
-        from ai_osop.core.config import EngagementPhase
+        from ai_osop.core.enums import EngagementPhase
         from ai_osop.core.exceptions import WorkflowException
 
         self.task_scheduler.state_machine = MagicMock()

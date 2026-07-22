@@ -6,9 +6,8 @@ Specialized agent for Insecure File Upload detection.
 from typing import Any, Dict
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
-from ai_osop.payload_engine.engine import AdaptivePayloadEngine
 
 
 class UploadScanner(BaseVulnerabilityAgent):
@@ -34,7 +33,9 @@ class UploadScanner(BaseVulnerabilityAgent):
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute Insecure File Upload scan task."""
-        target_url = task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        target_url = (
+            task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        )
         if not target_url:
             return {"status": "failed", "error": "url parameter is required"}
 
@@ -86,7 +87,10 @@ class UploadScanner(BaseVulnerabilityAgent):
                     "vulnerabilities": created_vulns,
                 }
 
-            return {"status": "success", "message": "Upload scan completed, no file upload vulnerabilities confirmed."}
+            return {
+                "status": "success",
+                "message": "Upload scan completed, no file upload vulnerabilities confirmed.",
+            }
         except Exception as e:
             self.logger.error("upload_scan_failed", url=target_url, error=str(e))
             return {"status": "failed", "error": str(e)}

@@ -66,12 +66,14 @@ async def test_clean_graph_returns_zero_total():
 
 @pytest.mark.asyncio
 async def test_orphan_counts_aggregate_into_total():
-    gm = _FakeGraph(counts={
-        "ghost_workflows": 2,
-        "orphan_vulnerabilities": 5,
-        "orphan_exploits": 1,
-        # others zero
-    })
+    gm = _FakeGraph(
+        counts={
+            "ghost_workflows": 2,
+            "orphan_vulnerabilities": 5,
+            "orphan_exploits": 1,
+            # others zero
+        }
+    )
     report = await gic.run_integrity_check(gm, emit_prints=False)
     assert report["ghost_workflows"] == 2
     assert report["orphan_vulnerabilities"] == 5
@@ -140,17 +142,19 @@ def test_orchestrator_has_graph_integrity_task_attribute():
     from ai_osop.orchestrator.orchestrator import Orchestrator
 
     # __init__ sets it to None; verify the slot exists.
-    src = open(Orchestrator.__module__.replace("ai_osop.orchestrator.orchestrator", "").join([])) if False else None
+    src = (
+        open(Orchestrator.__module__.replace("ai_osop.orchestrator.orchestrator", "").join([]))
+        if False
+        else None
+    )
     # Inspect the source for the slot declaration instead.
     import inspect
 
     src = inspect.getsource(Orchestrator)
-    assert "_graph_integrity_task" in src, (
-        "Orchestrator must declare _graph_integrity_task so shutdown cancels it"
-    )
-    assert "_graph_integrity_loop" in src, (
-        "Orchestrator must implement _graph_integrity_loop"
-    )
+    assert (
+        "_graph_integrity_task" in src
+    ), "Orchestrator must declare _graph_integrity_task so shutdown cancels it"
+    assert "_graph_integrity_loop" in src, "Orchestrator must implement _graph_integrity_loop"
 
 
 def test_orchestrator_shutdown_cancels_graph_integrity_task():
@@ -160,9 +164,9 @@ def test_orchestrator_shutdown_cancels_graph_integrity_task():
     from ai_osop.orchestrator.orchestrator import Orchestrator
 
     shutdown_src = inspect.getsource(Orchestrator.shutdown)
-    assert "_graph_integrity_task" in shutdown_src, (
-        "shutdown must cancel _graph_integrity_task alongside the other bg tasks"
-    )
+    assert (
+        "_graph_integrity_task" in shutdown_src
+    ), "shutdown must cancel _graph_integrity_task alongside the other bg tasks"
 
 
 def test_orchestrator_initialize_starts_graph_integrity_task():
@@ -172,9 +176,7 @@ def test_orchestrator_initialize_starts_graph_integrity_task():
     from ai_osop.orchestrator.orchestrator import Orchestrator
 
     init_src = inspect.getsource(Orchestrator.initialize)
-    assert "_graph_integrity_loop" in init_src, (
-        "initialize must start _graph_integrity_loop"
-    )
+    assert "_graph_integrity_loop" in init_src, "initialize must start _graph_integrity_loop"
 
 
 def test_config_exposes_graph_integrity_interval():
@@ -198,17 +200,19 @@ async def test_graph_integrity_loop_runs_once_then_sleeps(monkeypatch):
     from ai_osop.orchestrator.orchestrator import Orchestrator
 
     # Stub graph that reports 3 orphan vulnerabilities -> triggers cleanup.
-    fake_gm = _FakeGraph(counts={
-        "ghost_workflows": 0,
-        "orphan_vulnerabilities": 3,
-        "orphan_steps": 0,
-        "orphan_evidence": 0,
-        "orphan_diff_auth_findings": 0,
-        "orphan_exploits": 0,
-        "orphan_replay_results": 0,
-        "orphan_authorization_tests": 0,
-        "orphan_workflow_bound_api_endpoints": 0,
-    })
+    fake_gm = _FakeGraph(
+        counts={
+            "ghost_workflows": 0,
+            "orphan_vulnerabilities": 3,
+            "orphan_steps": 0,
+            "orphan_evidence": 0,
+            "orphan_diff_auth_findings": 0,
+            "orphan_exploits": 0,
+            "orphan_replay_results": 0,
+            "orphan_authorization_tests": 0,
+            "orphan_workflow_bound_api_endpoints": 0,
+        }
+    )
 
     # Build a bare Orchestrator shell — we only call _graph_integrity_loop.
     orch = object.__new__(Orchestrator)
@@ -229,6 +233,7 @@ async def test_graph_integrity_loop_runs_once_then_sleeps(monkeypatch):
 
     # Patch the loop's settings read so it always sees a fixed interval.
     from ai_osop.core import config as _cfg
+
     monkeypatch.setattr(_cfg.settings, "graph_integrity_check_interval_seconds", 600, raising=False)
 
     with pytest.raises(_asyncio.CancelledError):

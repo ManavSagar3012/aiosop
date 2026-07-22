@@ -1,7 +1,8 @@
 from datetime import datetime
 
-from ai_osop.core.config import VALID_TRANSITIONS, AgentType, EngagementPhase
+from ai_osop.core.config import VALID_TRANSITIONS
 from ai_osop.core.engagement_state import EngagementState
+from ai_osop.core.enums import AgentType, EngagementPhase
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.models import Task
 from ai_osop.memory.session_memory import SessionMemory

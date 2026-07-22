@@ -17,12 +17,12 @@ The new oracle:
      manual-confirm MEDIUM lead, never an auto-submittable HIGH.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
 
 # Each probe is (syntax_name, payload, expected_eval, control_payload).
@@ -97,7 +97,9 @@ class SSTIAgent(BaseVulnerabilityAgent):
 
         findings: List[Vulnerability] = []
 
-        async with self.get_governed_client(tool="ssti", verify=False, follow_redirects=True, timeout=15.0) as client:
+        async with self.get_governed_client(
+            tool="ssti", verify=False, follow_redirects=True, timeout=15.0
+        ) as client:
             for syntax_name, payload, expected, control_payload in _SSTI_PROBES:
                 try:
                     eval_resp = await self._send(
@@ -194,6 +196,4 @@ class SSTIAgent(BaseVulnerabilityAgent):
             injected = dict(body)
             injected[param] = value
             return await client.request(method, url, json=injected, headers=headers, timeout=15.0)
-        return await client.request(
-            method, url, data={param: value}, headers=headers, timeout=15.0
-        )
+        return await client.request(method, url, data={param: value}, headers=headers, timeout=15.0)

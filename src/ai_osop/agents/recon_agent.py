@@ -18,7 +18,7 @@ from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.agents.base import BaseAgent
 from ai_osop.agents.retrieval_agent import RetrievalAgent
 from ai_osop.auth.session_store import SessionStore
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, Task
 from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
@@ -897,7 +897,9 @@ class ReconAgent(BaseAgent):
                     for c in user_session.cookies:
                         cookies[c["name"]] = c["value"]
 
-            async with self.get_governed_client(tool="recon", headers=headers, cookies=cookies) as session:
+            async with self.get_governed_client(
+                tool="recon", headers=headers, cookies=cookies
+            ) as session:
                 while urls_to_crawl and pages_crawled < max_pages:
                     url = urls_to_crawl.pop(0)
                     if url in visited_urls:
@@ -916,7 +918,7 @@ class ReconAgent(BaseAgent):
                         # and leaks auth cookies/bearer to attacker-glued hosts.
                         enforcer = getattr(self, "_ep_scope_enforcer", None)
                         h = (parsed_url.hostname or "").lower().strip()
-                        _fallback_in_scope = (h == domain or h.endswith(f".{domain}"))
+                        _fallback_in_scope = h == domain or h.endswith(f".{domain}")
                         _in_scope = (
                             enforcer.host_in_scope(h)
                             if enforcer is not None
@@ -938,8 +940,11 @@ class ReconAgent(BaseAgent):
                             query_params = list(parse_qs(parsed_url.query).keys())
                             if is_new:
                                 from ai_osop.core.url_intelligence import active_parameter_mine
+
                                 try:
-                                    mined_params = await active_parameter_mine(str(response.url), session)
+                                    mined_params = await active_parameter_mine(
+                                        str(response.url), session
+                                    )
                                     if mined_params:
                                         query_params = list(set(query_params + mined_params))
                                         for p in mined_params:
@@ -974,16 +979,13 @@ class ReconAgent(BaseAgent):
                                     # MAJ-2: use host_in_scope to prevent lookalike domain bleed
                                     link_enforcer = getattr(self, "_ep_scope_enforcer", None)
                                     lh = (parsed_link.hostname or "").lower().strip()
-                                    _link_fallback = (lh == domain or lh.endswith(f".{domain}"))
+                                    _link_fallback = lh == domain or lh.endswith(f".{domain}")
                                     _link_in_scope = (
                                         link_enforcer.host_in_scope(lh)
                                         if link_enforcer is not None
                                         else _link_fallback
                                     )
-                                    if (
-                                        _link_in_scope
-                                        and link not in visited_urls
-                                    ):
+                                    if _link_in_scope and link not in visited_urls:
                                         urls_to_crawl.append(link)
 
                                 # 1b. Extract routes embedded in inline JS / raw HTML
@@ -992,7 +994,7 @@ class ReconAgent(BaseAgent):
                                     parsed_link = urlparse(link)
                                     inline_enforcer = getattr(self, "_ep_scope_enforcer", None)
                                     ilh = (parsed_link.hostname or "").lower().strip()
-                                    _inline_fallback = (ilh == domain or ilh.endswith(f".{domain}"))
+                                    _inline_fallback = ilh == domain or ilh.endswith(f".{domain}")
                                     _inline_in_scope = (
                                         inline_enforcer.host_in_scope(ilh)
                                         if inline_enforcer is not None
@@ -1059,8 +1061,10 @@ class ReconAgent(BaseAgent):
                                         sh = script_host.lower().strip()
                                         _fallback_valid = (
                                             sh == ""
-                                            or sh == domain or sh.endswith(f".{domain}")
-                                            or sh == root_domain or sh.endswith(f".{root_domain}")
+                                            or sh == domain
+                                            or sh.endswith(f".{domain}")
+                                            or sh == root_domain
+                                            or sh.endswith(f".{root_domain}")
                                             or "website-files.com" in sh
                                             or "webflow" in sh
                                         )

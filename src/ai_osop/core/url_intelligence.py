@@ -184,6 +184,7 @@ _PARAM_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]*$")
 _PARAM_KEY_STOP = {"null", "undefined", "true", "false", "nan"}
 _PARAM_KEY_SINGLE_OK = {"q", "s", "p", "n", "k", "v"}
 
+
 def _is_probable_param_key(key: str) -> bool:
     """True for a plausible real HTTP query-parameter name (drops extractor noise)."""
     if not key or key.lower() in _PARAM_KEY_STOP:
@@ -194,6 +195,7 @@ def _is_probable_param_key(key: str) -> bool:
         return key.lower() in _PARAM_KEY_SINGLE_OK
     return True
 
+
 def extract_params(url: str) -> List[str]:
     """Return the sorted unique query-parameter names present in *url*."""
     params = set()
@@ -201,7 +203,9 @@ def extract_params(url: str) -> List[str]:
     # 1. Query parameters
     try:
         qs = urlsplit(url).query
-        params.update(k for k, _ in parse_qsl(qs, keep_blank_values=True) if _is_probable_param_key(k))
+        params.update(
+            k for k, _ in parse_qsl(qs, keep_blank_values=True) if _is_probable_param_key(k)
+        )
     except (ValueError, AttributeError):
         pass
 
@@ -306,14 +310,36 @@ class UrlIntel:
         }
 
 
-import urllib.parse
 import httpx
 
 COMMON_MINING_PARAMS = [
-    "debug", "admin", "test", "dev", "config", "file", "page", "url", "ip",
-    "redirect", "path", "source", "view", "template", "profile", "user",
-    "id", "uuid", "key", "token", "auth", "secret", "pass", "role", "priv"
+    "debug",
+    "admin",
+    "test",
+    "dev",
+    "config",
+    "file",
+    "page",
+    "url",
+    "ip",
+    "redirect",
+    "path",
+    "source",
+    "view",
+    "template",
+    "profile",
+    "user",
+    "id",
+    "uuid",
+    "key",
+    "token",
+    "auth",
+    "secret",
+    "pass",
+    "role",
+    "priv",
 ]
+
 
 async def active_parameter_mine(
     url: str,
@@ -325,7 +351,7 @@ async def active_parameter_mine(
     Appends a batch of common hidden parameters. If the response status, length,
     or reflection changes, binary-searches the batch to isolate the active param.
     """
-    from urllib.parse import urlparse, parse_qs, urlunparse
+    from urllib.parse import urlparse, urlunparse
 
     mined: List[str] = []
     parsed = urlparse(url)
@@ -353,9 +379,7 @@ async def active_parameter_mine(
 
     # Detection criteria: status change, significant body length change (>20 bytes), or reflection
     has_change = (
-        batch_status != base_status
-        or abs(batch_len - base_len) > 20
-        or marker in batch_text
+        batch_status != base_status or abs(batch_len - base_len) > 20 or marker in batch_text
     )
 
     if not has_change:

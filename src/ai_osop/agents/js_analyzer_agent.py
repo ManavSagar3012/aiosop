@@ -14,13 +14,12 @@ import math
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Pattern, Tuple
+
+import structlog
 from pydantic import BaseModel
 
-import httpx
-import structlog
-
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import OutOfScopeError, ScopeValidationError
 from ai_osop.core.models import Task, Vulnerability
 from ai_osop.core.secret_verifier import STATUS_CONFIRMED_LIVE, STATUS_NOT_A_SECRET, assess_secret
@@ -197,6 +196,7 @@ class JSAnalysisResult(BaseModel):
     finding_ids: List[str]
     secrets: List[Dict[str, Any]]
     note: Optional[str] = None
+
 
 class JSAnalyzerAgent(BaseAgent):
     """
@@ -528,7 +528,6 @@ class JSAnalyzerAgent(BaseAgent):
             finding_ids=finding_ids,
             secrets=secret_summary,
         )
-
 
     async def _cleanup_resources(self) -> None:
         self.discovered_endpoints = []

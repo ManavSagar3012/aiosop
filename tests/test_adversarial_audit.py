@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.enums import AgentType, EngagementPhase
 from ai_osop.core.exceptions import OutOfScopeError, ScopeValidationError, WorkflowException
 from ai_osop.core.models import (
     ApprovalRequest,
@@ -61,7 +61,7 @@ class _Orch:
         # _assign_task doesn't NoneType-error (production wires a real one).
         from unittest.mock import MagicMock
 
-        from ai_osop.core.config import EngagementPhase
+        from ai_osop.core.enums import EngagementPhase
         from ai_osop.core.exceptions import WorkflowException
 
         self.task_scheduler.state_machine = MagicMock()
@@ -418,7 +418,7 @@ async def test_llm_hallucination_rejected():
 # F1. The Stuck Agent Test
 async def test_stuck_agent_reaped():
     """Verify the AgentReaper eventually marks stuck tasks as failed."""
-    from ai_osop.core.config import AgentState
+    from ai_osop.core.enums import AgentState
     from ai_osop.reliability.agent_reaper import AgentReaper
 
     orch = _Orch()

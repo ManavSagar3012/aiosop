@@ -1,12 +1,13 @@
-import pytest
 from unittest.mock import AsyncMock, patch
-import httpx
 
+import httpx
+import pytest
+
+from ai_osop.core.ai_mcp_tester import AIMCPTester
+from ai_osop.core.cache_poisoning_tester import CachePoisoningTester
+from ai_osop.core.nosql_tester import NoSQLTester
 from ai_osop.core.oauth_reset_tester import OAuthResetTester
 from ai_osop.core.open_redirect_tester import OpenRedirectTester
-from ai_osop.core.nosql_tester import NoSQLTester
-from ai_osop.core.cache_poisoning_tester import CachePoisoningTester
-from ai_osop.core.ai_mcp_tester import AIMCPTester
 
 
 @pytest.mark.asyncio

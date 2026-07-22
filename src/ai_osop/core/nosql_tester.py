@@ -8,10 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qs, urlparse
 
 import httpx
-
 
 NOSQL_OPERATOR_PAYLOADS = [
     {"$gt": ""},
@@ -54,7 +52,9 @@ class NoSQLTester:
         findings: List[NoSQLFinding] = []
         body = json_body or {"username": "admin", "password": "password"}
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds, follow_redirects=False
+        ) as client:
             # 1. Baseline request
             try:
                 if method.upper() == "POST":
@@ -94,7 +94,11 @@ class NoSQLTester:
                                 )
                             )
                             break
-                        elif resp.status_code == 200 and ("token" in resp.text.lower() or "success" in resp.text.lower()) and ("token" not in base_resp.text.lower()):
+                        elif (
+                            resp.status_code == 200
+                            and ("token" in resp.text.lower() or "success" in resp.text.lower())
+                            and ("token" not in base_resp.text.lower())
+                        ):
                             findings.append(
                                 NoSQLFinding(
                                     param=key,

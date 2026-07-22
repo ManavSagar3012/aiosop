@@ -41,6 +41,7 @@ USAGE
     so migrating a call site is never a behavior regression — governance is added
     only where the caller supplies the corresponding guard.
 """
+
 from __future__ import annotations
 
 import logging
@@ -72,6 +73,7 @@ def research_header_from_settings() -> Optional[Tuple[str, str]]:
         return None
     if not value:
         import logging
+
         logging.getLogger(__name__).warning(
             "research_header_name_is_set_but_value_is_empty",
             extra={"research_header_name": name},
@@ -118,7 +120,8 @@ def governance_hook(
             if not scope.host_in_scope(host):
                 logger.warning(
                     "governed_egress_blocked host=%s method=%s reason=out_of_scope",
-                    host, request.method,
+                    host,
+                    request.method,
                 )
                 raise OutOfScopeError(
                     f"governed egress blocked out-of-scope host: {host!r} "
@@ -138,8 +141,11 @@ def governance_hook(
         # 4. Audit — one structured line per allowed egress.
         logger.debug(
             "governed_egress_allow host=%s method=%s scoped=%s throttled=%s tagged=%s",
-            host, request.method, scope is not None,
-            rate_limiter is not None, research_header is not None,
+            host,
+            request.method,
+            scope is not None,
+            rate_limiter is not None,
+            research_header is not None,
         )
 
     return _govern_request
@@ -179,8 +185,10 @@ def governed_client(
     the governance hook is appended so caller hooks still run.
     """
     hook = governance_hook(
-        scope=scope, rate_limiter=rate_limiter,
-        research_header=research_header, tool=tool,
+        scope=scope,
+        rate_limiter=rate_limiter,
+        research_header=research_header,
+        tool=tool,
     )
     return httpx.AsyncClient(**attach_governance(httpx_kwargs, hook))
 

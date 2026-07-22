@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List
 
-from ai_osop.core.config import VulnClass
+from ai_osop.core.enums import VulnClass
 from ai_osop.core.models import Payload
 
 

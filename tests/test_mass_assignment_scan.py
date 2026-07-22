@@ -18,7 +18,7 @@ import pytest
 
 from ai_osop.agents import vuln_agent as va
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
-from ai_osop.core.config import Severity
+from ai_osop.core.enums import Severity
 
 
 class _FakeResp:

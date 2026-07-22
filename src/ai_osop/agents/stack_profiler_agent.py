@@ -7,7 +7,7 @@ Enables contextual reasoning based on historical bug bounty patterns.
 from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task
 
 

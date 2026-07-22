@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.config import EngagementPhase
+from ai_osop.core.enums import EngagementPhase
 from ai_osop.core.models import ScopeDefinition, SessionState
 from ai_osop.orchestrator.phase_monitor import PhaseMonitor
 

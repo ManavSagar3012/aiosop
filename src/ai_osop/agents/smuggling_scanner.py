@@ -6,9 +6,8 @@ Specialized agent for HTTP Request Smuggling detection.
 from typing import Any, Dict
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
-from ai_osop.payload_engine.engine import AdaptivePayloadEngine
 
 
 class SmugglingScanner(BaseVulnerabilityAgent):
@@ -34,7 +33,9 @@ class SmugglingScanner(BaseVulnerabilityAgent):
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute HTTP Request Smuggling scan task."""
-        target_url = task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        target_url = (
+            task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        )
         if not target_url:
             return {"status": "failed", "error": "url parameter is required"}
 
@@ -42,6 +43,7 @@ class SmugglingScanner(BaseVulnerabilityAgent):
 
         try:
             from urllib.parse import urlparse
+
             from ai_osop.core.smuggle_probe import probe_desync
 
             parsed = urlparse(target_url)
@@ -73,7 +75,11 @@ class SmugglingScanner(BaseVulnerabilityAgent):
                     engagement_id=task.engagement_id,
                 )
                 await self.persist_finding(vuln)
-                return {"status": "vulnerable", "vulnerability": vuln.model_dump(), "probe_result": res}
+                return {
+                    "status": "vulnerable",
+                    "vulnerability": vuln.model_dump(),
+                    "probe_result": res,
+                }
 
             return {
                 "status": "success",

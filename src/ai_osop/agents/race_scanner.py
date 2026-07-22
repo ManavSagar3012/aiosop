@@ -6,9 +6,8 @@ Specialized agent for Race Condition detection.
 from typing import Any, Dict
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
-from ai_osop.payload_engine.engine import AdaptivePayloadEngine
 
 
 class RaceScanner(BaseVulnerabilityAgent):
@@ -34,7 +33,9 @@ class RaceScanner(BaseVulnerabilityAgent):
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute Race Condition scan task."""
-        target_url = task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        target_url = (
+            task.payload.get("url") or task.payload.get("target") or task.payload.get("target_url")
+        )
         if not target_url:
             return {"status": "failed", "error": "url parameter is required"}
 
@@ -42,6 +43,7 @@ class RaceScanner(BaseVulnerabilityAgent):
 
         try:
             import asyncio
+
             import httpx
 
             # Send 15 concurrent requests in parallel to test for race conditions / TOCTOU
@@ -50,7 +52,10 @@ class RaceScanner(BaseVulnerabilityAgent):
             headers = task.payload.get("headers", {})
             body = task.payload.get("body", {})
 
-            async with self.get_governed_client(tool="race", timeout=10.0, follow_redirects=False) as client:
+            async with self.get_governed_client(
+                tool="race", timeout=10.0, follow_redirects=False
+            ) as client:
+
                 async def make_req():
                     try:
                         if method.upper() == "POST":

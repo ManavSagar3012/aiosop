@@ -13,18 +13,12 @@ fabricating a schema.
 import json
 from typing import Any, Dict, List, Optional
 
-import httpx
 import structlog
 
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import OutOfScopeError, ScopeValidationError
-from ai_osop.core.models import (
-    GraphQLOperation,
-    GraphQLSchema,
-    Task,
-    Vulnerability,
-)
+from ai_osop.core.models import GraphQLOperation, GraphQLSchema, Task, Vulnerability
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)

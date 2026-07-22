@@ -90,11 +90,8 @@ class RecoveryService:
             timeout = task.timeout_seconds or 300
             if age <= timeout:
                 continue
-            
+
             # reaper: ensure task is actually terminated if it exceeds budget
-            await self._orch._audit_log(self._reaper_audit(task, age, "recovering"))
-            reaped += 1
-            
             if task.status == "running" and task.retry_count < task.max_retries:
                 # A retry must replace the execution that timed out.
                 handles = getattr(self._orch, "_task_handles", None)
@@ -105,10 +102,12 @@ class RecoveryService:
                         await asyncio.wait_for(handle, timeout=5.0)
                     except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass
-                
+
                 await self._orch.task_scheduler._maybe_retry(
                     task, {"error": f"reaper: stuck {int(age)}s > {timeout}s timeout"}
                 )
+                await self._orch._audit_log(self._reaper_audit(task, age, "recovering"))
+                reaped += 1
                 continue
             task.status = "failed"
             task.completed_at = now

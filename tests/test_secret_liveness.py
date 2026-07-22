@@ -103,6 +103,7 @@ def test_probe_authenticates_marks_confirmed_live(monkeypatch):
     # This test verifies the probe MECHANISM (a live 200 -> confirmed_live), so it
     # must opt into the policy the same way a real engagement would.
     from ai_osop.core import config as _config
+
     monkeypatch.setattr(_config.settings, "allow_external_liveness_probing", True, raising=False)
     client = _FakeClient(200)
     verdict = asyncio.run(

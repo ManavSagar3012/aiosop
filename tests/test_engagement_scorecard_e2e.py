@@ -42,7 +42,8 @@ if str(_BENCH) not in sys.path:
 
 from score_engagement import load_manifest, score_findings  # noqa: E402
 
-from ai_osop.core.config import Severity, VulnClass  # noqa: E402
+from ai_osop.core.config import VulnClass  # noqa: E402
+from ai_osop.core.enums import Severity
 from ai_osop.core.models import Vulnerability  # noqa: E402
 
 
@@ -145,12 +146,24 @@ def test_scorecard_contract_for_orchestrated_findings(tmp_path):
     """
     manifest = load_manifest(_manifest(tmp_path))
     findings = [
-        _vuln(vid="vuln-sqli-login", vtype=VulnClass.SQLI,
-              endpoint="http://target.test/rest/user/login", confidence=0.95),
-        _vuln(vid="vuln-sqli-search", vtype=VulnClass.SQLI,
-              endpoint="http://target.test/rest/products/search", confidence=0.9),
-        _vuln(vid="vuln-idor-user", vtype=VulnClass.IDOR,
-              endpoint="http://target.test/api/Users/1", confidence=0.85),
+        _vuln(
+            vid="vuln-sqli-login",
+            vtype=VulnClass.SQLI,
+            endpoint="http://target.test/rest/user/login",
+            confidence=0.95,
+        ),
+        _vuln(
+            vid="vuln-sqli-search",
+            vtype=VulnClass.SQLI,
+            endpoint="http://target.test/rest/products/search",
+            confidence=0.9,
+        ),
+        _vuln(
+            vid="vuln-idor-user",
+            vtype=VulnClass.IDOR,
+            endpoint="http://target.test/api/Users/1",
+            confidence=0.85,
+        ),
     ]
 
     card = score_findings(findings, manifest)
@@ -159,16 +172,14 @@ def test_scorecard_contract_for_orchestrated_findings(tmp_path):
     # Recall over the manifest's positives must be 1.0 (all three matched).
     assert summary["recall"] == 1.0, f"expected recall 1.0, got {summary['recall']}"
     # Precision against the negative control: no finding matched the CSRF entry.
-    assert summary["precision"] == 1.0, (
-        f"expected precision 1.0, got {summary['precision']}"
-    )
+    assert summary["precision"] == 1.0, f"expected precision 1.0, got {summary['precision']}"
     # No manifest entry went unmatched.
     assert card["false_negatives"] == [], card["false_negatives"]
     # Every matched finding carries complete evidence (request + response + payload).
     for m in card["matched"]:
-        assert m["evidence_complete"] is True, (
-            f"matched finding {m['gt_id']} missing evidence: {m['missing_evidence']}"
-        )
+        assert (
+            m["evidence_complete"] is True
+        ), f"matched finding {m['gt_id']} missing evidence: {m['missing_evidence']}"
 
 
 def test_scorecard_flags_false_negative_when_a_manifest_entry_is_missed(tmp_path):
@@ -179,10 +190,18 @@ def test_scorecard_flags_false_negative_when_a_manifest_entry_is_missed(tmp_path
     """
     manifest = load_manifest(_manifest(tmp_path))
     findings = [
-        _vuln(vid="vuln-sqli-login", vtype=VulnClass.SQLI,
-              endpoint="http://target.test/rest/user/login", confidence=0.95),
-        _vuln(vid="vuln-sqli-search", vtype=VulnClass.SQLI,
-              endpoint="http://target.test/rest/products/search", confidence=0.9),
+        _vuln(
+            vid="vuln-sqli-login",
+            vtype=VulnClass.SQLI,
+            endpoint="http://target.test/rest/user/login",
+            confidence=0.95,
+        ),
+        _vuln(
+            vid="vuln-sqli-search",
+            vtype=VulnClass.SQLI,
+            endpoint="http://target.test/rest/products/search",
+            confidence=0.9,
+        ),
         # IDOR deliberately OMITTED — simulates a layer that dropped it.
     ]
 
@@ -191,9 +210,9 @@ def test_scorecard_flags_false_negative_when_a_manifest_entry_is_missed(tmp_path
 
     assert summary["recall"] < 1.0, "a missing manifest positive must drop recall"
     fn_types = {fn["type"].lower() for fn in card["false_negatives"]}
-    assert "idor" in fn_types, (
-        f"missing IDOR must surface as a false negative; got {card['false_negatives']}"
-    )
+    assert (
+        "idor" in fn_types
+    ), f"missing IDOR must surface as a false negative; got {card['false_negatives']}"
 
 
 def test_scorecard_flags_false_positive_when_a_negative_control_is_claimed(tmp_path):
@@ -205,24 +224,40 @@ def test_scorecard_flags_false_positive_when_a_negative_control_is_claimed(tmp_p
     """
     manifest = load_manifest(_manifest(tmp_path))
     findings = [
-        _vuln(vid="vuln-sqli-login", vtype=VulnClass.SQLI,
-              endpoint="http://target.test/rest/user/login", confidence=0.95),
-        _vuln(vid="vuln-sqli-search", vtype=VulnClass.SQLI,
-              endpoint="http://target.test/rest/products/search", confidence=0.9),
-        _vuln(vid="vuln-idor-user", vtype=VulnClass.IDOR,
-              endpoint="http://target.test/api/Users/1", confidence=0.85),
+        _vuln(
+            vid="vuln-sqli-login",
+            vtype=VulnClass.SQLI,
+            endpoint="http://target.test/rest/user/login",
+            confidence=0.95,
+        ),
+        _vuln(
+            vid="vuln-sqli-search",
+            vtype=VulnClass.SQLI,
+            endpoint="http://target.test/rest/products/search",
+            confidence=0.9,
+        ),
+        _vuln(
+            vid="vuln-idor-user",
+            vtype=VulnClass.IDOR,
+            endpoint="http://target.test/api/Users/1",
+            confidence=0.85,
+        ),
         # Noisy detector claiming CSRF on the login endpoint (negative control).
-        _vuln(vid="vuln-csrf-noise", vtype=VulnClass.CSRF,
-              endpoint="http://target.test/rest/user/login", confidence=0.7,
-              tool_source="csrf_scanner"),
+        _vuln(
+            vid="vuln-csrf-noise",
+            vtype=VulnClass.CSRF,
+            endpoint="http://target.test/rest/user/login",
+            confidence=0.7,
+            tool_source="csrf_scanner",
+        ),
     ]
 
     card = score_findings(findings, manifest)
     summary = card["summary"]
 
-    assert summary["precision"] < 1.0, (
-        "a finding matching a negative control must drop precision below 1.0"
-    )
+    assert (
+        summary["precision"] < 1.0
+    ), "a finding matching a negative control must drop precision below 1.0"
     assert summary["false_positives"] >= 1, summary["false_positives"]
 
 
@@ -234,17 +269,33 @@ def test_scorecard_drops_simulated_findings_before_scoring(tmp_path):
     """
     manifest = load_manifest(_manifest(tmp_path))
     real = [
-        _vuln(vid="vuln-sqli-login", vtype=VulnClass.SQLI,
-              endpoint="http://target.test/rest/user/login", confidence=0.95),
-        _vuln(vid="vuln-sqli-search", vtype=VulnClass.SQLI,
-              endpoint="http://target.test/rest/products/search", confidence=0.9),
-        _vuln(vid="vuln-idor-user", vtype=VulnClass.IDOR,
-              endpoint="http://target.test/api/Users/1", confidence=0.85),
+        _vuln(
+            vid="vuln-sqli-login",
+            vtype=VulnClass.SQLI,
+            endpoint="http://target.test/rest/user/login",
+            confidence=0.95,
+        ),
+        _vuln(
+            vid="vuln-sqli-search",
+            vtype=VulnClass.SQLI,
+            endpoint="http://target.test/rest/products/search",
+            confidence=0.9,
+        ),
+        _vuln(
+            vid="vuln-idor-user",
+            vtype=VulnClass.IDOR,
+            endpoint="http://target.test/api/Users/1",
+            confidence=0.85,
+        ),
     ]
     # A simulated finding that would otherwise match JS-001 (sqli login) and
     # inflate the match count. It must be dropped before scoring.
-    sim = _vuln(vid="vuln-sim-sqli", vtype=VulnClass.SQLI,
-                endpoint="http://target.test/rest/user/login", confidence=0.99)
+    sim = _vuln(
+        vid="vuln-sim-sqli",
+        vtype=VulnClass.SQLI,
+        endpoint="http://target.test/rest/user/login",
+        confidence=0.99,
+    )
     # Mark as simulated via the EXPLICIT boolean field (the hardest-to-evade
     # signal is_simulated() checks first) so the scorer's drop path fires
     # regardless of the tool_source heuristic.

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.config import AgentType, VulnClass
+from ai_osop.core.enums import AgentType, VulnClass
 from ai_osop.core.models import ScopeDefinition, SessionState, Task
 from ai_osop.orchestrator.orchestrator import EngagementPhase, Orchestrator
 from ai_osop.orchestrator.phase_monitor import PhaseMonitor
@@ -18,6 +18,7 @@ async def mock_orchestrator():
     # MIN-5 (2026-07-21): the MCP readiness gate now fails closed when no servers
     # are registered. Register dummy critical MCP connections so the gate passes.
     from unittest.mock import MagicMock
+
     _mock_conn = MagicMock()
     _mock_conn.get_circuit_state.return_value = "closed"
     _mock_conn._initialized = True

@@ -198,7 +198,13 @@ class JWTTester:
                             detail=f"Server accepted an unsigned token (alg='{label}') under a forged identity.",
                             sentinel=self.sentinel,
                             forged_token=tok,
-                            evidence={"alg_label": label, "status": code, "response_snippet": snip},
+                            evidence={
+                                "alg_label": label,
+                                "status": code,
+                                "response_snippet": snip,
+                                "response": snip,
+                                "request": f"{self.method} {self.verify_url} with alg:none forged token",
+                            },
                         )
                     )
                     break
@@ -227,7 +233,12 @@ class JWTTester:
                             sentinel=self.sentinel,
                             secret="<public-key>" if secret == self.public_key_pem else secret,
                             forged_token=tok,
-                            evidence={"status": code, "response_snippet": snip},
+                            evidence={
+                                "status": code,
+                                "response_snippet": snip,
+                                "response": snip,
+                                "request": f"{self.method} {self.verify_url} with weak secret HS256 forged token",
+                            },
                         )
                     )
                     break
@@ -250,7 +261,12 @@ class JWTTester:
                             kid=kid,
                             secret="",
                             forged_token=tok,
-                            evidence={"status": code, "response_snippet": snip},
+                            evidence={
+                                "status": code,
+                                "response_snippet": snip,
+                                "response": snip,
+                                "request": f"{self.method} {self.verify_url} with kid-injected forged token",
+                            },
                         )
                     )
                     break

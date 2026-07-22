@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.config import VulnClass
+from ai_osop.core.enums import VulnClass
 from ai_osop.core.models import Payload
 from ai_osop.payload_engine.engine import AdaptivePayloadEngine
 

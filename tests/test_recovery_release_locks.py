@@ -109,7 +109,10 @@ async def test_recovery_continues_when_one_agent_release_fails():
 async def test_recovery_skips_agents_without_id():
     """An agent whose ctx.agent_id is None is silently skipped — cannot release
     a lock with no key, and should not crash recovery."""
-    agents = [_agent("agent-a"), SimpleNamespace(ctx=SimpleNamespace(agent_id=None, status="running"))]
+    agents = [
+        _agent("agent-a"),
+        SimpleNamespace(ctx=SimpleNamespace(agent_id=None, status="running")),
+    ]
     orch = _orch([agents[0]])  # only the named agent is in _agents
     # Add the id-less agent directly so it iterates.
     orch._agents["nameless"] = agents[1]

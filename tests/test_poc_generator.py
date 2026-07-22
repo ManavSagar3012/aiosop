@@ -107,8 +107,8 @@ def test_subdomain_takeover_poc_resolves_host():
 
 
 def test_unmapped_class_falls_back_to_manual():
-    """A class with no builder (e.g. XXE) must return a non-reproducible MANUAL artifact."""
-    v = _v("xxe", {"url": "https://x/xml"})
+    """A class with no builder must return a non-reproducible MANUAL artifact."""
+    v = _v("graphql", {"url": "https://x/hidden"})
     art = generate_poc(v)
     assert art.kind == "manual"
     assert art.reproducible is False
@@ -150,7 +150,7 @@ def test_render_markdown_fenced_block_for_runnable():
 
 
 def test_render_markdown_blockquote_for_manual():
-    v = _v("xxe", {"url": "https://x/xml"})
+    v = _v("graphql", {"url": "https://x/hidden"})
     md = render_poc_markdown(v)
     assert md.strip().startswith(">")
     assert "```" not in md

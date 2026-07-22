@@ -7,12 +7,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ai_osop.api.deps import (
-    AgentStatusResponse,
-    require_role,
-    state,
-    update_active_agents,
-)
+from ai_osop.api.deps import AgentStatusResponse, require_role, state, update_active_agents
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 

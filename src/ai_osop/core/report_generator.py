@@ -6,13 +6,19 @@ section with CWE/OWASP, evidence, and concrete reproduction steps derived from t
 oracle evidence. Reads findings straight from graph_memory — the same records the
 deterministic scan persisted — so the report reflects verified reality, not an LLM
 summary.
+
+V6.2: Pre-report evidence vault integrity audit is performed to detect tampered
+or missing artifacts before the report is generated. A low integrity score
+inlines a warning banner so the operator can investigate.
 """
+
 from __future__ import annotations
 
 import json
 from typing import Any, Dict, List
 
 from ai_osop.core.bounty_report import finding_signature
+from ai_osop.core.evidence_vault import EvidenceVaultService
 from ai_osop.core.finding_view import to_finding_view
 
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -90,9 +96,18 @@ def _render_finding(i: int, f: Dict[str, Any]) -> str:
         meta.append(f"**OWASP:** {ev0['owasp']}")
     ep = view.get("url")
     if ep:
-        meta.append(f"**Endpoint:** `{ep}`" + (f" ({view['method']} · {view['param']})" if view.get("param") else f" ({view['method']})"))
+        meta.append(
+            f"**Endpoint:** `{ep}`"
+            + (
+                f" ({view['method']} · {view['param']})"
+                if view.get("param")
+                else f" ({view['method']})"
+            )
+        )
     if f.get("confidence") is not None:
-        meta.append(f"**Confidence:** {f['confidence']}" + (" (validated)" if f.get("validated") else ""))
+        meta.append(
+            f"**Confidence:** {f['confidence']}" + (" (validated)" if f.get("validated") else "")
+        )
     occ = f.get("_occurrences", 1)
     if occ > 1:
         meta.append(f"**Detections:** {occ}")
@@ -102,7 +117,15 @@ def _render_finding(i: int, f: Dict[str, Any]) -> str:
         lines += [str(f["description"]), ""]
     lines.append("**Proof of concept / evidence:**")
     shown = False
-    for k in ("payload", "proof", "db_error_excerpt", "technique", "token_prefix", "accepted_fields", "http_status"):
+    for k in (
+        "payload",
+        "proof",
+        "db_error_excerpt",
+        "technique",
+        "token_prefix",
+        "accepted_fields",
+        "http_status",
+    ):
         if ev0.get(k):
             lines.append(f"- {k.replace('_', ' ')}: `{ev0[k]}`")
             shown = True
@@ -135,6 +158,15 @@ async def generate_bounty_report(engagement_id: str, graph_memory: Any, target: 
     findings = list(deduped.values())
     findings.sort(key=lambda f: _SEV_ORDER.get((f.get("severity") or "").lower(), 9))
 
+    # V6.2: Pre-report evidence vault integrity audit.
+    try:
+        vault = EvidenceVaultService()
+        audit = await vault.audit_vault_integrity(engagement_id, graph_memory)
+        integrity_ok = audit.get("integrity_score", 100.0) >= 80.0
+    except Exception as e:  # noqa: BLE001 - audit is best-effort
+        audit = {"integrity_score": 0.0, "corrupted_hashes": [], "error": str(e)}
+        integrity_ok = False
+
     counts: Dict[str, int] = {}
     for f in findings:
         s = (f.get("severity") or "?").lower()
@@ -145,8 +177,31 @@ async def generate_bounty_report(engagement_id: str, graph_memory: Any, target: 
         "",
         f"Engagement: `{engagement_id}`  ",
         f"Validated findings: **{len(findings)}**  ",
+    ]
+
+    # Integrity audit banner
+    if not integrity_ok:
+        corrupted = len(audit.get("corrupted_hashes", []))
+        out.append(
+            "> ⚠️ **EVIDENCE INTEGRITY WARNING**  \n"
+            "> The evidence vault audit found integrity issues that may affect "
+            "the trustworthiness of this report.  \n"
+            f"> **Integrity score:** {audit.get('integrity_score', 0.0):.0f}%  \n"
+            f"> **Corrupted hashes:** {corrupted}  \n"
+            f"> **Missing artifacts:** {len(audit.get('missing_artifacts', []))}  \n"
+            f"> **Mock contamination:** {len(audit.get('mock_contamination', []))}  \n"
+            "> Investigate before submitting findings from this engagement.\n"
+        )
+
+    out += [
         "Severity breakdown: "
-        + (", ".join(f"{k}: {v}" for k, v in sorted(counts.items(), key=lambda x: _SEV_ORDER.get(x[0], 9))) or "none"),
+        + (
+            ", ".join(
+                f"{k}: {v}"
+                for k, v in sorted(counts.items(), key=lambda x: _SEV_ORDER.get(x[0], 9))
+            )
+            or "none"
+        ),
         "",
         "| # | Severity | Type | CWE | Title |",
         "|---|----------|------|-----|-------|",

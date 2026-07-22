@@ -84,21 +84,18 @@ async def test_audit_log_cleanup_is_soft_delete_not_hard_delete(monkeypatch):
 
     await svc._cleanup_postgres()
 
-    audit_executes = [
-        e for e in sm._fake_session.executes
-        if "audit_log" in _stmt_str(e)
-    ]
+    audit_executes = [e for e in sm._fake_session.executes if "audit_log" in _stmt_str(e)]
     assert len(audit_executes) == 1
     stmt_str = _stmt_str(audit_executes[0])
     # Must be UPDATE, not DELETE.
-    assert stmt_str.startswith("update"), (
-        f"audit log retention must soft-delete (UPDATE), not hard-delete; got: {stmt_str}"
-    )
+    assert stmt_str.startswith(
+        "update"
+    ), f"audit log retention must soft-delete (UPDATE), not hard-delete; got: {stmt_str}"
     assert "archived" in stmt_str
     # Must NOT be a DELETE statement.
-    assert not stmt_str.startswith("delete"), (
-        f"audit log retention must NOT hard-delete; got: {stmt_str}"
-    )
+    assert not stmt_str.startswith(
+        "delete"
+    ), f"audit log retention must NOT hard-delete; got: {stmt_str}"
 
 
 @pytest.mark.asyncio
@@ -118,10 +115,7 @@ async def test_audit_log_cutoff_uses_configured_retention_days(monkeypatch):
 
     await svc._cleanup_postgres()
 
-    audit_executes = [
-        e for e in sm._fake_session.executes
-        if "audit_log" in _stmt_str(e)
-    ]
+    audit_executes = [e for e in sm._fake_session.executes if "audit_log" in _stmt_str(e)]
     assert len(audit_executes) == 1
 
 
@@ -139,10 +133,7 @@ async def test_session_state_cutoff_uses_configured_retention(monkeypatch):
 
     await svc._cleanup_postgres()
 
-    state_executes = [
-        e for e in sm._fake_session.executes
-        if "session_state" in _stmt_str(e)
-    ]
+    state_executes = [e for e in sm._fake_session.executes if "session_state" in _stmt_str(e)]
     assert len(state_executes) == 1
     stmt_str = _stmt_str(state_executes[0])
     # Session-state cleanup is a hard delete (not a compliance log); the fix

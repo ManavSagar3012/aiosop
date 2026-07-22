@@ -3,8 +3,10 @@ Reporting MCP reality gate.
 Proves reporting-mcp compiles real HTML/Markdown reports using ReportExporter.
 """
 
-import pytest
 import time
+
+import pytest
+
 from .conftest import mcp_execute, mcp_initialize, require_server
 
 pytestmark = pytest.mark.qualification
@@ -22,11 +24,7 @@ def test_reporting_flow():
     res = mcp_execute(
         base,
         "compile_findings",
-        {
-            "engagement_id": "test-eng-reporting-mcp",
-            "format": "html",
-            "idempotency_key": idemp_key
-        }
+        {"engagement_id": "test-eng-reporting-mcp", "format": "html", "idempotency_key": idemp_key},
     )
     assert res.get("job_id") is not None
     assert res.get("status") in ("pending", "running", "completed")
@@ -40,8 +38,8 @@ def test_reporting_flow():
             {
                 "engagement_id": "test-eng-reporting-mcp",
                 "format": "html",
-                "idempotency_key": idemp_key
-            }
+                "idempotency_key": idemp_key,
+            },
         )
         if poll_res.get("status") == "completed":
             assert poll_res.get("download_url") is not None

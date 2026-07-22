@@ -17,7 +17,7 @@ import pytest
 
 from ai_osop.agents.csrf_agent import CSRFAgent
 from ai_osop.agents.ssti_agent import SSTIAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task
 from tests._mocks import stub_session_memory
 
@@ -93,6 +93,7 @@ async def test_ssti_reflection_only_not_confirmed(monkeypatch):
     """REFLECTION ONLY: response contains ``{{7*7}}`` verbatim (the payload echoed
     back) but does NOT contain ``49``. The old agent flagged this as HIGH
     validated. The new oracle must NOT confirm — it must emit no finding."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         injected = request.url.params.get("q") or ""
         # Reflect the payload verbatim, no evaluation
@@ -117,6 +118,7 @@ async def test_ssti_control_collision_not_confirmed(monkeypatch):
     """If BOTH the {{7*7}} probe AND the {{7*8}} control probe yield ``49`` in
     the response, the signal is unreliable (the page contains 49 regardless of
     input). The oracle must NOT confirm in that case."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         # Response always contains 49 (e.g. an order total) — evaluation signal
         # is meaningless. Both probes see it.
@@ -157,11 +159,11 @@ def _csrf_agent(monkeypatch, transport_handler, *, sessions=None, skip_applicabi
     monkeypatch.setattr("ai_osop.agents.csrf_agent.httpx.AsyncClient", _fake_client)
 
     if skip_applicability:
+
         async def _list_sessions(self, engagement_id):
             return sessions or []
-        monkeypatch.setattr(
-            "ai_osop.auth.session_store.SessionStore.list_sessions", _list_sessions
-        )
+
+        monkeypatch.setattr("ai_osop.auth.session_store.SessionStore.list_sessions", _list_sessions)
     return agent
 
 
@@ -185,6 +187,7 @@ def _csrf_task(url, method="POST", cookie=None, body=None):
 async def test_csrf_confirmed_when_foreign_origin_accepted(monkeypatch):
     """Cross-site request with foreign Origin + ambient cookie is ACCEPTED =>
     CONFIRMED (working PoC). This is the objective signal."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         # The state-changing action succeeds despite the foreign Origin.
         return httpx.Response(200, text="OK")
@@ -212,6 +215,7 @@ async def test_csrf_confirmed_when_foreign_origin_accepted(monkeypatch):
 async def test_csrf_not_confirmed_when_request_rejected(monkeypatch):
     """The state-changing endpoint REJECTS the foreign-Origin request (403) =>
     NOT exploitable. No finding — this is the false-positive guard."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="Forbidden")
 
@@ -234,6 +238,7 @@ async def test_csrf_not_confirmed_when_bearer_only(monkeypatch):
     """Bearer-token APIs are NOT CSRF-able (token isn't sent cross-site). No
     ambient cookie => no finding (the old 'no token string' heuristic would
     have flagged this)."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="OK")
 

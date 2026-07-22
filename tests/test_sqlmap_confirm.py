@@ -5,10 +5,10 @@ These do NOT shell out to real sqlmap (that's covered by live verification
 scripts); they lock in the parser contract and the escalation wiring so a future
 change can't silently (a) misparse a verdict or (b) mint a fake sqlmap finding.
 """
+
 import pytest
 
 from ai_osop.core import sqlmap_confirm as sc
-
 
 # --------------------------------------------------------------------------- #
 # parser contract                                                             #
@@ -69,16 +69,25 @@ async def test_escalation_mints_real_sqlmap_finding(monkeypatch):
 
     ep = {
         "url": "http://t.test/rest/products/search?q=x",
-        "method": "GET", "query_keys": ["q"], "parameters": [],
-        "has_body": False, "path": "/rest/products/search", "body_schema_keys": [],
+        "method": "GET",
+        "query_keys": ["q"],
+        "parameters": [],
+        "has_body": False,
+        "path": "/rest/products/search",
+        "body_schema_keys": [],
     }
 
     async def fake_eps(_gm, _eid):
         return [ep]
 
     async def fake_error_based(_c, _url, param=None):
-        return {"technique": "error_based", "endpoint": ep["url"], "parameter": "q",
-                "payload": "q='", "confidence": 1.0}
+        return {
+            "technique": "error_based",
+            "endpoint": ep["url"],
+            "parameter": "q",
+            "payload": "q='",
+            "confidence": 1.0,
+        }
 
     async def fake_time_blind(*a, **k):
         return None
@@ -87,8 +96,14 @@ async def test_escalation_mints_real_sqlmap_finding(monkeypatch):
         return None
 
     async def fake_confirm(url, **kw):
-        return {"injectable": True, "parameter": "q (GET)", "dbms": "PostgreSQL",
-                "techniques": ["error-based"], "payloads": ["PG error-based"], "raw_tail": ""}
+        return {
+            "injectable": True,
+            "parameter": "q (GET)",
+            "dbms": "PostgreSQL",
+            "techniques": ["error-based"],
+            "payloads": ["PG error-based"],
+            "raw_tail": "",
+        }
 
     captured = {}
 
@@ -105,7 +120,10 @@ async def test_escalation_mints_real_sqlmap_finding(monkeypatch):
     monkeypatch.setattr("ai_osop.core.sqlmap_confirm.sqlmap_confirm", fake_confirm)
 
     persisted, _examined = await ds.run_generalized_sqli(
-        "eng-x", _GM(), per_check_timeout=2.0, confirm_with_sqlmap=True,
+        "eng-x",
+        _GM(),
+        per_check_timeout=2.0,
+        confirm_with_sqlmap=True,
     )
     assert len(persisted) == 1
     v = captured["v"]
@@ -123,16 +141,25 @@ async def test_no_escalation_falls_back_to_oracle_finding(monkeypatch):
 
     ep = {
         "url": "http://t.test/rest/products/search?q=x",
-        "method": "GET", "query_keys": ["q"], "parameters": [],
-        "has_body": False, "path": "/rest/products/search", "body_schema_keys": [],
+        "method": "GET",
+        "query_keys": ["q"],
+        "parameters": [],
+        "has_body": False,
+        "path": "/rest/products/search",
+        "body_schema_keys": [],
     }
 
     async def fake_eps(_gm, _eid):
         return [ep]
 
     async def fake_error_based(_c, _url, param=None):
-        return {"technique": "error_based", "endpoint": ep["url"], "parameter": "q",
-                "payload": "q='", "confidence": 1.0}
+        return {
+            "technique": "error_based",
+            "endpoint": ep["url"],
+            "parameter": "q",
+            "payload": "q='",
+            "confidence": 1.0,
+        }
 
     async def fake_none(*a, **k):
         return None
@@ -155,7 +182,10 @@ async def test_no_escalation_falls_back_to_oracle_finding(monkeypatch):
     monkeypatch.setattr("ai_osop.core.sqlmap_confirm.sqlmap_confirm", fake_confirm)
 
     persisted, _ = await ds.run_generalized_sqli(
-        "eng-y", _GM(), per_check_timeout=2.0, confirm_with_sqlmap=True,
+        "eng-y",
+        _GM(),
+        per_check_timeout=2.0,
+        confirm_with_sqlmap=True,
     )
     assert len(persisted) == 1
     assert captured["v"].tool_source == "deterministic_scan_generalized"

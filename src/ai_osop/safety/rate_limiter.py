@@ -128,7 +128,9 @@ class RateLimiter:
         if time.monotonic() - started_at > 0.001:
             self.metrics["rate_limited_total"] += 1
 
-    def record_backpressure(self, target: str, status_code: Optional[int] = None, response_time: float = 0.0) -> None:
+    def record_backpressure(
+        self, target: str, status_code: Optional[int] = None, response_time: float = 0.0
+    ) -> None:
         """
         Queue-based backpressure: slow down when targets respond slowly or return 429/403.
         """

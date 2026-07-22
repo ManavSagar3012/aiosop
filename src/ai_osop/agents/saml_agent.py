@@ -8,7 +8,7 @@ from typing import Any, Dict
 import httpx
 
 from ai_osop.agents.base_vuln_agent import BaseVulnerabilityAgent
-from ai_osop.core.config import AgentType, Severity, VulnClass
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
 from ai_osop.payload_engine.engine import PayloadTemplateLibrary
 

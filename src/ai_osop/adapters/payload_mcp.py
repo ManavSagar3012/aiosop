@@ -6,7 +6,7 @@ Context-aware payload generation, mutation, and encoding engine.
 import hashlib
 from typing import Any, Dict, List, Optional
 
-from ai_osop.core.config import VulnClass
+from ai_osop.core.enums import VulnClass
 from ai_osop.core.models import Payload
 from ai_osop.mcp.protocol import MCPRegistry
 

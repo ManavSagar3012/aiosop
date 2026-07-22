@@ -67,6 +67,7 @@ def test_assert_production_secrets_blocks_unset_audit_key(restore_settings):
     with pytest.raises(RuntimeError, match="AUDIT_SECRET_KEY"):
         config.assert_production_secrets()
 
+
 def test_assert_production_secrets_noop_in_dev(restore_settings):
     config.settings.environment = "development"
     config.settings.neo4j_password = "change-me-local"
@@ -80,6 +81,7 @@ def test_assert_production_secrets_passes_when_configured(restore_settings):
     config.settings.audit_secret_key = "a-real-audit-key"
     config.settings.jwt_secret = "a-strong-jwt-secret"
     config.assert_production_secrets()  # must not raise
+
 
 def test_sign_then_verify_roundtrip_with_one_key(restore_settings):
     """A scope signed with scope_signing_key() verifies with the same key — proving the

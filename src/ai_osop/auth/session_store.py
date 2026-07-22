@@ -478,7 +478,11 @@ class SessionStore:
 
     @asynccontextmanager
     async def as_user(
-        self, engagement_id: str, user_label: str, *, base_url: str = "",
+        self,
+        engagement_id: str,
+        user_label: str,
+        *,
+        base_url: str = "",
         governance_hook: Any = None,
     ):
         """Yield a SessionClient pre-configured with the user's credentials.

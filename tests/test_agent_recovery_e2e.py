@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from ai_osop.core.config import AgentState
+from ai_osop.core.enums import AgentState
 from ai_osop.core.models import Task
 
 

@@ -1,9 +1,11 @@
 import asyncio
+
 import structlog
 from sqlalchemy import select, update
-from ai_osop.memory.session_memory import OutboxORM, SessionMemory
-from ai_osop.memory.graph_memory import GraphMemory
+
 from ai_osop.core.tracing import trace_span
+from ai_osop.memory.graph_memory import GraphMemory
+from ai_osop.memory.session_memory import OutboxORM, SessionMemory
 
 logger = structlog.get_logger("ai_osop.memory.outbox_processor")
 
@@ -57,12 +59,15 @@ class OutboxProcessor:
                         if entry.entity_type == "task":
                             # Reconstruct task from payload
                             from ai_osop.core.models import Task
+
                             task = Task(**entry.payload)
                             await self.graph_memory.upsert_task(task)
 
                             # Mark as processed
                             await session.execute(
-                                update(OutboxORM).where(OutboxORM.id == entry.id).values(processed=True)
+                                update(OutboxORM)
+                                .where(OutboxORM.id == entry.id)
+                                .values(processed=True)
                             )
                             await session.commit()
                             logger.info(f"Processed outbox entry {entry.id}")
@@ -72,9 +77,7 @@ class OutboxProcessor:
                             # (never marked processed). Now it counts as an
                             # attempt so a misconfigured producer surfaces
                             # as a DLQ entry instead of looping silently.
-                            raise ValueError(
-                                f"unknown outbox entity_type: {entry.entity_type!r}"
-                            )
+                            raise ValueError(f"unknown outbox entity_type: {entry.entity_type!r}")
                     except Exception as e:
                         # Phase-1 issue #12: increment attempt_count and
                         # record the error. Over MAX_ATTEMPTS, mark dlq=True
