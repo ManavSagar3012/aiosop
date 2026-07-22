@@ -12,13 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-
-import logging
-
-logging.getLogger("neo4j").setLevel(logging.ERROR)
-
-
+from cachetools import TTLCache
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 
@@ -36,8 +30,12 @@ from ai_osop.core.models import (
     WorkflowStep,
     WorkflowTransition,
 )
+from ai_osop.core.observability import record_neo4j_pool_metrics
 from ai_osop.core.tracing import trace_span
 from ai_osop.reliability.retry import retry_with_backoff
+
+logger = logging.getLogger(__name__)
+logging.getLogger("neo4j").setLevel(logging.ERROR)
 
 
 class GraphMemory:
@@ -72,10 +70,26 @@ class GraphMemory:
         # records accepted findings into the Beta-Binomial feedback loop.
         self.calibration_engine: Optional[Any] = None
 
+        # AIOSOP-CACHE-001 (2026-07-22): TTLCache for get_graph_stats results.
+        # Phase monitor calls this on every tick for each active engagement
+        # (via _resolve_auto_next). Cache for 10s since graph stats change
+        # infrequently (only when new Vulnerability/Endpoint nodes are added).
+        self._graph_stats_cache: TTLCache = TTLCache(maxsize=128, ttl=10)
+
+        # AIOSOP-NEO4J-POOL-METRICS-002 (2026-07-22): periodic pool metric export.
+        # Background loop runs every 15s so Prometheus gauges reflect live pool
+        # health (in-use connections, closed state) rather than a startup snapshot.
+        self._pool_metrics_running = False
+        self._pool_metrics_task: Optional[asyncio.Task] = None
+
     async def connect(self) -> None:
         """Initialize Neo4j connection with exponential backoff retry.
 
         Sprint 7: Survives Neo4j restarts during startup without crashing the platform.
+
+        AIOSOP-NEO4J-POOL-METRICS-001 (2026-07-22): After a successful connection,
+        export pool metrics so Prometheus immediately reflects real pool health
+        rather than showing 0/False until the first periodic export tick.
         """
 
         async def _connect() -> None:
@@ -97,6 +111,9 @@ class GraphMemory:
         # Create indexes and constraints
         await self._setup_schema()
 
+        # Export initial pool metrics after successful connection
+        await self._export_pool_metrics()
+
     async def _setup_schema(self) -> None:
         """Create indexes and constraints for performance."""
         constraints = [
@@ -105,17 +122,24 @@ class GraphMemory:
             "CREATE CONSTRAINT vuln_id IF NOT EXISTS FOR (v:Vulnerability) REQUIRE v.id IS UNIQUE",
             "CREATE CONSTRAINT exploit_id IF NOT EXISTS FOR (x:Exploit) REQUIRE x.id IS UNIQUE",
             "CREATE CONSTRAINT payload_id IF NOT EXISTS FOR (p:Payload) REQUIRE p.id IS UNIQUE",
-            "CREATE CONSTRAINT diff_auth_id IF NOT EXISTS FOR (d:DiffAuthFinding) REQUIRE d.id IS UNIQUE",
-            "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (ev:Evidence) REQUIRE ev.id IS UNIQUE",
-            "CREATE CONSTRAINT hypothesis_id IF NOT EXISTS FOR (h:Hypothesis) REQUIRE h.id IS UNIQUE",
+            "CREATE CONSTRAINT diff_auth_id "
+            "IF NOT EXISTS FOR (d:DiffAuthFinding) REQUIRE d.id IS UNIQUE",
+            "CREATE CONSTRAINT evidence_id "
+            "IF NOT EXISTS FOR (ev:Evidence) REQUIRE ev.id IS UNIQUE",
+            "CREATE CONSTRAINT hypothesis_id "
+            "IF NOT EXISTS FOR (h:Hypothesis) REQUIRE h.id IS UNIQUE",
             "CREATE CONSTRAINT workflow_id IF NOT EXISTS FOR (w:Workflow) REQUIRE w.id IS UNIQUE",
             "CREATE CONSTRAINT step_id IF NOT EXISTS FOR (s:Step) REQUIRE s.id IS UNIQUE",
             "CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
-            "CREATE CONSTRAINT engagement_id IF NOT EXISTS FOR (e:Engagement) REQUIRE e.engagement_id IS UNIQUE",
-            "CREATE CONSTRAINT auto_discovery_claim_eid IF NOT EXISTS FOR (c:AutoDiscoveryClaim) REQUIRE c.engagement_id IS UNIQUE",
-            "CREATE CONSTRAINT taxonomy_node_id IF NOT EXISTS FOR (t:TaxonomyNode) REQUIRE t.id IS UNIQUE",
+            "CREATE CONSTRAINT engagement_id "
+            "IF NOT EXISTS FOR (e:Engagement) REQUIRE e.engagement_id IS UNIQUE",
+            "CREATE CONSTRAINT auto_discovery_claim_eid "
+            "IF NOT EXISTS FOR (c:AutoDiscoveryClaim) REQUIRE c.engagement_id IS UNIQUE",
+            "CREATE CONSTRAINT taxonomy_node_id "
+            "IF NOT EXISTS FOR (t:TaxonomyNode) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT identity_id IF NOT EXISTS FOR (i:Identity) REQUIRE i.id IS UNIQUE",
-            "CREATE CONSTRAINT credential_id IF NOT EXISTS FOR (c:Credential) REQUIRE c.id IS UNIQUE",
+            "CREATE CONSTRAINT credential_id "
+            "IF NOT EXISTS FOR (c:Credential) REQUIRE c.id IS UNIQUE",
             "CREATE CONSTRAINT session_id IF NOT EXISTS FOR (s:Session) REQUIRE s.id IS UNIQUE",
             "CREATE CONSTRAINT role_id IF NOT EXISTS FOR (r:Role) REQUIRE r.id IS UNIQUE",
         ]
@@ -129,16 +153,22 @@ class GraphMemory:
             "CREATE INDEX vuln_eid_idx IF NOT EXISTS FOR (v:Vulnerability) ON (v.engagement_id)",
             "CREATE INDEX vuln_class_idx IF NOT EXISTS FOR (v:Vulnerability) ON (v.vuln_class)",
             "CREATE INDEX replay_eid_idx IF NOT EXISTS FOR (r:ReplayResult) ON (r.engagement_id)",
-            "CREATE INDEX authtest_eid_idx IF NOT EXISTS FOR (a:AuthorizationTest) ON (a.engagement_id)",
-            "CREATE INDEX diffauth_eid_idx IF NOT EXISTS FOR (d:DiffAuthFinding) ON (d.engagement_id)",
+            "CREATE INDEX authtest_eid_idx "
+            "IF NOT EXISTS FOR (a:AuthorizationTest) ON (a.engagement_id)",
+            "CREATE INDEX diffauth_eid_idx "
+            "IF NOT EXISTS FOR (d:DiffAuthFinding) ON (d.engagement_id)",
             "CREATE INDEX evidence_eid_idx IF NOT EXISTS FOR (e:Evidence) ON (e.engagement_id)",
             "CREATE INDEX workflow_eid_idx IF NOT EXISTS FOR (w:Workflow) ON (w.engagement_id)",
             "CREATE INDEX asset_type_value IF NOT EXISTS FOR (a:Asset) ON (a.type, a.value)",
-            "CREATE INDEX vuln_type_confidence IF NOT EXISTS FOR (v:Vulnerability) ON (v.vuln_type, v.confidence)",
+            "CREATE INDEX vuln_type_confidence "
+            "IF NOT EXISTS FOR (v:Vulnerability) ON (v.vuln_type, v.confidence)",
             "CREATE INDEX exploit_timestamp IF NOT EXISTS FOR (x:Exploit) ON (x.timestamp)",
-            "CREATE INDEX diff_auth_category IF NOT EXISTS FOR (d:DiffAuthFinding) ON (d.category, d.engagement_id)",
-            "CREATE INDEX hypothesis_category IF NOT EXISTS FOR (h:Hypothesis) ON (h.category, h.engagement_id)",
-            "CREATE INDEX hypothesis_confidence IF NOT EXISTS FOR (h:Hypothesis) ON (h.confidence, h.engagement_id)",
+            "CREATE INDEX diff_auth_category "
+            "IF NOT EXISTS FOR (d:DiffAuthFinding) ON (d.category, d.engagement_id)",
+            "CREATE INDEX hypothesis_category "
+            "IF NOT EXISTS FOR (h:Hypothesis) ON (h.category, h.engagement_id)",
+            "CREATE INDEX hypothesis_confidence "
+            "IF NOT EXISTS FOR (h:Hypothesis) ON (h.confidence, h.engagement_id)",
         ]
 
         async with self._driver.session() as session:
@@ -171,7 +201,9 @@ class GraphMemory:
                 a.source = $source,
                 a.confidence = $confidence,
                 a.metadata = $metadata,
-                a.first_seen = CASE WHEN a.first_seen IS NULL THEN $first_seen ELSE a.first_seen END,
+                a.first_seen = CASE
+                    WHEN a.first_seen IS NULL
+                    THEN $first_seen ELSE a.first_seen END,
                 a.last_seen = $last_seen,
                 a.engagement_id = $engagement_id
             RETURN a.id
@@ -285,6 +317,8 @@ class GraphMemory:
                     },
                 )
                 record = await result.single()
+                # Invalidate graph stats cache since we added a new node
+                await self.invalidate_graph_stats_cache(endpoint.engagement_id)
                 return record["id"] if record else endpoint.id
 
     async def add_vulnerability(self, vuln: Vulnerability) -> str:
@@ -456,6 +490,8 @@ class GraphMemory:
                 persisted_id,
                 dedup_key,
             )
+        # Invalidate graph stats cache since we persisted a new (or updated) node
+        await self.invalidate_graph_stats_cache(vuln.engagement_id)
         return persisted_id
 
     @staticmethod
@@ -578,7 +614,11 @@ class GraphMemory:
         async with self._driver.session() as session:
             result = await session.run(cypher, {"rows": rows})
             ids = [rec["id"] async for rec in result]
-            return ids
+
+        # Invalidate graph stats cache after batch persist
+        if ids and endpoints:
+            await self.invalidate_graph_stats_cache(endpoints[0].engagement_id)
+        return ids
 
     async def add_vulnerabilities_batch(self, vulns: List[Vulnerability]) -> List[str]:
         """Persist a list of Vulnerabilities in one UNWIND Cypher transaction. Skips
@@ -710,6 +750,9 @@ class GraphMemory:
                 except Exception as e:  # noqa: BLE001
                     logger.warning("primitive_ledger_record_failed id=%s error=%s", vuln.id, e)
 
+        # Invalidate graph stats cache after batch persist
+        if ids and real_vulns:
+            await self.invalidate_graph_stats_cache(real_vulns[0].engagement_id)
         return ids
 
     async def validate_vulnerability(self, vuln_id: str) -> None:
@@ -847,16 +890,27 @@ class GraphMemory:
         WHERE start.id = $entry_id
         MATCH (goal:Vulnerability)
         WHERE goal.impact IN $goal_types AND coalesce(goal.confidence, 1.0) >= $min_conf
-        CALL apoc.algo.dijkstra(start, goal, 'HAS_ENDPOINT>|HAS_VULNERABILITY>|LEADS_TO>', 'probability') 
+        CALL apoc.algo.dijkstra(
+            start, goal,
+            'HAS_ENDPOINT>|HAS_VULNERABILITY>|LEADS_TO>',
+            'probability'
+        )
         YIELD path, weight
         WITH path, weight, start, goal
         WHERE length(path) <= $max_depth
         RETURN 
             [node in nodes(path) | node.id] as node_ids,
-            [rel in relationships(path) | {type: type(rel), weight: coalesce(rel.probability, 1.0)}] as edges,
+            [rel in relationships(path)
+             | {type: type(rel), weight: coalesce(rel.probability, 1.0)}] as edges,
             coalesce(weight, 1.0) as confidence,
-            reduce(time = 0, r in relationships(path) | time + coalesce(r.time_estimate, 60)) as total_time,
-            reduce(risk = 0.0, r in relationships(path) | risk + coalesce(r.detection_risk, 0.1)) as total_risk,
+            reduce(
+                time = 0, r in relationships(path)
+                | time + coalesce(r.time_estimate, 60)
+            ) as total_time,
+            reduce(
+                risk = 0.0, r in relationships(path)
+                | risk + coalesce(r.detection_risk, 0.1)
+            ) as total_risk,
             start.id as entry_id,
             goal.id as goal_id
         ORDER BY confidence DESC
@@ -911,7 +965,11 @@ class GraphMemory:
         cypher = """
         MATCH (start)
         WHERE start.id = $node_id
-        CALL apoc.path.subgraphNodes(start, {relationshipFilter: 'LEADS_TO>|HAS_VULNERABILITY>|EXPLOITED_BY>', maxLevel: 3})
+        CALL apoc.path.subgraphNodes(
+            start,
+            {relationshipFilter: 'LEADS_TO>|HAS_VULNERABILITY>|EXPLOITED_BY>',
+             maxLevel: 3}
+        )
         YIELD node
         RETURN node.id as id, labels(node)[0] as type, node.confidence as confidence
         """
@@ -941,9 +999,18 @@ class GraphMemory:
         WITH v
         MATCH path = (v)-[:LEADS_TO*1..5]->(downstream)
         WITH downstream, path, $impact_score as base_risk
-        SET downstream.risk_score = CASE 
-            WHEN downstream.risk_score IS NULL THEN base_risk * reduce(conf = 1.0, r in relationships(path) | conf * r.probability)
-            ELSE downstream.risk_score + base_risk * reduce(conf = 1.0, r in relationships(path) | conf * r.probability)
+        SET downstream.risk_score = CASE
+            WHEN downstream.risk_score IS NULL
+                THEN base_risk * reduce(
+                    conf = 1.0,
+                    r in relationships(path)
+                    | conf * r.probability
+                )
+            ELSE downstream.risk_score + base_risk * reduce(
+                conf = 1.0,
+                r in relationships(path)
+                | conf * r.probability
+            )
         END
         """
 
@@ -1003,7 +1070,18 @@ class GraphMemory:
             return None
 
     async def get_graph_stats(self, engagement_id: str) -> Dict[str, Any]:
-        """Get engagement graph statistics."""
+        """Get engagement graph statistics.
+
+        Results are cached in ``self._graph_stats_cache`` (TTL 10s) since graph
+        stats change infrequently — only when new Vulnerability/Endpoint nodes
+        are persisted. The cache is invalidated by :meth:`invalidate_graph_stats_cache`.
+        """
+        _cache = getattr(self, "_graph_stats_cache", None)
+        if _cache is not None:
+            cached = _cache.get(engagement_id)
+            if cached is not None:
+                return cached
+
         cypher = """
         MATCH (n)
         WHERE n.engagement_id = $engagement_id
@@ -1022,7 +1100,119 @@ class GraphMemory:
             async with self._driver.session() as session:
                 result = await session.run(cypher, {"engagement_id": engagement_id})
                 record = await result.single()
-                return dict(record) if record else {}
+                stats = dict(record) if record else {}
+                # Cache the result so repeated phase-monitor ticks skip the query.
+                _cache = getattr(self, "_graph_stats_cache", None)
+                if _cache is not None:
+                    _cache[engagement_id] = stats
+                return stats
+
+    async def invalidate_graph_stats_cache(self, engagement_id: str) -> None:
+        """Invalidate cached graph stats for an engagement.
+
+        Called from persistence hooks so a newly added Vulnerability or Endpoint
+        is immediately visible on the next phase-monitor tick rather than waiting
+        for TTL expiry.
+        """
+        _cache = getattr(self, "_graph_stats_cache", None)
+        if _cache is not None:
+            _cache.pop(engagement_id, None)
+
+    async def _export_pool_metrics(self) -> None:
+        """Export Neo4j connection pool metrics to Prometheus gauges.
+
+        Reads from ``self._driver._pool`` internal state. The neo4j Python driver
+        exposes ``in_use_connection_count`` as a public pool attribute; total
+        connection count and closed status are probed from internal attributes
+        with try/except guards so a driver version change never breaks the
+        platform.
+
+        Gracefully handles uninitialized driver (``_driver is None``) — all
+        gauges reset to 0/False so Prometheus scrapes see a drained pool rather
+        than stale last-known-good values.
+        """
+        if self._driver is None:
+            record_neo4j_pool_metrics()
+            return
+
+        pool = getattr(self._driver, "_pool", None)
+        if pool is None:
+            record_neo4j_pool_metrics()
+            return
+
+        in_use = getattr(pool, "in_use_connection_count", None)
+        if in_use is None:
+            record_neo4j_pool_metrics()
+            return
+        # MAJ-4 fix (2026-07-22): some neo4j driver versions expose
+        # ``in_use_connection_count`` as a METHOD, not an int. Calling int()
+        # on a method raises TypeError. Resolve it: if it's callable, call it;
+        # if the result is still not an int, fall back to 0.
+        if callable(in_use):
+            try:
+                in_use = in_use()
+            except Exception:  # noqa: BLE001 — pool metric probe is advisory
+                in_use = 0
+        if not isinstance(in_use, (int, float)):
+            in_use = 0
+
+        # Derive total from internal connection set (best-effort, private API)
+        connections = getattr(pool, "connections", None)
+        total = 0
+        if connections is not None:
+            try:
+                total = len(connections)
+            except Exception:  # noqa: BLE001 — pool metric probe is advisory
+                pass
+
+        # Pool is closed when _pool has a 'closed' attribute that is True, or
+        # when the driver itself reports not connected.
+        closed = bool(getattr(pool, "closed", False))
+        ready = bool(self._initialized) and not closed
+
+        record_neo4j_pool_metrics(
+            in_use=int(in_use),
+            total=max(total, int(in_use)),
+            closed=closed,
+            ready=ready,
+        )
+
+    async def start_pool_metrics_export(self, interval: int = 15) -> None:
+        """Start a background task that exports Neo4j pool metrics every ``interval`` seconds.
+
+        The loop runs until :meth:`stop_pool_metrics_export` is called. Calling this
+        method when the loop is already running is a no-op.
+        """
+        if self._pool_metrics_running:
+            return
+        self._pool_metrics_running = True
+        self._pool_metrics_task = asyncio.ensure_future(self._pool_metrics_loop(interval))
+
+    async def stop_pool_metrics_export(self) -> None:
+        """Stop the pool metric export loop and cancel any in-flight iteration."""
+        self._pool_metrics_running = False
+        if self._pool_metrics_task is not None and not self._pool_metrics_task.done():
+            self._pool_metrics_task.cancel()
+            try:
+                await self._pool_metrics_task
+            except asyncio.CancelledError:
+                pass
+            self._pool_metrics_task = None
+
+    async def _pool_metrics_loop(self, interval: int) -> None:
+        """Periodically export Neo4j pool metrics.
+
+        Follows the same pattern as :class:`OutboxProcessor.run` — a "while running"
+        loop with a guard flag that :meth:`stop_pool_metrics_export` sets to False,
+        so cancellation is cooperative and never leaves stale background work.
+        """
+        logger.info("neo4j_pool_metrics_loop_started interval=%ds", interval)
+        while self._pool_metrics_running:
+            try:
+                await self._export_pool_metrics()
+            except Exception as e:  # noqa: BLE001 - pool metrics are advisory
+                logger.warning("neo4j_pool_metrics_export_error: %s", e)
+            await asyncio.sleep(interval)
 
     async def get_vulnerabilities_by_engagement(
         self, engagement_id: str, *aliases: str
@@ -1102,7 +1292,10 @@ class GraphMemory:
                 "graph_memory.export_findings_json",
                 attributes={"engagement_id": engagement_id, "count": len(findings)},
             ):
-                Path(path).write_text(json.dumps(findings, indent=2, default=str), encoding="utf-8")
+                Path(path).write_text(
+                    json.dumps(findings, indent=2, default=str),
+                    encoding="utf-8",
+                )
             logger.info(
                 "exported %d findings for engagement=%s -> %s",
                 len(findings),
@@ -1401,7 +1594,9 @@ class GraphMemory:
         SET d.category = $category, d.resource_id = $resource_id,
             d.test_identity_id = $test_identity_id, d.expected_result = $expected_result,
             d.observed_result = $observed_result, d.evidence_diff = $evidence_diff,
-            d.confidence = $confidence, d.engagement_id = $engagement_id, d.created_at = $created_at
+            d.confidence = $confidence,
+            d.engagement_id = $engagement_id,
+            d.created_at = $created_at
         WITH d
         OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
         FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
@@ -1558,7 +1753,9 @@ class GraphMemory:
         SET t.type=$type, t.status=$status, t.engagement_id=$engagement_id,
             t.agent_type=$agent_type, t.retry_count=$retry_count, t.max_retries=$max_retries,
             t.timeout_seconds=$timeout_seconds, t.created_at=$created_at, t.started_at=$started_at,
-            t.completed_at=$completed_at, t.updated_at=$updated_at, t.result_summary=$result_summary,
+            t.completed_at=$completed_at,
+            t.updated_at=$updated_at,
+            t.result_summary=$result_summary,
             t.result=$result, t.error=$error,
             t.payload=$payload, t.priority=$priority,
             t.recovery_attempts=coalesce(t.recovery_attempts, 0)
@@ -2181,7 +2378,9 @@ class GraphMemory:
         MATCH (e:Endpoint {engagement_id: $engagement_id})
         OPTIONAL MATCH (e)-[:HAS_VULNERABILITY]->(v:Vulnerability)
         WITH e, count(v) AS vuln_count
-        OPTIONAL MATCH (e)<-[:HAS_ENDPOINT]-(:Asset)-[:HAS_ENDPOINT]->(peer:Endpoint)-[:HAS_VULNERABILITY]->(pv:Vulnerability)
+        OPTIONAL MATCH (e)<-[:HAS_ENDPOINT]-(:Asset)
+            -[:HAS_ENDPOINT]->(peer:Endpoint)
+            -[:HAS_VULNERABILITY]->(pv:Vulnerability)
         WITH e, vuln_count, count(DISTINCT pv) AS neighbor_vuln_count
         RETURN
             e.id AS endpoint_id,

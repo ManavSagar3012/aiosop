@@ -1,4 +1,10 @@
-"""Local MCP-style adapter for report rendering and export."""
+"""Local MCP-style adapter for report rendering and export.
+
+MAJ-1 (2026-07-22): NOT a stub. This is a local adapter that wraps the real
+``ReportExporter`` (Jinja2/HTML) with a timeout. The bounty-report rendering
+engine is ``ai_osop.core.bounty_report.render_bounty_report`` (re-exported
+from ``ai_osop.reporting``). This adapter is for internal HTML/PDF export.
+"""
 
 from __future__ import annotations
 

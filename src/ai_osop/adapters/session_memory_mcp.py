@@ -1,4 +1,9 @@
-"""Local MCP-style adapter for session memory operations."""
+"""Local MCP-style adapter for session memory operations.
+
+MAJ-1 (2026-07-22): NOT a stub. This is a local adapter that wraps the real
+``SessionMemory`` (Redis + Postgres) with a timeout. It does not produce
+fake data — it delegates to the actual persistence layer.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,9 @@
-"""Local MCP-style adapter for attack graph operations."""
+"""Local MCP-style adapter for attack graph operations.
+
+MAJ-1 (2026-07-22): NOT a stub. This is a local adapter that wraps the real
+``GraphMemory`` (Neo4j) with a timeout. It does not produce fake data — it
+delegates to the actual graph persistence layer.
+"""
 
 from __future__ import annotations
 

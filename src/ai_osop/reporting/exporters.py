@@ -1,6 +1,13 @@
 """
-Report Exporters
-Generates structured and styled reports from template data.
+Report Exporters — legacy Jinja2/HTML exporter for engagement output.
+
+BLK-3 (2026-07-22): this module generates styled HTML reports from Jinja2
+templates. The bounty-report rendering engine — the one that produces
+triager-grade Markdown with PoC, evidence, dedup signatures, CVSS, and
+simulated-finding guards — lives in ``ai_osop.core.bounty_report`` and is
+re-exported from ``ai_osop.reporting`` (the package ``__init__``). Use
+``render_bounty_report`` for bug-bounty submissions; this module is for
+internal HTML/PDF report export only.
 """
 
 import hashlib

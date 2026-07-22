@@ -202,6 +202,9 @@ class VulnAnalysisAgent(BaseAgent):
         elif task_type == "dom_xss_scan":
             return await self._execute_dom_xss_scan(payload)
         elif task_type == "jwt_scan":
+            # MAJ-3 (2026-07-22): jwt_agent.py is the authoritative handler.
+            # This branch is dead code — the scheduler routes to AgentType.JWT_SCANNER.
+            # Kept as a fail-safe redirect only; emit a deprecation warning.
             warnings.warn(
                 "jwt_scan dispatched to VulnAnalysisAgent — JWTAgent exists. "
                 "Route to AgentType.JWT_SCANNER instead.",
@@ -211,13 +214,14 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_jwt_scan(payload)
         elif task_type == "mass_assignment_scan":
             return await self._execute_mass_assignment_scan(payload)
-        # NOTE [DUAL-PATH]: The scheduler routes these task types to DEDICATED
-        # agent files (csrf_agent.py, ssrf_agent.py, takeover_agent.py, etc.)
-        # via their specific AgentType. These handlers in vuln_agent.py are
-        # NEVER REACHED from the scheduler path but are kept because:
-        #  - Tests call them directly (test fixtures)
-        #  - External CLI/API code may dispatch tasks with agent_type=VULN_ANALYSIS
-        # See AGENT_CLASSIFICATION.md for the full dual-path audit.
+        # MAJ-3 (2026-07-22): The following 9 task types have DEDICATED standalone
+        # agents (csrf_agent, ssrf_agent, takeover_agent, upload_scanner,
+        # pollution_scanner, websocket_agent, saml_agent, smuggling_scanner,
+        # race_scanner). The scheduler routes to them via their specific AgentType,
+        # so these vuln_agent branches are NEVER reached from the scheduler path.
+        # They are kept ONLY because tests call the _execute_* methods directly
+        # (the methods themselves are real implementations; only the dispatch
+        # branch is dead code). Do NOT add new dual-path branches here.
         elif task_type == "csrf_scan":
             warnings.warn(
                 "csrf_scan dispatched to VulnAnalysisAgent — CSRFAgent exists. "
@@ -242,13 +246,10 @@ class VulnAnalysisAgent(BaseAgent):
                 stacklevel=2,
             )
             return await self._execute_subdomain_takeover_scan(payload)
-        # NOTE [AUTHORITATIVE]: No dedicated agent exists for stored_xss_scan or
-        # secret_liveness_scan — these handlers are the SOLE code path.
         elif task_type == "stored_xss_scan":
             return await self._execute_stored_xss_scan(payload)
         elif task_type == "secret_liveness_scan":
             return await self._execute_secret_liveness_scan(payload)
-        # DUAL-PATH: dispatched to upload_scanner.py
         elif task_type == "file_upload_scan":
             warnings.warn(
                 "file_upload_scan dispatched to VulnAnalysisAgent — UploadScanner exists. "
@@ -257,7 +258,6 @@ class VulnAnalysisAgent(BaseAgent):
                 stacklevel=2,
             )
             return await self._execute_file_upload_scan(payload)
-        # DUAL-PATH: dispatched to pollution_scanner.py
         elif task_type == "prototype_pollution_scan":
             warnings.warn(
                 "prototype_pollution_scan dispatched to VulnAnalysisAgent — PollutionScanner exists. "
@@ -266,8 +266,6 @@ class VulnAnalysisAgent(BaseAgent):
                 stacklevel=2,
             )
             return await self._execute_prototype_pollution_scan(payload)
-        # NOTE [DUAL-PATH continued]: The remaining handlers below also have
-        # dedicated agent files and are never reached from the scheduler path.
         elif task_type == "websocket_scan":
             warnings.warn(
                 "websocket_scan dispatched to VulnAnalysisAgent — WebSocketAgent exists. "
