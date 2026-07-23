@@ -319,11 +319,17 @@ class ReconAgent(BaseAgent):
         )
 
     async def _execute_content_discovery(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Deep content/parameter discovery via katana (P1.2).
+        """Deep content/parameter discovery via katana (P1.2) + targeted permutator.
 
         JS-aware crawl of the target, then every discovered URL is mined for hidden
         parameters and high-risk surface and written to the graph as enriched
         endpoints. Reuses the P1.1 url_intelligence module for the mining.
+
+        Short-term Priority 2 (2026-07-23): after the katana crawl, queries the
+        graph for detected technologies on the target Asset and uses the
+        TargetedPermutator to generate framework-specific wordlist paths. These
+        are probed via the governed client — a human researcher would fuzz
+        /actuator/env if Spring is detected, /admin/login if Django, etc.
         """
         target = payload.get("url") or payload.get("target")
         if not target:
@@ -342,6 +348,53 @@ class ReconAgent(BaseAgent):
             for u in (list(result.get("endpoints", [])) + list(result.get("js_files", [])))
             if isinstance(u, str) and u
         ]
+
+        # Targeted Permutator: generate framework-specific paths and probe them.
+        # A human researcher doesn't use a generic wordlist — they generate
+        # custom paths based on the detected technology stack.
+        try:
+            from ai_osop.core.targeted_permutator import TargetedPermutator
+
+            # Query the graph for technologies detected on the target asset
+            tech_records = await self.ctx.graph_memory.run_read_query(
+                "MATCH (a:Asset {engagement_id: $eid}) "
+                "WHERE a.value CONTAINS $domain OR a.technologies IS NOT NULL "
+                "RETURN a.technologies AS techs, a.value AS value LIMIT 5",
+                {"eid": engagement_id, "domain": target.split("//")[-1].split("/")[0]},
+            )
+            all_techs: list = []
+            for rec in tech_records:
+                techs = rec.get("techs")
+                if isinstance(techs, list):
+                    all_techs.extend(techs)
+                elif isinstance(techs, str):
+                    all_techs.append(techs)
+
+            if all_techs:
+                framework_paths = TargetedPermutator.get_permutations(all_techs)
+                base_url = target.rstrip("/")
+                # Probe framework-specific paths via the governed client
+                async with self.get_governed_client(tool="content_fuzz", timeout=10.0) as client:
+                    for path in framework_paths[:80]:  # cap at 80 to stay bounded
+                        probe_url = f"{base_url}{path}"
+                        try:
+                            resp = await client.get(probe_url)
+                            if resp.status_code not in (404,):
+                                # Path exists (200, 401, 403, 500, etc.) — persist it
+                                ep = self._mk_endpoint(
+                                    probe_url, engagement_id, source="targeted_permutator",
+                                )
+                                await self._persist_endpoint(ep)
+                                self.endpoint_inventory[ep.id] = ep
+                        except Exception:
+                            continue
+                logger.info(
+                    "content_discovery_targeted_permutator",
+                    technologies=all_techs,
+                    paths_probed=len(framework_paths[:80]),
+                )
+        except Exception as e:
+            logger.warning("content_discovery_targeted_permutator_failed", error=str(e))
 
         # 1. Fetch form fields from up to 50 crawled URLs
         form_params_by_url = {}
@@ -766,6 +819,37 @@ class ReconAgent(BaseAgent):
                     logger.error(f"Failed to add Shodan asset {asset.value} to graph: {ex}")
         except Exception as e:
             logger.warning(f"Shodan OSINT lookup failed: {e}")
+
+        # 5a. Certificate Transparency (crt.sh) — passive subdomain discovery
+        try:
+            ct_result = await self._execute_cert_transparency({
+                "domain": domain,
+                "engagement_id": self.ctx.current_task.engagement_id,
+            })
+            logger.info(f"CT logs found {ct_result.get('subdomains_found', 0)} subdomains")
+        except Exception as e:
+            logger.warning(f"CT log lookup failed: {e}")
+
+        # 5b. Wayback Machine — historical URL discovery
+        try:
+            wb_result = await self._execute_wayback_discovery({
+                "domain": domain,
+                "engagement_id": self.ctx.current_task.engagement_id,
+            })
+            logger.info(f"Wayback found {wb_result.get('urls_found', 0)} historical URLs")
+        except Exception as e:
+            logger.warning(f"Wayback discovery failed: {e}")
+
+        # 5c. WAF Detection — identify WAF for context-aware payload generation
+        try:
+            waf_result = await self._execute_waf_detection({
+                "domain": domain,
+                "engagement_id": self.ctx.current_task.engagement_id,
+            })
+            if waf_result.get("waf_detected"):
+                logger.info(f"WAF detected: {waf_result['waf_detected']} (signals: {waf_result['waf_signals']})")
+        except Exception as e:
+            logger.warning(f"WAF detection failed: {e}")
 
         # P1 recon multiplier: consolidate every discovered URL (crawl + historical +
         # probes) into parameter/endpoint intelligence. This turns a raw URL dump into
