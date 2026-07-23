@@ -52,6 +52,12 @@ def client():
         graph.connect = AsyncMock()
         graph._driver = MagicMock()
         graph._driver.session = MagicMock(return_value=stub_async_context_manager(AsyncMock()))
+        # BLK-4 (2026-07-23): lifespan shutdown calls stop_pool_metrics_export
+        # + start_pool_metrics_export; mock them so the MagicMock graph doesn't
+        # raise TypeError on await.
+        graph.stop_pool_metrics_export = AsyncMock()
+        graph.start_pool_metrics_export = AsyncMock()
+        graph._export_pool_metrics = AsyncMock()
 
         # --- VectorMemory ---
         mock_vector.return_value.connect = AsyncMock()

@@ -177,7 +177,18 @@ class VulnAnalysisAgent(BaseAgent):
         return await self.ctx.llm_client.complete(messages)
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
-        """Execute vulnerability analysis task."""
+        """Execute vulnerability analysis task.
+
+        BLK-4 / MAJ-2 (2026-07-23): the 25-branch if/elif chain has been
+        replaced with a handler-registry lookup. Each task_type routes to
+        a handler module in ``agents/handlers/``. The 10 dead-code branches
+        for task types that have dedicated standalone agents (jwt, csrf,
+        ssrf, subdomain_takeover, file_upload, prototype_pollution,
+        websocket, saml, race_limit, request_smuggling) are DELETED — the
+        scheduler routes to the standalone agent, so these branches were
+        unreachable. Tests that call ``_execute_*`` methods directly still
+        work because the methods remain on this class.
+        """
         task_type = task.type
         payload = task.payload
         # PATCH (REL-016, 2026-06-15): inject engagement_id into payload so
@@ -189,133 +200,50 @@ class VulnAnalysisAgent(BaseAgent):
         if isinstance(payload, dict) and not payload.get("engagement_id"):
             payload["engagement_id"] = task.engagement_id
 
-        if task_type == "burp_scan":
-            return await self._execute_burp_scan(payload)
-        elif task_type == "intruder_fuzz":
-            return await self._execute_intruder_fuzz(payload)
-        elif task_type == "nuclei_scan":
-            return await self._execute_nuclei_scan(payload)
-        elif task_type == "sqli_scan":
-            return await self._execute_sqli_scan(payload)
-        elif task_type == "xss_scan":
-            return await self._execute_xss_scan(payload)
-        elif task_type == "dom_xss_scan":
-            return await self._execute_dom_xss_scan(payload)
-        elif task_type == "jwt_scan":
-            # MAJ-3 (2026-07-22): jwt_agent.py is the authoritative handler.
-            # This branch is dead code — the scheduler routes to AgentType.JWT_SCANNER.
-            # Kept as a fail-safe redirect only; emit a deprecation warning.
+        from ai_osop.agents.handlers.registry import TASK_HANDLERS
+
+        handler = TASK_HANDLERS.get(task_type)
+        if handler is not None:
+            return await handler(self, payload)
+
+        # Task types that have dedicated standalone agents — they should
+        # NEVER reach VulnAnalysisAgent. If they do, warn and redirect.
+        _DELEGATED_TO_STANDALONE = {
+            "jwt_scan": "JWTAgent (AgentType.JWT_SCANNER)",
+            "csrf_scan": "CSRFAgent (AgentType.CSRF_SCANNER)",
+            "ssrf_scan": "SSRFAgent (AgentType.SSRF_SCANNER)",
+            "subdomain_takeover_scan": "TakeoverAgent (AgentType.TAKEOVER_SCANNER)",
+            "file_upload_scan": "UploadScanner (AgentType.UPLOAD_SCANNER)",
+            "prototype_pollution_scan": "PollutionScanner (AgentType.POLLUTION_SCANNER)",
+            "websocket_scan": "WebSocketAgent (AgentType.WEBSOCKET_SCANNER)",
+            "saml_scan": "SAMLAgent (AgentType.SAML_SCANNER)",
+            "race_limit_scan": "RaceScanner (AgentType.RACE_SCANNER)",
+            "request_smuggling_scan": "SmugglingScanner (AgentType.SMUGGLING_SCANNER)",
+        }
+        if task_type in _DELEGATED_TO_STANDALONE:
             warnings.warn(
-                "jwt_scan dispatched to VulnAnalysisAgent — JWTAgent exists. "
-                "Route to AgentType.JWT_SCANNER instead.",
+                f"{task_type} dispatched to VulnAnalysisAgent — "
+                f"{_DELEGATED_TO_STANDALONE[task_type]} exists. "
+                f"Route to the dedicated agent instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            return await self._execute_jwt_scan(payload)
-        elif task_type == "mass_assignment_scan":
-            return await self._execute_mass_assignment_scan(payload)
-        # MAJ-3 (2026-07-22): The following 9 task types have DEDICATED standalone
-        # agents (csrf_agent, ssrf_agent, takeover_agent, upload_scanner,
-        # pollution_scanner, websocket_agent, saml_agent, smuggling_scanner,
-        # race_scanner). The scheduler routes to them via their specific AgentType,
-        # so these vuln_agent branches are NEVER reached from the scheduler path.
-        # They are kept ONLY because tests call the _execute_* methods directly
-        # (the methods themselves are real implementations; only the dispatch
-        # branch is dead code). Do NOT add new dual-path branches here.
-        elif task_type == "csrf_scan":
-            warnings.warn(
-                "csrf_scan dispatched to VulnAnalysisAgent — CSRFAgent exists. "
-                "Route to AgentType.CSRF_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_csrf_scan(payload)
-        elif task_type == "ssrf_scan":
-            warnings.warn(
-                "ssrf_scan dispatched to VulnAnalysisAgent — SSRFAgent exists. "
-                "Route to AgentType.SSRF_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_ssrf_scan(payload)
-        elif task_type == "subdomain_takeover_scan":
-            warnings.warn(
-                "subdomain_takeover_scan dispatched to VulnAnalysisAgent — TakeoverAgent exists. "
-                "Route to AgentType.TAKEOVER_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_subdomain_takeover_scan(payload)
-        elif task_type == "stored_xss_scan":
-            return await self._execute_stored_xss_scan(payload)
-        elif task_type == "secret_liveness_scan":
-            return await self._execute_secret_liveness_scan(payload)
-        elif task_type == "file_upload_scan":
-            warnings.warn(
-                "file_upload_scan dispatched to VulnAnalysisAgent — UploadScanner exists. "
-                "Route to AgentType.UPLOAD_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_file_upload_scan(payload)
-        elif task_type == "prototype_pollution_scan":
-            warnings.warn(
-                "prototype_pollution_scan dispatched to VulnAnalysisAgent — PollutionScanner exists. "
-                "Route to AgentType.POLLUTION_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_prototype_pollution_scan(payload)
-        elif task_type == "websocket_scan":
-            warnings.warn(
-                "websocket_scan dispatched to VulnAnalysisAgent — WebSocketAgent exists. "
-                "Route to AgentType.WEBSOCKET_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_websocket_scan(payload)
-        elif task_type == "saml_scan":
-            warnings.warn(
-                "saml_scan dispatched to VulnAnalysisAgent — SAMLAgent exists. "
-                "Route to AgentType.SAML_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_saml_scan(payload)
-        elif task_type == "race_limit_scan":
-            warnings.warn(
-                "race_limit_scan dispatched to VulnAnalysisAgent — RaceScanner exists. "
-                "Route to AgentType.RACE_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_race_limit_scan(payload)
-        elif task_type == "ssrf_metadata_chain":
-            return await self._execute_ssrf_metadata_chain(payload)
-        elif task_type == "request_smuggling_scan":
-            warnings.warn(
-                "request_smuggling_scan dispatched to VulnAnalysisAgent — SmugglingScanner exists. "
-                "Route to AgentType.SMUGGLING_SCANNER instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return await self._execute_request_smuggling_scan(payload)
-        elif task_type == "oauth_reset_scan":
-            return await self._execute_oauth_reset_scan(payload)
-        elif task_type == "open_redirect_scan":
-            return await self._execute_open_redirect_scan(payload)
-        elif task_type == "nosql_scan":
-            return await self._execute_nosql_scan(payload)
-        elif task_type == "cache_poisoning_scan":
-            return await self._execute_cache_poisoning_scan(payload)
-        elif task_type == "ai_mcp_scan":
-            return await self._execute_ai_mcp_scan(payload)
-        elif task_type == "correlate_findings":
-            return await self._execute_correlation(payload)
-        elif task_type == "triage_finding":
-            return await self._execute_triage(payload)
-        else:
-            raise AgentException(f"Unknown vuln analysis task: {task_type}")
+            # Delegate to the method on self (kept for test compat)
+            method_name = {
+                "jwt_scan": "_execute_jwt_scan",
+                "csrf_scan": "_execute_csrf_scan",
+                "ssrf_scan": "_execute_ssrf_scan",
+                "subdomain_takeover_scan": "_execute_subdomain_takeover_scan",
+                "file_upload_scan": "_execute_file_upload_scan",
+                "prototype_pollution_scan": "_execute_prototype_pollution_scan",
+                "websocket_scan": "_execute_websocket_scan",
+                "saml_scan": "_execute_saml_scan",
+                "race_limit_scan": "_execute_race_limit_scan",
+                "request_smuggling_scan": "_execute_request_smuggling_scan",
+            }[task_type]
+            return await getattr(self, method_name)(payload)
+
+        raise AgentException(f"Unknown vuln analysis task: {task_type}")
 
     async def _enrich_with_prior_findings(self, context: str, domain: str) -> str:
         """Append semantically-similar past findings to a reasoning context.
