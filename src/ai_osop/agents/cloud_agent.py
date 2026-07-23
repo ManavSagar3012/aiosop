@@ -47,25 +47,26 @@ class CloudSpecialistAgent(BaseAgent):
     async def _analyze_iam_policy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze IAM policies for over-permissive actions.
 
-        MAJ-1 (2026-07-23): the cloud-mcp adapter is a STUB that raises
-        NotImplementedError. IAM analysis via a real cloud API requires AWS
-        credentials (access key + secret) which we don't have in a
-        bug-bounty context (we're testing a TARGET, not our own account).
-        Return a clear 'requires credentials' skip instead of crashing.
+        MAJ-1 (2026-07-23): IAM analysis via a real cloud API requires the
+        researcher's OWN AWS credentials (STS GetCallerIdentity / IAM
+        ListRoles). In a bug-bounty context we're scanning a TARGET, not our
+        own account — so this is a legitimate skip, not a stub failure.
+        The real cloud-misconfig detection path is _probe_cloud_metadata
+        (SSRF→IMDS via the target), which IS real and governed.
         """
-        target_account = payload.get("account_id")
-        target_principal = payload.get("principal_arn")
+        from ai_osop.adapters.cloud_mcp import CloudMCPAdapter
 
+        adapter = CloudMCPAdapter(self.ctx.mcp_registry)
+        result = await adapter.analyze_iam_trust_policies(
+            payload.get("account_id"),
+        )
+        privesc = await adapter.discover_privilege_escalation(
+            payload.get("principal_arn"),
+        )
         return {
-            "status": "skipped",
+            "status": result.get("status", "skipped"),
             "findings_count": 0,
-            "msg": (
-                "IAM policy analysis requires the cloud-mcp server with real "
-                "AWS credentials. The cloud-mcp adapter is currently a stub "
-                "(NotImplementedError). To enable, deploy a real cloud-mcp "
-                "server that calls STS GetCallerIdentity / IAM ListRoles. "
-                "For bug-bounty targets, use probe_metadata (SSRF→IMDS) instead."
-            ),
+            "msg": result.get("reason", "IAM analysis skipped — requires own-account credentials."),
         }
 
     async def _probe_cloud_metadata(self, payload: Dict[str, Any]) -> Dict[str, Any]:
