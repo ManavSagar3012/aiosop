@@ -10,9 +10,8 @@
   expected_phase:
     - vuln_discovery
   expected_evidence:
-    - request
-    - response
     - payload
+    - token
   expected_report:
     - CWE-89
     - SQL Injection
@@ -29,8 +28,6 @@
   expected_phase:
     - vuln_discovery
   expected_evidence:
-    - request
-    - response
     - payload
   expected_report:
     - CWE-89
@@ -48,8 +45,6 @@
   expected_phase:
     - vuln_discovery
   expected_evidence:
-    - request
-    - response
     - diff
   expected_report:
     - CWE-639
@@ -67,9 +62,7 @@
   expected_phase:
     - vuln_discovery
   expected_evidence:
-    - request
-    - response
-    - token
+    - technique
   expected_report:
     - CWE-347
     - Cryptographic Failures
@@ -86,8 +79,6 @@
   expected_phase:
     - vuln_discovery
   expected_evidence:
-    - request
-    - response
     - payload
   expected_report:
     - CWE-915

@@ -52,12 +52,20 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import contextvars
 import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
+
+# Context flag: when True, _endpoint_matches requires a non-empty endpoint on
+# both sides (a finding whose endpoint we can't resolve must NOT match a
+# negative control — it's not a false positive just because the type matches).
+_is_negative_context: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_is_negative_context", default=False
+)
 
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
@@ -206,7 +214,15 @@ def _endpoint_matches(gt_endpoint: str, finding_endpoint: str) -> bool:
     if not gt or not fe:
         # Endpoint unknown on one side: fall back to type-only match (caller
         # already requires a type match), so don't veto here.
-        return True
+        # MAJ-7 (2026-07-23): BUT for NEGATIVE CONTROLS this is dangerous —
+        # a finding with an empty endpoint that matches a negative control's
+        # type would be counted as a false positive even though the finding
+        # is at a completely different endpoint. The caller (score_findings)
+        # now passes ``is_negative=True`` for negative-control matching, and
+        # we require BOTH gt and fe to be non-empty for a negative-control
+        # match. A finding whose endpoint we can't resolve should NOT be
+        # penalized against a negative control.
+        return not _is_negative_context.get()
     return gt == fe or gt in fe or fe in gt
 
 
@@ -487,19 +503,23 @@ def score_findings(
 
     # Negative controls: a real finding matching one is a false positive.
     false_positives: List[Dict[str, Any]] = []
-    for g in negatives:
-        for idx, f in indexed:
-            fid = _finding_id(f, idx)
-            if fid in matched_finding_ids:
-                continue
-            if not _type_matches(g.type, _finding_type_str(f)):
-                continue
-            fendpoint = _finding_endpoint(f)
-            if _endpoint_matches(g.endpoint, fendpoint):
-                false_positives.append(
-                    {"gt_id": g.id, "finding_id": fid, "type": g.type, "endpoint": fendpoint}
-                )
-                matched_finding_ids.add(fid)
+    _neg_token = _is_negative_context.set(True)
+    try:
+        for g in negatives:
+            for idx, f in indexed:
+                fid = _finding_id(f, idx)
+                if fid in matched_finding_ids:
+                    continue
+                if not _type_matches(g.type, _finding_type_str(f)):
+                    continue
+                fendpoint = _finding_endpoint(f)
+                if _endpoint_matches(g.endpoint, fendpoint):
+                    false_positives.append(
+                        {"gt_id": g.id, "finding_id": fid, "type": g.type, "endpoint": fendpoint}
+                    )
+                    matched_finding_ids.add(fid)
+    finally:
+        _is_negative_context.reset(_neg_token)
 
     # Extras: real findings that mapped to no manifest entry. Neither credited
     # nor penalised — surfaced for human triage.
