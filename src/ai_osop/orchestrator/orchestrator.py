@@ -115,6 +115,12 @@ class Orchestrator:
         self.engagement_manager = EngagementManager(self, self.engagement_state_machine)
         self.recovery_service = RecoveryService(self, self.engagement_state_machine)
         self.agent_reaper = AgentReaper(self, self.engagement_state_machine)
+        # Reasoning loop: continuous hypothesis-driven reasoning that runs
+        # alongside the phase monitor. Observe → Hypothesize → Dispatch →
+        # Evaluate → Learn → re-hypothesize. Adds adaptive work the fixed
+        # phase pipeline would never schedule.
+        from ai_osop.orchestrator.reasoning_loop import ReasoningLoop
+        self.reasoning_loop = ReasoningLoop(self)
 
         self._running = False
         self._scheduler_task: Optional[asyncio.Task] = None
@@ -143,11 +149,13 @@ class Orchestrator:
         # the expensive durable-store read until task statuses settle.
         self._phase_complete_cache: TTLCache = TTLCache(maxsize=256, ttl=5)
 
-        # Start phase monitor if an event loop is running (avoids test errors)
+        # Start phase monitor + reasoning loop if an event loop is running
+        # (avoids test errors when no loop is available).
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
                 self._phase_monitor_task = loop.create_task(self.phase_monitor._phase_monitor())
+                self.reasoning_loop.start()
         except RuntimeError:
             pass
 
@@ -1094,6 +1102,9 @@ class Orchestrator:
     async def shutdown(self) -> None:
         """Graceful shutdown."""
         self._running = False
+
+        # Stop the reasoning loop first (it reads from the graph + schedules tasks).
+        await self.reasoning_loop.stop()
 
         for bg in (
             self._scheduler_task,

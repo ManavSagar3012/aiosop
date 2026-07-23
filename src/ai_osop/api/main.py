@@ -421,6 +421,13 @@ async def lifespan(app: FastAPI):
             llm_client=llm_client,
         )
 
+        # 5c. Wire coordination bus to graph_memory so finding.recorded events
+        # are published on every persist (enables the reasoning loop's
+        # event-driven hypothesis re-generation). Must happen AFTER the
+        # orchestrator is created so orch.coordination_bus exists.
+        graph_memory.coordination_bus = orch.coordination_bus
+        logger.info("Coordination bus wired to graph_memory (finding.recorded events).")
+
         # Reliability sprint: Run self-test after orchestrator initialization
         startup_results = await run_startup_self_test()
         if startup_results["status"] != "healthy":

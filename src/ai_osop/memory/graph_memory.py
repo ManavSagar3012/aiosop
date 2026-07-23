@@ -69,6 +69,11 @@ class GraphMemory:
         # Optional P2b calibration engine. When wired, validate_vulnerability()
         # records accepted findings into the Beta-Binomial feedback loop.
         self.calibration_engine: Optional[Any] = None
+        # Optional coordination bus. When wired (app lifespan), every persisted
+        # finding publishes a 'finding.recorded' event so the reasoning loop
+        # and other subscribers can react immediately. Left None so GraphMemory
+        # stays decoupled from the bus in minimal setups/tests.
+        self.coordination_bus: Optional[Any] = None
 
         # AIOSOP-CACHE-001 (2026-07-22): TTLCache for get_graph_stats results.
         # Phase monitor calls this on every tick for each active engagement
@@ -472,6 +477,12 @@ class GraphMemory:
             except Exception as e:  # noqa: BLE001 - knowledge recording is best-effort
                 logger.warning("findings_knowledge_record_failed id=%s error=%s", vuln.id, e)
 
+        # Event-driven finding publication: broadcast a finding.recorded event on
+        # the coordination bus so the reasoning loop (and any other subscriber)
+        # can immediately generate chain hypotheses or trigger follow-up work.
+        if created:
+            await self._publish_finding_event(vuln, persisted_id)
+
         # Chain-first loop: record this confirmed finding as a typed primitive so the
         # escalation/chain engine can chain it with co-located signals. Best-effort;
         # a ledger failure must never break graph persistence.
@@ -493,6 +504,33 @@ class GraphMemory:
         # Invalidate graph stats cache since we persisted a new (or updated) node
         await self.invalidate_graph_stats_cache(vuln.engagement_id)
         return persisted_id
+
+    async def _publish_finding_event(self, vuln: Vulnerability, persisted_id: str) -> None:
+        """Publish a 'finding.recorded' event on the coordination bus.
+
+        Event-driven finding publication: every persisted finding triggers an
+        event so the reasoning loop (and any other subscriber) can immediately
+        generate chain hypotheses or trigger follow-up work. Best-effort —
+        a bus failure must never break graph persistence.
+        """
+        if self.coordination_bus is None:
+            return
+        try:
+            await self.coordination_bus.publish(
+                "finding.recorded",
+                {
+                    "finding_id": persisted_id,
+                    "vuln_type": vuln.vuln_type.value if hasattr(vuln.vuln_type, "value") else str(vuln.vuln_type),
+                    "severity": vuln.severity.value if hasattr(vuln.severity, "value") else str(vuln.severity),
+                    "validated": vuln.validated,
+                    "engagement_id": vuln.engagement_id,
+                    "endpoint": vuln.endpoint_id or "",
+                    "title": vuln.title,
+                },
+                source="graph_memory",
+            )
+        except Exception as e:  # noqa: BLE001 - event publication is best-effort
+            logger.warning("finding_event_publish_failed id=%s error=%s", persisted_id, e)
 
     @staticmethod
     def _vulnerability_dedup_key(vuln: Vulnerability) -> str:
