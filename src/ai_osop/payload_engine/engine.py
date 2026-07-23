@@ -8,8 +8,9 @@ import hashlib
 import json
 import random
 import urllib.parse
-import httpx
 from typing import Any, Callable, Dict, List, Optional
+
+import httpx
 
 from ai_osop.adapters.payload_mcp import PayloadMCPAdapter
 from ai_osop.core.enums import VulnClass
@@ -214,8 +215,7 @@ class PayloadTemplateLibrary:
                 # XSS: use SVG + data URIs instead of <script>
                 elif vuln_type == VulnClass.XSS:
                     if "<script>" in p:
-                        p = p.replace("<script>alert(1)</script>",
-                                      "<svg/onload=alert(1)>")
+                        p = p.replace("<script>alert(1)</script>", "<svg/onload=alert(1)>")
             elif waf == "aws_waf":
                 # AWS WAF: try case variation + inline comments
                 if vuln_type == VulnClass.SQLI:
@@ -378,7 +378,24 @@ class WAFCharacterProber:
     ) -> Dict[str, str]:
         """Probe each character and return a map of character -> status."""
         if characters is None:
-            characters = ["'", "\"", "<", ">", "/", ";", "(", ")", "[", "]", "{", "}", "--", "#", "`", "$"]
+            characters = [
+                "'",
+                '"',
+                "<",
+                ">",
+                "/",
+                ";",
+                "(",
+                ")",
+                "[",
+                "]",
+                "{",
+                "}",
+                "--",
+                "#",
+                "`",
+                "$",
+            ]
 
         char_map = {}
         client = self.client or httpx.AsyncClient(verify=False)
@@ -390,19 +407,11 @@ class WAFCharacterProber:
             try:
                 if method.upper() == "GET":
                     baseline_resp = await client.request(
-                        method,
-                        url,
-                        params={param_name: baseline_val},
-                        headers=headers,
-                        timeout=5.0
+                        method, url, params={param_name: baseline_val}, headers=headers, timeout=5.0
                     )
                 else:
                     baseline_resp = await client.request(
-                        method,
-                        url,
-                        data={param_name: baseline_val},
-                        headers=headers,
-                        timeout=5.0
+                        method, url, data={param_name: baseline_val}, headers=headers, timeout=5.0
                     )
                 baseline_status = baseline_resp.status_code
             except Exception:
@@ -418,7 +427,7 @@ class WAFCharacterProber:
                             url,
                             params={param_name: payload_val},
                             headers=headers,
-                            timeout=5.0
+                            timeout=5.0,
                         )
                     else:
                         resp = await client.request(
@@ -426,10 +435,12 @@ class WAFCharacterProber:
                             url,
                             data={param_name: payload_val},
                             headers=headers,
-                            timeout=5.0
+                            timeout=5.0,
                         )
 
-                    if resp.status_code in (403, 406, 418, 429) or (resp.status_code != baseline_status and resp.status_code >= 400):
+                    if resp.status_code in (403, 406, 418, 429) or (
+                        resp.status_code != baseline_status and resp.status_code >= 400
+                    ):
                         char_map[char] = "blocked"
                     elif char not in resp.text and char in payload_val:
                         char_map[char] = "filtered"
@@ -693,24 +704,24 @@ class AdaptivePayloadEngine:
 
         # Heuristic mutation based on character map
         mutations = []
-        
+
         # 1. Base mutations
         mutations.append(lambda p: p.replace(" ", random.choice(["/**/", "%0a", "%09"])))
-        
+
         if vuln_type == VulnClass.SQLI:
             mutations.append(lambda p: p.replace("SELECT", "SeLeCt") if "SELECT" in p else p)
-            
+
         # Add comment termination if allowed
         comment_char = "#" if char_map.get("#") == "allowed" else "--"
         mutations.append(lambda p: p + random.choice([comment_char, ";%00"]))
 
         # If quotes are blocked, we must apply encoding variations (WAF character probe integration)
         blocked_chars = [c for c, status in char_map.items() if status == "blocked"]
-        
+
         # Generate mutated content
         chosen_mutator = random.choice(mutations)
         mutated_content = chosen_mutator(payload.content)
-        
+
         encoding_chain = list(payload.encoding_chain or [])
         # If any of the characters in the mutated content are blocked, force an encoding variation
         if any(c in mutated_content for c in blocked_chars):
@@ -723,7 +734,9 @@ class AdaptivePayloadEngine:
             # Standard encoding variation
             if random.random() < 0.3:
                 extra_mutations = [
-                    lambda p: self.encoding_pipeline.apply(p, [random.choice(["url", "hex", "null_byte"])])
+                    lambda p: self.encoding_pipeline.apply(
+                        p, [random.choice(["url", "hex", "null_byte"])]
+                    )
                 ]
                 mutated_content = random.choice(extra_mutations)(mutated_content)
 

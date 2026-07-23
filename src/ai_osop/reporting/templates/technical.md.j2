@@ -13,7 +13,14 @@
 #### Description
 {{ vuln.description }}
 
-#### Proof of Concept / Evidence
+#### Proof of Concept
+{% if vuln.poc %}
+{{ vuln.poc }}
+{% else %}
+No automated Proof of Concept could be generated.
+{% endif %}
+
+#### Evidence
 ```
 {{ vuln.evidence }}
 ```

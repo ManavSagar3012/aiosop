@@ -185,6 +185,7 @@ async def test_attack_chain_agent_discover_paths_integration():
     # 1. active session query: role "standard"
     # 2. active credential query: has_token True (returns a dummy record)
     mock_ctx.graph_memory.run_read_query.side_effect = [
+        [],  # Pathfinding query (no dynamic paths found)
         [{"role_name": "standard"}],  # Session query
         [{"cred_type": "api_token"}],  # Credential query
     ]
@@ -216,3 +217,40 @@ async def test_attack_chain_agent_discover_paths_integration():
     assert len(path.node_ids) == 2
     assert len(path.edge_ids) == 1
     assert path.edge_ids[0] == "LEADS_TO-0"
+
+
+@pytest.mark.asyncio
+async def test_attack_chain_agent_discover_dynamic_paths():
+    """Verify that when Neo4j has LEADS_TO paths, they are traversed and returned directly."""
+    mock_ctx = MagicMock(spec=AgentContext)
+    mock_ctx.agent_id = "test-chain-agent"
+    mock_ctx.graph_memory = AsyncMock()
+    mock_ctx.session_memory = AsyncMock()
+    mock_ctx.current_task = MagicMock(spec=Task)
+    mock_ctx.current_task.engagement_id = "test-eng"
+
+    # Mock GraphMemory to return a dynamic path
+    mock_ctx.graph_memory.run_read_query.return_value = [
+        {
+            "node_ids": ["node-start", "node-vuln"],
+            "node_types": ["Endpoint", "Vulnerability"],
+            "node_labels": ["http://target.test/login", "SQL Injection"],
+        }
+    ]
+
+    agent = AttackChainAgent(mock_ctx)
+    payload = {
+        "engagement_id": "test-eng",
+        "entry_node_id": "node-start",
+        "goal_types": ["rce"],
+    }
+
+    result = await agent._discover_paths(payload)
+
+    assert result["status"] == "success"
+    assert result["paths_discovered"] == 1
+    assert len(result["top_paths"]) == 1
+    assert (
+        result["top_paths"][0]["description"]
+        == "Graph-traversed path: http://target.test/login -> SQL Injection"
+    )

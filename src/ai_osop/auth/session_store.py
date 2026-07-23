@@ -297,6 +297,81 @@ class UserSession:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class MultiRoleSessionPool:
+    """Manages active user identities across multiple privilege roles for a given engagement.
+
+    Enables automated access control and differential authorization validation.
+    """
+
+    def __init__(self, store: SessionStore):
+        self.store = store
+        self._roles: Dict[str, Dict[str, str]] = {}  # engagement_id -> {role_name: user_label}
+
+    def register_role(self, engagement_id: str, role_name: str, user_label: str) -> None:
+        """Link a logical role (e.g., 'admin') to an actual user_label stored in session memory."""
+        if engagement_id not in self._roles:
+            self._roles[engagement_id] = {}
+        self._roles[engagement_id][role_name] = user_label
+
+    def get_role_user(self, engagement_id: str, role_name: str) -> Optional[str]:
+        """Get the user_label registered for a specific role."""
+        return self._roles.get(engagement_id, {}).get(role_name)
+
+    async def get_all_roles(self, engagement_id: str) -> List[str]:
+        """List all active role labels registered for this engagement."""
+        async with self.store.sm._async_session() as db:
+            stmt = select(UserSessionORM.user_label).where(
+                UserSessionORM.engagement_id == engagement_id
+            )
+            result = await db.execute(stmt)
+            return [row[0] for row in result.all()]
+
+    @asynccontextmanager
+    async def as_role(
+        self,
+        engagement_id: str,
+        role_name: str,
+        *,
+        base_url: str = "",
+        governance_hook: Any = None,
+    ):
+        """Yield a SessionClient pre-configured with the credentials of the specified role.
+
+        If the role is 'anonymous' or not registered, yields a client with no credentials.
+        """
+        if role_name.lower() == "anonymous":
+            from ai_osop.auth.session_client import SessionClient
+
+            empty_sess = UserSession(
+                engagement_id=engagement_id,
+                user_label="anonymous",
+                cookies=[],
+                bearer_token="",
+            )
+            client = SessionClient(
+                session=empty_sess,
+                base_url=base_url,
+                store=self.store,
+                governance_hook=governance_hook,
+            )
+            try:
+                yield client
+            finally:
+                await client.aclose()
+        else:
+            user_label = self.get_role_user(engagement_id, role_name)
+            if not user_label:
+                # Fall back to assuming role_name is the user_label directly
+                user_label = role_name
+            async with self.store.as_user(
+                engagement_id,
+                user_label,
+                base_url=base_url,
+                governance_hook=governance_hook,
+            ) as client:
+                yield client
+
+
 class SessionStore:
     """Durable (Postgres) + hot-cache (Redis) user-session store.
 
@@ -314,6 +389,13 @@ class SessionStore:
         self.sm = session_memory
         self.gm = graph_memory
         self._encryption = SessionEncryption()
+
+    @property
+    def role_pool(self) -> MultiRoleSessionPool:
+        """Return the multi-role session pool manager."""
+        if not hasattr(self, "_role_pool"):
+            self._role_pool = MultiRoleSessionPool(self)
+        return self._role_pool
 
     # -- key helpers -----------------------------------------------------------
 
@@ -559,9 +641,9 @@ class SessionStore:
         d = sess.to_dict()
         # Encrypt sensitive fields before writing to Redis
         enc = self._encryption
-        for field in SessionEncryption.SENSITIVE_FIELDS:
-            if field in d:
-                d[field] = self._encrypt_field(enc, d[field])
+        for fld in SessionEncryption.SENSITIVE_FIELDS:
+            if fld in d:
+                d[fld] = self._encrypt_field(enc, d[fld])
         payload = json.dumps(d, default=str)
         await self.sm._redis.setex(key, sess.ttl_seconds(), payload)
 
@@ -573,9 +655,9 @@ class SessionStore:
             d = json.loads(raw)
             # Decrypt sensitive fields after reading from Redis
             enc = self._encryption
-            for field in SessionEncryption.SENSITIVE_FIELDS:
-                if field in d:
-                    d[field] = self._decrypt_field(enc, d[field])
+            for fld in SessionEncryption.SENSITIVE_FIELDS:
+                if fld in d:
+                    d[fld] = self._decrypt_field(enc, d[fld])
             return UserSession.from_dict(d)
         except Exception as e:
             logger.warning(

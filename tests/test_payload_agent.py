@@ -33,6 +33,11 @@ async def test_generate_payloads(mock_context):
     agent = PayloadMutationAgent(mock_context)
     await agent._setup_resources()
 
+    # Mock governed client
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    agent.get_governed_client = MagicMock(return_value=mock_client)
     # Mock the engine's initial population generation
     mock_payload = Payload(
         vuln_type=VulnClass.SQLI,
@@ -103,6 +108,11 @@ async def test_evolve_population(mock_context):
     agent = PayloadMutationAgent(mock_context)
     await agent._setup_resources()
 
+    # Mock governed client
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    agent.get_governed_client = MagicMock(return_value=mock_client)
     mock_payload = Payload(
         vuln_type=VulnClass.SQLI,
         content="' OR 1=1--",

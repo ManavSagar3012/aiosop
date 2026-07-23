@@ -324,6 +324,73 @@ class AttackChainAgent(BaseAgent):
     async def _discover_paths(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Discover attack paths from entry points to goals."""
         engagement_id = payload["engagement_id"]
+
+        # Phase 3.1: Automated Graph Pathfinder in AttackChainAgent
+        # Query Neo4j for actual :LEADS_TO paths first
+        dynamic_paths = []
+        if self.ctx.graph_memory:
+            try:
+                cypher_paths = """
+                MATCH path = (start)-[:LEADS_TO*1..5]->(goal)
+                WHERE start.engagement_id = $eid
+                  AND (goal:Vulnerability OR goal:Endpoint)
+                RETURN [n in nodes(path) | n.id] AS node_ids,
+                       [n in nodes(path) | labels(n)[0]] AS node_types,
+                       [n in nodes(path) | coalesce(n.title, n.url, n.value, '')] AS node_labels,
+                       length(path) AS length
+                ORDER BY length ASC LIMIT 10
+                """
+                records = await self.ctx.graph_memory.run_read_query(
+                    cypher_paths, {"eid": engagement_id}
+                )
+                for rec in records:
+                    node_ids = rec.get("node_ids", [])
+                    node_types = rec.get("node_types", [])
+                    node_labels = rec.get("node_labels", [])
+
+                    if len(node_ids) > 1:
+                        edge_ids = [f"LEADS_TO-{i}" for i in range(len(node_ids) - 1)]
+                        total_cost = float(len(node_ids)) * 1.0
+                        confidence = 0.95
+                        risk_score = 8.0 if "Vulnerability" in node_types[-1] else 6.0
+
+                        path = AttackPath(
+                            id=f"path-dynamic-{uuid.uuid4().hex[:12]}",
+                            node_ids=node_ids,
+                            edge_ids=edge_ids,
+                            confidence=confidence,
+                            risk_score=risk_score,
+                            total_time_estimate=int(total_cost * 60),
+                            detection_risk=0.1,
+                            validated=False,
+                            entry_node_id=node_ids[0],
+                            goal_node_id=node_ids[-1],
+                            engagement_id=engagement_id,
+                        )
+                        desc = "Graph-traversed path: " + " -> ".join(node_labels)
+                        dynamic_paths.append((path, desc))
+            except Exception as e:
+                logger.warning("dynamic_pathfinding_failed", error=str(e))
+
+        if dynamic_paths:
+            self.discovered_paths = [p for p, _ in dynamic_paths[:10]]
+            return {
+                "status": "success",
+                "paths_discovered": len(dynamic_paths),
+                "top_paths": [
+                    {
+                        "path_id": p.id,
+                        "confidence": p.confidence,
+                        "risk_score": p.risk_score,
+                        "time_estimate": p.total_time_estimate,
+                        "detection_risk": p.detection_risk,
+                        "node_count": len(p.node_ids),
+                        "description": d,
+                    }
+                    for p, d in dynamic_paths[:10]
+                ],
+            }
+
         entry_node_id = payload.get("entry_node_id")
         goal_types = payload.get("goal_types", ["rce", "admin_access", "data_exfiltration"])
         payload.get("max_depth", 5)

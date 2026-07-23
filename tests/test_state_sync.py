@@ -265,3 +265,45 @@ async def test_graph_memory_delete_user_session_node():
 
     assert params["session_id"] == "session-eng-123-test-user"
     assert params["credential_id"] == "credential-eng-123-test-user"
+
+
+@pytest.mark.asyncio
+async def test_multi_role_session_pool():
+    mock_sm, db_mock = _stub_session_memory()
+
+    # Mock database result for listing roles
+    mock_result = MagicMock()
+    mock_result.all.return_value = [("admin-user",), ("member-user",)]
+    db_mock.execute.return_value = mock_result
+
+    store = SessionStore(session_memory=mock_sm, graph_memory=None)
+    pool = store.role_pool
+
+    # Register roles
+    pool.register_role("eng-123", "admin", "admin-user")
+    pool.register_role("eng-123", "member", "member-user")
+
+    assert pool.get_role_user("eng-123", "admin") == "admin-user"
+    assert pool.get_role_user("eng-123", "member") == "member-user"
+    assert pool.get_role_user("eng-123", "guest") is None
+
+    # Test get_all_roles
+    roles = await pool.get_all_roles("eng-123")
+    assert "admin-user" in roles
+    assert "member-user" in roles
+
+    # Test as_role for 'anonymous'
+    async with pool.as_role("eng-123", "anonymous") as client:
+        assert client.session.user_label == "anonymous"
+        assert client.session.bearer_token == ""
+
+    # Test as_role for registered role (mocks get_session)
+    mock_sess = UserSession(
+        engagement_id="eng-123",
+        user_label="admin-user",
+        bearer_token="admin-token",
+    )
+    with patch.object(store, "get_session", AsyncMock(return_value=mock_sess)):
+        async with pool.as_role("eng-123", "admin") as client:
+            assert client.session.user_label == "admin-user"
+            assert client.session.bearer_token == "admin-token"

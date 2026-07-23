@@ -12,9 +12,10 @@ import structlog
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import settings
-from ai_osop.core.enums import AgentType
+from ai_osop.core.enums import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import AgentException
-from ai_osop.core.models import Task
+from ai_osop.core.models import Task, Vulnerability
+from ai_osop.core.poc_generator import render_poc_markdown
 from ai_osop.reporting.exporters import ReportExporter
 
 logger = structlog.get_logger(__name__)
@@ -136,6 +137,37 @@ class ReportingAgent(BaseAgent):
                 # Resolve event_id from the pre-built audit map; default if absent.
                 event_id = audit_event_by_target.get(n.get("id"), "no-audit-event")
 
+                poc_md = ""
+                try:
+                    sev_str = str(n.get("severity", "info")).strip().upper()
+                    severity_enum = getattr(Severity, sev_str, Severity.INFO)
+
+                    vt_str = str(n.get("vuln_type", "generic")).strip().upper()
+                    # Map common vuln type names to VulnClass enums
+                    vuln_type_enum = None
+                    for vc in VulnClass:
+                        if vc.name == vt_str or vc.value == n.get("vuln_type"):
+                            vuln_type_enum = vc
+                            break
+                    if vuln_type_enum is None:
+                        vuln_type_enum = VulnClass.SQLI  # default fallback
+
+                    reconstructed_vuln = Vulnerability(
+                        id=n.get("id"),
+                        vuln_type=vuln_type_enum,
+                        severity=severity_enum,
+                        title=n.get("title", ""),
+                        description=n.get("description", ""),
+                        evidence=n.get("evidence") or [],
+                        tool_source=n.get("tool_source", ""),
+                        confidence=n.get("confidence", 1.0),
+                        validated=n.get("validated", False),
+                        engagement_id=n.get("engagement_id", ""),
+                    )
+                    poc_md = render_poc_markdown(reconstructed_vuln)
+                except Exception as poc_err:
+                    logger.debug("report_poc_generation_failed", error=str(poc_err))
+
                 findings.append(
                     {
                         "id": n.get("id"),
@@ -147,6 +179,7 @@ class ReportingAgent(BaseAgent):
                         "evidence": display_evidence,
                         "evidence_hash": evidence_hash,
                         "event_id": event_id,
+                        "poc": poc_md,
                     }
                 )
         except Exception as e:

@@ -104,3 +104,58 @@ async def test_waf_learning(engine) -> None:
     assert profile["confidence"] > 0
     assert "case_randomization" in profile["suggested_strategies"]
     assert engine._waf_profiles[target] == profile
+
+
+@pytest.mark.asyncio
+async def test_waf_character_probing(engine) -> None:
+    # Mock AsyncClient
+    client_mock = AsyncMock()
+
+    # Configure mock request response behaviors
+    async def mock_request(method, url, **kwargs):
+        resp = AsyncMock()
+        params = kwargs.get("params") or kwargs.get("data") or {}
+        val = params.get("q", "")
+
+        if "baseline" in val:
+            resp.status_code = 200
+            resp.text = val
+        elif "'" in val:
+            resp.status_code = 403  # WAF Block
+            resp.text = "Forbidden"
+        elif "<" in val:
+            resp.status_code = 200
+            resp.text = "test value"  # Char "<" is filtered out from response
+        else:
+            resp.status_code = 200
+            resp.text = val
+        return resp
+
+    client_mock.request = AsyncMock(side_effect=mock_request)
+    engine.prober.client = client_mock
+
+    # Run character probing
+    char_map = await engine.probe_target_characters(
+        target_hash="test-target",
+        url="http://example.com/api",
+        param_name="q",
+        method="GET",
+    )
+
+    assert char_map["'"] == "blocked"
+    assert char_map["<"] == "filtered"
+    assert char_map[";"] == "allowed"
+
+    # Test mutation respects the WAF character map
+    original = Payload(
+        vuln_type=VulnClass.SQLI,
+        content="UNION SELECT 'value'",
+        content_hash="orig-hash",
+        context={"target_hash": "test-target"},
+        engagement_id="eng-1",
+    )
+
+    # Mutate payload — since "'" is blocked, the engine should force an encoding variation
+    mutated = await engine._mutate(original, VulnClass.SQLI, {"target_hash": "test-target"})
+    assert len(mutated.encoding_chain) > 0
+    assert any(enc in mutated.encoding_chain for enc in ["url", "hex", "unicode"])

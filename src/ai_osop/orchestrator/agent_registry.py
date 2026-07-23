@@ -24,6 +24,7 @@ from ai_osop.agents.js_analyzer_agent import JSAnalyzerAgent
 from ai_osop.agents.jwt_agent import JWTAgent
 from ai_osop.agents.mobile_agent import MobileAnalysisAgent
 from ai_osop.agents.nextjs_agent import NextJSSpecialistAgent
+from ai_osop.agents.passive_recon_agent import PassiveReconAgent
 from ai_osop.agents.payload_agent import PayloadMutationAgent
 from ai_osop.agents.pollution_scanner import PollutionScanner
 from ai_osop.agents.race_scanner import RaceScanner
@@ -86,6 +87,10 @@ async def register_all_agents(
 
     for i in range(1, _RECON_WORKERS + 1):
         agents_to_register.append((ReconAgent, AgentType.RECON, f"recon-agent-{i:03d}"))
+    for i in range(1, 3):
+        agents_to_register.append(
+            (PassiveReconAgent, AgentType.RECON, f"passive-recon-agent-{i:03d}")
+        )
 
     for i in range(1, _VULN_WORKERS + 1):
         agents_to_register.append(

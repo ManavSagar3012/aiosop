@@ -57,6 +57,23 @@ class PayloadMutationAgent(BaseAgent):
         context = payload.get("context", {})
         count = payload.get("count", 5)
 
+        # WAF character probe integration
+        target_url = context.get("target") or context.get("url")
+        param_name = context.get("parameter") or context.get("param")
+        if target_url and param_name:
+            target_hash = context.get("target_hash") or target_url
+            try:
+                async with self.get_governed_client(tool="payload_mutation") as client:
+                    self.engine.prober.client = client
+                    await self.engine.probe_target_characters(
+                        target_hash=target_hash,
+                        url=target_url,
+                        param_name=param_name,
+                        method=context.get("method", "GET"),
+                        headers=context.get("headers"),
+                    )
+            except Exception as e:
+                logger.warning(f"WAF character probing failed: {e}")
         # 1. Semantic Retrieval from Vector Memory
         # Find historically successful payloads for this vuln type
         similar_payloads = []
@@ -119,6 +136,24 @@ class PayloadMutationAgent(BaseAgent):
         vuln_type = VulnClass(payload["vuln_type"])
         context = payload.get("context", {})
         population = [Payload.model_validate(p) for p in payload["population"]]
+
+        # WAF character probe integration
+        target_url = context.get("target") or context.get("url")
+        param_name = context.get("parameter") or context.get("param")
+        if target_url and param_name:
+            target_hash = context.get("target_hash") or target_url
+            try:
+                async with self.get_governed_client(tool="payload_mutation") as client:
+                    self.engine.prober.client = client
+                    await self.engine.probe_target_characters(
+                        target_hash=target_hash,
+                        url=target_url,
+                        param_name=param_name,
+                        method=context.get("method", "GET"),
+                        headers=context.get("headers"),
+                    )
+            except Exception as e:
+                logger.warning(f"WAF character probing failed: {e}")
 
         evolved = await self.engine.evolve_population(
             population=population,
