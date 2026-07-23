@@ -230,11 +230,25 @@ class ReasoningLoop:
             )
 
     async def _reasoning_cycle(self, engagement_id: str, session_id: str) -> None:
-        """One full Observe → Hypothesize → Dispatch → Evaluate cycle."""
+        """One full Observe → Hypothesize → Dispatch → Evaluate → Critique cycle."""
         # 1. OBSERVE: read the current graph state
         state = await self._observe(engagement_id)
         if not state["endpoints"]:
             return  # nothing to reason about yet
+
+        # 1b. ORIENT: categorize endpoints by business domain (Phase 3.1).
+        # This is the semantic mental model the assessment says is missing —
+        # instead of treating endpoints as flat strings, the system now
+        # understands "this is a payment endpoint" or "this is an admin panel."
+        from ai_osop.core.business_context import batch_categorize
+
+        categorized = batch_categorize(state["endpoints"])
+        high_value = [c for c in categorized if c.criticality >= 7]
+        if high_value:
+            state["focus"] = (
+                f"high-value endpoints detected: "
+                f"{', '.join(c.category for c in high_value[:5])}"
+            )
 
         # 2. GENERATE HYPOTHESES
         from ai_osop.core.hypothesis_engine import HypothesisEngine
@@ -278,6 +292,30 @@ class ReasoningLoop:
         # 5. EVALUATE: wait for the task, check results
         result = await self._wait_for_task(task.id, timeout=_HYPOTHESIS_TIMEOUT)
         await self._evaluate_result(engagement_id, selected, result)
+
+        # 5b. CRITIQUE: adversarial review of findings (Phase 3.2).
+        # The PostEngagementCriticAgent.audit_findings method reviews validated
+        # findings for false positives, missing evidence, and incomplete
+        # validation — the "peer review" step the assessment says is missing.
+        # If the critic flags a finding, the reasoning loop logs the issue
+        # so the report layer can downgrade or re-verify it.
+        try:
+            from ai_osop.agents.critic_agent import PostEngagementCriticAgent
+
+            critic = PostEngagementCriticAgent(
+                self._orch.session_memory, self._orch.graph_memory,
+            )
+            critiques = await critic.audit_findings(engagement_id)
+            if critiques:
+                for c in critiques:
+                    logger.warning(
+                        "reasoning_critic_flag",
+                        engagement_id=engagement_id,
+                        finding_id=c.get("finding_id"),
+                        issues=c.get("issues"),
+                    )
+        except Exception as e:
+            logger.warning("reasoning_critic_failed", error=str(e))
 
         # 6. LEARN happens automatically: GraphMemory.add_vulnerability
         # calls FindingsKnowledge.record_finding. We just update the

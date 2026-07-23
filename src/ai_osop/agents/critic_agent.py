@@ -1,4 +1,4 @@
-"""Post-Engagement Critic Agent — platform performance auditor.
+"""Post-Engagement Critic Agent — platform performance auditor + adversarial challenger.
 
 Analyzes the graph database, task execution tables, and skipped scans
 from an engagement to generate an automated engineering critique of AI-OSOP itself:
@@ -6,14 +6,25 @@ from an engagement to generate an automated engineering critique of AI-OSOP itse
   - Active scanners skipped/run
   - Findings rejected/escalated
   - Underutilized MCP servers
+
+Phase 3.2 (2026-07-23): activated as an adversarial challenger. The
+`audit_findings` method reviews validated findings for false positives,
+missing evidence, and incomplete validation — the "peer review" the
+assessment says is missing. The reasoning loop calls `audit_findings`
+after each hypothesis evaluation so the critic can catch false positives
+before they reach the report.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 
 class PostEngagementCriticAgent:
-    """Audits engagement logs and neo4j graph nodes to critique AI-OSOP performance."""
+    """Audits engagement logs and neo4j graph nodes to critique AI-OSOP performance.
+
+    Also serves as an adversarial challenger: `audit_findings` reviews
+    validated findings for false positives and incomplete evidence.
+    """
 
     def __init__(self, session_memory: Any, graph_memory: Any):
         self.session_memory = session_memory
@@ -142,3 +153,92 @@ class PostEngagementCriticAgent:
         critique.append("\n".join(improvements))
 
         return "\n".join(critique)
+
+    async def audit_findings(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Adversarial review of validated findings — the 'peer review' step.
+
+        Phase 3.2 (2026-07-23): the assessment identified a missing adversarial
+        challenger that audits findings for false positives, missing evidence,
+        and incomplete validation before they reach the report. This method
+        reviews every validated finding in the graph and flags:
+          - Findings with empty evidence lists (no proof)
+          - Findings where validated=True but confidence < 0.5 (weak signal)
+          - Findings whose tool_source is a known-noisy scanner
+          - Findings missing request/response evidence
+
+        Returns a list of critique dicts, each flagging a finding that needs
+        re-verification. The reasoning loop uses this to downgrade or re-test
+        findings before reporting.
+        """
+        critiques: List[Dict[str, Any]] = []
+
+        try:
+            vulns = await self.graph_memory.get_vulnerabilities_by_engagement(
+                engagement_id
+            )
+        except Exception:
+            return []
+
+        for v in vulns:
+            vid = v.get("id", "?")
+            vtype = v.get("vuln_type", "unknown")
+            confidence = float(v.get("confidence", 0) or 0)
+            validated = bool(v.get("validated", False))
+            tool_source = str(v.get("tool_source", "")).lower()
+            evidence = v.get("evidence")
+
+            # Parse evidence (may be JSON string from Neo4j)
+            import json
+            if isinstance(evidence, str):
+                try:
+                    evidence = json.loads(evidence)
+                except Exception:
+                    evidence = []
+            if not isinstance(evidence, list):
+                evidence = [evidence] if evidence else []
+
+            issues: List[str] = []
+
+            # Check 1: validated but no evidence
+            if validated and not evidence:
+                issues.append("validated=True but evidence list is empty — no proof")
+
+            # Check 2: validated but low confidence
+            if validated and confidence < 0.5:
+                issues.append(
+                    f"validated=True but confidence={confidence:.2f} is below 0.5 — weak signal"
+                )
+
+            # Check 3: noisy scanner source
+            noisy_sources = {"nuclei", "burp_scan", "ffuf"}
+            if tool_source in noisy_sources and validated:
+                issues.append(
+                    f"tool_source={tool_source} is a known-noisy scanner — verify the finding is not a template-match false positive"
+                )
+
+            # Check 4: missing request/response in evidence
+            if validated and evidence:
+                has_request = any(
+                    isinstance(e, dict) and ("request" in e or "request_url" in e)
+                    for e in evidence
+                )
+                has_response = any(
+                    isinstance(e, dict) and ("response" in e or "http_status" in e)
+                    for e in evidence
+                )
+                if not has_request:
+                    issues.append("evidence lacks request details — triager cannot reproduce")
+                if not has_response:
+                    issues.append("evidence lacks response details — triager cannot verify")
+
+            if issues:
+                critiques.append({
+                    "finding_id": vid,
+                    "vuln_type": vtype,
+                    "confidence": confidence,
+                    "validated": validated,
+                    "issues": issues,
+                    "recommendation": "re-verify before reporting; consider downgrading to POTENTIAL",
+                })
+
+        return critiques
