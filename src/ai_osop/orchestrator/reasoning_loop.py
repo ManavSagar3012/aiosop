@@ -102,6 +102,12 @@ class ReasoningLoop:
         # chain hypothesis generation without waiting for the next polling cycle.
         self._event_subscriber: Optional[asyncio.Task] = None
         self._pending_finding_events: asyncio.Queue = asyncio.Queue()
+        # Reasoning trace: records every decision the loop makes so the
+        # system can explain WHY it tested hypothesis X instead of Y, WHY
+        # it abandoned a hypothesis, and what it learned. This is the
+        # 'self-evaluation + explainability' cognitive capability.
+        from ai_osop.core.reasoning_trace import ReasoningTrace
+        self.trace = ReasoningTrace()
 
     def start(self) -> None:
         """Start the reasoning loop + the event subscriber as background tasks."""
@@ -284,10 +290,39 @@ class ReasoningLoop:
             return
         self._tested_hypotheses.add(selected.get("id"))
 
+        # Record the selection decision in the reasoning trace
+        self.trace.record(
+            engagement_id=engagement_id,
+            step="select",
+            decision=f"Selected hypothesis: {selected.get('title', '?')}",
+            rationale=(
+                f"confidence={selected.get('confidence', 0):.2f}, "
+                f"category={selected.get('category', '?')}, "
+                f"target={selected.get('target_id', '?')}"
+            ),
+            hypothesis_id=selected.get("id", ""),
+            confidence=float(selected.get("confidence", 0)),
+            alternatives_considered=[h.get("title", "?") if isinstance(h, dict) else getattr(h, "title", "?") for h in hypotheses[:5]],
+        )
+
         # 4. DISPATCH: create a Task for the hypothesis's recommended test
         task = await self._dispatch_hypothesis(engagement_id, session_id, selected)
         if task is None:
+            self.trace.record(
+                engagement_id=engagement_id, step="dispatch",
+                decision="Skipped dispatch — no agent mapping or target URL",
+                hypothesis_id=selected.get("id", ""),
+                result="skipped",
+            )
             return
+
+        self.trace.record(
+            engagement_id=engagement_id, step="dispatch",
+            decision=f"Dispatched {task.type} to {task.agent_type.value}",
+            rationale=f"maps to {task.agent_type.value}",
+            hypothesis_id=selected.get("id", ""),
+            task_id=task.id, result="dispatched",
+        )
 
         # 5. EVALUATE: wait for the task, check results
         result = await self._wait_for_task(task.id, timeout=_HYPOTHESIS_TIMEOUT)
@@ -381,6 +416,37 @@ class ReasoningLoop:
         except Exception as e:
             logger.warning("reasoning_observe_failed", engagement_id=engagement_id, error=str(e))
             return {"endpoints": [], "findings": [], "open_hypotheses": set()}
+
+        # Uncertainty detection: scan the current state for things we DON'T
+        # know. Each uncertainty becomes an info-seeking hypothesis that the
+        # reasoning loop can dispatch. This is the 'active information-
+        # seeking' behavior the assessment says is missing — instead of
+        # only testing for vulns, the system also tests to RESOLVE
+        # uncertainty (is this endpoint authed? what framework is it?).
+        try:
+            from ai_osop.core.uncertainty_tracker import UncertaintyTracker
+
+            if not hasattr(self, "_uncertainty_tracker"):
+                self._uncertainty_tracker = UncertaintyTracker()
+            new_uncerts = self._uncertainty_tracker.detect_uncertainties(
+                engagement_id, endpoints, findings,
+            )
+            if new_uncerts:
+                unc_hyps = self._uncertainty_tracker.get_uncertainty_hypotheses(engagement_id)
+                logger.info(
+                    "reasoning_uncertainties_detected",
+                    engagement_id=engagement_id,
+                    new=len(new_uncerts),
+                    total_open=len(self._uncertainty_tracker.get_open_uncertainties(engagement_id)),
+                )
+                # Record the uncertainty detection in the reasoning trace
+                self.trace.record(
+                    engagement_id=engagement_id, step="observe",
+                    decision=f"Detected {len(new_uncerts)} new uncertainties",
+                    rationale=f"open uncertainties: {self._uncertainty_tracker.get_summary(engagement_id)}",
+                )
+        except Exception as e:
+            logger.warning("reasoning_uncertainty_detection_failed", error=str(e))
 
         return {
             "endpoints": endpoints,
@@ -590,6 +656,12 @@ class ReasoningLoop:
             # Task timed out — mark as inconclusive
             await self._update_hypothesis_status(hyp_id, "inconclusive")
             self._dead_ends += 1
+            self.trace.record(
+                engagement_id=engagement_id, step="evaluate",
+                decision=f"Hypothesis {hyp_id} inconclusive (task timed out)",
+                rationale="task did not complete within timeout — target may be slow or unresponsive",
+                hypothesis_id=hyp_id, result="inconclusive",
+            )
             return
 
         findings_count = result.get("findings_count", 0)
@@ -598,12 +670,25 @@ class ReasoningLoop:
             # CONFIRMED: the hypothesis was correct
             await self._update_hypothesis_status(hyp_id, "confirmed")
             self._dead_ends = 0
+            self.trace.record(
+                engagement_id=engagement_id, step="evaluate",
+                decision=f"Hypothesis {hyp_id} CONFIRMED — {findings_count} finding(s)",
+                rationale=f"findings_count={findings_count}, the hypothesis was correct",
+                hypothesis_id=hyp_id, result="confirmed",
+                confidence=float(result.get("findings", [{}])[0].get("confidence", 0.9)) if result.get("findings") else 0.9,
+            )
             # Chain: the confirmed finding may open new attack paths
             await self._generate_chain_hypotheses(engagement_id, hypothesis, result)
         else:
             # REFUTED: dead end — generate follow-up hypotheses
             await self._update_hypothesis_status(hyp_id, "refuted")
             self._dead_ends += 1
+            self.trace.record(
+                engagement_id=engagement_id, step="evaluate",
+                decision=f"Hypothesis {hyp_id} REFUTED — 0 findings",
+                rationale=f"findings_count=0 — the hypothesis did not hold. Generating follow-up: was the endpoint authenticated? should we try a different technique?",
+                hypothesis_id=hyp_id, result="refuted",
+            )
             await self._generate_followup_hypotheses(engagement_id, hypothesis, result)
 
     async def _update_hypothesis_status(self, hyp_id: str, status: str) -> None:
