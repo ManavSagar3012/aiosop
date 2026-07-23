@@ -23,6 +23,10 @@ from ai_osop.core.metrics import (
     LLM_TOKENS_TOTAL,
     MCP_LATENCY_SECONDS,
     MCP_SUCCESS_RATE,
+    NEO4J_POOL_CLOSED,
+    NEO4J_POOL_IN_USE,
+    NEO4J_POOL_READY,
+    NEO4J_POOL_TOTAL,
     OWNERSHIP_VIOLATIONS_TOTAL,
     PENDING_APPROVALS,
     POSTGRES_LATENCY_SECONDS,
@@ -188,6 +192,25 @@ def record_mcp_latency(server_id: str, method: str, latency_seconds: float) -> N
 def record_graph_latency(operation: str, latency_seconds: float) -> None:
     """Record Neo4j write latency."""
     GRAPH_WRITE_LATENCY_SECONDS.labels(operation=operation).observe(max(latency_seconds, 0.0))
+
+
+def record_neo4j_pool_metrics(
+    in_use: int = 0,
+    total: int = 0,
+    closed: bool = False,
+    ready: bool = False,
+) -> None:
+    """Record Neo4j connection pool metrics as Prometheus gauges.
+
+    Called periodically from the graph memory layer to expose pool health.
+    All parameters default to 0/False so a failed pool probe never leaves
+    stale stale high values on the gauge — Prometheus scrapes see the pool
+    as drained rather than misreporting last-known-good.
+    """
+    NEO4J_POOL_IN_USE.set(max(in_use, 0))
+    NEO4J_POOL_TOTAL.set(max(total, 0))
+    NEO4J_POOL_CLOSED.set(1.0 if closed else 0.0)
+    NEO4J_POOL_READY.set(1.0 if ready else 0.0)
 
 
 def record_redis_latency(operation: str, latency_seconds: float) -> None:

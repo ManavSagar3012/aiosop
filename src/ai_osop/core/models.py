@@ -224,6 +224,37 @@ class Task(BaseModel):
     trace_context: Dict[str, Any] = Field(default_factory=dict)
     lease_expires: Optional[datetime] = None
 
+    # AIOSOP-CACHE-001 (2026-07-22): cached model_dump() result. Task objects
+    # are serialized 3+ times during their lifecycle (task_scheduler pushes to
+    # Redis queue, stores in hot tier, and calls model_dump again for the outbox).
+    # Each serialization re-computes the full dict from Pydantic fields.
+    # ``_dump_cache`` stores the output of ``model_dump()`` (no-args) after the
+    # first call; ``__setattr__`` invalidates it on any field mutation so the
+    # cache is automatically cleared when e.g. ``task.status = "running"``.
+    _dump_cache: Optional[Dict[str, Any]] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        """Initialize the dump cache after construction."""
+        object.__setattr__(self, "_dump_cache", None)
+
+    def model_dump(self, **kwargs: Any) -> Dict[str, Any]:
+        """Return cached dict for no-arg calls; fall through for kwarg calls.
+
+        Returns a shallow copy of the cached dict so callers cannot corrupt
+        the cache by mutating the returned dict (aliasing protection).
+        """
+        if not kwargs:
+            if self._dump_cache is None:
+                object.__setattr__(self, "_dump_cache", super().model_dump())
+            return dict(self._dump_cache)  # type: ignore[arg-type]
+        return super().model_dump(**kwargs)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Invalidate ``_dump_cache`` when any field is mutated."""
+        super().__setattr__(name, value)
+        if name != "_dump_cache":
+            object.__setattr__(self, "_dump_cache", None)
+
 
 class ApprovalRequest(BaseModel):
     id: str = Field(default_factory=lambda: f"apr-{uuid.uuid4().hex[:12]}")

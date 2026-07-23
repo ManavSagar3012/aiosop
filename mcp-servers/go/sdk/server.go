@@ -124,7 +124,8 @@ func loadEnvToken() string {
 
 func checkAuth(w http.ResponseWriter, r *http.Request, expectedToken string) bool {
 	if expectedToken == "" {
-		return true
+		http.Error(w, "MCP authentication is not configured", http.StatusServiceUnavailable)
+		return false
 	}
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -240,8 +241,8 @@ func (s *Server) ValidateParams(params map[string]any) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if !s.HasScope || s.Scope.EngagementID == "api-bootstrap" {
-		return nil
+	if !s.HasScope {
+		return fmt.Errorf("MCP scope has not been initialized")
 	}
 
 	targetKeys := []string{"domain", "target", "targets", "url", "host", "hosts", "ip", "ips"}
@@ -349,7 +350,21 @@ func (s *Server) Run(addr string) error {
 				return
 			}
 		}
-		writeJSON(w, map[string]any{"request_id": req.RequestID, "status": "success", "result": tool.Handler(req.Parameters)})
+		result := tool.Handler(req.Parameters)
+		if resultMap, ok := result.(map[string]any); ok && resultMap["status"] == "error" {
+			errorMessage, _ := resultMap["error"].(string)
+			if errorMessage == "" {
+				errorMessage = "tool execution failed"
+			}
+			writeJSON(w, map[string]any{
+				"request_id": req.RequestID,
+				"status":     "error",
+				"error":      errorMessage,
+				"result":     result,
+			})
+			return
+		}
+		writeJSON(w, map[string]any{"request_id": req.RequestID, "status": "success", "result": result})
 	})
 
 	log.Printf("%s listening on %s", s.ID, addr)

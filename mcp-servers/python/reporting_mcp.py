@@ -3,6 +3,7 @@ Reporting MCP Server (Production Implementation)
 Provides secure, queue-backed, and authenticated compilation of assessment reports.
 """
 
+import json
 import sys
 import os
 import uuid
@@ -79,6 +80,7 @@ async def verify_mcp_token(authorization: Optional[str] = Header(None)):
 
     token = authorization.split(" ", 1)[1]
     import hmac
+
     if not hmac.compare_digest(token, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -153,13 +155,18 @@ async def mcp_initialize(authenticated: None = Depends(verify_mcp_token)):
                 "description": "Aggregate verified vulnerabilities into an assessment report.",
                 "parameters": [
                     {"name": "engagement_id", "type": "string", "required": True},
-                    {"name": "format", "type": "string", "enum": ["markdown", "html", "json"], "required": False},
+                    {
+                        "name": "format",
+                        "type": "string",
+                        "enum": ["markdown", "html", "json"],
+                        "required": False,
+                    },
                     {"name": "include_evidence", "type": "boolean", "required": False},
                     {"name": "idempotency_key", "type": "string", "required": False},
                 ],
                 "returns": {"status": "string", "result": "object"},
             }
-        ]
+        ],
     }
 
 
@@ -179,7 +186,7 @@ async def run_compile_findings_job(
         # 2. Gather data
         graph_stats = await graph_memory.get_graph_stats(engagement_id)
         raw_nodes = await graph_memory.get_vulnerabilities_by_engagement(engagement_id)
-        
+
         vuln_nodes = []
         for n in raw_nodes:
             is_simulated = n.get("is_simulated", False) or n.get("simulated", False)
@@ -206,19 +213,25 @@ async def run_compile_findings_job(
             elif isinstance(raw_evidence, str):
                 evidence_parts.append(raw_evidence)
 
-            evidence_str = "\n\n---\n\n".join(evidence_parts) if evidence_parts else "No evidence recorded."
+            evidence_str = (
+                "\n\n---\n\n".join(evidence_parts) if evidence_parts else "No evidence recorded."
+            )
             evidence_hash = hashlib.sha256(evidence_str.encode("utf-8")).hexdigest()
 
-            findings.append({
-                "id": n.get("id"),
-                "title": n.get("title", "Unknown"),
-                "severity": n.get("severity", "INFO").upper(),
-                "vuln_type": n.get("vuln_type", "unknown"),
-                "target": n.get("endpoint_id", "unknown"),
-                "description": n.get("description", "No description."),
-                "evidence": evidence_str if include_evidence else "Evidence excluded by policy.",
-                "evidence_hash": evidence_hash,
-            })
+            findings.append(
+                {
+                    "id": n.get("id"),
+                    "title": n.get("title", "Unknown"),
+                    "severity": n.get("severity", "INFO").upper(),
+                    "vuln_type": n.get("vuln_type", "unknown"),
+                    "target": n.get("endpoint_id", "unknown"),
+                    "description": n.get("description", "No description."),
+                    "evidence": (
+                        evidence_str if include_evidence else "Evidence excluded by policy."
+                    ),
+                    "evidence_hash": evidence_hash,
+                }
+            )
 
         # 4. Generate narrative
         stats = {
@@ -236,8 +249,11 @@ async def run_compile_findings_job(
         if not settings.mock_llm and llm_client:
             context = f"Engagement {engagement_id}. Stats: {stats}."
             messages = [
-                {"role": "system", "content": "Write a 2-paragraph executive risk narrative for this assessment. CONFIDENTIAL."},
-                {"role": "user", "content": context}
+                {
+                    "role": "system",
+                    "content": "Write a 2-paragraph executive risk narrative for this assessment. CONFIDENTIAL.",
+                },
+                {"role": "user", "content": context},
             ]
             narrative = await llm_client.complete(messages)
         else:
@@ -245,7 +261,9 @@ async def run_compile_findings_job(
 
         # 5. Render
         template_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "src", "ai_osop", "reporting", "templates")
+            os.path.join(
+                os.path.dirname(__file__), "..", "..", "src", "ai_osop", "reporting", "templates"
+            )
         )
         exporter = ReportExporter(template_dir)
 
@@ -271,10 +289,7 @@ async def run_compile_findings_job(
         # 6. Save Artifact
         artifact_id = f"art-{uuid.uuid4().hex[:12]}"
         new_artifact = ReportArtifactORM(
-            id=artifact_id,
-            engagement_id=engagement_id,
-            format=fmt,
-            content=content
+            id=artifact_id, engagement_id=engagement_id, format=fmt, content=content
         )
 
         async with async_session() as session:
@@ -294,7 +309,11 @@ async def run_compile_findings_job(
             actor_type="system",
             actor_id="mcp-reporting",
             action={"method": "compile_findings", "engagement_id": engagement_id, "format": fmt},
-            result={"status": "success", "artifact_id": artifact_id, "findings_count": len(findings)},
+            result={
+                "status": "success",
+                "artifact_id": artifact_id,
+                "findings_count": len(findings),
+            },
             context={"job_id": job_id, "artifact_id": artifact_id},
             engagement_id=engagement_id,
         )
@@ -316,7 +335,7 @@ async def run_compile_findings_job(
 async def mcp_execute(
     req: MCPExecuteRequest,
     background_tasks: BackgroundTasks,
-    authenticated: None = Depends(verify_mcp_token)
+    authenticated: None = Depends(verify_mcp_token),
 ):
     request_id = req.request_id or str(uuid.uuid4())
     params = req.parameters or {}
@@ -358,7 +377,7 @@ async def mcp_execute(
                         "status": existing.status,
                         "download_url": download_url,
                         "error": existing.error,
-                    }
+                    },
                 }
 
     job_id = f"job-{uuid.uuid4().hex[:12]}"
@@ -388,7 +407,7 @@ async def mcp_execute(
             "job_id": job_id,
             "status": "pending",
             "message": "Report compilation started in background",
-        }
+        },
     }
 
 
@@ -416,6 +435,7 @@ async def download_report(artifact_id: str, expires: int, token: str):
 if __name__ == "__main__":
     import uvicorn
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8092)
     args = parser.parse_args()

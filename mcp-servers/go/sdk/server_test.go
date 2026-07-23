@@ -65,6 +65,13 @@ func TestScopeValidation(t *testing.T) {
 	}
 }
 
+func TestValidateParamsFailsClosedWithoutScope(t *testing.T) {
+	s := NewServer("test-scope")
+	if err := s.ValidateParams(map[string]any{"target": "example.com"}); err == nil {
+		t.Fatal("ValidateParams() succeeded without an initialized scope")
+	}
+}
+
 func TestAuthMiddleware(t *testing.T) {
 	tokenKey := "OSOP_API_TOKEN"
 	origToken := os.Getenv(tokenKey)
@@ -92,5 +99,16 @@ func TestAuthMiddleware(t *testing.T) {
 	}
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("checkAuth response status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuthMiddlewareFailsClosedWithoutConfiguredToken(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/mcp/execute", nil)
+	rr := httptest.NewRecorder()
+	if checkAuth(rr, req, "") {
+		t.Error("checkAuth() succeeded without a configured token")
+	}
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("checkAuth() status = %d, want %d", rr.Code, http.StatusServiceUnavailable)
 	}
 }

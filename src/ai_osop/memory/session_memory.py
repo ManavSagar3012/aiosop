@@ -282,6 +282,14 @@ class SessionMemory:
 
         # Redis with retry
         async def _connect_redis() -> None:
+            # AIOSOP-REDIS-LEAK-001: close any previously leaked pool before
+            # creating a new one on a retry attempt. Guard against None since
+            # self._redis starts as None on the first attempt.
+            if self._redis is not None:
+                try:
+                    await self._redis.close()
+                except Exception:
+                    pass
             self._redis = redis.from_url(
                 settings.redis_uri, decode_responses=True, max_connections=50
             )
@@ -325,6 +333,12 @@ class SessionMemory:
 
         Sprint 7: Auto-reconnect on Redis disconnect so the platform survives
         Redis restarts without requiring an application restart.
+
+        AIOSOP-REDIS-LEAK-001 (2026-07-22): Close the old connection pool BEFORE
+        creating a new one on reconnect. Prior code leaked one TCP connection pool
+        (50 connections) per Redis restart cycle. On a platform with frequent Redis
+        restarts (e.g. chaos tests, Redis cluster failover), leaked pools accumulated
+        indefinitely, consuming file descriptors and socket memory.
         """
         if self._redis is None:
             self._redis = redis.from_url(
@@ -337,6 +351,11 @@ class SessionMemory:
             return self._redis
         except Exception:
             logger.warning("Redis connection lost, reconnecting...")
+            # AIOSOP-REDIS-LEAK-001: close the leaking pool before discarding
+            try:
+                await self._redis.close()
+            except Exception:
+                pass
             self._redis = redis.from_url(
                 settings.redis_uri, decode_responses=True, max_connections=50
             )

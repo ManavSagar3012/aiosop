@@ -407,6 +407,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"OutboxProcessor initialization failed: {e}")
 
+        # 5b. Neo4j pool metrics export (every 15s)
+        try:
+            await graph_memory.start_pool_metrics_export(interval=15)
+            logger.info("Neo4j pool metrics export started (15s interval).")
+        except Exception as e:  # noqa: BLE001 — pool metrics are advisory
+            logger.warning(f"Neo4j pool metrics export start failed: {e}")
+
         orch = Orchestrator(
             session_memory=session_memory,
             graph_memory=graph_memory,
@@ -486,6 +493,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("AI-OSOP API shutting down...")
+    await graph_memory.stop_pool_metrics_export()
     await orch.shutdown()
     await vector_memory.close()
     await mcp_registry.close_all()

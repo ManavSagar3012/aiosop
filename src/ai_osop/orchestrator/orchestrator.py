@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 import redis.exceptions
 import sqlalchemy.exc
 import structlog
+from cachetools import TTLCache
 
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import settings
@@ -134,6 +135,13 @@ class Orchestrator:
         # halt_engagement can actually cancel running coroutines (not just flip a
         # status flag). Runtime-only — not recovered across restarts.
         self._task_handles: Dict[str, asyncio.Task] = {}
+
+        # AIOSOP-CACHE-001 (2026-07-22): TTLCache for _is_phase_complete results.
+        # Phase monitor calls this on every tick (every 10s) for each active
+        # engagement. With ~50 engagements, that's ~300 Neo4j queries/minute.
+        # Cache results for 5s so repeated ticks within the same window skip
+        # the expensive durable-store read until task statuses settle.
+        self._phase_complete_cache: TTLCache = TTLCache(maxsize=256, ttl=5)
 
         # Start phase monitor if an event loop is running (avoids test errors)
         try:
@@ -280,7 +288,11 @@ class Orchestrator:
 
     async def _assign_task(self, task: Task) -> None:
         """Assign task to appropriate agent. Delegated to TaskScheduler."""
-        return await self.task_scheduler._assign_task(task)
+        result = await self.task_scheduler._assign_task(task)
+        # AIOSOP-CACHE-INVALIDATE-001: task status changed (pending→running);
+        # invalidate phase-complete cache so the monitor sees the new state.
+        await self._invalidate_phase_complete_cache(task.engagement_id)
+        return result
 
     async def _find_available_agent(
         self, agent_type: AgentType, task_type: str = ""
@@ -307,11 +319,19 @@ class Orchestrator:
 
     async def _on_task_success(self, task: Task, result: Dict[str, Any]) -> None:
         """Handle task completion. Delegated to TaskScheduler."""
-        return await self.task_scheduler._on_task_success(task, result)
+        ret = await self.task_scheduler._on_task_success(task, result)
+        # AIOSOP-CACHE-INVALIDATE-001: task reached terminal success state;
+        # invalidate cache so next phase-monitor tick sees the completion.
+        await self._invalidate_phase_complete_cache(task.engagement_id)
+        return ret
 
     async def _on_task_failure(self, task: Task, result: Dict[str, Any]) -> None:
         """Handle task failure. Delegated to TaskScheduler."""
-        return await self.task_scheduler._on_task_failure(task, result)
+        ret = await self.task_scheduler._on_task_failure(task, result)
+        # AIOSOP-CACHE-INVALIDATE-001: task reached terminal failure state;
+        # invalidate cache so next phase-monitor tick sees the failure.
+        await self._invalidate_phase_complete_cache(task.engagement_id)
+        return ret
 
     async def _trigger_downstream_tasks(self, completed_task: Task) -> None:
         """Trigger tasks that depend on completed task. Delegated to TaskScheduler."""
@@ -841,7 +861,20 @@ class Orchestrator:
         return desired_next
 
     async def _is_phase_complete(self, session_id: str, phase: EngagementPhase) -> bool:
-        """Check if all tasks for the current phase are finished."""
+        """Check if all tasks for the current phase are finished.
+
+        Results are cached in ``self._phase_complete_cache`` (TTL 5s) to avoid
+        re-reading the durable task store on every phase-monitor tick. The cache
+        is keyed by ``(session_id, phase.value)`` so distinct engagements and
+        phases never collide.
+        """
+        cache_key = (session_id, phase.value)
+        _cache = getattr(self, "_phase_complete_cache", None)
+        if _cache is not None:
+            cached = _cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         if phase == EngagementPhase.INITIALIZED:
             return True
 
@@ -975,7 +1008,28 @@ class Orchestrator:
                 task_count=len(phase_tasks),
                 statuses=sorted({t.status for t in phase_tasks}),
             )
-        return True
+        result = True
+        # Cache the result so repeated phase-monitor ticks skip the read.
+        _cache = getattr(self, "_phase_complete_cache", None)
+        if _cache is not None:
+            _cache[cache_key] = result
+        return result
+
+    async def _invalidate_phase_complete_cache(self, engagement_id: str) -> None:
+        """Invalidate cached phase-completion results for an engagement.
+
+        Called from task lifecycle hooks so a status transition is immediately
+        visible on the next phase-monitor tick rather than waiting for TTL expiry.
+        """
+        _cache = getattr(self, "_phase_complete_cache", None)
+        if _cache is None:
+            return
+        keys_to_delete = [k for k in _cache if k[0] == engagement_id]
+        for k in keys_to_delete:
+            try:
+                del _cache[k]
+            except KeyError:
+                pass
 
     async def _graph_integrity_loop(self) -> None:
         """Background sweep that detects orphan / ghost nodes in the Neo4j graph

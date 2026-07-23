@@ -23,9 +23,15 @@
 #   payload-mcp       8083  REAL  (Python: real template library, encoding pipeline, mutation engine,
 #                         fitness evaluator; wraps ai_osop.payload_engine.engine classes)
 #   cloud-mcp         8097  STUB  (Python: hardcoded AWS IAM findings, no live cloud API)
-#   session-memory    8090  STUB  (Python: returns simulated "Operation successful" message)
-#   reporting-mcp     8092  STUB  (Python: returns fake internal report URL)
-#   attack-graph      8093  STUB  (Python: returns empty simulated graph)
+#   session-memory    8090  REAL  (Python: authenticates with bearer token, wraps SessionMemory
+#                         Redis+PostgreSQL multi-tier storage — session state, checkpoints,
+#                         audit log, approval management, agent working memory, DLQ operations)
+#   reporting-mcp     8092  REAL  (Python: authenticates with bearer token, wraps GraphMemory +
+#                         SessionMemory + ReportExporter — PostgreSQL-backed job queue, report
+#                         compilation, artifact storage, HMAC-signed download URLs, LLM narrative)
+#   attack-graph      8093  REAL  (Python: authenticates with bearer token, wraps GraphMemory —
+#                         parameterized Cypher queries for asset neighbors, attack paths,
+#                         graph summary; no raw-Cypher tool exposure)
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File launch_real.ps1
 

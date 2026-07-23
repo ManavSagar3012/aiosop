@@ -28,9 +28,7 @@ async def verify_mcp_token(authorization: Optional[str] = Header(None)):
     """Enforce strict bearer token verification."""
     expected = settings.api_token or os.getenv("OSOP_API_TOKEN")
     if not expected:
-        if settings.environment in ("production", "prod"):
-            raise HTTPException(status_code=401, detail="Authentication is not configured")
-        return
+        raise HTTPException(status_code=503, detail="MCP authentication is not configured")
 
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
@@ -68,14 +66,14 @@ class MCPExecuteRequest(BaseModel):
 
 @app.post("/mcp/initialize")
 async def mcp_initialize(req: MCPInitializeRequest, authenticated: None = Depends(verify_mcp_token)):
-    if req.scope:
-        try:
-            scope_def = ScopeDefinition(**req.scope)
-            app.state.scope_enforcer = ScopeEnforcer(scope_def)
-            app.state.session_id = req.session_id
-        except Exception as e:  # noqa: BLE001
-            import logging
-            logging.getLogger("source-map-mcp").warning(f"Failed to initialize scope: {e}")
+    if not req.scope:
+        raise HTTPException(status_code=422, detail="A valid engagement scope is required")
+    try:
+        scope_def = ScopeDefinition(**req.scope)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Invalid engagement scope: {e}") from e
+    app.state.scope_enforcer = ScopeEnforcer(scope_def)
+    app.state.session_id = req.session_id
 
     return {
         "server_id": "source-map-mcp",
@@ -95,7 +93,7 @@ async def mcp_initialize(req: MCPInitializeRequest, authenticated: None = Depend
     }
 
 
-async def analyze_sourcemap(url: str) -> Dict[str, Any]:
+async def analyze_sourcemap(url: str, scope_enforcer: ScopeEnforcer) -> Dict[str, Any]:
     # Secret regex patterns
     patterns = {
         "google_api": r"AIza[0-9A-Za-z-_]{35}",
@@ -110,7 +108,7 @@ async def analyze_sourcemap(url: str) -> Dict[str, Any]:
         "msg": ""
     }
 
-    async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url)
         if resp.status_code != 200:
             raise HTTPException(status_code=400, detail=f"Failed to fetch JS bundle: HTTP {resp.status_code}")
@@ -125,6 +123,11 @@ async def analyze_sourcemap(url: str) -> Dict[str, Any]:
                 if not map_url.startswith("http"):
                     base_url = url.rsplit("/", 1)[0]
                     map_url = f"{base_url}/{map_url}"
+
+                parsed_map_url = urlparse(map_url)
+                if parsed_map_url.scheme not in ("http", "https") or not parsed_map_url.hostname:
+                    raise HTTPException(status_code=400, detail="Invalid sourcemap URL")
+                scope_enforcer.validate_target(map_url)
                 
                 resp = await client.get(map_url)
                 if resp.status_code != 200:
@@ -188,7 +191,7 @@ async def mcp_execute(req: MCPExecuteRequest, authenticated: None = Depends(veri
         }
 
     url = params.get("url")
-    if not url:
+    if not isinstance(url, str) or not url:
         return {
             "request_id": request_id,
             "status": "error",
@@ -197,7 +200,7 @@ async def mcp_execute(req: MCPExecuteRequest, authenticated: None = Depends(veri
     
     # Enforce strict URL validation (prevent SSRF/file scheme access)
     parsed_url = urlparse(url)
-    if parsed_url.scheme not in ("http", "https"):
+    if parsed_url.scheme not in ("http", "https") or not parsed_url.hostname:
         return {
             "request_id": request_id,
             "status": "error",
@@ -205,18 +208,24 @@ async def mcp_execute(req: MCPExecuteRequest, authenticated: None = Depends(veri
         }
 
     # Enforce scope
-    if getattr(app.state, "scope_enforcer", None) and getattr(app.state, "session_id", "") != "api-bootstrap":
-        try:
-            app.state.scope_enforcer.validate_target(url)
-        except Exception as e:  # noqa: BLE001
-            return {
-                "request_id": request_id,
-                "status": "error",
-                "error": f"Out of scope target: {e}"
-            }
+    scope_enforcer = getattr(app.state, "scope_enforcer", None)
+    if scope_enforcer is None:
+        return {
+            "request_id": request_id,
+            "status": "error",
+            "error": "MCP scope has not been initialized",
+        }
+    try:
+        scope_enforcer.validate_target(url)
+    except Exception as e:  # noqa: BLE001
+        return {
+            "request_id": request_id,
+            "status": "error",
+            "error": f"Out of scope target: {e}",
+        }
             
     try:
-        result = await analyze_sourcemap(url)
+        result = await analyze_sourcemap(url, scope_enforcer)
         return {
             "request_id": request_id,
             "status": "success",

@@ -287,6 +287,24 @@ DEPENDENCY_UP = Gauge(
     ["name"],
 )
 
+# Neo4j connection pool metrics
+NEO4J_POOL_IN_USE = Gauge(
+    "ai_osop_neo4j_pool_in_use_connections",
+    "Neo4j connection pool — connections currently in use",
+)
+NEO4J_POOL_TOTAL = Gauge(
+    "ai_osop_neo4j_pool_total_connections",
+    "Neo4j connection pool — total connections (in_use + idle)",
+)
+NEO4J_POOL_CLOSED = Gauge(
+    "ai_osop_neo4j_pool_closed",
+    "Neo4j connection pool — 1 if closed, 0 if open",
+)
+NEO4J_POOL_READY = Gauge(
+    "ai_osop_neo4j_pool_ready",
+    "Neo4j connection pool — driver initialized and connected (1=ready, 0=not_ready)",
+)
+
 # Trace export
 TRACE_SPANS_EXPORTED = Counter(
     "ai_osop_trace_spans_exported_total",
