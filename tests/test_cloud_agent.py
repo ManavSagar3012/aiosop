@@ -34,6 +34,9 @@ def agent(mock_context):
 
 @pytest.mark.asyncio
 async def test_cloud_agent_analyze_iam_success(agent) -> None:
+    """MAJ-1 (2026-07-23): the cloud-mcp adapter is a stub (NotImplementedError),
+    so _analyze_iam_policy now returns 'skipped' with a clear message instead of
+    calling the stub adapter. This test asserts the skip behavior."""
     await agent.initialize()
 
     task = Task(
@@ -47,33 +50,13 @@ async def test_cloud_agent_analyze_iam_success(agent) -> None:
         engagement_id="test-session",
     )
 
-    mock_adapter_instance = AsyncMock()
-    mock_adapter_instance.analyze_iam_trust_policies.return_value = {
-        "findings": [
-            {
-                "role": "arn:aws:iam::123456789012:role/OverprivilegedRole",
-                "issue": "Cross-account assume role allowed",
-            }
-        ]
-    }
-    mock_adapter_instance.discover_privilege_escalation.return_value = {
-        "paths": [{"target": "admin-policy", "path": "iam:PutUserPolicy"}]
-    }
+    result = await agent._execute(task)
 
-    with patch("ai_osop.adapters.cloud_mcp.CloudMCPAdapter") as mock_adapter_cls:
-        mock_adapter_cls.return_value = mock_adapter_instance
-
-        result = await agent._execute(task)
-
-        assert result["status"] == "success"
-        assert result["findings_count"] == 2
-        assert "complete" in result["msg"]
-        mock_adapter_instance.initialize.assert_awaited_once()
-        mock_adapter_instance.analyze_iam_trust_policies.assert_awaited_once_with("123456789012")
-        mock_adapter_instance.discover_privilege_escalation.assert_awaited_once_with(
-            "arn:aws:iam::123456789012:user/admin"
-        )
-        assert agent.ctx.coordination_bus.publish.call_count == 2
+    # The stub adapter is now fail-closed: IAM analysis returns 'skipped'
+    # with a clear message instead of silently calling a fake adapter.
+    assert result["status"] == "skipped"
+    assert result["findings_count"] == 0
+    assert "stub" in result["msg"].lower() or "credentials" in result["msg"].lower()
 
 
 @pytest.mark.asyncio

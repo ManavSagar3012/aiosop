@@ -45,59 +45,28 @@ class CloudSpecialistAgent(BaseAgent):
             return {"status": "failed", "error": f"Unknown task type: {task_type}"}
 
     async def _analyze_iam_policy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze IAM policies for over-permissive actions."""
+        """Analyze IAM policies for over-permissive actions.
+
+        MAJ-1 (2026-07-23): the cloud-mcp adapter is a STUB that raises
+        NotImplementedError. IAM analysis via a real cloud API requires AWS
+        credentials (access key + secret) which we don't have in a
+        bug-bounty context (we're testing a TARGET, not our own account).
+        Return a clear 'requires credentials' skip instead of crashing.
+        """
         target_account = payload.get("account_id")
         target_principal = payload.get("principal_arn")
 
-        await self.think(
-            "Analyzing IAM policy for excessive permissions and trust relationships.",
-            ["iam", "least_privilege", "privilege_escalation"],
-        )
-
-        try:
-            from ai_osop.adapters.cloud_mcp import CloudMCPAdapter
-
-            # PATCH (REL-034, 2026-06-15): self.context -> self.ctx (BaseAgent
-            # stores AgentContext as self.ctx; self.context is undefined).
-            adapter = CloudMCPAdapter(self.ctx.mcp_registry)
-            await adapter.initialize(
-                self.ctx.scope.model_dump() if self.ctx.scope else {},
-                self.ctx.session_id,
-            )
-
-            findings = []
-
-            # Analyze trusts
-            trust_results = await adapter.analyze_iam_trust_policies(target_account)
-            for f in trust_results.get("findings", []):
-                findings.append(f)
-                await self.observe(
-                    target_id=f.get("role", "unknown-role"),
-                    obs_type="cloud_iam_trust_misconfig",
-                    data=f,
-                    confidence=0.9,
-                )
-
-            # Discover privesc
-            privesc_results = await adapter.discover_privilege_escalation(target_principal)
-            for p in privesc_results.get("paths", []):
-                findings.append(p)
-                await self.observe(
-                    target_id=p.get("target", "unknown-target"),
-                    obs_type="cloud_iam_privesc",
-                    data=p,
-                    confidence=0.95,
-                )
-
-            return {
-                "status": "success",
-                "findings_count": len(findings),
-                "msg": f"IAM policy analysis complete. Found {len(findings)} risks.",
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to analyze IAM roles: {e}")
-            return {"status": "failed", "error": str(e)}
+        return {
+            "status": "skipped",
+            "findings_count": 0,
+            "msg": (
+                "IAM policy analysis requires the cloud-mcp server with real "
+                "AWS credentials. The cloud-mcp adapter is currently a stub "
+                "(NotImplementedError). To enable, deploy a real cloud-mcp "
+                "server that calls STS GetCallerIdentity / IAM ListRoles. "
+                "For bug-bounty targets, use probe_metadata (SSRF→IMDS) instead."
+            ),
+        }
 
     async def _probe_cloud_metadata(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Probe for Cloud Metadata SSRF vulnerabilities."""
