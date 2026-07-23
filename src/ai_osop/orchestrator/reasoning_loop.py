@@ -321,6 +321,39 @@ class ReasoningLoop:
         # calls FindingsKnowledge.record_finding. We just update the
         # hypothesis status so the next cycle generates fresh ones.
 
+        # 6b. GRAPH PATHFINDER: after each cycle, run the automated graph
+        # pathfinder to discover attack chains the template-based
+        # AttackChainAgent would miss. The pathfinder queries Neo4j for
+        # paths from confirmed vulnerabilities to high-value endpoints.
+        # Discovered chains generate new hypotheses for the next cycle.
+        try:
+            from ai_osop.core.graph_pathfinder import GraphPathfinder
+
+            pathfinder = GraphPathfinder(self._orch.graph_memory)
+            chains = await pathfinder.find_chains(engagement_id, max_depth=5)
+            if chains:
+                for chain in chains[:3]:  # cap at 3 chains per cycle
+                    logger.info(
+                        "reasoning_graph_pathfinder_chain",
+                        engagement_id=engagement_id,
+                        chain_type=chain.get("chain_type"),
+                        confidence=chain.get("confidence"),
+                        description=chain.get("description", "")[:100],
+                    )
+                    # Publish the chain as a hypothesis-generated event so
+                    # any subscriber can react.
+                    await self._publish_event(
+                        "chain.discovered",
+                        {
+                            "engagement_id": engagement_id,
+                            "chain_type": chain.get("chain_type"),
+                            "description": chain.get("description"),
+                            "steps": chain.get("steps"),
+                        },
+                    )
+        except Exception as e:
+            logger.warning("reasoning_pathfinder_failed", error=str(e))
+
     async def _observe(self, engagement_id: str) -> Dict[str, Any]:
         """Read the current graph state for an engagement."""
         gm = self._orch.graph_memory

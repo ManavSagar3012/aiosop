@@ -474,22 +474,42 @@ async def scan_sqli(
         )
     else:
         _owns_client = True
-        async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
-            await _run_sqli_oracles(
-                c,
-                login_url,
-                search_url,
-                base_or_url,
-                is_base,
-                data,
-                search_param,
-                include_time_blind,
-                timeout,
-                second_order_store_url,
-                second_order_read_url,
-                second_order_field,
-                findings,
-            )
+        # MAJ-4 (2026-07-23): use a governed client when available so even the
+        # fallback path (no caller-supplied client) is scope-checked + rate-limited.
+        try:
+            from ai_osop.safety.governed_client import governed_client
+            from ai_osop.safety.governed_client import research_header_from_settings
+            from ai_osop.core.config import settings as _settings
+            from ai_osop.safety.rate_limiter import RateLimiter
+            from ai_osop.safety.scope import ScopeEnforcer
+            from ai_osop.core.models import ScopeDefinition
+            # Build a scope-less governed client (rate + header only — no
+            # engagement scope available in the standalone oracle path).
+            async with governed_client(
+                rate_limiter=RateLimiter(
+                    target_rate=_settings.scan_target_rate_per_second,
+                    target_capacity=_settings.scan_target_burst,
+                ),
+                research_header=research_header_from_settings(),
+                verify=False,
+                follow_redirects=True,
+                timeout=timeout,
+            ) as c:
+                await _run_sqli_oracles(
+                    c, login_url, search_url, base_or_url, is_base, data,
+                    search_param, include_time_blind, timeout,
+                    second_order_store_url, second_order_read_url,
+                    second_order_field, findings,
+                )
+        except ImportError:
+            # Fallback: raw httpx if governed_client is not importable
+            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
+                await _run_sqli_oracles(
+                    c, login_url, search_url, base_or_url, is_base, data,
+                    search_param, include_time_blind, timeout,
+                    second_order_store_url, second_order_read_url,
+                    second_order_field, findings,
+                )
     return findings
 
 
