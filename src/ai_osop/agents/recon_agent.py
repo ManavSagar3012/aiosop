@@ -108,6 +108,9 @@ class ReconAgent(BaseAgent):
             "content_discovery",
             "openapi_ingest",
             "expand_subdomains",
+            "cert_transparency",
+            "wayback_discovery",
+            "waf_detection",
         ]
 
     async def _setup_resources(self) -> None:
@@ -277,6 +280,12 @@ class ReconAgent(BaseAgent):
             return await self._execute_content_discovery(payload)
         elif task_type == "openapi_ingest":
             return await self._execute_openapi_ingest(payload)
+        elif task_type == "cert_transparency":
+            return await self._execute_cert_transparency(payload)
+        elif task_type == "wayback_discovery":
+            return await self._execute_wayback_discovery(payload)
+        elif task_type == "waf_detection":
+            return await self._execute_waf_detection(payload)
         else:
             raise AgentException(f"Unknown recon task type: {task_type}")
 
@@ -1175,6 +1184,206 @@ class ReconAgent(BaseAgent):
             )
 
         return discovered_endpoints
+
+    async def _execute_cert_transparency(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Query crt.sh certificate transparency logs for subdomains.
+
+        crt.sh is a free CT log search that reveals subdomains the target
+        may not publicize — a core recon technique for elite researchers.
+        Uses the governed client so the egress is scope-checked + rate-limited.
+        """
+        domain = payload.get("domain") or payload.get("url", "").replace("https://", "").replace("http://", "").split("/")[0]
+        if not domain:
+            return {"status": "failed", "error": "domain parameter is required"}
+
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        )
+        found_subdomains: list = []
+
+        try:
+            async with self.get_governed_client(tool="cert_ct", timeout=15.0) as client:
+                resp = await client.get(f"https://crt.sh/?q=%.{domain}&output=json")
+                if resp.status_code == 200:
+                    import json as _json
+                    try:
+                        data = _json.loads(resp.text)
+                        for entry in data:
+                            for name in entry.get("name_value", "").split("\n"):
+                                name = name.strip().lower()
+                                if name and name.endswith(f".{domain}") and name not in found_subdomains:
+                                    found_subdomains.append(name)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"cert_transparency failed for {domain}: {e}")
+
+        # Persist discovered subdomains as assets
+        for sub in found_subdomains[:50]:  # cap to avoid flooding
+            try:
+                asset = Asset(
+                    id=f"asset-{engagement_id}-{sub}",
+                    type="domain",
+                    value=sub,
+                    source="cert_transparency",
+                    confidence=0.95,
+                    engagement_id=engagement_id,
+                )
+                await self.ctx.graph_memory.add_asset(asset)
+            except Exception:
+                pass
+
+        return {
+            "status": "success",
+            "tool": "cert_transparency",
+            "domain": domain,
+            "subdomains_found": len(found_subdomains),
+            "subdomains": found_subdomains[:20],
+        }
+
+    async def _execute_wayback_discovery(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Query the Wayback Machine for historical URLs of the target.
+
+        The Wayback Machine reveals endpoints that may no longer be linked
+        from the current site — old API paths, deprecated admin panels,
+        removed features that are still live. This is a core recon technique.
+        """
+        domain = payload.get("domain") or payload.get("url", "").replace("https://", "").replace("http://", "").split("/")[0]
+        if not domain:
+            return {"status": "failed", "error": "domain parameter is required"}
+
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        )
+        found_urls: list = []
+
+        try:
+            async with self.get_governed_client(tool="wayback", timeout=20.0) as client:
+                resp = await client.get(
+                    f"http://web.archive.org/cdx/search/cdx?url=*.{domain}/*&output=json&fl=original&collapse=urlkey&limit=500"
+                )
+                if resp.status_code == 200:
+                    import json as _json
+                    try:
+                        data = _json.loads(resp.text)
+                        if len(data) > 1:  # first row is headers
+                            for row in data[1:]:
+                                if row and row[0] and row[0] not in found_urls:
+                                    found_urls.append(row[0])
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"wayback_discovery failed for {domain}: {e}")
+
+        # Persist discovered URLs as endpoints
+        seeded = 0
+        for url in found_urls[:100]:
+            try:
+                ep = self._mk_endpoint(url, engagement_id, source="wayback")
+                await self._persist_endpoint(ep)
+                seeded += 1
+            except Exception:
+                pass
+
+        return {
+            "status": "success",
+            "tool": "wayback_discovery",
+            "domain": domain,
+            "urls_found": len(found_urls),
+            "endpoints_seeded": seeded,
+        }
+
+    async def _execute_waf_detection(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Detect WAF protection on the target.
+
+        Identifies the WAF (Cloudflare, AWS WAF, Akamai, etc.) by checking
+        response headers, cookies, and challenge patterns. WAF detection
+        is critical for context-aware payload generation — knowing the WAF
+        lets the payload engine choose WAF-bypass variants.
+        """
+        target_url = payload.get("url") or payload.get("target")
+        if not target_url:
+            domain = payload.get("domain", "")
+            if domain:
+                target_url = f"http://{domain}"
+            else:
+                return {"status": "failed", "error": "url or domain parameter is required"}
+
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
+        )
+
+        waf_detected = None
+        waf_signals: list = []
+
+        try:
+            async with self.get_governed_client(tool="waf_detect", timeout=10.0) as client:
+                resp = await client.get(target_url)
+                headers = {k.lower(): v for k, v in resp.headers.items()}
+                cookies = resp.headers.get("set-cookie", "").lower()
+
+                # Cloudflare
+                if "cf-ray" in headers or "cloudflare" in cookies:
+                    waf_detected = "cloudflare"
+                    waf_signals.append("cf-ray header present")
+                # AWS WAF
+                elif "x-amzn-waf" in headers or "awselb" in cookies:
+                    waf_detected = "aws_waf"
+                    waf_signals.append("x-amzn-waf header present")
+                # Akamai
+                elif "akamaighost" in headers or "akamai" in cookies:
+                    waf_detected = "akamai"
+                    waf_signals.append("akamai headers present")
+                # F5 BIG-IP
+                elif "bigipserver" in cookies:
+                    waf_detected = "f5_bigip"
+                    waf_signals.append("BIGipServer cookie present")
+                # Sucuri
+                elif "x-sucuri-id" in headers:
+                    waf_detected = "sucuri"
+                    waf_signals.append("x-sucuri-id header present")
+                # Imperva
+                elif "incap_ses" in cookies or "visid_incap" in cookies:
+                    waf_detected = "imperva"
+                    waf_signals.append("incap_ses/visid_incap cookies present")
+
+                # Check for challenge pages
+                body_lower = resp.text[:2000].lower()
+                if not waf_detected:
+                    if "just a moment" in body_lower or "cf-browser-verification" in body_lower:
+                        waf_detected = "cloudflare"
+                        waf_signals.append("challenge page detected")
+                    elif "access denied" in body_lower and "akamai" in body_lower:
+                        waf_detected = "akamai"
+                        waf_signals.append("access denied page")
+        except Exception as e:
+            logger.warning(f"waf_detection failed for {target_url}: {e}")
+            return {"status": "failed", "error": str(e)}
+
+        result = {
+            "status": "success",
+            "tool": "waf_detection",
+            "target": target_url,
+            "waf_detected": waf_detected,
+            "waf_signals": waf_signals,
+        }
+
+        # Store the WAF finding as an asset attribute so the payload engine
+        # and the reasoning loop can use it for context-aware generation.
+        if waf_detected:
+            try:
+                await self.ctx.graph_memory.run_write_query(
+                    "MERGE (a:Asset {value: $domain}) SET a.waf = $waf, a.waf_signals = $signals",
+                    {
+                        "domain": target_url.split("//")[-1].split("/")[0],
+                        "waf": waf_detected,
+                        "signals": waf_signals,
+                    },
+                )
+            except Exception:
+                pass
+
+        return result
 
     async def _cleanup_resources(self) -> None:
         """Cleanup recon resources."""

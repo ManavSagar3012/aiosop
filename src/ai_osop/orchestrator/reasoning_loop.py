@@ -98,29 +98,74 @@ class ReasoningLoop:
         self._task: Optional[asyncio.Task] = None
         self._dead_ends = 0
         self._tested_hypotheses: set = set()
+        # Event-driven collaboration: finding.recorded events trigger immediate
+        # chain hypothesis generation without waiting for the next polling cycle.
+        self._event_subscriber: Optional[asyncio.Task] = None
+        self._pending_finding_events: asyncio.Queue = asyncio.Queue()
 
     def start(self) -> None:
-        """Start the reasoning loop as a background task."""
+        """Start the reasoning loop + the event subscriber as background tasks."""
         if self._task is not None and not self._task.done():
             return
         self._running = True
         self._task = asyncio.create_task(self._run())
+        # Subscribe to finding.recorded events so every confirmed finding
+        # immediately triggers chain hypothesis generation (event-driven
+        # agent collaboration — Priority 4 of the roadmap).
+        self._event_subscriber = asyncio.create_task(self._listen_for_findings())
 
     async def stop(self) -> None:
-        """Stop the reasoning loop gracefully."""
+        """Stop the reasoning loop + event subscriber gracefully."""
         self._running = False
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            try:
-                await asyncio.wait_for(asyncio.gather(self._task, return_exceptions=True), timeout=5)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                pass
+        for bg in (self._event_subscriber, self._task):
+            if bg is not None and not bg.done():
+                bg.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.gather(bg, return_exceptions=True), timeout=5)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
         self._task = None
+        self._event_subscriber = None
+
+    async def _listen_for_findings(self) -> None:
+        """Subscribe to finding.recorded events and trigger immediate chain generation.
+
+        This is the event-driven collaboration mechanism: when any agent
+        persists a finding, GraphMemory publishes a finding.recorded event
+        on the coordination bus. This subscriber receives it and immediately
+        generates chain hypotheses (SSRF→metadata, IDOR→admin, etc.) without
+        waiting for the next polling cycle.
+        """
+        bus = getattr(self._orch, "coordination_bus", None)
+        if bus is None:
+            return
+        try:
+            async for event in bus.subscribe("finding.recorded"):
+                if not self._running:
+                    break
+                payload = event.payload if hasattr(event, "payload") else event.get("payload", {})
+                await self._pending_finding_events.put(payload)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("reasoning_event_subscriber_error", error=str(e))
 
     async def _run(self) -> None:
         """Main reasoning loop — runs until the orchestrator stops."""
         while self._running:
             try:
+                # Drain any pending finding.recorded events FIRST (event-driven
+                # collaboration). Each event triggers immediate chain hypothesis
+                # generation without waiting for the next polling cycle.
+                while not self._pending_finding_events.empty():
+                    try:
+                        event_payload = self._pending_finding_events.get_nowait()
+                        eid = event_payload.get("engagement_id", "")
+                        if eid:
+                            await self._handle_finding_event(eid, event_payload)
+                    except Exception as e:
+                        logger.warning("reasoning_event_drain_error", error=str(e))
+
                 await asyncio.sleep(2)  # yield to the event loop
                 for session_id, session in list(self._orch._sessions.items()):
                     eid = getattr(session, "canonical_engagement_id", None) or session_id
@@ -134,6 +179,55 @@ class ReasoningLoop:
             except Exception as e:
                 logger.warning("reasoning_loop_error", error=str(e))
                 await asyncio.sleep(10)
+
+    async def _handle_finding_event(self, engagement_id: str, payload: Dict[str, Any]) -> None:
+        """Handle a finding.recorded event — trigger immediate chain generation.
+
+        When a finding is persisted, generate chain hypotheses immediately:
+          - SSRF confirmed → try metadata → try credentials → try S3
+          - IDOR confirmed → try admin objects → try privilege escalation
+          - XSS confirmed → try cookie theft → try session hijacking
+          - JWT confirmed → try identity forgery → try admin access
+        """
+        vuln_type = payload.get("vuln_type", "")
+        finding_id = payload.get("finding_id", "")
+
+        # Map vuln types to chain focus strings
+        chain_map = {
+            "ssrf": "metadata chain: SSRF confirmed → probe IMDS → extract credentials → probe S3/secrets",
+            "idor": "authorization chain: IDOR confirmed → try admin objects → privilege escalation",
+            "xss": "XSS chain: execution confirmed → try cookie theft → session hijacking → ATO",
+            "jwt_abuse": "JWT chain: forgery confirmed → try admin identity → full auth bypass",
+            "sqli": "SQLi chain: injection confirmed → try UNION → try stacked queries → try RCE",
+            "mass_assignment": "Mass-assignment chain: admin role set → try admin endpoints → privesc",
+        }
+        focus = chain_map.get(vuln_type, "")
+        if not focus:
+            return
+
+        try:
+            from ai_osop.core.hypothesis_engine import HypothesisEngine
+
+            engine = HypothesisEngine(
+                self._orch.graph_memory,
+                skill_engine=getattr(self._orch, "skill_engine", None),
+                session_memory=self._orch.session_memory,
+            )
+            await engine.generate_and_persist(engagement_id, focus=focus, limit=5)
+            logger.info(
+                "reasoning_event_chain_generated",
+                engagement_id=engagement_id,
+                vuln_type=vuln_type,
+                finding_id=finding_id,
+                focus=focus,
+            )
+        except Exception as e:
+            logger.warning(
+                "reasoning_event_chain_failed",
+                engagement_id=engagement_id,
+                vuln_type=vuln_type,
+                error=str(e),
+            )
 
     async def _reasoning_cycle(self, engagement_id: str, session_id: str) -> None:
         """One full Observe → Hypothesize → Dispatch → Evaluate cycle."""

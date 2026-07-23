@@ -230,6 +230,32 @@ class PhaseMonitor:
         policy = self._orch.PHASE_POLICY.get(phase)
 
         if policy and policy.get("auto_next"):
+            # Dynamic planner (Priority 2): before auto-advancing the phase,
+            # check if the reasoning loop has OPEN hypotheses that haven't been
+            # tested yet. If it does, DELAY the phase transition so the
+            # reasoning loop can dispatch + evaluate them first. This makes
+            # the phase monitor event-driven rather than purely phase-driven —
+            # it waits for the reasoning loop to exhaust its hypotheses before
+            # moving on, so adaptive work (chains, dead-end recovery) gets
+            # done before the engagement advances.
+            reasoning_loop = getattr(self._orch, "reasoning_loop", None)
+            if reasoning_loop is not None:
+                try:
+                    open_hyps = await self._orch.graph_memory.get_hypotheses_by_engagement(session_id)
+                    has_open = any(
+                        h.get("status") == "open"
+                        and h.get("id") not in reasoning_loop._tested_hypotheses
+                        for h in open_hyps
+                    )
+                    if has_open:
+                        # The reasoning loop has untested hypotheses. Don't
+                        # advance the phase yet — let the loop work. It will
+                        # re-check on the next tick (5s) and advance once the
+                        # hypotheses are all tested/refuted.
+                        return
+                except Exception:
+                    pass  # if the graph query fails, fall through to the normal path
+
             # Check if all tasks for current phase are complete
             if await self._orch._is_phase_complete(session_id, phase):
                 next_phase = await self._orch._resolve_auto_next(
