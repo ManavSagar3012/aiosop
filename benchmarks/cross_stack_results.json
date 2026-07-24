@@ -1,0 +1,22 @@
+[
+  {
+    "target_name": "juice-shop",
+    "url": "http://localhost:3000",
+    "stack": "Node.js/Angular/SQLite",
+    "seeded": 34,
+    "findings_total": 17,
+    "findings_validated": 16,
+    "chains": 32,
+    "uncertainties": 34,
+    "time_to_discovery": 176.81200000003446,
+    "novel_paths": 12,
+    "trace_steps": 5,
+    "trace_confirmed": 3,
+    "trace_refuted": 0,
+    "false_positive_rate": 0.0,
+    "recall": 1.0,
+    "precision": 1.0,
+    "high_value_endpoints": 17,
+    "error": ""
+  }
+]
