@@ -1,0 +1,57 @@
+[
+  {
+    "config_name": "baseline (all on)",
+    "seeded": 34,
+    "findings_total": 17,
+    "findings_validated": 16,
+    "chains": 32,
+    "uncertainties": 34,
+    "time_to_discovery": 181.20299999999997,
+    "high_value_endpoints": 17,
+    "error": ""
+  },
+  {
+    "config_name": "without business context",
+    "seeded": 34,
+    "findings_total": 17,
+    "findings_validated": 16,
+    "chains": 32,
+    "uncertainties": 34,
+    "time_to_discovery": 182.70299999999997,
+    "high_value_endpoints": 0,
+    "error": ""
+  },
+  {
+    "config_name": "without uncertainty tracker",
+    "seeded": 34,
+    "findings_total": 17,
+    "findings_validated": 16,
+    "chains": 32,
+    "uncertainties": 0,
+    "time_to_discovery": 181.48399999999992,
+    "high_value_endpoints": 17,
+    "error": ""
+  },
+  {
+    "config_name": "without graph pathfinder",
+    "seeded": 34,
+    "findings_total": 17,
+    "findings_validated": 16,
+    "chains": 0,
+    "uncertainties": 34,
+    "time_to_discovery": 178.25,
+    "high_value_endpoints": 17,
+    "error": ""
+  },
+  {
+    "config_name": "without any cognitive components (raw scan)",
+    "seeded": 34,
+    "findings_total": 17,
+    "findings_validated": 16,
+    "chains": 0,
+    "uncertainties": 0,
+    "time_to_discovery": 177.32799999999997,
+    "high_value_endpoints": 0,
+    "error": ""
+  }
+]
