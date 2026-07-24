@@ -1710,7 +1710,7 @@ class GraphMemory:
                     "target_id": hypothesis.target_id,
                     "confidence": hypothesis.confidence,
                     "supporting_entities": hypothesis.supporting_entities,
-                    "evidence": hypothesis.evidence,
+                    "evidence": json.dumps(hypothesis.evidence, default=str) if hypothesis.evidence else "[]",
                     "recommended_tests": hypothesis.recommended_tests,
                     "recommended_skills": hypothesis.recommended_skills,
                     "status": hypothesis.status,
