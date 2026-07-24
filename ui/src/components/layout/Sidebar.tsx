@@ -1,19 +1,21 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { 
-    LayoutDashboard, 
-    Crosshair, 
-    Brain, 
-    Network, 
-    ShieldCheck, 
-    LineChart, 
+import {
+    LayoutDashboard,
+    Crosshair,
+    Brain,
+    Network,
+    ShieldCheck,
+    LineChart,
     Settings,
     Fingerprint,
     HelpCircle,
     Clock,
     FileText,
     Lock,
-    Eye
+    Eye,
+    Activity,
+    Zap
 } from 'lucide-react';
 import { NetworkHealth } from '../shared/NetworkHealth';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
@@ -34,6 +36,8 @@ export const Sidebar: React.FC = () => {
     { path: '/verification', label: 'Reality Verification', icon: <Fingerprint size={18} /> },
     { path: '/visual-context', label: 'Visual Context', icon: <Eye size={18} /> },
     { path: '/uncertainty', label: 'Uncertainty Engine', icon: <HelpCircle size={18} /> },
+    { path: '/reasoning', label: 'Reasoning Trace', icon: <Activity size={18} /> },
+    { path: '/cognition', label: 'Cognition Dashboard', icon: <Zap size={18} /> },
     { path: '/learning', label: 'Learning & Analytics', icon: <LineChart size={18} /> },
     { path: '/admin', label: 'Administration', icon: <Settings size={18} /> },
   ];

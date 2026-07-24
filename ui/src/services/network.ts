@@ -71,6 +71,18 @@ export class NetworkService {
       // 8. Graph Data
       const graphRes = await fetch(`${API_BASE}/engagements/${sessionId}/graph`, { headers });
       if (graphRes.ok) useIntelligenceStore.getState().setGraphData(await graphRes.json());
+
+      // 9. Reasoning Trace
+      const traceRes = await fetch(`${API_BASE}/engagements/${sessionId}/reasoning-trace`, { headers });
+      if (traceRes.ok) useIntelligenceStore.getState().setReasoningTrace((await traceRes.json()).trace || []);
+
+      // 10. Cognition Summary
+      const cogRes = await fetch(`${API_BASE}/engagements/${sessionId}/cognition-summary`, { headers });
+      if (cogRes.ok) useIntelligenceStore.getState().setCognitionSummary(await cogRes.json());
+
+      // 11. Critic Review
+      const criticRes = await fetch(`${API_BASE}/engagements/${sessionId}/critic-review`, { headers });
+      if (criticRes.ok) useIntelligenceStore.getState().setCriticReview((await criticRes.json()).critiques || []);
     } catch (e) {
       console.error("[Network] Hydration failed", e);
     }

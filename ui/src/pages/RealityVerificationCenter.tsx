@@ -13,13 +13,9 @@ interface LedgerFinding {
   confidence: number;
 }
 
-// Same content previously hard-coded as two individual cards; reshaped into
-// row data so it can flow through the shared DataTable primitive.
-const findingLedger: LedgerFinding[] = [
-  { id: 'tenant-escape-invoice-export', title: 'Tenant Escape via Invoice Export', severity: 'critical', confidence: 98 },
-  { id: 'public-s3-bucket-avatars', title: 'Public AWS S3 Bucket (Avatars)', severity: 'medium', confidence: 100 },
-];
-
+// Finding ledger is now derived from the live findings store, not hardcoded.
+// Previously this contained two fabricated findings ("tenant-escape-invoice-export"
+// and "public-s3-bucket-avatars") that displayed as real data.
 const ledgerColumns: Column<LedgerFinding>[] = [
   {
     key: 'title',
@@ -46,8 +42,24 @@ const ledgerColumns: Column<LedgerFinding>[] = [
 ];
 
 export const RealityVerificationCenter: React.FC = () => {
-  const { verifications, sessionId, hasCheckedSession } = useIntelligenceStore();
+  const { verifications, findings, criticReview, sessionId, hasCheckedSession } = useIntelligenceStore();
   const rows = verifications || [];
+
+  // Derive the finding ledger from live findings instead of hardcoded data
+  const findingLedger: LedgerFinding[] = (findings || [])
+    .filter((f: any) => f.status === 'validated' || f.status === 'verified')
+    .map((f: any) => ({
+      id: f.id,
+      title: f.title || f.category || 'Untitled',
+      severity: (f.severity || 'low') as LedgerFinding['severity'],
+      confidence: Math.round((f.confidence || 0) * 100),
+    }));
+
+  // Derive verification metrics from live data instead of hardcoded "82%" / "3"
+  const verifiedCount = (findings || []).filter((f: any) => f.status === 'verified' || f.status === 'validated').length;
+  const totalCount = (findings || []).length || 1;
+  const verificationRate = Math.round((verifiedCount / totalCount) * 100);
+  const rejectedCount = criticReview?.length || 0;
 
   // Loading skeleton while waiting for first data
   if (!sessionId) {
@@ -102,13 +114,13 @@ export const RealityVerificationCenter: React.FC = () => {
             <span className="font-code-sm text-primary text-[14px]">BALANCED_CONSENSUS (REQUIRES 2+ INDEPENDENT AGENTS)</span>
          </div>
          <div className="flex items-center gap-6">
-            <div className="text-right">
-               <div className="font-code-sm text-primary text-[14px]">82%</div>
+            <div class_Name="text-right">
+               <div className="font-code-sm text-primary text-[14px]">{verificationRate}%</div>
                <div className="font-label-caps text-label-caps text-on-surface-variant">OVERALL VERIFICATION RATE</div>
             </div>
             <div className="text-right border-l border-outline-variant pl-6">
-               <div className="font-code-sm text-error text-[14px]">3</div>
-               <div className="font-label-caps text-label-caps text-on-surface-variant">REJECTED HYPOTHESES</div>
+               <div className="font-code-sm text-error text-[14px]">{rejectedCount}</div>
+               <div className="font-label-caps text-label-caps text-on-surface-variant">CRITIC ISSUES</div>
             </div>
          </div>
       </div>

@@ -97,6 +97,9 @@ interface IntelligenceState {
   skillStats: SkillStats | null
   auditLog: AuditLogEntry[]
   graphData: GraphData
+  reasoningTrace: any[]
+  cognitionSummary: any | null
+  criticReview: any[]
   setSessionId: (id: string) => void
   setHasCheckedSession: (checked: boolean) => void
   appendFinding: (finding: Finding) => void
@@ -112,6 +115,9 @@ interface IntelligenceState {
   setAuditLog: (log: AuditLogEntry[]) => void
   appendAuditEntry: (event: AuditLogEntry) => void
   setGraphData: (data: GraphData) => void
+  setReasoningTrace: (trace: any[]) => void
+  setCognitionSummary: (summary: any) => void
+  setCriticReview: (review: any[]) => void
 }
 
 export const useIntelligenceStore = create<IntelligenceState>((set) => ({
@@ -124,14 +130,20 @@ export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   skillStats: null,
   auditLog: [],
   graphData: { nodes: [], edges: [] },
-  setSessionId: (sessionId) => set({ 
-    sessionId, 
-    findings: [], 
-    verifications: [], 
-    uncertainties: [], 
-    diffAuthFindings: [], 
-    auditLog: [], 
-    graphData: { nodes: [], edges: [] } 
+  reasoningTrace: [],
+  cognitionSummary: null,
+  criticReview: [],
+  setSessionId: (sessionId) => set({
+    sessionId,
+    findings: [],
+    verifications: [],
+    uncertainties: [],
+    diffAuthFindings: [],
+    auditLog: [],
+    graphData: { nodes: [], edges: [] },
+    reasoningTrace: [],
+    cognitionSummary: null,
+    criticReview: [],
   }),
   setHasCheckedSession: (hasCheckedSession) => set({ hasCheckedSession }),
   appendFinding: (finding) => set((state) => ({ 
@@ -157,4 +169,7 @@ export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   setAuditLog: (auditLog) => set({ auditLog }),
   appendAuditEntry: (event) => set((state) => ({ auditLog: [event, ...state.auditLog].slice(0, 100) })),
   setGraphData: (graphData) => set({ graphData }),
+  setReasoningTrace: (reasoningTrace) => set({ reasoningTrace }),
+  setCognitionSummary: (cognitionSummary) => set({ cognitionSummary }),
+  setCriticReview: (criticReview) => set({ criticReview }),
 }))

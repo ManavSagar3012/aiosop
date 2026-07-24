@@ -153,7 +153,7 @@ export const DifferentialAuth: React.FC = () => {
             </div>
             <div>
                <div className={`font-headline-md text-headline-md ${currentFinding ? 'text-error' : 'text-on-surface-variant'}`}>
-                   Differential Verdict: {currentFinding ? 'CRITICAL ANOMALY' : 'NO ANOMALIES DETECTED'}
+                   Differential Verdict: {currentFinding ? 'Anomaly Detected' : 'No Anomalies'}
                </div>
                <div className="font-code-sm text-on-surface-variant text-[11px]">
                    {currentFinding ? `Confidence: ${(currentFinding.confidence * 100).toFixed(1)}% // ${currentFinding.test_identity_id} accessed restricted resource.` : 'All observed identities respect baseline authorization boundaries.'}

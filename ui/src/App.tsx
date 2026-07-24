@@ -18,6 +18,8 @@ import { AlertTriangle } from 'lucide-react';
 import { PageErrorBoundary } from './components/shared/PageErrorBoundary';
 import { MissionTimeline } from './pages/MissionTimeline';
 import { MissionReport } from './pages/MissionReport';
+import { ReasoningTrace } from './pages/ReasoningTrace';
+import { CognitionDashboard } from './pages/CognitionDashboard';
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
   constructor(props: any) {
@@ -73,6 +75,8 @@ export default function App() {
             <Route path="visual-context" element={<PageErrorBoundary pageName="VisualContext"><VisualContext /></PageErrorBoundary>} />
             <Route path="admin" element={<PageErrorBoundary pageName="Administration"><Administration /></PageErrorBoundary>} />
             <Route path="report/:sessionId" element={<PageErrorBoundary pageName="MissionReport"><MissionReport /></PageErrorBoundary>} />
+            <Route path="reasoning" element={<PageErrorBoundary pageName="Reasoning"><ReasoningTrace /></PageErrorBoundary>} />
+            <Route path="cognition" element={<PageErrorBoundary pageName="Cognition"><CognitionDashboard /></PageErrorBoundary>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

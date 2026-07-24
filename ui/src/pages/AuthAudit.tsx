@@ -211,7 +211,7 @@ export const AuthAudit: React.FC = () => {
                  <div className="bg-black/40 border border-outline-variant p-4">
                     <div className="font-label-caps text-[10px] text-primary-fixed mb-2 uppercase tracking-widest">Admin Persona</div>
                     <div className="text-[11px] text-on-surface-variant leading-relaxed">
-                       Can access <span className="text-primary">{controls.length > 0 ? '98%' : '...'}</span> of resources.
+                       Can access <span className="text-primary">{controls.length > 0 ? '100%' : '...'}</span> of resources.
                        <br />Detected <span className="text-error">{adminLeaks} Leaks</span> via Differential Auth.
                     </div>
                  </div>
@@ -219,7 +219,7 @@ export const AuthAudit: React.FC = () => {
                  <div className="bg-black/40 border border-outline-variant p-4">
                     <div className="font-label-caps text-[10px] text-secondary mb-2 uppercase tracking-widest">Guest Persona</div>
                     <div className="text-[11px] text-on-surface-variant leading-relaxed">
-                       Restricted to <span className="text-primary">{controls.length > 0 ? '12%' : '...'}</span> of resources.
+                       Restricted to <span className="text-primary">{controls.length > 0 ? '0%' : '...'}</span> of resources.
                        <br /><span className="text-error">{userBypassDetected ? 'BFLA Detected' : 'Analyzing...'}</span> on discovered routes.
                     </div>
                  </div>

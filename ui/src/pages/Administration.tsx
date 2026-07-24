@@ -87,14 +87,14 @@ export const Administration: React.FC = () => {
                     <div className="w-2 h-2 rounded-full bg-primary-fixed"></div>
                     <span className="font-code-sm text-[12px] text-on-surface">OPENAI_GPT4O</span>
                  </div>
-                 <span className="text-[10px] text-on-surface-variant">••••••••sk-4a</span>
+                 <span className="text-[10px] text-on-surface-variant">CONFIGURED</span>
               </div>
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2">
                  <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-primary-fixed"></div>
                     <span className="font-code-sm text-[12px] text-on-surface">ANTHROPIC_CLAUDE3</span>
                  </div>
-                 <span className="text-[10px] text-on-surface-variant">••••••••key-f2</span>
+                 <span className="text-[10px] text-on-surface-variant">CONFIGURED</span>
               </div>
               <div className="flex items-center justify-between opacity-40">
                  <div className="flex items-center gap-2">

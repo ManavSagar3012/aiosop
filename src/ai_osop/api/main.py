@@ -38,6 +38,7 @@ from ai_osop.api.health import run_startup_self_test
 from ai_osop.api.routers import (
     agents,
     approvals,
+    cognition,
     dlq,
     engagements,
     findings,
@@ -749,6 +750,7 @@ app.include_router(findings.router)
 app.include_router(intelligence.router)
 app.include_router(system.router)
 app.include_router(observatory.router)
+app.include_router(cognition.router)
 
 
 # ============== Metrics (protected) ==============
@@ -855,7 +857,10 @@ async def websocket_engagement(
         counts it toward throughput), so the swarm feed and EV/S reflect real work
         instead of only the 2s heartbeat. A compact projection is sent — never the
         full task `result` blob — to keep WS frames small (cf. report-bloat fix)."""
-        _TOPICS = ("task.scheduled", "task.assigned", "task.completed", "task.failed")
+        _TOPICS = (
+            "task.scheduled", "task.assigned", "task.completed", "task.failed",
+            "finding.recorded", "hypothesis.generated", "chain.discovered",
+        )
 
         async def _pump(topic: str) -> None:
             async for ev in orch.coordination_bus.subscribe(topic):

@@ -99,30 +99,29 @@ export const UncertaintyEngine: React.FC = () => {
            </div>
         </Card>
 
-        <Card title="Reasoning Transparency (Brain Dump)">
+        <Card title="Reasoning Transparency">
            <div className="h-full font-code-sm text-[11px] text-on-surface-variant leading-relaxed space-y-4">
               <div className="bg-black/60 p-4 border border-outline-variant rounded">
-                 <p className="text-primary font-bold mb-2 uppercase tracking-tighter text-[10px]">SWARM_GOVERNOR // RATIONALE:</p>
+                 <p className="text-primary font-bold mb-2 uppercase tracking-tighter text-[10px]">REASONING LOOP // STATUS:</p>
                  <p>
                     {uncertainties.length > 0 ? (
-                        <>"The current uncertainty regarding <span className="text-secondary underline italic">{uncertainties[0].unknowns?.[0] || 'Target Context'}</span> has halted exploitation attempts.
+                        <>The current uncertainty regarding <span className="text-secondary underline italic">{uncertainties[0].unknowns?.[0] || 'Target Context'}</span> has halted exploitation attempts.
                         We lack confirmation of the state transition for <span className="text-on-surface italic">{uncertainties[0].target}</span>.
-                        Escalating to <span className="text-primary-fixed italic font-bold text-[13px]">VisualContextAgent</span> to identify hidden iframe triggers."</>
+                        The reasoning loop will generate an info-seeking hypothesis to resolve this.</>
                     ) : (
-                        <>"Swarm reasoning is currently deterministic. No high-uncertainty state transitions detected in the last cycle.
-                        Continuing <span className="text-secondary">Mission Discovery</span> phase."</>
+                        <>No open uncertainties detected. The reasoning loop is in steady state — all detected unknowns have been resolved or are being actively investigated.</>
                     )}
                  </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
                  <div className="border border-outline-variant p-3">
-                    <div className="font-label-caps text-label-xs text-primary-fixed mb-2">MOST UNCERTAIN STACK</div>
-                    <div className="text-on-surface">Cloudflare Turnstile + Custom WebGL</div>
+                    <div className="font-label-caps text-label-xs text-primary-fixed mb-2">OPEN UNCERTAINTIES</div>
+                    <div className="text-on-surface">{uncertainties.length}</div>
                  </div>
                  <div className="border border-outline-variant p-3">
-                    <div className="font-label-caps text-label-xs text-primary-fixed mb-2">HIGHEST DATA GAP</div>
-                    <div className="text-on-surface">Organization Admin Credentials</div>
+                    <div className="font-label-caps text-label-xs text-primary-fixed mb-2">BLOCKED PATHS</div>
+                    <div className="text-on-surface">{uncertainties.reduce((acc: number, u: any) => acc + (u.blockedPaths?.length || 0), 0)}</div>
                  </div>
               </div>
 
