@@ -316,4 +316,33 @@ def render_bounty_report(vuln: Union[Vulnerability, Dict[str, Any]], program: st
         f"## Evidence\n```json\n{evidence_json}\n```\n\n"
         f"## Remediation\n{remediation}\n"
     )
+
+    # RemediationEngine: inject framework-specific secure code snippets.
+    # If the target's technology stack is known, provide a concrete code
+    # example for the developer to fix the vulnerability in their framework.
+    try:
+        from ai_osop.core.remediation_engine import get_framework_remediation
+
+        # Try to extract framework info from the finding evidence or the report context
+        frameworks = []
+        ev_technologies = ev.get("technologies") if isinstance(ev, dict) else None
+        if isinstance(ev_technologies, list):
+            frameworks = ev_technologies
+        if not frameworks:
+            # Check the finding's endpoint for technology tags
+            endpoint_techs = view.get("technologies")
+            if isinstance(endpoint_techs, list):
+                frameworks = endpoint_techs
+
+        if frameworks:
+            fw_remediation = get_framework_remediation(vt, frameworks)
+            if fw_remediation:
+                body += (
+                    f"\n### Framework-Specific Fix ({fw_remediation['framework']})\n"
+                    f"{fw_remediation['code']}\n"
+                    f"\n*{fw_remediation['description']}*\n"
+                )
+    except Exception:
+        pass  # remediation engine is best-effort; never break report rendering
+
     return header + body

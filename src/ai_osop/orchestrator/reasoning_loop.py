@@ -448,6 +448,121 @@ class ReasoningLoop:
         except Exception as e:
             logger.warning("reasoning_uncertainty_detection_failed", error=str(e))
 
+        # WAF Character Probe: if any endpoint has a detected WAF, probe its
+        # filtered characters so the payload engine can generate WAF-bypass
+        # payloads. This is the "experiment design" cognitive capability —
+        # the system actively gathers information about the target's defenses
+        # before attacking.
+        try:
+            from ai_osop.core.waf_character_probe import probe_waf_characters
+
+            # Check if any asset has a WAF detected
+            waf_assets = await self._orch.graph_memory.run_read_query(
+                "MATCH (a:Asset {engagement_id: $eid}) WHERE a.waf IS NOT NULL "
+                "RETURN a.value AS value, a.waf AS waf LIMIT 5",
+                {"eid": engagement_id},
+            )
+            for asset in waf_assets:
+                waf_name = asset.get("waf", "")
+                asset_value = asset.get("value", "")
+                if not waf_name or not asset_value:
+                    continue
+                # Check if we already probed this host
+                probe_key = f"waf_probed_{asset_value}"
+                if probe_key in self._tested_hypotheses:
+                    continue
+                self._tested_hypotheses.add(probe_key)
+
+                target_url = f"http://{asset_value}" if not asset_value.startswith("http") else asset_value
+                import httpx
+                from ai_osop.safety.governed_client import governance_hook, research_header_from_settings
+                from ai_osop.safety.rate_limiter import RateLimiter
+                from ai_osop.core.config import settings as _settings
+
+                ghook = governance_hook(
+                    rate_limiter=RateLimiter(
+                        target_rate=_settings.scan_target_rate_per_second,
+                        target_capacity=_settings.scan_target_burst,
+                    ),
+                    research_header=research_header_from_settings(),
+                )
+                async with httpx.AsyncClient(
+                    event_hooks={"request": [ghook]} if ghook else {},
+                    verify=False, timeout=10.0,
+                ) as waf_client:
+                    probe_result = await probe_waf_characters(
+                        waf_client, target_url, param="q",
+                    )
+                    if probe_result.blocked_groups:
+                        self.trace.record(
+                            engagement_id=engagement_id, step="observe",
+                            decision=f"WAF probe: {len(probe_result.blocked_groups)} char groups blocked by {waf_name}",
+                            rationale=f"blocked: {probe_result.blocked_groups}, allowed: {probe_result.allowed_groups}",
+                        )
+                        logger.info(
+                            "reasoning_waf_probe_complete",
+                            engagement_id=engagement_id,
+                            waf=waf_name,
+                            blocked=probe_result.blocked_groups,
+                            allowed=probe_result.allowed_groups,
+                        )
+        except Exception as e:
+            logger.warning("reasoning_waf_probe_failed", error=str(e))
+
+        # Param Miner: actively probe high-value endpoints for hidden
+        # parameters. A human researcher doesn't just parse OpenAPI specs —
+        # they brute-force parameter names. This discovers inputs that
+        # static parsing would miss.
+        try:
+            from ai_osop.core.param_miner import mine_parameters
+
+            # Only mine high-value endpoints (criticality >= 7 from business context)
+            # to avoid wasting requests on static assets.
+            mined_key = f"param_mined_{engagement_id}"
+            if mined_key not in self._tested_hypotheses:
+                # Mine up to 3 high-value endpoints per cycle
+                high_value_eps = [ep for ep in endpoints[:5] if ep.get("auth_required") or "api" in (ep.get("path", "")).lower()]
+                for ep in high_value_eps[:3]:
+                    ep_url = ep.get("url", "")
+                    if not ep_url:
+                        continue
+                    import httpx
+                    from ai_osop.safety.governed_client import governance_hook, research_header_from_settings
+                    from ai_osop.safety.rate_limiter import RateLimiter
+                    from ai_osop.core.config import settings as _settings
+
+                    ghook = governance_hook(
+                        rate_limiter=RateLimiter(
+                            target_rate=_settings.scan_target_rate_per_second,
+                            target_capacity=_settings.scan_target_burst,
+                        ),
+                        research_header=research_header_from_settings(),
+                    )
+                    method = (ep.get("method") or "GET").upper()
+                    existing_params = list(ep.get("query_keys") or [])
+                    async with httpx.AsyncClient(
+                        event_hooks={"request": [ghook]} if ghook else {},
+                        verify=False, timeout=8.0,
+                    ) as mine_client:
+                        mine_result = await mine_parameters(
+                            mine_client, ep_url, method=method,
+                            existing_params=existing_params, max_params=30,
+                        )
+                        if mine_result.discovered_params:
+                            self.trace.record(
+                                engagement_id=engagement_id, step="observe",
+                                decision=f"Param miner: discovered {len(mine_result.discovered_params)} hidden params at {ep_url}",
+                                rationale=f"discovered: {mine_result.discovered_params}",
+                            )
+                            # Persist discovered params on the endpoint
+                            await self._orch.graph_memory.run_write_query(
+                                "MATCH (e:Endpoint {url: $url}) SET e.mined_params = $params",
+                                {"url": ep_url, "params": mine_result.discovered_params},
+                            )
+                self._tested_hypotheses.add(mined_key)
+        except Exception as e:
+            logger.warning("reasoning_param_mine_failed", error=str(e))
+
         return {
             "endpoints": endpoints,
             "findings": findings,
@@ -690,6 +805,13 @@ class ReasoningLoop:
                 hypothesis_id=hyp_id, result="refuted",
             )
             await self._generate_followup_hypotheses(engagement_id, hypothesis, result)
+            # ponytail: WAF-block pivoting deferred — a hypothesis-test `result`
+            # carries only findings_count/findings, never per-request HTTP status,
+            # so a PivotingBroker keyed on result["status_code"] here could never
+            # fire (dead code). Real fix: surface a `waf_blocked` signal from the
+            # governed egress client — the single choke point every scan request
+            # flows through — up to the task result, then drive the broker off
+            # that. Module kept at orchestrator/pivoting_broker.py awaiting that feed.
 
     async def _update_hypothesis_status(self, hyp_id: str, status: str) -> None:
         """Update a hypothesis's status in the graph."""
