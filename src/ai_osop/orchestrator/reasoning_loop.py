@@ -154,7 +154,7 @@ class ReasoningLoop:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.warning("reasoning_event_subscriber_error", error=str(e))
+            logger.warning("reasoning_event_subscriber_error: %s", str(e))
 
     async def _run(self) -> None:
         """Main reasoning loop — runs until the orchestrator stops."""
@@ -170,7 +170,7 @@ class ReasoningLoop:
                         if eid:
                             await self._handle_finding_event(eid, event_payload)
                     except Exception as e:
-                        logger.warning("reasoning_event_drain_error", error=str(e))
+                        logger.warning("reasoning_event_drain_error: %s", str(e))
 
                 await asyncio.sleep(2)  # yield to the event loop
                 for session_id, session in list(self._orch._sessions.items()):
@@ -183,7 +183,7 @@ class ReasoningLoop:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("reasoning_loop_error", error=str(e))
+                logger.warning("reasoning_loop_error: %s", str(e))
                 await asyncio.sleep(10)
 
     async def _handle_finding_event(self, engagement_id: str, payload: Dict[str, Any]) -> None:
@@ -350,7 +350,7 @@ class ReasoningLoop:
                         issues=c.get("issues"),
                     )
         except Exception as e:
-            logger.warning("reasoning_critic_failed", error=str(e))
+            logger.warning("reasoning_critic_failed: %s", str(e))
 
         # 6. LEARN happens automatically: GraphMemory.add_vulnerability
         # calls FindingsKnowledge.record_finding. We just update the
@@ -387,7 +387,7 @@ class ReasoningLoop:
                         },
                     )
         except Exception as e:
-            logger.warning("reasoning_pathfinder_failed", error=str(e))
+            logger.warning("reasoning_pathfinder_failed: %s", str(e))
 
     async def _observe(self, engagement_id: str) -> Dict[str, Any]:
         """Read the current graph state for an engagement."""
@@ -414,7 +414,7 @@ class ReasoningLoop:
                 if h.get("status") == "open"
             }
         except Exception as e:
-            logger.warning("reasoning_observe_failed", engagement_id=engagement_id, error=str(e))
+            logger.warning("reasoning_observe_failed engagement_id=%s: %s", engagement_id, str(e))
             return {"endpoints": [], "findings": [], "open_hypotheses": set()}
 
         # Uncertainty detection: scan the current state for things we DON'T
@@ -446,7 +446,7 @@ class ReasoningLoop:
                     rationale=f"open uncertainties: {self._uncertainty_tracker.get_summary(engagement_id)}",
                 )
         except Exception as e:
-            logger.warning("reasoning_uncertainty_detection_failed", error=str(e))
+            logger.warning("reasoning_uncertainty_detection_failed: %s", str(e))
 
         # WAF Character Probe: if any endpoint has a detected WAF, probe its
         # filtered characters so the payload engine can generate WAF-bypass
@@ -507,7 +507,7 @@ class ReasoningLoop:
                             allowed=probe_result.allowed_groups,
                         )
         except Exception as e:
-            logger.warning("reasoning_waf_probe_failed", error=str(e))
+            logger.warning("reasoning_waf_probe_failed: %s", str(e))
 
         # Param Miner: actively probe high-value endpoints for hidden
         # parameters. A human researcher doesn't just parse OpenAPI specs —
@@ -561,7 +561,7 @@ class ReasoningLoop:
                             )
                 self._tested_hypotheses.add(mined_key)
         except Exception as e:
-            logger.warning("reasoning_param_mine_failed", error=str(e))
+            logger.warning("reasoning_param_mine_failed: %s", str(e))
 
         return {
             "endpoints": endpoints,
@@ -712,7 +712,7 @@ class ReasoningLoop:
             )
             return task
         except Exception as e:
-            logger.warning("reasoning_dispatch_failed", error=str(e))
+            logger.warning("reasoning_dispatch_failed: %s", str(e))
             return None
 
     async def _resolve_target_url(self, engagement_id: str, target_id: str) -> Optional[str]:

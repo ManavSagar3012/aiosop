@@ -20,6 +20,8 @@ import { MissionTimeline } from './pages/MissionTimeline';
 import { MissionReport } from './pages/MissionReport';
 import { ReasoningTrace } from './pages/ReasoningTrace';
 import { CognitionDashboard } from './pages/CognitionDashboard';
+import { Hypotheses } from './pages/Hypotheses';
+import { AttackChains } from './pages/AttackChains';
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
   constructor(props: any) {
@@ -77,6 +79,8 @@ export default function App() {
             <Route path="report/:sessionId" element={<PageErrorBoundary pageName="MissionReport"><MissionReport /></PageErrorBoundary>} />
             <Route path="reasoning" element={<PageErrorBoundary pageName="Reasoning"><ReasoningTrace /></PageErrorBoundary>} />
             <Route path="cognition" element={<PageErrorBoundary pageName="Cognition"><CognitionDashboard /></PageErrorBoundary>} />
+            <Route path="hypotheses" element={<PageErrorBoundary pageName="Hypotheses"><Hypotheses /></PageErrorBoundary>} />
+            <Route path="attack-chains" element={<PageErrorBoundary pageName="AttackChains"><AttackChains /></PageErrorBoundary>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

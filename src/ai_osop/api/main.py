@@ -860,6 +860,7 @@ async def websocket_engagement(
         _TOPICS = (
             "task.scheduled", "task.assigned", "task.completed", "task.failed",
             "finding.recorded", "hypothesis.generated", "chain.discovered",
+            "feedback.payload_validated",
         )
 
         async def _pump(topic: str) -> None:

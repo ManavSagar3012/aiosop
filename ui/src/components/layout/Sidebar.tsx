@@ -36,6 +36,8 @@ export const Sidebar: React.FC = () => {
     { path: '/verification', label: 'Reality Verification', icon: <Fingerprint size={18} /> },
     { path: '/visual-context', label: 'Visual Context', icon: <Eye size={18} /> },
     { path: '/uncertainty', label: 'Uncertainty Engine', icon: <HelpCircle size={18} /> },
+    { path: '/hypotheses', label: 'Hypotheses', icon: <Brain size={18} /> },
+    { path: '/attack-chains', label: 'Attack Chains', icon: <Network size={18} /> },
     { path: '/reasoning', label: 'Reasoning Trace', icon: <Activity size={18} /> },
     { path: '/cognition', label: 'Cognition Dashboard', icon: <Zap size={18} /> },
     { path: '/learning', label: 'Learning & Analytics', icon: <LineChart size={18} /> },
