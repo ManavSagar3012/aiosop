@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, Query
 
-from ai_osop.api.deps import assert_engagement_access, state, verify_token
+from ai_osop.api.deps import assert_engagement_access, engagement_id_forms, state, verify_token
 
 router = APIRouter(tags=["cognition"])
 
@@ -26,12 +26,13 @@ async def get_reasoning_trace(
     evaluate/critique/learn), decision, rationale, confidence, alternatives
     considered, alternatives rejected, and result.
     """
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
     orch = state["orchestrator"]
     rl = getattr(orch, "reasoning_loop", None)
     if rl is None or not hasattr(rl, "trace"):
         return {"session_id": session_id, "count": 0, "trace": []}
-    entries = rl.trace.get_trace(session_id)
+    forms = engagement_id_forms(session, session_id)
+    entries = rl.trace.get_trace(*forms)
     return {"session_id": session_id, "count": len(entries), "trace": entries}
 
 
@@ -45,18 +46,19 @@ async def get_uncertainties(
     Each uncertainty is something the system doesn't know yet:
     'is this endpoint authenticated?', 'what framework is this?', etc.
     """
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
     orch = state["orchestrator"]
     rl = getattr(orch, "reasoning_loop", None)
     if rl is None or not hasattr(rl, "_uncertainty_tracker"):
         return {"session_id": session_id, "count": 0, "uncertainties": [], "summary": {}}
     tracker = rl._uncertainty_tracker
-    open_uncs = tracker.get_open_uncertainties(session_id)
+    forms = engagement_id_forms(session, session_id)
+    open_uncs = tracker.get_open_uncertainties(*forms)
     return {
         "session_id": session_id,
         "count": len(open_uncs),
         "uncertainties": [u.__dict__ for u in open_uncs],
-        "summary": tracker.get_summary(session_id),
+        "summary": tracker.get_summary(*forms),
     }
 
 
@@ -71,19 +73,20 @@ async def get_business_context(
     file/user/api/config/redirect/static) with a criticality score (1-10),
     recommended tests, and business invariants.
     """
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
     from ai_osop.core.business_context import batch_categorize
 
     orch = state["orchestrator"]
     gm = orch.graph_memory
+    forms = engagement_id_forms(session, session_id)
     try:
         endpoints = await gm.run_read_query(
-            "MATCH (e:Endpoint {engagement_id: $eid}) "
+            "MATCH (e:Endpoint) WHERE e.engagement_id IN $ids "
             "RETURN e.url AS url, e.path AS path, e.method AS method, "
             "e.query_keys AS query_keys, e.status_code AS status_code, "
             "e.technologies AS technologies, e.auth_required AS auth_required, "
             "e.id AS id LIMIT 500",
-            {"eid": session_id},
+            {"ids": forms},
         )
     except Exception:
         endpoints = []
@@ -155,19 +158,20 @@ async def get_cognition_summary(
     context high-value endpoint counts — all in one call for the
     Cognition Dashboard page.
     """
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
+    forms = engagement_id_forms(session, session_id)
     orch = state["orchestrator"]
     rl = getattr(orch, "reasoning_loop", None)
 
     # Reasoning trace summary
     trace_summary = {"total_steps": 0, "confirmed": 0, "refuted": 0, "chains": 0, "pivots": 0}
     if rl is not None and hasattr(rl, "trace"):
-        trace_summary = rl.trace.get_summary(session_id)
+        trace_summary = rl.trace.get_summary(*forms)
 
     # Uncertainty summary
     unc_summary = {"total": 0, "resolved": 0, "open": 0}
     if rl is not None and hasattr(rl, "_uncertainty_tracker"):
-        unc_summary = rl._uncertainty_tracker.get_summary(session_id)
+        unc_summary = rl._uncertainty_tracker.get_summary(*forms)
 
     # Attack chains
     chain_count = 0
@@ -194,10 +198,10 @@ async def get_cognition_summary(
     try:
         from ai_osop.core.business_context import batch_categorize
         endpoints = await orch.graph_memory.run_read_query(
-            "MATCH (e:Endpoint {engagement_id: $eid}) "
+            "MATCH (e:Endpoint) WHERE e.engagement_id IN $ids "
             "RETURN e.url AS url, e.path AS path, e.query_keys AS query_keys "
             "LIMIT 500",
-            {"eid": session_id},
+            {"ids": forms},
         )
         categorized = batch_categorize(endpoints)
         high_value = len([c for c in categorized if c.criticality >= 7])

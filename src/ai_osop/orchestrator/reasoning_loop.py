@@ -108,6 +108,10 @@ class ReasoningLoop:
         # 'self-evaluation + explainability' cognitive capability.
         from ai_osop.core.reasoning_trace import ReasoningTrace
         self.trace = ReasoningTrace()
+        # WAF-block pivoting: fed by the WAFCharacterProbe in _observe
+        # (real HTTP responses), consulted after each hypothesis test.
+        from ai_osop.orchestrator.pivoting_broker import PivotingBroker
+        self._pivoting_broker = PivotingBroker()
 
     def start(self) -> None:
         """Start the reasoning loop + the event subscriber as background tasks."""
@@ -493,6 +497,30 @@ class ReasoningLoop:
                     probe_result = await probe_waf_characters(
                         waf_client, target_url, param="q",
                     )
+                    # Each blocked char-group is a real request the governed
+                    # client sent that the WAF rejected (WAFCharacterProbe
+                    # marks a group blocked on 403/406/429/503, a challenge
+                    # page, or a >50% body-length drop). Feed them to the broker
+                    # keyed by host — the same key should_pivot() is queried
+                    # with below — so the block count reflects actual WAF
+                    # rejections, then check for a strategic pivot right here at
+                    # the real signal source. A fired pivot is advisory: it
+                    # records a PIVOT step in the reasoning trace; it does not
+                    # reschedule tasks.
+                    blocked = list(probe_result.blocked_groups or [])
+                    if probe_result.baseline_status in (403, 406, 429, 503):
+                        blocked = blocked or ["baseline"]
+                    for _ in blocked:
+                        self._pivoting_broker.record_response(asset_value, 403)
+                    if blocked:
+                        decision = self._pivoting_broker.should_pivot(asset_value)
+                        if decision.should_pivot:
+                            self.trace.record(
+                                engagement_id=engagement_id, step="pivot",
+                                decision=f"PIVOT: {decision.reason}",
+                                rationale=decision.pivot_strategy,
+                                result="pivot",
+                            )
                     if probe_result.blocked_groups:
                         self.trace.record(
                             engagement_id=engagement_id, step="observe",
@@ -805,13 +833,12 @@ class ReasoningLoop:
                 hypothesis_id=hyp_id, result="refuted",
             )
             await self._generate_followup_hypotheses(engagement_id, hypothesis, result)
-            # ponytail: WAF-block pivoting deferred — a hypothesis-test `result`
-            # carries only findings_count/findings, never per-request HTTP status,
-            # so a PivotingBroker keyed on result["status_code"] here could never
-            # fire (dead code). Real fix: surface a `waf_blocked` signal from the
-            # governed egress client — the single choke point every scan request
-            # flows through — up to the task result, then drive the broker off
-            # that. Module kept at orchestrator/pivoting_broker.py awaiting that feed.
+            # WAF-block pivoting is evaluated at the real signal source — the
+            # _observe WAFCharacterProbe, which makes real governed HTTP
+            # requests and records blocks keyed by host. It is NOT evaluated
+            # here: a hypothesis-test result dict carries no per-request HTTP
+            # status, and hypothesis.target_id is a graph-node id, not the
+            # host the broker is keyed by, so a check here could never fire.
 
     async def _update_hypothesis_status(self, hyp_id: str, status: str) -> None:
         """Update a hypothesis's status in the graph."""

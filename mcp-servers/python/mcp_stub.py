@@ -112,13 +112,22 @@ TOOL_DEFS: Dict[str, List[Dict[str, Any]]] = {
               timeout=180),
     ],
     "browser-mcp": [
-        _tool("navigate", "Navigate browser to URL",
-              [{"name": "url", "desc": "Target URL"},
+        # AIOSOP-BROWSERMCP-TOOLNAME-001 (2026-07-25): a single "execute" tool,
+        # dispatched on the "action" field — matches the real contract that both
+        # BrowserMCPAdapter (src/ai_osop/adapters/browser_mcp.py) and the
+        # qualification gate (tests/qualification/test_browser_mcp.py) already
+        # use. Previously declared as two tools ("navigate" + "execute_action"),
+        # neither named "execute", so every call from the real adapter raised
+        # "Tool execute not available on server browser-mcp" instantly — and
+        # then rode the task scheduler's full hard-timeout+retry cycle (3x)
+        # before surfacing, turning an instant, deterministic bug into a
+        # multi-minute stall for every browser-driven task (register,
+        # authenticate, capture_authenticated_surface, XSS confirmation).
+        _tool("execute", "Execute a browser action (navigate/eval/fill/click/screenshot/...)",
+              [{"name": "action", "desc": "Action type (navigate/eval/fill/click/capture_session/screenshot/dom_snapshot/flush_har)"},
+               {"name": "url", "desc": "Target URL (for action=navigate)", "required": False},
                {"name": "user_label", "desc": "Auth user label", "required": False},
-               {"name": "engagement_id", "desc": "Engagement ID", "required": False}]),
-        _tool("execute_action", "Execute browser action",
-              [{"name": "action", "desc": "Action type (eval/click/type)"},
-               {"name": "params", "type": "object", "desc": "Action parameters"}],
+               {"name": "engagement_id", "desc": "Engagement ID", "required": False}],
               timeout=60),
     ],
     "source-map-mcp": [
@@ -370,7 +379,9 @@ def _first_query_param(url: str) -> str:
     return ""
 
 
-def _honest_empty(server_id: str, tool_name: str) -> Optional[Dict[str, Any]]:
+def _honest_empty(
+    server_id: str, tool_name: str, params: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
     """Real-shaped but EMPTY result for finding-producing tools.
 
     Returned when OSOP_STUB_SYNTHETIC is off so a stub can never fabricate a
@@ -389,8 +400,10 @@ def _honest_empty(server_id: str, tool_name: str) -> Optional[Dict[str, Any]]:
         return {"status": "success",
                 "result": {"status_distribution": {"200": 1}, "success_count": 1,
                            "release_window_ms": 5}}
-    if server_id == "browser-mcp" and tool_name == "execute_action":
-        # No XSS confirmation token → vuln_agent records no finding.
+    if server_id == "browser-mcp" and tool_name == "execute" and (params or {}).get("action") != "navigate":
+        # No XSS confirmation token / no real DOM to inspect → vuln_agent
+        # records no finding. navigate is excluded so it still returns a
+        # plausible mock page (see _mock_execute) instead of a null result.
         return {"status": "success", "result": {"result": None}}
     return None
 
@@ -407,7 +420,7 @@ def _mock_execute(server_id: str, tool_name: str,
     global _last_navigate_url
 
     if not SYNTHETIC:
-        empty = _honest_empty(server_id, tool_name)
+        empty = _honest_empty(server_id, tool_name, params)
         if empty is not None:
             return empty
 
@@ -457,14 +470,17 @@ def _mock_execute(server_id: str, tool_name: str,
             },
         }
 
-    elif server_id == "browser-mcp":
-        if tool_name == "navigate":
+    elif server_id == "browser-mcp" and tool_name == "execute":
+        action = params.get("action", "")
+        if action == "navigate":
             nav_url = params.get("url", "")
             _last_navigate_url = nav_url
             return {"status": "success", "result": {"url": nav_url, "title": "Mock Page"}}
-        elif tool_name == "execute_action":
-            action = params.get("action", "")
-            expr = str(params.get("params", {}).get("expression", ""))
+        else:
+            # BrowserMCPAdapter.execute_action merges the caller's params dict
+            # directly into the request body (not nested under a "params"
+            # key), so "expression" lives at the top level here.
+            expr = str(params.get("expression", ""))
             # XSS execution confirmation: vuln_agent navigates to a URL with
             # the token embedded, then executes "window.__osopxss || null" to
             # read it back. Extract the token from the stored navigate URL so
@@ -561,8 +577,15 @@ if __name__ == "__main__":
         assert _mock_execute("burp-mcp", "get_scan_issues", {})["result"]["issues"] == []
         assert _mock_execute("burp-mcp", "get_sitemap", {})["result"]["entries"] == []
         assert _mock_execute("security-bridge", "sqlmap", {})["result"]["data"]["injectable"] is False
-        # Non-finding tools still work.
-        assert _mock_execute("browser-mcp", "navigate", {"url": "http://x"})["status"] == "success"
+        # browser-mcp execute: navigate returns a mock page, but a non-navigate
+        # eval is honest-empty (no fabricated __osopxss token) so the guard that
+        # OSOP-P0-02 protects is actually exercised, not the generic fallback.
+        _nav = _mock_execute("browser-mcp", "execute", {"action": "navigate", "url": "http://x"})
+        assert _nav["status"] == "success" and _nav["result"].get("title")
+        assert _mock_execute(
+            "browser-mcp", "execute",
+            {"action": "eval", "expression": "window.__osopxss || null"},
+        )["result"]["result"] is None
         print("mcp_stub selfcheck OK: honest-empty by default")
         raise SystemExit(0)
 

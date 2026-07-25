@@ -125,10 +125,18 @@ class ReasoningTrace:
         )
         return entry
 
-    def get_trace(self, engagement_id: str = "") -> List[Dict[str, Any]]:
-        """Get the full reasoning trace for an engagement."""
-        if engagement_id:
-            return [e.to_dict() for e in self._entries if e.engagement_id == engagement_id]
+    def get_trace(self, engagement_id: str = "", *aliases: str) -> List[Dict[str, Any]]:
+        """Get the full reasoning trace for an engagement.
+
+        Matches any provided id form (session_id / scope.engagement_id) — same
+        split-brain fix as GraphMemory.get_vulnerabilities_by_engagement
+        (AIOSOP-FINDINGS-KEY). Entries are recorded under whichever id the
+        reasoning loop was passed, which isn't always the same form the API
+        caller queries with.
+        """
+        ids = {i for i in (engagement_id, *aliases) if i}
+        if ids:
+            return [e.to_dict() for e in self._entries if e.engagement_id in ids]
         return [e.to_dict() for e in self._entries]
 
     def get_hypothesis_trace(self, hypothesis_id: str) -> List[Dict[str, Any]]:
@@ -183,9 +191,14 @@ class ReasoningTrace:
 
         return "\n".join(lines)
 
-    def get_summary(self, engagement_id: str = "") -> Dict[str, Any]:
-        """Get a summary of the reasoning process for an engagement."""
-        entries = [e for e in self._entries if not engagement_id or e.engagement_id == engagement_id]
+    def get_summary(self, engagement_id: str = "", *aliases: str) -> Dict[str, Any]:
+        """Get a summary of the reasoning process for an engagement.
+
+        Matches any provided id form (session_id / scope.engagement_id) — same
+        split-brain fix as get_trace (AIOSOP-FINDINGS-KEY).
+        """
+        ids = {i for i in (engagement_id, *aliases) if i}
+        entries = [e for e in self._entries if not ids or e.engagement_id in ids]
         return {
             "total_steps": len(entries),
             "hypotheses_selected": len([e for e in entries if e.step == "select"]),

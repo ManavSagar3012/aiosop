@@ -11,7 +11,13 @@ from typing import Any, Dict, List
 import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from ai_osop.api.deps import assert_engagement_access, require_role, state, verify_token
+from ai_osop.api.deps import (
+    assert_engagement_access,
+    engagement_id_forms,
+    require_role,
+    state,
+    verify_token,
+)
 from ai_osop.core.finding_view import to_finding_view
 from ai_osop.core.findings_quality import FindingConversionEngine
 
@@ -89,21 +95,11 @@ async def _finding_exists(
     return bool(records)
 
 
-def _engagement_id_forms(session: Any, session_id: str) -> List[str]:
-    """Return every id form an engagement's nodes may be keyed under.
-
-    The URL carries either the FULL session_id (eng-{ts}-{eid}) or the SHORT
-    operator engagement_id; writers persist under one or the other. Match both so
-    a read never misses findings due to an id-form mismatch (AIOSOP-FINDINGS-KEY).
-    """
-    forms = [session_id]
-    scope_eid = getattr(getattr(session, "scope", None), "engagement_id", None)
-    if scope_eid:
-        forms.append(scope_eid)
-    sess_id = getattr(session, "session_id", None)
-    if sess_id:
-        forms.append(sess_id)
-    return list(dict.fromkeys(f for f in forms if f))
+# Moved to ai_osop.api.deps.engagement_id_forms (2026-07-25) so every router
+# shares one id-resolution rule instead of re-deriving it per file — tasks.py,
+# cognition.py, and intelligence.py had the same session_id/engagement_id
+# split-brain bug this helper exists to fix, but didn't have this helper.
+_engagement_id_forms = engagement_id_forms
 
 
 @router.get("/{session_id}/findings")

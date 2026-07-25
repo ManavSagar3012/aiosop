@@ -121,8 +121,10 @@ class BaseAgent(ABC):
         Enforces scope checks, rate limits, and research headers based on
         engagement context.
         """
-        from ai_osop.safety.governed_client import governed_client, research_header_from_settings
+        from ai_osop.safety.governed_client import governance_hook, research_header_from_settings
+        from ai_osop.safety.governed_client import attach_governance
         from ai_osop.safety.scope import ScopeEnforcer
+        import httpx as _httpx
 
         scope_enforcer = None
         # Use getattr: some contexts (tests, minimal runtime ctxs) don't set a
@@ -140,13 +142,21 @@ class BaseAgent(ABC):
         kwargs.setdefault("follow_redirects", True)
         kwargs.setdefault("timeout", 20.0)
 
-        return governed_client(
+        # Governance hook is the single choke point every scan request flows
+        # through — it can only see the outgoing request, not the response,
+        # so it can enforce scope/rate-limit/headers but can't detect WAF
+        # blocks (those live in the 403/406/429 response). WAF-block
+        # detection instead happens in reasoning_loop._observe, which reads
+        # real HTTP responses from WAFCharacterProbe and feeds them to
+        # PivotingBroker directly — see reasoning_loop.py.
+        hook = governance_hook(
             scope=scope_enforcer,
             rate_limiter=rate_limiter,
             research_header=research_hdr,
             tool=tool,
-            **kwargs,
         )
+
+        return _httpx.AsyncClient(**attach_governance(kwargs, hook))
 
     def safe_path(self, path: str) -> str:
         """Enforce file access within the agent's sandbox directory."""

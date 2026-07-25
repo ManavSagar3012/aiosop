@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ai_osop.api.deps import (
     CreateTaskRequest,
     assert_engagement_access,
+    engagement_id_forms,
     require_role,
     state,
     verify_token,
@@ -28,8 +29,14 @@ async def list_tasks(
     """List tasks, optionally filtered by engagement_id."""
     all_tasks = state["orchestrator"]._tasks
     if engagement_id:
-        await assert_engagement_access(operator, engagement_id)
-        tasks = [t for t in all_tasks.values() if t.engagement_id == engagement_id]
+        session = await assert_engagement_access(operator, engagement_id)
+        # Tasks are scheduled under session.canonical_engagement_id (the SHORT
+        # scope id), but callers naturally query with the session_id this same
+        # engagement's create-response returned — match both forms, same fix
+        # as findings.py's AIOSOP-FINDINGS-KEY. Confirmed live 2026-07-25: this
+        # endpoint silently returned [] for engagements with real tasks.
+        forms = set(engagement_id_forms(session, engagement_id))
+        tasks = [t for t in all_tasks.values() if t.engagement_id in forms]
     else:
         tasks = list(all_tasks.values())
     return tasks

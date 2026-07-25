@@ -47,6 +47,16 @@ MCP_PORTS = {
     "cloud-mcp": 8097,
     "turbo-intruder-mcp": 8098,
     "oast-mcp": 8099,
+    # AIOSOP-MCP-GAP-001 (2026-07-25): these 3 have real, non-stub Python
+    # implementations (mcp-servers/python/*.py, each self-reports
+    # is_stub=False) and api/health.py + main.py's optional-server registry
+    # already expect them here — but they were never added to MCP_PORTS, so
+    # supervisor.py silently never started them. Confirmed live: /health/mcp
+    # listed all 3 as "down" (connection refused) on an otherwise-healthy
+    # stack. Ports match settings.{session_memory,reporting,attack_graph}_mcp_port.
+    "session-memory-mcp": 8090,
+    "reporting-mcp": 8092,
+    "attack-graph-mcp": 8093,
 }
 API_PORT = 8200
 CHECK_INTERVAL = 10  # seconds
@@ -101,8 +111,28 @@ def _launch_go_server(server_id: str, port: int, binary: str) -> None:
     )
 
 
+def _launch_python_server(server_id: str, port: int, script: str) -> None:
+    """Launch a dedicated (non-mock-stub) Python MCP server script.
+
+    Distinct from _launch_python_stub: these scripts (session_memory_mcp.py,
+    reporting_mcp.py, attack_graph_mcp.py) are real implementations with their
+    own --port CLI arg, not routed through the generic mock mcp_stub.py.
+    """
+    print(f"[supervisor] launching {server_id} ({script}) on :{port}", flush=True)
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    subprocess.Popen(
+        [PY, script, "--port", str(port)],
+        stdout=_logfile(server_id), stderr=subprocess.STDOUT, cwd=ROOT,
+        env=env,
+    )
+
+
+PYROOT = os.path.join(ROOT, "mcp-servers", "python")
+
 # Map of server_id -> (launcher_func, arg). Servers with a Go binary use
-# _launch_go_server; everything else uses the Python stub.
+# _launch_go_server; real dedicated Python servers use _launch_python_server;
+# everything else falls back to the generic mock Python stub.
 _MCP_LAUNCHERS: dict[str, tuple] = {
     server_id: (_launch_go_server, binary)
     for server_id, binary in {
@@ -119,6 +149,17 @@ _MCP_LAUNCHERS: dict[str, tuple] = {
     }.items()
     if os.path.exists(binary)
 }
+_MCP_LAUNCHERS.update(
+    {
+        server_id: (_launch_python_server, script)
+        for server_id, script in {
+            "session-memory-mcp": os.path.join(PYROOT, "session_memory_mcp.py"),
+            "reporting-mcp": os.path.join(PYROOT, "reporting_mcp.py"),
+            "attack-graph-mcp": os.path.join(PYROOT, "attack_graph_mcp.py"),
+        }.items()
+        if os.path.exists(script)
+    }
+)
 
 
 def _redis_cli(args: list[str]) -> list[str]:
@@ -231,7 +272,7 @@ def ensure_all(with_api: bool) -> None:
     for server_id, port in MCP_PORTS.items():
         if not port_open(port):
             launcher, arg = _MCP_LAUNCHERS.get(server_id, (_launch_python_stub, STUB))
-            if launcher == _launch_go_server:
+            if launcher in (_launch_go_server, _launch_python_server):
                 launcher(server_id, port, arg)
             else:
                 launcher(server_id, port)

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ai_osop.api.deps import assert_engagement_access, state, verify_token
+from ai_osop.api.deps import assert_engagement_access, engagement_id_forms, state, verify_token
 from ai_osop.core.hypothesis_engine import HypothesisEngine
 
 router = APIRouter(tags=["intelligence"])
@@ -16,7 +16,8 @@ router = APIRouter(tags=["intelligence"])
 @router.get("/engagements/{session_id}/graph")
 async def get_full_graph(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Get full attack graph nodes and edges."""
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
+    forms = engagement_id_forms(session, session_id)
     nodes = {}
     edges = []
 
@@ -28,7 +29,7 @@ async def get_full_graph(session_id: str, operator: Dict[str, Any] = Depends(ver
     # engagement while the DB held live nodes (runtime-proven: 124 nodes returned by
     # the query, 0 rendered). Parse the real shape so the dashboard graph reflects
     # live execution.
-    node_records = await state["orchestrator"].graph_memory.get_all_nodes_for_engagement(session_id)
+    node_records = await state["orchestrator"].graph_memory.get_all_nodes_for_engagement(*forms)
     for record in node_records:
         nid = record.get("id")
         if nid is None or nid in nodes:
@@ -39,7 +40,7 @@ async def get_full_graph(session_id: str, operator: Dict[str, Any] = Depends(ver
             "properties": record.get("properties") or {},
         }
 
-    edge_records = await state["orchestrator"].graph_memory.get_all_edges_for_engagement(session_id)
+    edge_records = await state["orchestrator"].graph_memory.get_all_edges_for_engagement(*forms)
     for record in edge_records:
         src = record.get("source")
         tgt = record.get("target")
@@ -97,7 +98,8 @@ async def get_hypotheses(
     operator: Dict[str, Any] = Depends(verify_token),
 ):
     """Generate or return graph-native hypotheses for an engagement."""
-    await assert_engagement_access(operator, session_id)
+    session = await assert_engagement_access(operator, session_id)
+    forms = engagement_id_forms(session, session_id)
     orch = state["orchestrator"]
     engine = HypothesisEngine(
         orch.graph_memory,
@@ -108,7 +110,7 @@ async def get_hypotheses(
     if refresh:
         hypotheses = await engine.generate_and_persist(session_id, focus=focus, limit=limit)
     else:
-        stored = await orch.graph_memory.get_hypotheses_by_engagement(session_id)
+        stored = await orch.graph_memory.get_hypotheses_by_engagement(*forms)
         hypotheses = [dict(item) for item in stored[:limit]]
         if not hypotheses:
             hypotheses = [

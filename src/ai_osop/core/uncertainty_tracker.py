@@ -197,9 +197,22 @@ class UncertaintyTracker:
                 u.resolution_result = result
                 break
 
-    def get_open_uncertainties(self, engagement_id: str) -> List[Uncertainty]:
+    def _all_for(self, engagement_id: str, *aliases: str) -> List[Uncertainty]:
+        """Collect uncertainties stored under any of the given id forms.
+
+        Same split-brain fix as GraphMemory.get_vulnerabilities_by_engagement
+        (AIOSOP-FINDINGS-KEY) — uncertainties get recorded under whichever id
+        the reasoning loop was passed, not necessarily what the API caller
+        queries with.
+        """
+        out: List[Uncertainty] = []
+        for eid in dict.fromkeys(i for i in (engagement_id, *aliases) if i):
+            out.extend(self._uncertainties.get(eid, []))
+        return out
+
+    def get_open_uncertainties(self, engagement_id: str, *aliases: str) -> List[Uncertainty]:
         """Get unresolved uncertainties for an engagement."""
-        return [u for u in self._uncertainties.get(engagement_id, []) if not u.resolved]
+        return [u for u in self._all_for(engagement_id, *aliases) if not u.resolved]
 
     def get_uncertainty_hypotheses(self, engagement_id: str) -> List[Dict[str, Any]]:
         """Generate hypotheses from open uncertainties.
@@ -222,9 +235,9 @@ class UncertaintyTracker:
             })
         return hypotheses
 
-    def get_summary(self, engagement_id: str) -> Dict[str, Any]:
+    def get_summary(self, engagement_id: str, *aliases: str) -> Dict[str, Any]:
         """Get uncertainty summary for an engagement."""
-        all_u = self._uncertainties.get(engagement_id, [])
+        all_u = self._all_for(engagement_id, *aliases)
         return {
             "total": len(all_u),
             "resolved": len([u for u in all_u if u.resolved]),

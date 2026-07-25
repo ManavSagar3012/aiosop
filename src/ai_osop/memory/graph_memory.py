@@ -1342,39 +1342,52 @@ class GraphMemory:
             )
         return findings
 
-    async def get_all_nodes_for_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
+    async def get_all_nodes_for_engagement(
+        self, engagement_id: str, *aliases: str
+    ) -> List[Dict[str, Any]]:
         """Fetch all nodes for a given engagement (for attack graph viz).
 
         AIOSOP-GRAPHVIZ-001: also return properties so the dashboard graph can render
         node names/values/urls (KnowledgeGraphs.tsx reads properties.name/value/url).
         Additive — existing callers read id/labels and ignore the extra key.
+
+        Matches any provided id form — same split-brain fix as
+        get_vulnerabilities_by_engagement (AIOSOP-FINDINGS-KEY).
         """
+        ids = list(dict.fromkeys(i for i in (engagement_id, *aliases) if i))
         cypher = """
         MATCH (n)
-        WHERE n.engagement_id = $engagement_id
+        WHERE n.engagement_id IN $ids
         RETURN n.id AS id, labels(n) AS labels, properties(n) AS properties
         """
         with trace_span(
             "graph_memory.get_all_nodes_for_engagement",
-            attributes={"engagement_id": engagement_id},
+            attributes={"engagement_id": engagement_id, "id_forms": len(ids)},
         ):
             async with self._driver.session() as session:
-                result = await session.run(cypher, {"engagement_id": engagement_id})
+                result = await session.run(cypher, {"ids": ids})
                 return await result.data()
 
-    async def get_all_edges_for_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
-        """Fetch all relationships for a given engagement (for attack graph viz)."""
+    async def get_all_edges_for_engagement(
+        self, engagement_id: str, *aliases: str
+    ) -> List[Dict[str, Any]]:
+        """Fetch all relationships for a given engagement (for attack graph viz).
+
+        Matches any provided id form — same split-brain fix as
+        get_vulnerabilities_by_engagement (AIOSOP-FINDINGS-KEY).
+        """
+        ids = list(dict.fromkeys(i for i in (engagement_id, *aliases) if i))
         cypher = """
         MATCH (n)-[r]->(m)
-        WHERE n.engagement_id = $engagement_id AND m.engagement_id = $engagement_id
+        WHERE n.engagement_id IN $ids AND m.engagement_id IN $ids
         RETURN n.id AS source, m.id AS target, type(r) AS type
         """
         with trace_span(
             "graph_memory.get_all_edges_for_engagement",
-            attributes={"engagement_id": engagement_id},
+            attributes={"engagement_id": engagement_id, "id_forms": len(ids)},
         ):
             async with self._driver.session() as session:
-                result = await session.run(cypher, {"engagement_id": engagement_id})
+                result = await session.run(cypher, {"ids": ids})
                 return await result.data()
 
     async def run_read_query(
@@ -1721,20 +1734,29 @@ class GraphMemory:
             record = await result.single()
             return record["id"] if record else hypothesis.id
 
-    async def get_hypotheses_by_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
-        """Fetch hypotheses for an engagement sorted by confidence."""
+    async def get_hypotheses_by_engagement(
+        self, engagement_id: str, *aliases: str
+    ) -> List[Dict[str, Any]]:
+        """Fetch hypotheses for an engagement sorted by confidence.
+
+        Matches any provided id form (session_id / scope.engagement_id) — same
+        split-brain fix as get_vulnerabilities_by_engagement (AIOSOP-FINDINGS-KEY).
+        Single-arg callers (e.g. phase_monitor's auto-transition gate) are
+        unaffected; aliases is optional.
+        """
+        ids = list(dict.fromkeys(i for i in (engagement_id, *aliases) if i))
         cypher = """
         MATCH (h:Hypothesis)
-        WHERE h.engagement_id = $engagement_id
+        WHERE h.engagement_id IN $ids
         RETURN h
         ORDER BY h.confidence DESC, h.created_at DESC
         """
         with trace_span(
             "graph_memory.get_hypotheses_by_engagement",
-            attributes={"engagement_id": engagement_id},
+            attributes={"engagement_id": engagement_id, "id_forms": len(ids)},
         ):
             async with self._driver.session() as session:
-                result = await session.run(cypher, {"engagement_id": engagement_id})
+                result = await session.run(cypher, {"ids": ids})
                 records = await result.data()
                 return [
                     dict(record["h"]) if hasattr(record["h"], "items") else record["h"]

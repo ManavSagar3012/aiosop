@@ -244,6 +244,33 @@ async def assert_engagement_access(operator: Dict[str, Any], session_id: str) ->
     )
 
 
+def engagement_id_forms(session: Any, session_id: str) -> List[str]:
+    """Return every id form an engagement's nodes may be keyed under.
+
+    The URL carries either the FULL session_id (eng-{ts}-{eid}) or the SHORT
+    operator engagement_id; writers persist under one or the other. Match both
+    so a read never misses data due to an id-form mismatch (AIOSOP-FINDINGS-KEY,
+    2026-07-20). Originally scoped to findings.py only; every other read path
+    keyed on session_id (tasks, hypotheses, graph, reasoning-trace,
+    uncertainties, business-context) had the same bug — confirmed live
+    2026-07-25: those endpoints silently returned empty for a real engagement
+    when queried with the session_id the create-engagement response itself
+    returns. Centralized here so all routers share one id-resolution rule
+    instead of re-deriving (or missing) it per file.
+    """
+    forms = [session_id]
+    scope_eid = getattr(getattr(session, "scope", None), "engagement_id", None)
+    if scope_eid:
+        forms.append(scope_eid)
+    sess_id = getattr(session, "session_id", None)
+    if sess_id:
+        forms.append(sess_id)
+    canonical = getattr(session, "canonical_engagement_id", None)
+    if canonical:
+        forms.append(canonical)
+    return list(dict.fromkeys(f for f in forms if f))
+
+
 # ============== Request ID / Correlation Middleware ==============
 
 
