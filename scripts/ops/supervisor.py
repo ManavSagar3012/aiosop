@@ -74,6 +74,9 @@ def _logfile(name: str):
 
 GOROOT = os.path.join(ROOT, "mcp-servers", "go")
 RECON_MCP_BIN = os.path.join(GOROOT, "recon-mcp.exe")
+NUCLEI_MCP_BIN = os.path.join(GOROOT, "nuclei-mcp.exe")
+SHODAN_MCP_BIN = os.path.join(GOROOT, "shodan-mcp.exe")
+SECURITY_BRIDGE_BIN = os.path.join(GOROOT, "security-bridge.exe")
 
 
 def _launch_python_stub(server_id: str, port: int) -> None:
@@ -101,7 +104,20 @@ def _launch_go_server(server_id: str, port: int, binary: str) -> None:
 # Map of server_id -> (launcher_func, arg). Servers with a Go binary use
 # _launch_go_server; everything else uses the Python stub.
 _MCP_LAUNCHERS: dict[str, tuple] = {
-    "recon-mcp": (_launch_go_server, RECON_MCP_BIN),
+    server_id: (_launch_go_server, binary)
+    for server_id, binary in {
+        "recon-mcp": RECON_MCP_BIN,
+        # Real Go MCP servers replacing the Python mock stubs. Only wired when a
+        # compiled binary exists (os.path.exists guard below) — a missing binary
+        # falls back to _launch_python_stub rather than crashing the supervisor.
+        # payload-mcp is intentionally excluded: its Go source is still a mock
+        # ("Mock payload generation tool"). threat-intel has real source but no
+        # built binary yet, so it also falls through to the Python stub.
+        "nuclei-mcp": NUCLEI_MCP_BIN,
+        "shodan-mcp": SHODAN_MCP_BIN,
+        "security-bridge": SECURITY_BRIDGE_BIN,
+    }.items()
+    if os.path.exists(binary)
 }
 
 
