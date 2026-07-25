@@ -312,6 +312,7 @@ class Settings(BaseSettings):
         default=8090, validation_alias="OSOP_SESSION_MEMORY_MCP_PORT"
     )
     reporting_mcp_host: str = Field(default="localhost", validation_alias="OSOP_REPORTING_MCP_HOST")
+    reporting_mcp_port: int = Field(default=8092, validation_alias="OSOP_REPORTING_MCP_PORT")
     # Governed client and safety settings
     hackerone_research_username: Optional[str] = Field(
         default=None, validation_alias="OSOP_H1_RESEARCH_USERNAME"

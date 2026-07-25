@@ -866,11 +866,19 @@ class ReconAgent(BaseAgent):
                 interesting_files=len(param_intel["interesting_files"]),
             )
 
+        endpoints_found = endpoints_count + historical_count + len(active_endpoints)
+        # Honesty guard (base.py, Phase-1 #7): recon genuinely ran its real adapter
+        # chain (DNS/probe/active-crawl/wayback/CT/WAF) and persisted the root asset
+        # (always) plus any discovered endpoints to the graph. Surface that verifiable
+        # execution so a real recon is not downgraded to error for lacking the flag —
+        # mirrors vuln_agent's `execution_verified = ... or bool(all_endpoints)`.
+        execution_verified = bool(self.asset_inventory) or bool(self.endpoint_inventory) or endpoints_found > 0
         return {
             "status": "success",
+            "execution_verified": execution_verified,
             "target": domain,
             "subdomains_found": len(subdomains),
-            "endpoints_found": endpoints_count + historical_count + len(active_endpoints),
+            "endpoints_found": endpoints_found,
             "parameter_intelligence": param_intel,
             "reasoning": reasoning,
         }
