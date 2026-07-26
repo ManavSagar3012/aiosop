@@ -1319,46 +1319,80 @@ class TaskScheduler:
                         )
                     except Exception as e:
                         logger.error("dlq_enqueue_fallback_failed", task_id=task.id, error=str(e))
+                # A terminally-failed task is a satisfied (failed) dependency for
+                # anything waiting on it. Release those dependents so they can run
+                # and terminalise instead of hanging 'pending' forever — otherwise
+                # a failed `register` orphans its dependent `authenticate`, which
+                # pins RECONNAISSANCE and yields 0 findings.
+                # (AIOSOP-DEPGATE-DEADLOCK-2026-07-26)
+                await self._trigger_downstream_tasks(task)
 
     async def _trigger_downstream_tasks(self, parent: Task) -> None:
-        """Launch child tasks that depend on parent completion."""
-        # Use Neo4j as the ground-truth dependency graph so restart recovery and
-        # concurrent scheduling have the same source of truth. We need the parent's
-        # DEPENDENTS (tasks that list parent.id as a dependency), not the parent's
-        # own dependencies — the prior call used get_task_dependencies, which (a) did
-        # not exist on GraphMemory and (b) is the wrong direction.
+        """Promote child tasks whose dependencies are now all terminal.
+
+        Called when ``parent`` reaches a TERMINAL state — completed OR failed.
+        Dependents are discovered from (1) Neo4j ``SPAWNED`` edges when present
+        and (2) the durable ``dependencies`` field carried on in-memory and
+        active durable tasks. The field is authoritative even when the graph
+        edge was never persisted: register→authenticate never wrote a SPAWNED
+        edge, so the graph-only lookup returned nothing and left ``authenticate``
+        pending forever — which pinned RECONNAISSANCE (it gates on all WORKFLOW
+        tasks being terminal) and produced 0 findings on every run.
+        (AIOSOP-DEPGATE-DEADLOCK-2026-07-26)
+
+        A failed dependency counts as satisfied: a doomed child (e.g. authenticate
+        after register failed) is promoted so it runs and terminalises, letting
+        the phase advance rather than deadlock. Only ``pending`` children with
+        EVERY dependency terminal are promoted.
+        """
+        TERMINAL = {
+            "completed", "approved", "failed", "error",
+            "timeout", "cancelled", "discarded",
+        }
+
+        # 1. Gather candidate dependents from all sources, de-duped by id.
+        candidates: Dict[str, Task] = {}
         try:
-            child_ids = await self._orch.graph_memory.get_task_dependents(parent.id)
+            for cid in await self._orch.graph_memory.get_task_dependents(parent.id):
+                t = self._orch._tasks.get(cid)
+                if t is not None:
+                    candidates[t.id] = t
         except Exception as e:
-            logger.error("graph_lookup_failed", parent_id=parent.id, error=str(e))
-            return
-        for child_id in child_ids:
-            child = self._orch._tasks.get(child_id)
-            if child and child.status == "pending":
-                all_deps = await self._orch.graph_memory.get_task_dependencies(child.id)
-                if all(
-                    self._orch._tasks.get(
-                        dep_id,
-                        Task(id=dep_id, type="", agent_type=AgentType.RECON, engagement_id=""),
-                    ).status
-                    in ("completed", "failed")
-                    for dep_id in all_deps
-                ):
-                    # Propagate dependency payloads to child payload
-                    for dep_id in all_deps:
-                        dep_task = self._orch._tasks.get(dep_id)
-                        if dep_task and dep_task.status == "completed" and dep_task.result:
-                            if "payloads" in dep_task.result:
-                                payloads = dep_task.result["payloads"]
-                                if isinstance(payloads, list) and payloads:
-                                    first_p = payloads[0]
-                                    p_str = (
-                                        first_p.get("content")
-                                        if isinstance(first_p, dict)
-                                        else str(first_p)
-                                    )
-                                    child.payload["payload"] = p_str
-                    await self._assign_task(child)
+            logger.debug("graph_dependents_lookup_failed", parent_id=parent.id, error=str(e))
+        for t in list(self._orch._tasks.values()):
+            if parent.id in (t.dependencies or []):
+                candidates[t.id] = t
+        try:
+            for t in await self._orch.session_memory.load_all_active_tasks():
+                if parent.id in (t.dependencies or []):
+                    candidates.setdefault(t.id, t)
+        except Exception as e:
+            logger.debug("durable_dependents_lookup_failed", parent_id=parent.id, error=str(e))
+
+        # 2. Resolve dependency statuses. ``parent`` is terminal by definition
+        #    (we are called from its terminal handler); other deps come from the
+        #    in-memory task view. An unknown dep stays 'pending' → child waits.
+        status_of: Dict[str, str] = {parent.id: parent.status or "completed"}
+        for t in self._orch._tasks.values():
+            status_of[t.id] = t.status
+
+        for child in candidates.values():
+            if child.status != "pending":
+                continue
+            deps = child.dependencies or []
+            if not all(status_of.get(d, "pending") in TERMINAL for d in deps):
+                continue
+            # Propagate payloads from any successfully-completed dependency.
+            for dep_id in deps:
+                dep_task = self._orch._tasks.get(dep_id)
+                if dep_task and dep_task.status == "completed" and isinstance(dep_task.result, dict):
+                    payloads = dep_task.result.get("payloads")
+                    if isinstance(payloads, list) and payloads:
+                        first_p = payloads[0]
+                        child.payload["payload"] = (
+                            first_p.get("content") if isinstance(first_p, dict) else str(first_p)
+                        )
+            await self._assign_task(child)
 
     async def _chain_authenticated_surface(
         self, task: Task, result: Optional[Dict[str, Any]] = None

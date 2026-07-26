@@ -59,7 +59,7 @@ async def main():
 
         start_time = time.time()
         completed = False
-        duration = 1200
+        duration = 2400
         status = "unknown"
 
         while time.time() - start_time < duration:

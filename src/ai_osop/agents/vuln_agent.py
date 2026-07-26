@@ -551,6 +551,28 @@ class VulnAnalysisAgent(BaseAgent):
             self.ctx.current_task.engagement_id if self.ctx.current_task else None
         )
 
+        # AIOSOP-NUCLEI-SCOPE-INIT-2026-07-26: initialize the nuclei-mcp server's
+        # scope for this engagement BEFORE scanning. The Go nuclei-mcp enforces
+        # scope (ScopeCheck:true) using the engagement/scope set by a prior
+        # initialize; without it the server sees engagement_id='' and rejects
+        # every target ("out of scope for engagement ''"), so nuclei never runs
+        # and 0 findings are produced. sqli_scan already does this for
+        # security-bridge; nuclei_scan silently skipped it.
+        if engagement_id:
+            try:
+                session = await self.ctx.session_memory.get_session_state_by_engagement_id(
+                    engagement_id
+                )
+                if session:
+                    await self.ctx.mcp_registry.initialize_server(
+                        "nuclei-mcp",
+                        scope=session.scope,
+                        credentials={},
+                        session_id=session.session_id,
+                    )
+            except Exception as e:  # never let scope-init crash the scan path
+                logger.warning("nuclei_scope_init_failed", engagement_id=engagement_id, error=str(e))
+
         # Execute via MCP. Forward severity/tags so the orchestrator's high-signal
         # scoping (AIOSOP-NUCLEI-TIMEOUT-2026-06-24) actually reaches nuclei and the
         # scan completes within budget instead of running the full template set.

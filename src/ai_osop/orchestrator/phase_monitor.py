@@ -72,6 +72,14 @@ class PhaseMonitor:
             orchestrator, "engagement_state_machine", None
         )
         self._tick = 0
+        # Bounded open-hypotheses gate state: (session_id, phase) -> first tick
+        # blocked. The gate delays phase advancement while the reasoning loop has
+        # untested hypotheses, but must never deadlock — see _auto_advance_phase.
+        self._hyp_gate_first_tick: Dict[tuple, int] = {}
+
+    # Monitor ticks every 5s, so 24 ticks ≈ 2 min: a fair window for the
+    # reasoning loop to test open hypotheses before the pipeline advances anyway.
+    HYP_GATE_MAX_TICKS = 24
 
     @staticmethod
     def _select_injection_targets(
@@ -247,12 +255,28 @@ class PhaseMonitor:
                         and h.get("id") not in reasoning_loop._tested_hypotheses
                         for h in open_hyps
                     )
+                    gate_key = (session_id, phase.value)
                     if has_open:
-                        # The reasoning loop has untested hypotheses. Don't
-                        # advance the phase yet — let the loop work. It will
-                        # re-check on the next tick (5s) and advance once the
-                        # hypotheses are all tested/refuted.
-                        return
+                        # The reasoning loop has untested hypotheses. Give it a
+                        # BOUNDED window to test them, then advance regardless —
+                        # otherwise a reasoning loop that never resolves them (or
+                        # hypotheses whose real test IS the next phase) deadlocks
+                        # the pipeline in RECON forever, yielding 0 findings.
+                        # (AIOSOP-HYPGATE-LIVELOCK-2026-07-26)
+                        first = self._hyp_gate_first_tick.setdefault(gate_key, self._tick)
+                        if self._tick - first < self.HYP_GATE_MAX_TICKS:
+                            return
+                        logger.warning(
+                            "hyp_gate_bound_exceeded_advancing",
+                            session_id=session_id,
+                            phase=phase.value,
+                            open_hypotheses=sum(
+                                1 for h in open_hyps if h.get("status") == "open"
+                            ),
+                            waited_ticks=self._tick - first,
+                        )
+                    else:
+                        self._hyp_gate_first_tick.pop(gate_key, None)
                 except Exception:
                     pass  # if the graph query fails, fall through to the normal path
 
