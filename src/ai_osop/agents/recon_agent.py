@@ -1283,22 +1283,47 @@ class ReconAgent(BaseAgent):
                                     else self.endpoint_inventory[full_api_url].user_label
                                 )
 
+                                # For param-bearing routes, actively probe the
+                                # endpoint with its literal params so it becomes an
+                                # OBSERVED GET-with-query-string (URL carries '?',
+                                # status_code set). The active-injection selector
+                                # (phase_monitor) parses params from the URL query
+                                # and gates on status_code IS NOT NULL — a route
+                                # with only query_keys and no '?' is invisible to
+                                # sqli_scan, so JS-discovered injectables like
+                                # /rest/products/search?q= would never be tested.
+                                # (AIOSOP-RECON-JSPARAM-PROBE-2026-07-26)
+                                ep_url = full_api_url
+                                ep_status: Optional[int] = None
+                                if rparams:
+                                    ep_url = (
+                                        full_api_url
+                                        + "?"
+                                        + "&".join(f"{p}=1" for p in sorted(rparams))
+                                    )
+                                    try:
+                                        pr = await session.get(ep_url, timeout=5.0)
+                                        ep_status = pr.status_code
+                                    except Exception:
+                                        ep_status = None
                                 api_ep = Endpoint(
-                                    id=f"endpoint-{hashlib.md5(full_api_url.encode()).hexdigest()[:12]}",
+                                    id=f"endpoint-{hashlib.md5(ep_url.encode()).hexdigest()[:12]}",
                                     type="api",
-                                    url=full_api_url,
+                                    url=ep_url,
                                     method="GET",
                                     confidence=0.85,
                                     engagement_id=self.ctx.current_task.engagement_id,
                                     source="js_route_extraction",
                                     path=route,
+                                    status_code=ep_status,
+                                    status_codes_seen=[ep_status] if ep_status else [],
                                     auth_required=api_auth_req,
                                     user_label=api_final_label,
                                     query_keys=sorted(rparams),
                                     parameters=sorted(rparams),
                                 )
                                 discovered_endpoints.append(api_ep)
-                                self.endpoint_inventory[full_api_url] = api_ep
+                                self.endpoint_inventory[ep_url] = api_ep
                                 parameters_found.update(rparams)
                     except Exception as e:
                         logger.debug(
