@@ -88,8 +88,11 @@ class CSRFAgent(BaseVulnerabilityAgent):
                 evidence=[app_check["reason"]],
                 engagement_id=task.engagement_id,
             )
+            # Not applicable: no probe was sent to the target, so this is an
+            # honest "skipped" (not a clean "success"). status != success/failed
+            # → task terminalizes completed and the honesty guard doesn't gate it.
             return {
-                "status": "success",
+                "status": "skipped",
                 "confirmed": False,
                 "reason": app_check["reason"],
                 "findings_count": 0,
@@ -111,7 +114,7 @@ class CSRFAgent(BaseVulnerabilityAgent):
                 engagement_id=task.engagement_id,
             )
             return {
-                "status": "success",
+                "status": "skipped",
                 "confirmed": False,
                 "reason": "auth is not cookie/ambient (bearer tokens are not sent cross-site); CSRF not exploitable",
                 "findings_count": 0,
@@ -149,6 +152,9 @@ class CSRFAgent(BaseVulnerabilityAgent):
                 f"csrf_not_confirmed url={target_url} status={resp.status_code}: "
                 f"cross-site request rejected -> not exploitable"
             )
+            # The cross-site probe genuinely executed (request sent, response
+            # received) and the endpoint is NOT forgeable — an honest clean
+            # result. Carries execution_verified so the guard accepts it.
             return {
                 "status": "success",
                 "tool": "csrf_scan",
@@ -156,6 +162,7 @@ class CSRFAgent(BaseVulnerabilityAgent):
                 "confirmed": False,
                 "reason": f"cross-site request rejected (status {resp.status_code}); not exploitable",
                 "findings_count": 0,
+                "execution_verified": True,
             }
 
         # Working PoC: the foreign-Origin request was accepted. This is the
