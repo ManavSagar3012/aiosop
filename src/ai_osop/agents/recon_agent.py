@@ -958,6 +958,16 @@ class ReconAgent(BaseAgent):
         inline_route_pattern = re.compile(
             r"""["'`]((?:https?://[^"'`\s<>]+)|(?:/[A-Za-z0-9_./\-]+\?[^"'`\s<>]+))["'`]"""
         )
+        # AIOSOP-RECON-JS-TEMPLATE-ROUTE-2026-07-26: SPA API calls are built as
+        # template literals like `${this.hostServer}/rest/products/search?q=${e}`,
+        # so the route is NOT preceded by a quote and js_route_pattern misses it
+        # entirely (verified against OWASP Juice Shop's main.js — /rest/products/search
+        # with its injectable ?q= param was invisible to recon). Match /rest|/api
+        # paths anywhere and capture the FIRST literal query-param name per route so
+        # sqli_scan gets a real injection target instead of a global param soup.
+        js_api_route_pattern = re.compile(
+            r"""(/(?:rest|api)/[A-Za-z0-9_/\-]+)(?:\?([A-Za-z0-9_]+)=)?"""
+        )
 
         for identity in identities:
             user_label = identity["label"]
@@ -1073,6 +1083,15 @@ class ReconAgent(BaseAgent):
                                 parser = SimpleHTMLParser()
                                 parser.feed(html_text)
 
+                                # Hoisted to page scope: the links/forms/scripts
+                                # blocks below all reference link_enforcer, but a
+                                # link-less page (e.g. an Angular SPA shell whose
+                                # only <a> is none) skips the links loop, leaving
+                                # it undefined and the script-bundle extraction
+                                # dead on a swallowed NameError. (AIOSOP-RECON-
+                                # LINKENFORCER-HOIST-2026-07-26)
+                                link_enforcer = getattr(self, "_ep_scope_enforcer", None)
+
                                 # 1. Extract Links
                                 for href in parser.links:
                                     link = urljoin(str(response.url), href)
@@ -1107,114 +1126,114 @@ class ReconAgent(BaseAgent):
                                         and link not in urls_to_crawl
                                     ):
                                         urls_to_crawl.append(link)
-                                    # 2. Extract Forms & Parameters
-                                    for form in parser.forms:
-                                        form_url = urljoin(str(response.url), form["action"])
-                                        form_method = form["method"]
-                                        form_params = form["inputs"]
-                                        for p in form_params:
-                                            parameters_found.add(p)
+                                # 2. Extract Forms & Parameters
+                                for form in parser.forms:
+                                    form_url = urljoin(str(response.url), form["action"])
+                                    form_method = form["method"]
+                                    form_params = form["inputs"]
+                                    for p in form_params:
+                                        parameters_found.add(p)
 
-                                        is_form_new = form_url not in self.endpoint_inventory
-                                        form_auth_req = (
+                                    is_form_new = form_url not in self.endpoint_inventory
+                                    form_auth_req = (
+                                        user_label != "anonymous"
+                                        if is_form_new
+                                        else self.endpoint_inventory[form_url].auth_required
+                                    )
+                                    form_final_label = (
+                                        user_label
+                                        if is_form_new
+                                        else self.endpoint_inventory[form_url].user_label
+                                    )
+
+                                    form_ep = Endpoint(
+                                        id=f"endpoint-{hashlib.md5(form_url.encode()).hexdigest()[:12]}",
+                                        type="web",
+                                        url=form_url,
+                                        method=form_method,
+                                        confidence=0.95,
+                                        engagement_id=self.ctx.current_task.engagement_id,
+                                        source="active_crawl_form",
+                                        body_schema_keys=(
+                                            form_params if form_method == "POST" else []
+                                        ),
+                                        query_keys=form_params if form_method == "GET" else [],
+                                        auth_required=form_auth_req,
+                                        user_label=form_final_label,
+                                    )
+                                    discovered_endpoints.append(form_ep)
+                                    self.endpoint_inventory[form_url] = form_ep
+
+                                # 3. Extract Script sources (JS bundles) (Sprint 12)
+                                for src in parser.scripts:
+                                    script_url = urljoin(str(response.url), src)
+                                    parsed_script = urlparse(script_url)
+                                    script_host = parsed_script.netloc
+
+                                    # Get root domain dynamically
+                                    domain_parts = domain.split(".")
+                                    root_domain = (
+                                        ".".join(domain_parts[-2:])
+                                        if len(domain_parts) >= 2
+                                        else domain
+                                    )
+
+                                    sh = script_host.lower().strip()
+                                    _fallback_valid = (
+                                        sh == ""
+                                        or sh == domain
+                                        or sh.endswith(f".{domain}")
+                                        or sh == root_domain
+                                        or sh.endswith(f".{root_domain}")
+                                        or "website-files.com" in sh
+                                        or "webflow" in sh
+                                    )
+
+                                    is_valid = (
+                                        link_enforcer.host_in_scope(sh)
+                                        if link_enforcer is not None
+                                        else _fallback_valid
+                                    )
+                                    # Ignore common global trackers to avoid noise
+                                    ignore_trackers = [
+                                        "google-analytics",
+                                        "googletagmanager",
+                                        "facebook.net",
+                                        "doubleclick",
+                                    ]
+                                    if is_valid and not any(
+                                        t in script_url for t in ignore_trackers
+                                    ):
+                                        js_files.add(script_url)
+
+                                        is_js_new = script_url not in self.endpoint_inventory
+                                        js_auth_req = (
                                             user_label != "anonymous"
-                                            if is_form_new
-                                            else self.endpoint_inventory[form_url].auth_required
+                                            if is_js_new
+                                            else self.endpoint_inventory[
+                                                script_url
+                                            ].auth_required
                                         )
-                                        form_final_label = (
+                                        js_final_label = (
                                             user_label
-                                            if is_form_new
-                                            else self.endpoint_inventory[form_url].user_label
+                                            if is_js_new
+                                            else self.endpoint_inventory[script_url].user_label
                                         )
 
-                                        form_ep = Endpoint(
-                                            id=f"endpoint-{hashlib.md5(form_url.encode()).hexdigest()[:12]}",
+                                        # Persist the JS file itself as an Endpoint in the graph
+                                        js_ep = Endpoint(
+                                            id=f"endpoint-{hashlib.md5(script_url.encode()).hexdigest()[:12]}",
                                             type="web",
-                                            url=form_url,
-                                            method=form_method,
-                                            confidence=0.95,
+                                            url=script_url,
+                                            method="GET",
+                                            confidence=0.9,
                                             engagement_id=self.ctx.current_task.engagement_id,
-                                            source="active_crawl_form",
-                                            body_schema_keys=(
-                                                form_params if form_method == "POST" else []
-                                            ),
-                                            query_keys=form_params if form_method == "GET" else [],
-                                            auth_required=form_auth_req,
-                                            user_label=form_final_label,
+                                            source="active_crawl_script",
+                                            auth_required=js_auth_req,
+                                            user_label=js_final_label,
                                         )
-                                        discovered_endpoints.append(form_ep)
-                                        self.endpoint_inventory[form_url] = form_ep
-
-                                    # 3. Extract Script sources (JS bundles) (Sprint 12)
-                                    for src in parser.scripts:
-                                        script_url = urljoin(str(response.url), src)
-                                        parsed_script = urlparse(script_url)
-                                        script_host = parsed_script.netloc
-
-                                        # Get root domain dynamically
-                                        domain_parts = domain.split(".")
-                                        root_domain = (
-                                            ".".join(domain_parts[-2:])
-                                            if len(domain_parts) >= 2
-                                            else domain
-                                        )
-
-                                        sh = script_host.lower().strip()
-                                        _fallback_valid = (
-                                            sh == ""
-                                            or sh == domain
-                                            or sh.endswith(f".{domain}")
-                                            or sh == root_domain
-                                            or sh.endswith(f".{root_domain}")
-                                            or "website-files.com" in sh
-                                            or "webflow" in sh
-                                        )
-
-                                        is_valid = (
-                                            link_enforcer.host_in_scope(sh)
-                                            if link_enforcer is not None
-                                            else _fallback_valid
-                                        )
-                                        # Ignore common global trackers to avoid noise
-                                        ignore_trackers = [
-                                            "google-analytics",
-                                            "googletagmanager",
-                                            "facebook.net",
-                                            "doubleclick",
-                                        ]
-                                        if is_valid and not any(
-                                            t in script_url for t in ignore_trackers
-                                        ):
-                                            js_files.add(script_url)
-
-                                            is_js_new = script_url not in self.endpoint_inventory
-                                            js_auth_req = (
-                                                user_label != "anonymous"
-                                                if is_js_new
-                                                else self.endpoint_inventory[
-                                                    script_url
-                                                ].auth_required
-                                            )
-                                            js_final_label = (
-                                                user_label
-                                                if is_js_new
-                                                else self.endpoint_inventory[script_url].user_label
-                                            )
-
-                                            # Persist the JS file itself as an Endpoint in the graph
-                                            js_ep = Endpoint(
-                                                id=f"endpoint-{hashlib.md5(script_url.encode()).hexdigest()[:12]}",
-                                                type="web",
-                                                url=script_url,
-                                                method="GET",
-                                                confidence=0.9,
-                                                engagement_id=self.ctx.current_task.engagement_id,
-                                                source="active_crawl_script",
-                                                auth_required=js_auth_req,
-                                                user_label=js_final_label,
-                                            )
-                                            discovered_endpoints.append(js_ep)
-                                            self.endpoint_inventory[script_url] = js_ep
+                                        discovered_endpoints.append(js_ep)
+                                        self.endpoint_inventory[script_url] = js_ep
 
                     except Exception as e:
                         logger.debug(f"Active crawl failed for {url} under {user_label}: {e}")
@@ -1228,12 +1247,29 @@ class ReconAgent(BaseAgent):
                         js_response = await session.get(js_url, timeout=5.0)
                         if js_response.status_code == 200:
                             js_text = js_response.text
-                            routes = js_route_pattern.findall(js_text)
-                            params = param_pattern.findall(js_text)
+                            # route -> set(param names). Template-aware pattern
+                            # captures SPA XHR routes (e.g. /rest/products/search)
+                            # built as `${host}/rest/...?q=${x}` template literals
+                            # that the quoted js_route_pattern cannot see, plus the
+                            # FIRST literal query-param per route (real injection
+                            # target). Quoted routes are merged in with no assumed
+                            # param — a global param scrape assigned to every route
+                            # is noise that sends sqli_scan chasing bogus targets.
+                            route_params: Dict[str, set] = {}
+                            for m in js_api_route_pattern.finditer(js_text):
+                                rp = route_params.setdefault(m.group(1), set())
+                                if m.group(2):
+                                    rp.add(m.group(2))
+                            for route in js_route_pattern.findall(js_text):
+                                route_params.setdefault(route, set())
 
-                            for route in routes:
+                            for route, rparams in route_params.items():
                                 api_routes.add(route)
-                                full_api_url = urljoin(f"https://{domain}/", route)
+                                # Resolve against the JS bundle's own origin so the
+                                # scheme/host match the live service (hardcoding
+                                # https://{domain} breaks http-only targets like a
+                                # locally-run app). route is root-relative.
+                                full_api_url = urljoin(js_url, route)
 
                                 is_api_new = full_api_url not in self.endpoint_inventory
                                 api_auth_req = (
@@ -1258,14 +1294,12 @@ class ReconAgent(BaseAgent):
                                     path=route,
                                     auth_required=api_auth_req,
                                     user_label=api_final_label,
-                                    query_keys=list(set(params)),
-                                    parameters=list(set(params)),
+                                    query_keys=sorted(rparams),
+                                    parameters=sorted(rparams),
                                 )
                                 discovered_endpoints.append(api_ep)
                                 self.endpoint_inventory[full_api_url] = api_ep
-
-                            for param in params:
-                                parameters_found.add(param)
+                                parameters_found.update(rparams)
                     except Exception as e:
                         logger.debug(
                             f"JS route extraction failed for {js_url} under {user_label}: {e}"
