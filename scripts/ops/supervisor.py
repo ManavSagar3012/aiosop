@@ -156,6 +156,14 @@ _MCP_LAUNCHERS.update(
             "session-memory-mcp": os.path.join(PYROOT, "session_memory_mcp.py"),
             "reporting-mcp": os.path.join(PYROOT, "reporting_mcp.py"),
             "attack-graph-mcp": os.path.join(PYROOT, "attack_graph_mcp.py"),
+            # AIOSOP-BROWSER-REAL-2026-07-26: browser-mcp has a real Playwright
+            # server (browser_mcp.py, is_stub=False, chromium verified installed),
+            # but was falling through to the mock stub — so xss_scan/csrf_scan/
+            # authenticate could never CONFIRM execution (stub returns honest-null)
+            # and silently found nothing. Launch the real server so browser-gated
+            # scanners produce real evidence. Falls back to the stub only if the
+            # script is somehow absent (os.path.exists guard below).
+            "browser-mcp": os.path.join(PYROOT, "browser_mcp.py"),
         }.items()
         if os.path.exists(script)
     }

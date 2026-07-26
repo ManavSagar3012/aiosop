@@ -873,13 +873,25 @@ class VulnAnalysisAgent(BaseAgent):
         q[target] = payload
         return urlunparse(parsed._replace(query=urlencode(q, quote_via=quote)))
 
-    async def _confirm_xss_execution(self, url: str, token: str, engagement_id: str) -> bool:
+    async def _confirm_xss_execution(
+        self, url: str, token: str, engagement_id: str
+    ) -> tuple[bool, bool]:
         """Navigate a real browser to ``url`` and confirm the payload EXECUTED.
 
         The payload sets ``window.__osopxss`` to a per-scan token via an <img onerror>
         handler (fires even through innerHTML sinks). We then eval that global: a
         match proves the injected JavaScript actually ran — true execution, not a
         reflection or template guess. Fresh token per scan avoids stale positives.
+
+        Returns ``(executed, probe_ran)``:
+          - ``executed``  — the injected JS ran (a real XSS execution).
+          - ``probe_ran`` — the browser navigate+eval genuinely completed. This is
+            what distinguishes a VERIFIED-clean result (real browser said "no XSS")
+            from a BLIND one (stub/Chromium-launch failure). The honesty guard
+            (base.py _validate_output) needs this so a clean scan can terminalize
+            as ``completed`` only when it actually executed against a real browser —
+            a stubbed/failed probe leaves the flag False and is correctly rejected.
+            (AIOSOP-XSS-CLEAN-VERIFIED-2026-07-26)
         """
         try:
             await self.browser_adapter.navigate(
@@ -893,8 +905,8 @@ class VulnAnalysisAgent(BaseAgent):
             )
         except Exception as e:
             logger.warning("xss_execution_probe_failed", url=url, error=str(e))
-            return False
-        return (res or {}).get("result") == token
+            return False, False
+        return (res or {}).get("result") == token, True
 
     async def _confirm_xss_reflection(self, url: str, marker: str) -> bool:
         """Confirm a server-reflected XSS: the raw, un-encoded marker tag appears
@@ -950,6 +962,9 @@ class VulnAnalysisAgent(BaseAgent):
                 "confirmed": False,
                 "reason": app_check["reason"],
                 "findings_count": 0,
+                # The applicability engine genuinely ran and decided to skip — an
+                # honest, evidenced determination, not a blind no-op.
+                "execution_verified": True,
             }
         url = payload.get("url") or payload.get("target_url") or payload.get("target")
         if not url:
@@ -973,7 +988,7 @@ class VulnAnalysisAgent(BaseAgent):
         # 1) Execution probe (DOM + reflected sinks): <img onerror> sets a global.
         exec_payload = f"<img src=x onerror=\"window.__osopxss='{token}'\">"
         exec_url = self._inject_payload(url, exec_payload, param)
-        executed = await self._confirm_xss_execution(exec_url, token, engagement_id)
+        executed, probe_ran = await self._confirm_xss_execution(exec_url, token, engagement_id)
 
         # 2) Reflection probe (server-reflected): raw marker tag echoed un-encoded.
         reflected = False
@@ -984,13 +999,17 @@ class VulnAnalysisAgent(BaseAgent):
             reflected = await self._confirm_xss_reflection(refl_url, marker)
 
         if not (executed or reflected):
-            logger.info("xss_scan_clean", url=url, param=param)
+            logger.info("xss_scan_clean", url=url, param=param, probe_ran=probe_ran)
             return {
                 "status": "success",
                 "tool": "xss_scan",
                 "target": url,
                 "confirmed": False,
                 "findings_count": 0,
+                # A clean result is VERIFIED only if the browser probe genuinely ran.
+                # Blind (stub/launch-fail) probes leave this False so the honesty
+                # guard rejects the un-evidenced "all clear".
+                "execution_verified": probe_ran,
             }
 
         method = "execution" if executed else "reflection"
@@ -1109,6 +1128,7 @@ class VulnAnalysisAgent(BaseAgent):
                 "confirmed": False,
                 "reason": app_check["reason"],
                 "findings_count": 0,
+                "execution_verified": True,
             }
 
         url = payload.get("url") or payload.get("target_url") or payload.get("target")
@@ -1193,10 +1213,12 @@ class VulnAnalysisAgent(BaseAgent):
         test_params = list(dict.fromkeys(list(discovered_params) + test_params))[:10]
 
         executed = False
+        probe_ran = False
         injection_point = None
         for test_param in test_params:
             inject_url = self._inject_payload(url, exec_payload, test_param)
-            executed = await self._confirm_xss_execution(inject_url, token, engagement_id)
+            executed, ran = await self._confirm_xss_execution(inject_url, token, engagement_id)
+            probe_ran = probe_ran or ran
             if executed:
                 injection_point = test_param
                 break
@@ -1204,7 +1226,8 @@ class VulnAnalysisAgent(BaseAgent):
         # Also try fragment injection for SPA routes.
         if not executed and "#" in url:
             frag_url = url.split("#")[0] + "#" + exec_payload
-            executed = await self._confirm_xss_execution(frag_url, token, engagement_id)
+            executed, ran = await self._confirm_xss_execution(frag_url, token, engagement_id)
+            probe_ran = probe_ran or ran
             if executed:
                 injection_point = "fragment"
 
@@ -1213,6 +1236,7 @@ class VulnAnalysisAgent(BaseAgent):
                 "dom_xss_scan_sinks_found_but_unreachable",
                 url=url,
                 sink_count=len(sinks_discovered),
+                probe_ran=probe_ran,
             )
             return {
                 "status": "success",
@@ -1223,6 +1247,7 @@ class VulnAnalysisAgent(BaseAgent):
                 "sinks_found": len(sinks_discovered),
                 "sinks": sinks_discovered,
                 "findings_count": 0,
+                "execution_verified": probe_ran,
             }
 
         # Confirmed DOM XSS — mint a validated finding.
@@ -1400,6 +1425,9 @@ class VulnAnalysisAgent(BaseAgent):
             "findings_count": len(minted),
             "techniques": [f.technique for f in confirmed],
             "findings": [v.model_dump() for v in minted],
+            # Reached only after JWTTester.run() genuinely forged tokens and tested
+            # them against verify_url — a clean (0-finding) result here is verified.
+            "execution_verified": True,
         }
 
     async def _execute_mass_assignment_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1649,6 +1677,7 @@ class VulnAnalysisAgent(BaseAgent):
                 "confirmed": False,
                 "reason": f"Read-only HTTP method ({method}); CSRF is not applicable.",
                 "findings_count": 0,
+                "execution_verified": True,
             }
 
         # Heuristic 2: State-Changing Endpoint Heuristic.
@@ -1679,6 +1708,7 @@ class VulnAnalysisAgent(BaseAgent):
                 "confirmed": False,
                 "reason": "Read-only endpoint path; CSRF is not applicable.",
                 "findings_count": 0,
+                "execution_verified": True,
             }
         body = payload.get("body")
         cookie = payload.get("cookie")  # ambient credential => CSRF-relevant
@@ -1695,6 +1725,7 @@ class VulnAnalysisAgent(BaseAgent):
                 "confirmed": False,
                 "reason": "auth is not cookie/ambient (bearer tokens are not sent cross-site); CSRF not exploitable",
                 "findings_count": 0,
+                "execution_verified": True,
             }
 
         # Cross-site forgery simulation: foreign Origin, ambient cookie, no CSRF token.
@@ -1725,6 +1756,7 @@ class VulnAnalysisAgent(BaseAgent):
                 "confirmed": False,
                 "reason": f"cross-site request rejected (status {resp.status_code})",
                 "findings_count": 0,
+                "execution_verified": True,
             }
 
         vuln = Vulnerability(
