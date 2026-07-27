@@ -39,6 +39,10 @@ class TaskScheduler:
     # Terminal failure statuses that should not trigger retry success path
     _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
 
+    # AIOSOP-TASKCLAIM-001: value stored in the per-task NX lock. Constant is fine —
+    # NX guarantees a single holder, and only that holder reaches the release path.
+    _TASK_LOCK_VALUE = "claimed"
+
     # Emit a single starvation WARNING once a task has waited this long for an
     # idle agent of its type. An agent-pool outage (e.g. agents transiently
     # unregistered during an API restart) was previously silent — a task looped
@@ -466,6 +470,27 @@ class TaskScheduler:
                 logger.info("no_agent_found", task_id=task.id)
             if agent:
                 self._starvation_warned.discard(task.id)
+                # AIOSOP-TASKCLAIM-001: claim the TASK before executing. _find_available_agent
+                # locks the AGENT, not the task — so the same task present as two objects
+                # (in-memory pending scan + a copy popped from the Redis queue, plus the retry
+                # path which re-queues AND re-assigns the same id) each claimed a *different*
+                # idle agent and ran concurrently: same identity on the shared browser, all
+                # stomping each other until the 180s timeout, then retrying into more dupes.
+                # Growing the pool 3->6 amplified it (more idle agents to double-claim). An NX
+                # lock keyed by task id serialises dispatch: the loser releases its agent and
+                # drops out; the queued copy runs once the winner frees the lock. TTL exceeds
+                # the exec timeout so it never expires mid-run; _execute_via_agent's finally
+                # frees it for legitimate retries.
+                _task_lock = f"lock:task:{task.id}"
+                _task_lock_ttl = (getattr(task, "timeout_seconds", None) or 300) + 60
+                if not await self._orch.session_memory.acquire_lock(
+                    _task_lock, self._TASK_LOCK_VALUE, ttl=_task_lock_ttl
+                ):
+                    logger.info(
+                        "task_already_claimed", task_id=task.id, agent_id=agent.ctx.agent_id
+                    )
+                    await self._release_agent(agent.ctx.agent_id)
+                    return
                 record_stage(
                     task,
                     ExecutionStage.WORKER_LEASE_GRANTED,
@@ -516,8 +541,13 @@ class TaskScheduler:
                 finally:
                     # P0-009: if _execute_via_agent was never started, the agent lock
                     # would leak forever. Release it here as a safety net.
+                    # AIOSOP-TASKCLAIM-001: same for the task lock — when execution never
+                    # started (persistence failed above), _execute_via_agent's finally will
+                    # not run, so free the task claim here or it lingers until TTL and blocks
+                    # this task's retry for the whole TTL window.
                     if not started_execution:
                         await self._release_agent(agent.ctx.agent_id)
+                        await self._release_task_claim(task.id)
             else:
                 task.status = "pending"
                 record_stage(task, ExecutionStage.WORKER_LEASE_REQUESTED, error="no_agent_found")
@@ -626,6 +656,17 @@ class TaskScheduler:
                 logger.warning(
                     "release_agent_redis_cleanup_failed", agent_id=agent_id, error=str(e)
                 )
+
+    async def _release_task_claim(self, task_id: str) -> None:
+        """Release the AIOSOP-TASKCLAIM-001 per-task dispatch lock. Best-effort:
+        the NX lock's TTL self-heals a missed release, so never let a Redis blip
+        break the caller's finally."""
+        try:
+            await self._orch.session_memory.release_lock(
+                f"lock:task:{task_id}", self._TASK_LOCK_VALUE
+            )
+        except Exception as e:  # noqa: BLE001 — TTL self-heals a missed release
+            logger.warning("task_lock_release_failed", task_id=task_id, error=str(e))
 
     @staticmethod
     def _sanitize_external_payload(task: Task) -> None:
@@ -979,6 +1020,7 @@ class TaskScheduler:
                 )
             finally:
                 await self._release_agent(agent.ctx.agent_id)
+                await self._release_task_claim(task.id)
                 handles = getattr(self._orch, "_task_handles", None)
                 if handles is not None:
                     handles.pop(task.id, None)
