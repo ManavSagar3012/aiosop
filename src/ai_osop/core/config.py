@@ -150,6 +150,17 @@ class Settings(BaseSettings):
     # Bound browser-mcp calls so a down service fails fast (-> retry engine)
     # instead of hanging until the task reaper fires.
     browser_mcp_timeout: int = 30
+    # AIOSOP-BROWSER-CONCURRENCY-001: process-wide cap on concurrent browser-mcp
+    # calls. Every agent (register/authenticate/capture + xss/csrf/... scanners)
+    # drives ONE shared Chromium through the single browser-mcp server. With the
+    # 40-task inflight cap, that server and the single-process target were driven
+    # into crash-loops under load (observed: Juice Shop RestartCount 13, HTTP 000,
+    # browser-mcp "Server disconnected"). Gating browser ops to a handful in flight
+    # keeps the shared browser and the target alive without throttling non-browser
+    # scan work (sqlmap/nuclei run unbounded by this).
+    browser_mcp_max_concurrency: int = Field(
+        default=4, validation_alias="OSOP_BROWSER_MCP_MAX_CONCURRENCY"
+    )
     # AIOSOP-MCP-TIMEOUT-001 (2026-07-03): bound the MCP initialize/get_state HTTP calls.
     # These previously passed NO aiohttp timeout and inherited the 5-minute (300s) client
     # default, so a hung browser-mcp initialize (Chromium launch) blocked the calling agent

@@ -10,6 +10,19 @@ from ai_osop.core.config import settings
 from ai_osop.core.exceptions import MCPException
 from ai_osop.mcp.protocol import MCPRegistry
 
+# AIOSOP-BROWSER-CONCURRENCY-001: one process-wide gate over ALL browser-mcp calls so
+# the scanner fan-out cannot oversubscribe the single shared Chromium (and, through it,
+# the target). Created lazily because an asyncio.Semaphore binds to the running loop
+# (module import has no loop). Mirrors AIOSOP-LLM-CONCURRENCY-001 in llm_client.
+_browser_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _browser_gate() -> asyncio.Semaphore:
+    global _browser_semaphore
+    if _browser_semaphore is None:
+        _browser_semaphore = asyncio.Semaphore(max(1, settings.browser_mcp_max_concurrency))
+    return _browser_semaphore
+
 
 class BrowserMCPAdapter:
     """Adapter for the browser-mcp server."""
@@ -61,9 +74,12 @@ class BrowserMCPAdapter:
             for k, v in params.items():
                 if k not in body:
                     body[k] = v
-        response = await self.registry.execute_tool(
-            self.SERVER_ID, "execute", body, timeout_override=settings.browser_mcp_timeout
-        )
+        # AIOSOP-BROWSER-CONCURRENCY-001: hold a gate slot for the actual browser-mcp
+        # round-trip so at most N browser ops hit the shared Chromium concurrently.
+        async with _browser_gate():
+            response = await self.registry.execute_tool(
+                self.SERVER_ID, "execute", body, timeout_override=settings.browser_mcp_timeout
+            )
         if response.status != "success":
             raise MCPException(f"Browser action '{action}' failed: {response.error}")
         return response.result or {}
