@@ -3,6 +3,7 @@ Browser MCP Adapter
 Standardized interface for Playwright-based stateful browser automation.
 """
 
+import asyncio
 from typing import Any, Dict, Optional
 
 from ai_osop.core.config import settings
@@ -14,6 +15,21 @@ class BrowserMCPAdapter:
     """Adapter for the browser-mcp server."""
 
     SERVER_ID = "browser-mcp"
+
+    # AIOSOP-NAV-RESILIENCE-001: transient network errors that mean the target was
+    # briefly unavailable (rate-limiting, mid-restart, or — observed live — Juice Shop
+    # crash-looping under scan load), NOT a real navigation failure. Worth a short retry.
+    _TRANSIENT_NAV_MARKERS = (
+        "ERR_EMPTY_RESPONSE",
+        "ERR_ABORTED",
+        "ERR_CONNECTION_REFUSED",
+        "ERR_CONNECTION_RESET",
+        "ERR_CONNECTION_CLOSED",
+        "ERR_NETWORK_CHANGED",
+        "Empty reply",
+    )
+    _NAV_MAX_ATTEMPTS = 3
+    _NAV_RETRY_BASE_SECONDS = 2  # backoff = base * attempt#; overridable in tests
 
     def __init__(self, registry: MCPRegistry):
         self.registry = registry
@@ -65,28 +81,46 @@ class BrowserMCPAdapter:
         the browser context is seeded with those credentials so navigation runs as
         the imported user.
         """
-        try:
-            return await self.execute_action(
-                "navigate",
-                {"url": url},
-                user_label=user_label,
-                engagement_id=engagement_id,
-                storage_state=storage_state,
-            )
-        except MCPException as e:
-            # Defense-in-depth (2026-07-04): a localhost/private-range target that is
-            # HTTP-only fails an https:// navigation with net::ERR_SSL_PROTOCOL_ERROR,
-            # which otherwise kills the whole autonomous chain. Retry once over http.
-            # Public targets are never downgraded (real bounty targets stay https).
-            if ("SSL" in str(e) or "ERR_SSL" in str(e)) and self._is_local_http_target(url):
+        last_exc: Optional[MCPException] = None
+        for attempt in range(self._NAV_MAX_ATTEMPTS):
+            try:
                 return await self.execute_action(
                     "navigate",
-                    {"url": "http://" + url[len("https://") :]},
+                    {"url": url},
                     user_label=user_label,
                     engagement_id=engagement_id,
                     storage_state=storage_state,
                 )
-            raise
+            except MCPException as e:
+                es = str(e)
+                # Defense-in-depth (2026-07-04): a localhost/private-range target that is
+                # HTTP-only fails an https:// navigation with net::ERR_SSL_PROTOCOL_ERROR,
+                # which otherwise kills the whole autonomous chain. Retry once over http.
+                # Public targets are never downgraded (real bounty targets stay https).
+                if ("SSL" in es or "ERR_SSL" in es) and self._is_local_http_target(url):
+                    return await self.execute_action(
+                        "navigate",
+                        {"url": "http://" + url[len("https://") :]},
+                        user_label=user_label,
+                        engagement_id=engagement_id,
+                        storage_state=storage_state,
+                    )
+                # AIOSOP-NAV-RESILIENCE-001: a briefly-unavailable target (mid-restart /
+                # rate-limited / crash-looping under load) returns ERR_EMPTY_RESPONSE or
+                # ERR_ABORTED. Live, this burned register's whole 180s budget on a single
+                # blip against a restarting Juice Shop. Short backoff + retry rides over the
+                # outage window instead of failing the task. Non-transient errors (404, real
+                # nav failures) raise immediately — no masking.
+                if attempt < self._NAV_MAX_ATTEMPTS - 1 and any(
+                    m in es for m in self._TRANSIENT_NAV_MARKERS
+                ):
+                    last_exc = e
+                    await asyncio.sleep(self._NAV_RETRY_BASE_SECONDS * (attempt + 1))
+                    continue
+                raise
+        # Exhausted retries on a persistently-unavailable target — surface the last error.
+        assert last_exc is not None  # loop only exits here after a transient failure
+        raise last_exc
 
     @staticmethod
     def _is_local_http_target(url: str) -> bool:
