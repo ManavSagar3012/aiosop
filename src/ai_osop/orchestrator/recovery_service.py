@@ -149,6 +149,15 @@ class RecoveryService:
     MAX_RECOVERY_ATTEMPTS = 3
     _EXPLOIT_TASK_TYPES = ("validate_exploit", "exploit_validation")
 
+    # AIOSOP-RECOVERY-AGE-001 follow-up: never resurrect tasks of an engagement in
+    # a terminal phase. A revived abandoned engagement regenerates fresh (young)
+    # tasks, so neither recovery_max_age_hours (task created_at) nor the per-task
+    # _recovery_attempts cap stops it from hijacking the agent pool and starving
+    # live engagements. Terminal phase is the one signal a revival can't refresh.
+    # ponytail: relies on abandoned engagements reaching HALTED (operator /halt or
+    # halt_engagement); add an idle-engagement reaper if zombies re-accumulate.
+    _TERMINAL_ENGAGEMENT_PHASES = {"completed", "halted"}
+
     async def recover_state(self) -> Dict[str, Any]:
         """Restart recovery: restore ALL in-memory state from durable stores.
 
@@ -165,7 +174,13 @@ class RecoveryService:
         process is gone) so the release is always correct, and the pool is fully
         available the instant recovery completes.
         """
-        recovered = {"engagements": 0, "tasks": 0, "approvals": 0, "exhausted": 0}
+        recovered = {
+            "engagements": 0,
+            "tasks": 0,
+            "approvals": 0,
+            "exhausted": 0,
+            "skipped_terminal_phase": 0,
+        }
         try:
             # 0) Release stale agent locks. The prior process is gone, so every
             #    agent that was mid-execution is now idle. Without this, the
@@ -202,6 +217,20 @@ class RecoveryService:
                 self._orch._sessions[session.session_id] = session
                 recovered["engagements"] += 1
 
+            # Phase lookup for the resurrection gate in step 3. Key by BOTH ids: a
+            # task is keyed by canonical (scope.engagement_id) while the session's
+            # own PK is session_id (AIOSOP-FINDINGS-KEY split-brain), so either form
+            # may appear as task.engagement_id.
+            phase_by_engagement: Dict[str, str] = {}
+            for session in self._orch._sessions.values():
+                try:
+                    keys = (session.session_id, session.canonical_engagement_id)
+                except Exception:  # noqa: BLE001 - a malformed session must not abort recovery
+                    continue
+                for key in keys:
+                    if key:
+                        phase_by_engagement[key] = (session.phase or "").lower()
+
             # 2) Pending approvals — restore them AND re-spawn their timeout watchers
             #    so a denial/timeout still fails the parked task after a restart.
             try:
@@ -228,6 +257,34 @@ class RecoveryService:
                     self._orch.task_scheduler._sanitize_external_payload(task)
 
                 if task.status in ("pending", "running"):
+                    # Resurrection gate: an engagement in a terminal phase is done —
+                    # never revive its tasks (they would regenerate work and starve
+                    # live engagements). Terminalize the orphan and skip; do NOT add
+                    # it to _tasks or the queue.
+                    eng_phase = phase_by_engagement.get(task.engagement_id)
+                    if eng_phase in self._TERMINAL_ENGAGEMENT_PHASES:
+                        task.status = "cancelled"
+                        task.completed_at = datetime.utcnow()
+                        task.result = {
+                            "status": "cancelled",
+                            "error": (
+                                f"engagement in terminal phase '{eng_phase}'; "
+                                "not resurrected on restart"
+                            ),
+                        }
+                        try:
+                            await self._orch.graph_memory.upsert_task(
+                                task,
+                                result_summary={"recovery_skipped_terminal_phase": eng_phase},
+                            )
+                        except Exception as e:  # noqa: BLE001 - skip must not abort recovery
+                            logger.warning(
+                                "recovery_terminal_skip_upsert_failed",
+                                task_id=task.id,
+                                error=str(e),
+                            )
+                        recovered["skipped_terminal_phase"] += 1
+                        continue
                     # GAP-4-5: bound resurrection. Count this recovery; over the cap the
                     # task is failed + dead-lettered instead of re-queued.
                     if not isinstance(task.payload, dict):
