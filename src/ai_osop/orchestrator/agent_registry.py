@@ -79,6 +79,12 @@ async def register_all_agents(
     _WEBSOCKET_WORKERS = 3
     _SAML_WORKERS = 3
     _TAKEOVER_WORKERS = 3
+    # WORKFLOW pool drives ALL browser work through a shared Chromium (pages keyed
+    # by user_label, so different identities run truly in parallel). The diff-auth
+    # chain alone needs register×2 + authenticate×2 concurrently for its two
+    # identities; at 3 the 4th auth task waited ~183s for a slot and timed out at
+    # 180s, killing the whole csrf/jwt chain downstream. 6 gives that headroom.
+    _WORKFLOW_WORKERS = 6
 
     agents_to_register = [
         (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
@@ -110,9 +116,6 @@ async def register_all_agents(
             (ContextManagerAgent, AgentType.CONTEXT_MANAGER, "context-manager-agent-001"),
             (ConcurrencyAgent, AgentType.CONCURRENCY, "concurrency-agent-001"),
             (StackProfilerAgent, AgentType.CONTEXT_MANAGER, "stack-profiler-agent-001"),
-            (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-001"),
-            (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-002"),
-            (PlaywrightAgent, AgentType.WORKFLOW, "playwright-agent-003"),
             (CloudSpecialistAgent, AgentType.CLOUD_SPECIALIST, "cloud-agent-001"),
             (CodeQLAgent, AgentType.SAST_ANALYSIS, "codeql-agent-001"),
             (GraphQLAgent, AgentType.VULN_ANALYSIS, "graphql-agent-001"),
@@ -124,6 +127,11 @@ async def register_all_agents(
             (VisualContextAgent, AgentType.VISUAL_CONTEXT, "visual-agent-001"),
         ]
     )
+
+    for i in range(1, _WORKFLOW_WORKERS + 1):
+        agents_to_register.append(
+            (PlaywrightAgent, AgentType.WORKFLOW, f"playwright-agent-{i:03d}")
+        )
 
     for i in range(1, _SSTI_WORKERS + 1):
         agents_to_register.append((SSTIAgent, AgentType.SSTI_SCANNER, f"ssti-agent-{i:03d}"))
