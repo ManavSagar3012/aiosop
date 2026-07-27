@@ -21,6 +21,15 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from ai_osop.core.config import settings
 
+# Fast-fail per-action timeout. Playwright's default is 30s, so a single wedged
+# page burns 4×30s across register's fills and blows the 180s agent ceiling.
+# Bounded so a degraded/contended browser fails fast and the task terminalizes
+# instead of hanging. Overridable per-call via params["timeout_ms"].
+# ponytail: single global default; per-action override already exposed if a
+# specific action ever needs longer.
+ACTION_TIMEOUT_MS = int(os.getenv("OSOP_BROWSER_ACTION_TIMEOUT_MS", "10000"))
+
+
 async def verify_mcp_token(authorization: Optional[str] = Header(None)):
     """Enforce strict bearer token verification."""
     expected = settings.api_token or os.getenv("OSOP_API_TOKEN")
@@ -407,9 +416,16 @@ async def mcp_execute(req: MCPExecuteRequest, authenticated: None = Depends(veri
             except Exception:
                 pass
         elif action == "click":
-            await page.click(params.get("selector"))
+            await page.click(
+                params.get("selector"),
+                timeout=params.get("timeout_ms", ACTION_TIMEOUT_MS),
+            )
         elif action == "fill":
-            await page.fill(params.get("selector"), params.get("value"))
+            await page.fill(
+                params.get("selector"),
+                params.get("value"),
+                timeout=params.get("timeout_ms", ACTION_TIMEOUT_MS),
+            )
         elif action == "capture_session" or action == "capture_state":
             state = await manager.capture_state(user_label, engagement_id=engagement_id)
             return {
