@@ -172,8 +172,13 @@ class ReconAgent(BaseAgent):
             # answers fast (and a reasoning model's <think> trace can't blow the bound).
             from ai_osop.core.config import settings as _settings
 
+            # W7: route reasoning through a dedicated (capable) model when pinned;
+            # empty = primary model, unchanged.
+            _reasoning_model = getattr(_settings, "llm_reasoning_model", "") or None
             return await self.ctx.llm_client.complete(
-                messages, max_tokens=_settings.llm_reasoning_max_tokens
+                messages,
+                model=_reasoning_model,
+                max_tokens=_settings.llm_reasoning_max_tokens,
             )
         except Exception as e:
             logger.warning("recon_think_degraded", error=str(e))

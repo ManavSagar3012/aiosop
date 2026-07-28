@@ -1051,8 +1051,13 @@ class BaseAgent(ABC):
                 # AIOSOP-LLM-WARM-001: cap advisory reasoning tokens (see recon_agent).
                 from ai_osop.core.config import settings as _settings
 
+                # W7: route reasoning through a dedicated (capable) model when an
+                # operator pins OSOP_LLM_REASONING_MODEL; empty = primary, unchanged.
+                _reasoning_model = getattr(_settings, "llm_reasoning_model", "") or None
                 result = await self.ctx.llm_client.complete(
-                    messages, max_tokens=_settings.llm_reasoning_max_tokens
+                    messages,
+                    model=_reasoning_model,
+                    max_tokens=_settings.llm_reasoning_max_tokens,
                 )
                 if isinstance(result, dict):
                     return result.get("content", "")

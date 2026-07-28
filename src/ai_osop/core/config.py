@@ -121,10 +121,25 @@ class Settings(BaseSettings):
     llm_keep_alive: str = Field(default="30m", validation_alias="OSOP_LLM_KEEP_ALIVE")
     # Advisory reasoning (agent think()) does not need the full 4096-token budget, and
     # on a reasoning model like qwen3 a large budget means a long <think> trace that
-    # blows the latency bound. Cap think() generation separately.
+    # blows the latency bound. Cap think() generation separately. Raised from the
+    # original 512: 512 was too small to reason through even a short multi-step attack
+    # chain (W7). 1536 gives think() room for a real hypothesis while still capping the
+    # latency blowup on the local reasoning model — the right trade until reasoning is
+    # routed to a capable API model (see llm_reasoning_model). Operator-tunable; lower
+    # it again only if a cold-load/latency regression appears on the pinned local model.
     llm_reasoning_max_tokens: int = Field(
-        default=512, validation_alias="OSOP_LLM_REASONING_MAX_TOKENS"
+        default=1536, validation_alias="OSOP_LLM_REASONING_MAX_TOKENS"
     )
+    # W7: route reasoning-path calls (agent think() / hypothesis generation) to a
+    # capable model while bulk calls stay on the cheap local backend. 512-token think()
+    # on a memory-starved 8b local model is why "all agent think() degraded". When set,
+    # think() calls this model INSTEAD of the primary; when empty (default) think()
+    # uses the primary model exactly as before — NO behavior change unless an operator
+    # explicitly pins a reasoning model (e.g. a frontier API model). This is the
+    # routing half of W7's "raise budget AND route reasoning to a capable model"; the
+    # bulk/local path is untouched. Example: OSOP_LLM_REASONING_MODEL=claude-opus-4-8
+    # with the provider key configured, keeping OSOP_LLM_* on the local Ollama for bulk.
+    llm_reasoning_model: str = Field(default="", validation_alias="OSOP_LLM_REASONING_MODEL")
     # AIOSOP-REPORT-TRUNC-001 (2026-07-03): cap per-finding evidence in the RENDERED
     # report. Raw nuclei/burp evidence embeds full HTTP request+response bodies (often
     # the whole captured page), so one finding's evidence can exceed 200KB and 58
