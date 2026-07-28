@@ -78,7 +78,14 @@ async def test_recovery_releases_stale_agent_locks_on_startup():
     called_ids = {call.args[0] for call in orch.task_scheduler._release_agent.await_args_list}
     assert called_ids == {"agent-a", "agent-b", "agent-c"}
     # Recovery completed without raising.
-    assert report == {"engagements": 0, "tasks": 0, "approvals": 0, "exhausted": 0}
+    assert report == {
+        "engagements": 0,
+        "tasks": 0,
+        "approvals": 0,
+        "exhausted": 0,
+        "skipped_terminal_phase": 0,
+        "skipped_orphaned": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -102,7 +109,14 @@ async def test_recovery_continues_when_one_agent_release_fails():
     # All three release attempts were made (recovery did not abort).
     assert call_count["n"] == 3
     # Recovery still completed and returned its report.
-    assert report == {"engagements": 0, "tasks": 0, "approvals": 0, "exhausted": 0}
+    assert report == {
+        "engagements": 0,
+        "tasks": 0,
+        "approvals": 0,
+        "exhausted": 0,
+        "skipped_terminal_phase": 0,
+        "skipped_orphaned": 0,
+    }
 
 
 @pytest.mark.asyncio

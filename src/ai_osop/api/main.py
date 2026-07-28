@@ -206,9 +206,12 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
                 f"MCP server {server_id} at {host}:{port} registration/init failed: {exc}"
             )
 
+    # Every connection uses one non-blocking startup attempt, so initialize all
+    # servers concurrently and await the bounded warm-up.  Previously these were
+    # fire-and-forget tasks: the orchestrator could schedule browser-dependent
+    # work before the registry knew which tools the server actually exposed.
     tasks = [init_server(s, h, p, t, s in critical_mcps) for s, h, p, t in servers]
-    for t in tasks:
-        asyncio.create_task(t)
+    await asyncio.gather(*tasks)
 
 
 # ============== Lifespan ==============
@@ -427,6 +430,8 @@ async def lifespan(app: FastAPI):
         # event-driven hypothesis re-generation). Must happen AFTER the
         # orchestrator is created so orch.coordination_bus exists.
         graph_memory.coordination_bus = orch.coordination_bus
+        mcp_registry.coordination_bus = orch.coordination_bus
+        mcp_registry.start_health_publisher()
         logger.info("Coordination bus wired to graph_memory (finding.recorded events).")
 
         # Reliability sprint: Run self-test after orchestrator initialization

@@ -54,6 +54,53 @@ from ai_osop.core.exceptions import OutOfScopeError
 logger = logging.getLogger(__name__)
 
 
+def resolve_tls_verify(
+    requested: Optional[bool],
+    *,
+    allow_insecure: bool = False,
+    tool: str = "scan",
+) -> bool:
+    """Resolve the effective ``verify`` flag for governed egress (W5).
+
+    Policy: TLS verification is ON by default. ``verify=False`` is honored ONLY
+    when insecure TLS has been explicitly opted into — per call via
+    ``allow_insecure=True`` or deployment-wide via ``settings.tls_verify=False``
+    — and every downgrade is logged (never silent). Any other ``verify=False``
+    request is coerced back to True so an agent/scanner cannot silently disable
+    certificate validation on the platform's own outbound traffic.
+
+    ``requested=None`` (caller did not pass verify) defers to the policy default,
+    NOT to insecure: ``settings.tls_verify`` alone decides in that case.
+    """
+    from ai_osop.core.config import settings
+
+    deployment_allows = not getattr(settings, "tls_verify", True)
+    if requested is None:
+        return not deployment_allows
+
+    if requested is True:
+        return True
+
+    # requested is False — an explicit insecure request.
+    opted_in = allow_insecure or deployment_allows
+    if not opted_in:
+        logger.warning(
+            "governed_egress_tls_verify_forced tool=%s reason=insecure_not_opted_in "
+            "(requested verify=False without allow_insecure=True or OSOP_TLS_VERIFY=false); "
+            "coercing to verify=True",
+            tool,
+        )
+        return True
+
+    logger.warning(
+        "governed_egress_tls_verify_DISABLED tool=%s opted_in_via=%s "
+        "(certificate validation off for this client — MITM-exposable)",
+        tool,
+        "allow_insecure_arg" if allow_insecure else "OSOP_TLS_VERIFY=false",
+    )
+    return False
+
+
 def research_header_from_settings() -> Optional[Tuple[str, str]]:
     """Build the (name, value) research header from config, or None if unset.
 
@@ -175,15 +222,26 @@ def governed_client(
     rate_limiter: Optional[Any] = None,
     research_header: Optional[Tuple[str, str]] = None,
     tool: str = "scan",
+    allow_insecure: bool = False,
     **httpx_kwargs: Any,
 ) -> httpx.AsyncClient:
     """Return an ``httpx.AsyncClient`` whose request hook enforces scope + rate +
     header + audit. Drop-in for ``httpx.AsyncClient(...)``; with all guards omitted
     it behaves identically, so migrating a call site is never a regression.
 
+    TLS verification is governed too (W5): ``verify=False`` is honored only with
+    an explicit opt-in — ``allow_insecure=True`` or ``settings.tls_verify=False``
+    — and every downgrade is logged. Otherwise it is coerced back to True so
+    insecure TLS is never the silent default.
+
     Any existing ``event_hooks={"request": [...]}`` the caller passes is preserved;
     the governance hook is appended so caller hooks still run.
     """
+    httpx_kwargs["verify"] = resolve_tls_verify(
+        httpx_kwargs.get("verify"),
+        allow_insecure=allow_insecure,
+        tool=tool,
+    )
     hook = governance_hook(
         scope=scope,
         rate_limiter=rate_limiter,

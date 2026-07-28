@@ -268,8 +268,16 @@ class FileUploadTester:
     async def run(self) -> List[UploadFinding]:
         findings: List[UploadFinding] = []
         own = self._client is None
+        # W5: insecure TLS is an explicit, audited opt-in (resolve_tls_verify),
+        # not a silent default. This tester probes real upload endpoints which
+        # may present self-signed certs, so allow_insecure=True preserves that
+        # capability while logging the downgrade and respecting OSOP_TLS_VERIFY.
+        from ai_osop.safety.governed_client import resolve_tls_verify
+
         client = self._client or httpx.AsyncClient(
-            verify=False, follow_redirects=True, timeout=self.timeout
+            verify=resolve_tls_verify(False, allow_insecure=True, tool="file_upload"),
+            follow_redirects=True,
+            timeout=self.timeout,
         )
         try:
             for p in self._payloads():

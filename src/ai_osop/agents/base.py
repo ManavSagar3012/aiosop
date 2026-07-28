@@ -121,8 +121,12 @@ class BaseAgent(ABC):
         Enforces scope checks, rate limits, and research headers based on
         engagement context.
         """
-        from ai_osop.safety.governed_client import governance_hook, research_header_from_settings
-        from ai_osop.safety.governed_client import attach_governance
+        from ai_osop.safety.governed_client import (
+            attach_governance,
+            governance_hook,
+            research_header_from_settings,
+            resolve_tls_verify,
+        )
         from ai_osop.safety.scope import ScopeEnforcer
         import httpx as _httpx
 
@@ -138,7 +142,15 @@ class BaseAgent(ABC):
         research_hdr = research_header_from_settings()
 
         kwargs = dict(httpx_kwargs)
-        kwargs.setdefault("verify", False)
+        # W5 (AIOSOP-EGRESS-TLS-001): insecure TLS is no longer the silent default.
+        # Resolve through the shared policy — verify=True unless the caller opted
+        # in (allow_insecure=True) or the deployment disabled it (OSOP_TLS_VERIFY=false),
+        # and every downgrade is audit-logged. ``kwargs.pop("allow_insecure")`` keeps
+        # the non-httpx flag out of the client constructor.
+        allow_insecure = bool(kwargs.pop("allow_insecure", False))
+        kwargs["verify"] = resolve_tls_verify(
+            kwargs.get("verify"), allow_insecure=allow_insecure, tool=tool
+        )
         kwargs.setdefault("follow_redirects", True)
         kwargs.setdefault("timeout", 20.0)
 

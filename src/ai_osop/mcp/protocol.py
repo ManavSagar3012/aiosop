@@ -7,7 +7,7 @@ Implements the core MCP spec with async support and structured I/O.
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import aiohttp
 import structlog
@@ -15,9 +15,101 @@ import websockets
 from pydantic import BaseModel, Field
 
 from ai_osop.core.config import settings
-from ai_osop.core.exceptions import MCPConnectionError, MCPException
+from ai_osop.core.exceptions import (
+    MCPApprovalRequired,
+    MCPConnectionError,
+    MCPException,
+    MCPScopeDenied,
+)
 from ai_osop.core.telemetry import add_mcp_latency
 from ai_osop.core.tracing import trace_span
+
+logger = structlog.get_logger(__name__)
+
+
+class MCPExecutionGate:
+    """Client-side enforcement of a tool's declared ``requires_approval`` /
+    ``scope_check`` flags (W3 — declared-but-not-enforced -> real fail-closed gate).
+
+    The Go MCP servers already validate scope *server-side* against the scope
+    they received at ``initialize``; this is defense-in-depth ON THE CLIENT so
+    the request never leaves the platform process when the target is out of
+    scope, and so a high-impact tool flagged ``requires_approval=True`` cannot
+    fire without a valid approval wired in. ``None`` gate = no gate configured:
+    fail-closed for approval-flagged tools (safer than silently allowing), but
+    for ``scope_check`` the server-side check still holds, so we do NOT block
+    scope-flagged tools when no client gate is wired (that would break every
+    adapter today, where scope is enforced server-side not client-side).
+
+    Override the gate per-call with ``trust_server_scope=True`` for read-only
+    tools whose scope is already enforced by the server (e.g. recon listings).
+    """
+
+    def __init__(
+        self,
+        *,
+        host_in_scope: Optional[Callable[[str], bool]] = None,
+        is_approved: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
+    ) -> None:
+        self._host_in_scope = host_in_scope
+        self._is_approved = is_approved
+
+    def check_scope(self, server_id: str, tool_name: str, parameters: Dict[str, Any]) -> None:
+        """Raise MCPScopeDenied if the target host of this call is out of scope."""
+        if self._host_in_scope is None:
+            return  # no client-side scope wired -> rely on server-side check
+        host = _extract_target_host(parameters)
+        if host is None:
+            return  # no target host to check (e.g. a payload-generation call)
+        if not self._host_in_scope(host):
+            logger.warning(
+                "mcp_scope_denied",
+                server_id=server_id,
+                tool_name=tool_name,
+                host=host,
+            )
+            raise MCPScopeDenied(
+                f"MCP tool {server_id}/{tool_name} target host {host!r} is out of scope"
+            )
+
+    def check_approval(
+        self, server_id: str, tool_name: str, parameters: Dict[str, Any]
+    ) -> None:
+        """Raise MCPApprovalRequired if an approval-flagged tool lacks approval."""
+        if self._is_approved is None or not self._is_approved(server_id, tool_name, parameters):
+            logger.warning(
+                "mcp_approval_required",
+                server_id=server_id,
+                tool_name=tool_name,
+            )
+            raise MCPApprovalRequired(
+                f"MCP tool {server_id}/{tool_name} requires operator approval "
+                "and none is wired in (fail-closed)"
+            )
+
+
+def _extract_target_host(parameters: Dict[str, Any]) -> Optional[str]:
+    """Best-effort pull of a target host from common MCP parameter shapes.
+
+    MCP tools pass targets in a few keys (url, target, host, domain, endpoint);
+    return the hostname for scope comparison, or None when no host is present.
+    """
+    from urllib.parse import urlparse
+
+    for key in ("url", "target", "endpoint"):
+        val = parameters.get(key)
+        if isinstance(val, str) and "://" in val:
+            parsed = urlparse(val)
+            if parsed.hostname:
+                return parsed.hostname
+        if isinstance(val, str) and val and "://" not in val and "." in val:
+            # bare host/domain
+            return val.split("/")[0].split(":")[0]
+    for key in ("host", "domain"):
+        val = parameters.get(key)
+        if isinstance(val, str) and val:
+            return val.split("/")[0].split(":")[0]
+    return None
 
 
 class MCPToolParameter(BaseModel):
@@ -218,13 +310,16 @@ class MCPConnection:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
         from ai_osop.reliability.retry import retry_with_backoff
 
-        async def _do_connect():
+        async def _do_connect() -> None:
             if self._session and not self._session.closed:
                 await self._session.close()
             self._session = aiohttp.ClientSession(
                 headers={"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
             )
-            async with self._session.get(
+            session = self._session
+            if session is None:
+                raise MCPConnectionError(f"MCP server {self.server_id} has no HTTP session")
+            async with session.get(
                 f"http://{self.host}:{self.port}/health", timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
@@ -250,12 +345,15 @@ class MCPConnection:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
         if not self._session or self._session.closed:
             await self.connect()
+        session = self._session
+        if session is None:
+            raise MCPConnectionError(f"MCP server {self.server_id} has no HTTP session")
 
         import time as _time
 
         _t0 = _time.monotonic()
         try:
-            async with self._session.post(
+            async with session.post(
                 f"http://{self.host}:{self.port}/mcp/initialize",
                 json=request.model_dump(),
                 timeout=aiohttp.ClientTimeout(total=settings.mcp_initialize_timeout),
@@ -335,7 +433,10 @@ class MCPConnection:
 
     async def get_state(self) -> MCPStateResponse:
         """Get current server state."""
-        async with self._session.get(
+        session = self._session
+        if session is None or session.closed:
+            raise MCPConnectionError(f"MCP server {self.server_id} session is closed")
+        async with session.get(
             f"http://{self.host}:{self.port}/mcp/state",
             timeout=aiohttp.ClientTimeout(total=settings.mcp_initialize_timeout),
         ) as resp:
@@ -411,10 +512,16 @@ class MCPConnection:
 class MCPRegistry:
     """Central registry for all MCP server connections."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._servers: Dict[str, MCPConnection] = {}
         self._event_handlers: Dict[str, List[Callable]] = {}
         self.call_counts: Dict[str, int] = {}
+        self.coordination_bus: Optional[Any] = None
+        # W3: client-side execution gate enforcing each tool's declared
+        # requires_approval / scope_check flags (fail-closed). Set by the
+        # orchestrator at startup; None means no gate is wired (approval-
+        # flagged tools then fail-closed rather than silently executing).
+        self.execution_gate: Optional[MCPExecutionGate] = None
 
     async def register_server(
         self,
@@ -474,8 +581,17 @@ class MCPRegistry:
         tool_name: str,
         parameters: Dict[str, Any],
         timeout_override: Optional[int] = None,
+        *,
+        trust_server_scope: bool = False,
     ) -> MCPExecuteResponse:
-        """Execute a tool on a specific server with tracing."""
+        """Execute a tool on a specific server with tracing.
+
+        W3: enforces the tool's declared ``requires_approval`` / ``scope_check``
+        flags through the client-side execution gate (fail-closed) BEFORE the
+        request leaves the process. ``trust_server_scope=True`` skips the
+        client-side scope check for a call whose scope is already enforced by
+        the server (read-only recon listings) — approval is NEVER skippable.
+        """
         with trace_span(
             f"mcp_registry.execute_tool",
             attributes={
@@ -486,6 +602,17 @@ class MCPRegistry:
             conn = self._servers.get(server_id)
             if not conn:
                 raise MCPConnectionError(f"Server {server_id} not registered")
+
+            tool = conn._tools.get(tool_name)
+            if tool is not None and self.execution_gate is not None:
+                # Approval is non-negotiable: a tool that declared
+                # requires_approval=True must not fire without a wired approval.
+                if getattr(tool, "requires_approval", False):
+                    self.execution_gate.check_approval(server_id, tool_name, parameters)
+                # Scope is defense-in-depth on top of the server-side check, so a
+                # caller may opt out per-call when the server already enforces it.
+                if getattr(tool, "scope_check", False) and not trust_server_scope:
+                    self.execution_gate.check_scope(server_id, tool_name, parameters)
 
             self.call_counts[server_id] = self.call_counts.get(server_id, 0) + 1
             request = MCPExecuteRequest(
@@ -531,6 +658,29 @@ class MCPRegistry:
     def get_server(self, server_id: str) -> Optional[MCPConnection]:
         return self._servers.get(server_id)
 
+    def check_tool_requirements(self, requirements: List[Tuple[str, str]]) -> List[Dict[str, str]]:
+        """Return the availability state for required MCP tools without I/O.
+
+        ``unknown`` deliberately does not reject a task: a connection that was
+        unavailable during the short non-blocking startup warm-up can still
+        reconnect lazily in its adapter.  Conversely, a server that successfully
+        initialized but did not advertise a required tool is deterministic
+        configuration drift and must be rejected before dispatch.
+        """
+        statuses: List[Dict[str, str]] = []
+        for server_id, tool_name in requirements:
+            conn = self._servers.get(server_id)
+            if conn is None:
+                state = "server_missing"
+            elif not conn._initialized:
+                state = "unknown"
+            elif tool_name not in conn._tools:
+                state = "tool_missing"
+            else:
+                state = "available"
+            statuses.append({"server_id": server_id, "tool_name": tool_name, "state": state})
+        return statuses
+
     async def health_check_all(self) -> Dict[str, bool]:
         """Check health of all registered servers."""
         results = {}
@@ -561,7 +711,7 @@ class MCPRegistry:
         if self._health_task is not None and not self._health_task.done():
             return  # already running
 
-        async def _publish_loop():
+        async def _publish_loop() -> None:
             while True:
                 try:
                     snapshot: Dict[str, Dict[str, Any]] = {}
@@ -578,9 +728,12 @@ class MCPRegistry:
 
                     # Publish each server's telemetry as a coordination bus event
                     # so the dashboard and alerting layer see live health.
+                    bus = self.coordination_bus
                     for sid, tel in snapshot.items():
+                        if bus is None:
+                            break
                         try:
-                            await self.coordination_bus.publish(
+                            await bus.publish(
                                 "mcp.health",
                                 {
                                     "server_id": sid,

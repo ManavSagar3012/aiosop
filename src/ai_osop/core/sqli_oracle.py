@@ -491,6 +491,10 @@ async def scan_sqli(
                     target_capacity=_settings.scan_target_burst,
                 ),
                 research_header=research_header_from_settings(),
+                # W5: real scan targets may present self-signed/invalid certs; keep
+                # that capability but make it an explicit, audited opt-in rather
+                # than a silent verify=False.
+                allow_insecure=True,
                 verify=False,
                 follow_redirects=True,
                 timeout=timeout,
@@ -502,8 +506,16 @@ async def scan_sqli(
                     second_order_field, findings,
                 )
         except ImportError:
-            # Fallback: raw httpx if governed_client is not importable
-            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=timeout) as c:
+            # Fallback: raw httpx if governed_client is not importable. Route the
+            # insecure-TLS choice through the same audited policy (logged, coercible
+            # via OSOP_TLS_VERIFY) rather than a silent verify=False.
+            from ai_osop.safety.governed_client import resolve_tls_verify
+
+            async with httpx.AsyncClient(
+                verify=resolve_tls_verify(False, allow_insecure=True, tool="sqli"),
+                follow_redirects=True,
+                timeout=timeout,
+            ) as c:
                 await _run_sqli_oracles(
                     c, login_url, search_url, base_or_url, is_base, data,
                     search_param, include_time_blind, timeout,

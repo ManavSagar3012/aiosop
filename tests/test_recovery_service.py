@@ -252,7 +252,14 @@ class TestRecoverState:
         orch.dlq.enqueue = AsyncMock()
         svc = RecoveryService(orch)
         r = await svc.recover_state()
-        assert r == {"engagements": 0, "tasks": 0, "approvals": 0, "exhausted": 0}
+        assert r == {
+            "engagements": 0,
+            "tasks": 0,
+            "approvals": 0,
+            "exhausted": 0,
+            "skipped_terminal_phase": 0,
+            "skipped_orphaned": 0,
+        }
 
     async def test_releases_stale_agent_locks(self):
         agent = MagicMock()
@@ -340,9 +347,15 @@ class TestRecoverState:
             engagement_id="eng-1",
             status="pending",
         )
+        # AIOSOP-RECOVERY-ORPHAN-001: a recovered task needs a live engagement
+        # session, else the orphan gate cancels it as a ghost. Seed one for eng-1.
+        session = MagicMock()
+        session.session_id = "eng-1"
+        session.canonical_engagement_id = "eng-1"
+        session.phase = "reconnaissance"
         orch = MagicMock()
         orch._agents = {}
-        orch._sessions = {}
+        orch._sessions = {"eng-1": session}
         orch._tasks = {}
         orch.task_scheduler = MagicMock()
         orch.task_scheduler._release_agent = AsyncMock()
@@ -376,9 +389,16 @@ class TestRecoverState:
             status="running",
             payload={"_recovery_attempts": 3},
         )
+        # Orphan gate (AIOSOP-RECOVERY-ORPHAN-001): seed a live session so the
+        # exhausted task reaches the recovery-attempt cap rather than being
+        # cancelled as a ghost before the cap is evaluated.
+        session = MagicMock()
+        session.session_id = "eng-1"
+        session.canonical_engagement_id = "eng-1"
+        session.phase = "reconnaissance"
         orch = MagicMock()
         orch._agents = {}
-        orch._sessions = {}
+        orch._sessions = {"eng-1": session}
         orch._tasks = {}
         orch.task_scheduler = MagicMock()
         orch.task_scheduler._release_agent = AsyncMock()
@@ -412,9 +432,16 @@ class TestRecoverState:
             status="pending",
             approval_required=False,
         )
+        # Orphan gate (AIOSOP-RECOVERY-ORPHAN-001): seed a live session so the
+        # exploit task is recovered (and re-gated for approval) instead of being
+        # cancelled as a ghost.
+        session = MagicMock()
+        session.session_id = "eng-1"
+        session.canonical_engagement_id = "eng-1"
+        session.phase = "exploitation"
         orch = MagicMock()
         orch._agents = {}
-        orch._sessions = {}
+        orch._sessions = {"eng-1": session}
         orch._tasks = {}
         orch.task_scheduler = MagicMock()
         orch.task_scheduler._release_agent = AsyncMock()

@@ -199,6 +199,18 @@ class Settings(BaseSettings):
         default=2.0, validation_alias="OSOP_SCAN_TARGET_RATE_PER_SECOND"
     )
     scan_target_burst: int = Field(default=4, validation_alias="OSOP_SCAN_TARGET_BURST")
+    # AIOSOP-EGRESS-TLS-001 (W5): governed egress must verify TLS by default. A
+    # security product that disables certificate validation on its own outbound
+    # traffic is MITM-exposable and undermines the "governed egress" promise.
+    # Bug-bounty targets frequently present self-signed/invalid certs, so verify
+    # is NOT removed wholesale — instead insecure TLS becomes an explicit,
+    # audited opt-in: the governed client refuses ``verify=False`` unless the
+    # caller passes ``allow_insecure=True`` OR the operator sets this to False,
+    # and every insecure connection is logged so it is never silent. Default
+    # True (verify). Set OSOP_TLS_VERIFY=false only for a deployment where every
+    # target is known-bad-cert (e.g. an internal lab); the audit log still
+    # records each downgrade.
+    tls_verify: bool = Field(default=True, validation_alias="OSOP_TLS_VERIFY")
     # Nuclei template scans run for minutes; the 30s default silently times them
     # out to zero findings, so give them a dedicated generous bound.
     nuclei_mcp_timeout: int = 900

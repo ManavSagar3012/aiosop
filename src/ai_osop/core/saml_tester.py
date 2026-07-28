@@ -207,8 +207,13 @@ class SAMLTester:
     async def run(self) -> List[SAMLFinding]:
         if self._client is not None:
             return await self._run(self._client)
+        # W5: audited insecure-TLS opt-in (logged, coercible via OSOP_TLS_VERIFY).
+        from ai_osop.safety.governed_client import resolve_tls_verify
+
         async with httpx.AsyncClient(
-            verify=False, follow_redirects=False, timeout=self.timeout
+            verify=resolve_tls_verify(False, allow_insecure=True, tool="saml"),
+            follow_redirects=False,
+            timeout=self.timeout,
         ) as client:
             return await self._run(client)
 

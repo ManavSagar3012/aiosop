@@ -479,7 +479,11 @@ class ReasoningLoop:
 
                 target_url = f"http://{asset_value}" if not asset_value.startswith("http") else asset_value
                 import httpx
-                from ai_osop.safety.governed_client import governance_hook, research_header_from_settings
+                from ai_osop.safety.governed_client import (
+                    governance_hook,
+                    research_header_from_settings,
+                    resolve_tls_verify,
+                )
                 from ai_osop.safety.rate_limiter import RateLimiter
                 from ai_osop.core.config import settings as _settings
 
@@ -492,7 +496,11 @@ class ReasoningLoop:
                 )
                 async with httpx.AsyncClient(
                     event_hooks={"request": [ghook]} if ghook else {},
-                    verify=False, timeout=10.0,
+                    # W5: audited insecure-TLS opt-in (target may present bad certs).
+                    verify=resolve_tls_verify(
+                        False, allow_insecure=True, tool="waf_probe"
+                    ),
+                    timeout=10.0,
                 ) as waf_client:
                     probe_result = await probe_waf_characters(
                         waf_client, target_url, param="q",
@@ -555,7 +563,11 @@ class ReasoningLoop:
                     if not ep_url:
                         continue
                     import httpx
-                    from ai_osop.safety.governed_client import governance_hook, research_header_from_settings
+                    from ai_osop.safety.governed_client import (
+                        governance_hook,
+                        research_header_from_settings,
+                        resolve_tls_verify,
+                    )
                     from ai_osop.safety.rate_limiter import RateLimiter
                     from ai_osop.core.config import settings as _settings
 
@@ -570,7 +582,11 @@ class ReasoningLoop:
                     existing_params = list(ep.get("query_keys") or [])
                     async with httpx.AsyncClient(
                         event_hooks={"request": [ghook]} if ghook else {},
-                        verify=False, timeout=8.0,
+                        # W5: audited insecure-TLS opt-in (target may present bad certs).
+                        verify=resolve_tls_verify(
+                            False, allow_insecure=True, tool="param_mine"
+                        ),
+                        timeout=8.0,
                     ) as mine_client:
                         mine_result = await mine_parameters(
                             mine_client, ep_url, method=method,

@@ -180,6 +180,7 @@ class RecoveryService:
             "approvals": 0,
             "exhausted": 0,
             "skipped_terminal_phase": 0,
+            "skipped_orphaned": 0,
         }
         try:
             # 0) Release stale agent locks. The prior process is gone, so every
@@ -284,6 +285,38 @@ class RecoveryService:
                                 error=str(e),
                             )
                         recovered["skipped_terminal_phase"] += 1
+                        continue
+                    # AIOSOP-RECOVERY-ORPHAN-001: the task's engagement has NO restored
+                    # session. Its Redis session was flushed as stale on preflight
+                    # (STALE_SESSION_TTL_HOURS=1h) but the Postgres task survived within the
+                    # wider recovery window (recovery_max_age_hours=24h) — an inconsistency
+                    # that revived hours-old engagements as session-less "ghosts" that flood
+                    # the target and cannot be halted by id (they are absent from the session
+                    # list). Terminalize and skip, same as a terminal engagement. Legitimate
+                    # active engagements (<1h) keep their Redis session, so they are present
+                    # in phase_by_engagement and recover normally.
+                    if task.engagement_id not in phase_by_engagement:
+                        task.status = "cancelled"
+                        task.completed_at = datetime.utcnow()
+                        task.result = {
+                            "status": "cancelled",
+                            "error": (
+                                "engagement session not present on restart "
+                                "(orphaned task); not resurrected"
+                            ),
+                        }
+                        try:
+                            await self._orch.graph_memory.upsert_task(
+                                task,
+                                result_summary={"recovery_skipped_orphaned": task.engagement_id},
+                            )
+                        except Exception as e:  # noqa: BLE001 - skip must not abort recovery
+                            logger.warning(
+                                "recovery_orphan_skip_upsert_failed",
+                                task_id=task.id,
+                                error=str(e),
+                            )
+                        recovered["skipped_orphaned"] += 1
                         continue
                     # GAP-4-5: bound resurrection. Count this recovery; over the cap the
                     # task is failed + dead-lettered instead of re-queued.

@@ -43,6 +43,24 @@ class TaskScheduler:
     # NX guarantees a single holder, and only that holder reaches the release path.
     _TASK_LOCK_VALUE = "claimed"
 
+    # These task types cannot produce a meaningful result without the real
+    # Playwright server.  Keep this mapping centrally rather than relying on a
+    # late adapter exception, which previously consumed a full task timeout and
+    # pinned the engagement phase when browser-mcp was a stub.
+    _TASK_MCP_REQUIREMENTS: Dict[str, List[tuple]] = {
+        task_type: [("browser-mcp", "execute")]
+        for task_type in (
+            "navigate",
+            "authenticate",
+            "register",
+            "map_workflow",
+            "capture_session",
+            "capture_authenticated_surface",
+            "extract_semantics",
+            "map_business_logic",
+        )
+    }
+
     # Emit a single starvation WARNING once a task has waited this long for an
     # idle agent of its type. An agent-pool outage (e.g. agents transiently
     # unregistered during an API restart) was previously silent — a task looped
@@ -346,7 +364,7 @@ class TaskScheduler:
             # approval gate. Skipped only when the phase is unknown (no in-memory
             # session), where the approval gate still protects exploit-class tasks.
             session = self._orch._sessions.get(task.engagement_id)
-            if session is not None:
+            if session is not None and self.state_machine is not None:
                 try:
                     self.state_machine.assert_task_allowed(task, EngagementPhase(session.phase))
                 except WorkflowException as e:
@@ -356,6 +374,23 @@ class TaskScheduler:
                         task, {"error": str(e), "error_type": "PhaseViolation"}
                     )
                     return
+
+            capability_failure = self._mcp_capability_failure(task)
+            if capability_failure is not None:
+                logger.error(
+                    "task_mcp_capability_unavailable",
+                    task_id=task.id,
+                    task_type=task.type,
+                    error=capability_failure["error"],
+                )
+                record_failure(
+                    task,
+                    FailureCategory.MCP,
+                    str(capability_failure["error"]),
+                    component="mcp_preflight",
+                )
+                await self._on_task_failure(task, capability_failure)
+                return
 
             # GAP-2-4: tamper detection for exploit-class tasks. If the engagement's
             # scope carries a signature that no longer verifies, the manifest was
@@ -597,6 +632,52 @@ class TaskScheduler:
             pass
         return True
 
+    def _mcp_capability_failure(self, task: Task) -> Optional[Dict[str, str]]:
+        """Return a deterministic failure for a declared missing MCP tool.
+
+        An ``unknown`` server is intentionally allowed through so that normal
+        lazy reconnection remains available after a service restart.  Only a
+        missing registry/server or an initialized server that lacks a required
+        tool is a stable contract violation.
+        """
+        requirements = [
+            (requirement.server_id, requirement.tool_name) for requirement in task.mcp_requirements
+        ]
+        requirements.extend(self._TASK_MCP_REQUIREMENTS.get(task.type, []))
+        requirements = list(dict.fromkeys(requirements))
+        if not requirements:
+            return None
+
+        registry = getattr(self._orch, "mcp_registry", None)
+        # Lightweight unit/integration scheduler harnesses intentionally omit
+        # MCP wiring.  A real Orchestrator always owns a registry, so preserve
+        # the contract there without turning those isolated scheduler tests into
+        # a false configuration failure.
+        if registry is None:
+            return None
+        checker = getattr(registry, "check_tool_requirements", None)
+        if not callable(checker):
+            return {
+                "error": "MCP tool contract unavailable: registry is not configured",
+                "error_type": "MCPToolContractUnavailable",
+            }
+
+        unavailable = [
+            item
+            for item in checker(requirements)
+            if item.get("state") in {"server_missing", "tool_missing"}
+        ]
+        if not unavailable:
+            return None
+
+        details = ", ".join(
+            f"{item['server_id']}/{item['tool_name']} ({item['state']})" for item in unavailable
+        )
+        return {
+            "error": f"MCP tool contract unavailable: {details}",
+            "error_type": "MCPToolContractUnavailable",
+        }
+
     async def _find_available_agent(
         self, agent_type: AgentType, task_type: str = ""
     ) -> Optional[Any]:
@@ -709,6 +790,7 @@ class TaskScheduler:
     # (timeouts, connection refused, 5xx, ServiceUnavailable) are NOT listed here
     # and still retry normally.
     _NON_RETRYABLE_MARKERS = (
+        "mcp tool contract unavailable",
         "not available on server",
         "not registered",
         "unknown tool",
@@ -1349,7 +1431,7 @@ class TaskScheduler:
                 ExecutionStage.DASHBOARD_UPDATED,
                 metadata={"via": "coordination_bus", "topic": "task.failed"},
             )
-            if task.retry_count >= task.max_retries:
+            if self._is_non_retryable(result) or task.retry_count >= task.max_retries:
                 # Retries exhausted: try an alternate technique before giving up
                 fallback_dispatched = await self._schedule_fallback_task(task, result)
                 if not fallback_dispatched:
@@ -1388,8 +1470,13 @@ class TaskScheduler:
         EVERY dependency terminal are promoted.
         """
         TERMINAL = {
-            "completed", "approved", "failed", "error",
-            "timeout", "cancelled", "discarded",
+            "completed",
+            "approved",
+            "failed",
+            "error",
+            "timeout",
+            "cancelled",
+            "discarded",
         }
 
         # 1. Gather candidate dependents from all sources, de-duped by id.
@@ -1427,7 +1514,11 @@ class TaskScheduler:
             # Propagate payloads from any successfully-completed dependency.
             for dep_id in deps:
                 dep_task = self._orch._tasks.get(dep_id)
-                if dep_task and dep_task.status == "completed" and isinstance(dep_task.result, dict):
+                if (
+                    dep_task
+                    and dep_task.status == "completed"
+                    and isinstance(dep_task.result, dict)
+                ):
                     payloads = dep_task.result.get("payloads")
                     if isinstance(payloads, list) and payloads:
                         first_p = payloads[0]

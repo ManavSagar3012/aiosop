@@ -175,8 +175,14 @@ class JWTTester:
 
     async def run(self) -> List[JWTFinding]:
         findings: List[JWTFinding] = []
+        # W5: audited insecure-TLS opt-in (real targets may use bad certs);
+        # logged and coercible via OSOP_TLS_VERIFY instead of silent verify=False.
+        from ai_osop.safety.governed_client import resolve_tls_verify
+
         async with httpx.AsyncClient(
-            verify=False, follow_redirects=True, timeout=self.timeout
+            verify=resolve_tls_verify(False, allow_insecure=True, tool="jwt"),
+            follow_redirects=True,
+            timeout=self.timeout,
         ) as client:
             # Sanity: confirm the verify endpoint actually reflects identity for a
             # *valid* token, otherwise our sentinel test can't distinguish anything.

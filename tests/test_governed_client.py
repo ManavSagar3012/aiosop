@@ -12,9 +12,9 @@ import pytest
 
 from ai_osop.core.exceptions import OutOfScopeError
 from ai_osop.safety.governed_client import (
-    governance_hook,
     governed_client,
     research_header_from_settings,
+    resolve_tls_verify,
 )
 
 
@@ -137,6 +137,97 @@ def test_research_header_from_settings_builds_pair(monkeypatch):
     )
     monkeypatch.setattr(config.settings, "research_header_value", "h1user", raising=False)
     assert research_header_from_settings() == ("X-HackerOne-Research", "h1user")
+
+
+# --- W5 (AIOSOP-EGRESS-TLS-001): TLS verify policy ---------------------------
+
+
+def test_tls_verify_defaults_on_when_unspecified(monkeypatch):
+    """verify omitted + policy default => verify=True (secure-by-default)."""
+    from ai_osop.core import config
+
+    monkeypatch.setattr(config.settings, "tls_verify", True, raising=False)
+    assert resolve_tls_verify(None) is True
+
+
+def test_tls_verify_false_coerced_unless_opted_in(monkeypatch, caplog):
+    """verify=False without any opt-in is coerced back to True and logged."""
+    from ai_osop.core import config
+
+    monkeypatch.setattr(config.settings, "tls_verify", True, raising=False)
+    with caplog.at_level("WARNING"):
+        assert resolve_tls_verify(False, tool="sqli") is True
+    assert "governed_egress_tls_verify_forced" in caplog.text
+
+
+def test_tls_verify_false_honored_with_explicit_opt_in(monkeypatch, caplog):
+    """verify=False + allow_insecure=True is honored (real target with bad cert)
+    but MUST be audit-logged — never silent."""
+    from ai_osop.core import config
+
+    monkeypatch.setattr(config.settings, "tls_verify", True, raising=False)
+    with caplog.at_level("WARNING"):
+        assert resolve_tls_verify(False, allow_insecure=True, tool="sqli") is False
+    assert "governed_egress_tls_verify_DISABLED" in caplog.text
+
+
+def test_tls_verify_false_honored_when_deployment_disables(monkeypatch):
+    """Deployment-wide opt-out (OSOP_TLS_VERIFY=false) honors verify=False."""
+    from ai_osop.core import config
+
+    monkeypatch.setattr(config.settings, "tls_verify", False, raising=False)
+    assert resolve_tls_verify(False) is False
+    # and the unspecified case also defers to the deployment policy
+    assert resolve_tls_verify(None) is False
+
+
+@pytest.mark.asyncio
+async def test_governed_client_coerces_insecure_by_default(monkeypatch):
+    """End-to-end: governed_client(verify=False) with no opt-in builds a client
+    whose TLS verification was coerced back to True. Patch httpx.AsyncClient to
+    capture the resolved kwarg rather than relying on httpx internals."""
+    from ai_osop.core import config
+    import ai_osop.safety.governed_client as gc_mod
+
+    monkeypatch.setattr(config.settings, "tls_verify", True, raising=False)
+    captured: dict = {}
+    real_async_client = gc_mod.httpx.AsyncClient
+
+    class _Spy(real_async_client):
+        def __init__(self, **kwargs):
+            captured["verify"] = kwargs.get("verify")
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(gc_mod.httpx, "AsyncClient", _Spy)
+    sink: dict = {}
+    async with governed_client(verify=False, transport=_echo_transport(sink)) as c:
+        await c.get("https://anything.example.org/")
+    assert captured["verify"] is True, captured
+    assert sink["url"] == "https://anything.example.org/"
+
+
+@pytest.mark.asyncio
+async def test_governed_client_honors_explicit_insecure_opt_in(monkeypatch):
+    """End-to-end: governed_client(verify=False, allow_insecure=True) passes
+    verify=False through (real target with a self-signed cert)."""
+    from ai_osop.core import config
+    import ai_osop.safety.governed_client as gc_mod
+
+    monkeypatch.setattr(config.settings, "tls_verify", True, raising=False)
+    captured: dict = {}
+    real_async_client = gc_mod.httpx.AsyncClient
+
+    class _Spy(real_async_client):
+        def __init__(self, **kwargs):
+            captured["verify"] = kwargs.get("verify")
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(gc_mod.httpx, "AsyncClient", _Spy)
+    async with governed_client(
+        verify=False, allow_insecure=True, transport=_echo_transport({})
+    ) as c:
+        await c.get("https://anything.example.org/")
+    assert captured["verify"] is False, captured
 
 
 @pytest.mark.asyncio

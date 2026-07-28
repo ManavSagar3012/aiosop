@@ -398,7 +398,13 @@ class WAFCharacterProber:
             ]
 
         char_map = {}
-        client = self.client or httpx.AsyncClient(verify=False)
+        # W5: audited insecure-TLS opt-in (probe target may present bad certs);
+        # logged and coercible via OSOP_TLS_VERIFY instead of silent verify=False.
+        from ai_osop.safety.governed_client import resolve_tls_verify
+
+        client = self.client or httpx.AsyncClient(
+            verify=resolve_tls_verify(False, allow_insecure=True, tool="payload_engine")
+        )
         close_client = self.client is None
 
         try:

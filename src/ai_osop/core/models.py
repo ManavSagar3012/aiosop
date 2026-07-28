@@ -201,6 +201,19 @@ class AttackPath(BaseModel):
     engagement_id: str
 
 
+class MCPToolRequirement(BaseModel):
+    """A tool contract that must be present before a task is dispatched.
+
+    A task may still use additional optional MCP capabilities while it runs, but
+    a requirement here is a hard prerequisite.  Making the contract durable on
+    the task lets the scheduler reject stale deployments and stub servers before
+    an agent consumes its timeout budget.
+    """
+
+    server_id: str
+    tool_name: str
+
+
 class Task(BaseModel):
     id: str = Field(default_factory=lambda: f"task-{uuid.uuid4().hex[:12]}")
     type: str
@@ -208,12 +221,14 @@ class Task(BaseModel):
     agent_type: AgentType
     payload: Dict[str, Any] = Field(default_factory=dict)
     dependencies: List[str] = Field(default_factory=list)
+    mcp_requirements: List[MCPToolRequirement] = Field(default_factory=list)
     max_retries: int = 3
     timeout_seconds: int = 300
     scope_check: bool = True
     approval_required: bool = False
     status: str = "pending"  # pending, running, completed, failed, cancelled
     result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
     retry_count: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
     started_at: Optional[datetime] = None

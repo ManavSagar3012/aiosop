@@ -203,8 +203,13 @@ class PrototypePollutionTester:
     async def run(self) -> List[PollutionFinding]:
         findings: List[PollutionFinding] = []
         own = self._client is None
+        # W5: audited insecure-TLS opt-in (logged, coercible via OSOP_TLS_VERIFY).
+        from ai_osop.safety.governed_client import resolve_tls_verify
+
         client = self._client or httpx.AsyncClient(
-            verify=False, follow_redirects=True, timeout=self.timeout
+            verify=resolve_tls_verify(False, allow_insecure=True, tool="prototype_pollution"),
+            follow_redirects=True,
+            timeout=self.timeout,
         )
         try:
             reflected = await self._run_reflected(client)

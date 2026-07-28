@@ -99,18 +99,13 @@ jobs:
     # None is not < 0.4. The file only exists if an operator ran bench.py first
     # (it is git-ignored), so CI was passing without ever scoring real findings.
     - name: Check bench findings exist before scoring
-      id: check-findings
       run: |
-        if [ -f "benchmarks/results/juice-e2e-63844f55-findings.json" ]; then
-          echo "exists=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "exists=false" >> "$GITHUB_OUTPUT"
-          echo "WARNING: bench findings file not found at benchmarks/results/juice-e2e-63844f55-findings.json"
-          echo "Run benchmarks/juiceshop/bench.py first to generate it."
-        fi
+        test -f "benchmarks/results/juice-e2e-63844f55-findings.json" || {
+          echo "Required committed benchmark findings export is missing."
+          exit 1
+        }
 
     - name: Detection regression gate (scorecard)
-      if: steps.check-findings.outputs.exists == 'true'
       run: >
         poetry run python benchmarks/score_engagement.py
         --findings benchmarks/results/juice-e2e-63844f55-findings.json
@@ -118,12 +113,6 @@ jobs:
         --out scorecard-ci.json
         --min-recall 0.4
         --max-fp 0
-
-    - name: Scorecard skipped (no findings file)
-      if: steps.check-findings.outputs.exists != 'true'
-      run: |
-        echo "::warning title=Bench findings not found::The bench findings export file was not found at benchmarks/results/juice-e2e-63844f55-findings.json. Run benchmarks/juiceshop/bench.py locally and commit the result to enable the detection regression gate."
-        echo '{"summary":{"skipped":true,"reason":"findings_file_not_found"}}' > scorecard-ci.json
 
     - name: Upload scorecard
       if: always()
