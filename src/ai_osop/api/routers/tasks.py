@@ -70,9 +70,13 @@ async def create_task(
     )
 
     await state["orchestrator"].schedule_task(task)
-    from ai_osop.celery_app import execute_task_celery
-
-    execute_task_celery.delay(task.model_dump())
+    # NOTE (W6/#8): the dead Celery path (execute_task_celery.delay(...)) was
+    # removed here. It was a stub that returned {"status":"completed"} WITHOUT
+    # executing anything — a fake-success no-op that would report the task done
+    # while the real work ran (or didn't) through schedule_task above. There is
+    # no Celery worker, no compose service, and no other importer, so this call
+    # only enqueued a message that was never processed. schedule_task() is the
+    # single real execution path.
     return task
 
 
