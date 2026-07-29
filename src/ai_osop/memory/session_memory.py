@@ -57,6 +57,10 @@ class TaskORM(Base):
     agent_type = Column(String(64))
     payload = Column(JSON)
     dependencies = Column(JSON)
+    # Durable execution prerequisites.  These must survive a Redis loss /
+    # process restart so recovery cannot dispatch a task against a stale MCP
+    # deployment that the original scheduler would have rejected.
+    mcp_requirements = Column(JSON, nullable=True)
     max_retries = Column(Integer)
     timeout_seconds = Column(Integer)
     scope_check = Column(Boolean, default=True)
@@ -65,6 +69,7 @@ class TaskORM(Base):
         String(32), index=True
     )  # pending, running, completed, failed, cancelled, awaiting_approval
     result = Column(JSON, nullable=True)
+    error = Column(String(2048), nullable=True)
     retry_count = Column(Integer)
     created_at = Column(DateTime)
     started_at = Column(DateTime, nullable=True)
@@ -1180,6 +1185,9 @@ class SessionMemory:
                             else {}
                         ),
                         dependencies=task.dependencies,
+                        mcp_requirements=[
+                            requirement.model_dump() for requirement in task.mcp_requirements
+                        ],
                         max_retries=task.max_retries,
                         timeout_seconds=task.timeout_seconds,
                         scope_check=task.scope_check,
@@ -1190,6 +1198,7 @@ class SessionMemory:
                             if task.result
                             else None
                         ),
+                        error=task.error,
                         retry_count=task.retry_count,
                         created_at=task.created_at,
                         started_at=task.started_at,
@@ -1206,6 +1215,10 @@ class SessionMemory:
                                 if task.result
                                 else None
                             ),
+                            "mcp_requirements": [
+                                requirement.model_dump() for requirement in task.mcp_requirements
+                            ],
+                            "error": task.error,
                             "retry_count": task.retry_count,
                             "started_at": task.started_at,
                             "completed_at": task.completed_at,
@@ -1243,12 +1256,14 @@ class SessionMemory:
                     agent_type=AgentType(orm.agent_type),
                     payload=orm.payload,
                     dependencies=orm.dependencies,
+                    mcp_requirements=orm.mcp_requirements or [],
                     max_retries=orm.max_retries,
                     timeout_seconds=orm.timeout_seconds,
                     scope_check=orm.scope_check,
                     approval_required=orm.approval_required,
                     status=orm.status,
                     result=orm.result,
+                    error=orm.error,
                     retry_count=orm.retry_count,
                     created_at=orm.created_at,
                     started_at=orm.started_at,
@@ -1283,12 +1298,14 @@ class SessionMemory:
                         agent_type=AgentType(orm.agent_type),
                         payload=orm.payload,
                         dependencies=orm.dependencies,
+                        mcp_requirements=orm.mcp_requirements or [],
                         max_retries=orm.max_retries,
                         timeout_seconds=orm.timeout_seconds,
                         scope_check=orm.scope_check,
                         approval_required=orm.approval_required,
                         status=orm.status,
                         result=orm.result,
+                        error=orm.error,
                         retry_count=orm.retry_count,
                         created_at=orm.created_at,
                         started_at=orm.started_at,
