@@ -252,6 +252,8 @@ class MatchedFinding:
     evidence_kinds: List[str]
     evidence_complete: bool
     missing_evidence: List[str]
+    validation_satisfied: bool
+    validation_reasons: List[str]
 
 
 def load_manifest(path: str | Path) -> List[GroundTruthEntry]:
@@ -434,6 +436,28 @@ def _evidence_complete(expected: List[str], present: Iterable[str]) -> Tuple[boo
     return (len(missing) == 0, missing)
 
 
+def _validation_reasons(f: Any, evidence_complete: bool, missing_evidence: List[str]) -> List[str]:
+    """Return why an identity match is not a reportable, validated finding.
+
+    Discovery and validation are intentionally different signals.  A finding
+    may correctly identify a manifest entry while still needing a human to
+    confirm it, or while missing the evidence the manifest requires.  Keeping
+    those leads in the detection score is useful for diagnosis, but they must
+    never be credited as validated autonomous results.
+    """
+    reasons: List[str] = []
+    if _finding_field(f, "validated", default=False) is not True:
+        reasons.append("finding_validated_false")
+    if _finding_field(f, "manual_confirm_required", default=False) is True or any(
+        evidence.get("manual_confirm_required", False) is True
+        for evidence in _finding_evidence_list(f)
+    ):
+        reasons.append("manual_confirmation_required")
+    if not evidence_complete:
+        reasons.extend(f"missing_evidence:{kind}" for kind in missing_evidence)
+    return reasons
+
+
 # --------------------------------------------------------------------------- #
 # Core scoring
 # --------------------------------------------------------------------------- #
@@ -488,6 +512,7 @@ def score_findings(
         matched_finding_ids.add(fid)
         kinds = _evidence_kinds(f)
         complete, missing = _evidence_complete(g.expected_evidence, kinds)
+        validation_reasons = _validation_reasons(f, complete, missing)
         matched.append(
             MatchedFinding(
                 gt_id=g.id,
@@ -498,6 +523,8 @@ def score_findings(
                 evidence_kinds=kinds,
                 evidence_complete=complete,
                 missing_evidence=missing,
+                validation_satisfied=not validation_reasons,
+                validation_reasons=validation_reasons,
             )
         )
 
@@ -551,6 +578,9 @@ def score_findings(
     coverage = tp / len(positives) if positives else None
     evidence_complete_count = sum(1 for m in matched if m.evidence_complete)
     evidence_completeness = evidence_complete_count / tp if tp else None
+    validated_tp = sum(1 for m in matched if m.validation_satisfied)
+    validated_recall = validated_tp / len(positives) if positives else None
+    unvalidated_matches = [m for m in matched if not m.validation_satisfied]
 
     # R6 (2026-07-20): mock-mode disclosure. ``OSOP_MOCK_LLM=true`` redirects
     # LLM completion calls to simulated mock templates, so an autonomous run
@@ -573,11 +603,14 @@ def score_findings(
             "findings_real": len(real),
             "findings_simulated_dropped": len(simulated),
             "true_positives": tp,
+            "validated_true_positives": validated_tp,
+            "unvalidated_matches": len(unvalidated_matches),
             "false_negatives": fn,
             "false_positives": fp,
             "extras_for_triage": len(extras),
             "precision": precision,
             "recall": recall,
+            "validated_recall": validated_recall,
             "coverage": coverage,
             "evidence_completeness": evidence_completeness,
             # Explicit mock-mode stamp so a scorecard cannot masquerade as a
@@ -586,11 +619,14 @@ def score_findings(
             "mock_llm": mock_llm,
         },
         "matched": [m.__dict__ for m in matched],
+        "unvalidated_matches": [m.__dict__ for m in unvalidated_matches],
         "false_negatives": false_negatives,
         "false_positives": false_positives,
         "extras": extras,
         "notes": [
             "recall measured over manifest positives (what MUST be found).",
+            "validated_recall counts only matches with validated=true, no manual "
+            "confirmation requirement, and complete manifest-required evidence.",
             "precision measured only against explicit negative controls; "
             "None means no negative controls were defined.",
             "extras are findings unmapped to any manifest entry — triage manually, "
@@ -627,6 +663,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--out", default=None, help="write scorecard JSON here (else stdout)")
     ap.add_argument("--min-recall", type=float, default=None, help="exit 1 if recall below this")
     ap.add_argument(
+        "--min-validated-recall",
+        type=float,
+        default=None,
+        help="exit 1 if validated recall below this",
+    )
+    ap.add_argument(
         "--max-fp", type=int, default=None, help="exit 1 if false positives exceed this"
     )
     args = ap.parse_args(argv)
@@ -641,7 +683,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         s = card["summary"]
         print(
             f"scorecard -> {args.out}  "
-            f"recall={s['recall']} precision={s['precision']} "
+            f"recall={s['recall']} validated_recall={s['validated_recall']} "
+            f"precision={s['precision']} "
             f"TP={s['true_positives']} FN={s['false_negatives']} FP={s['false_positives']} "
             f"extras={s['extras_for_triage']}"
         )
@@ -651,6 +694,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = card["summary"]
     if args.min_recall is not None and (s["recall"] is None or s["recall"] < args.min_recall):
         print(f"GATE FAIL: recall {s['recall']} < {args.min_recall}", file=sys.stderr)
+        return 1
+    if args.min_validated_recall is not None and (
+        s["validated_recall"] is None or s["validated_recall"] < args.min_validated_recall
+    ):
+        print(
+            f"GATE FAIL: validated recall {s['validated_recall']} "
+            f"< {args.min_validated_recall}",
+            file=sys.stderr,
+        )
         return 1
     if args.max_fp is not None and s["false_positives"] > args.max_fp:
         print(f"GATE FAIL: FP {s['false_positives']} > {args.max_fp}", file=sys.stderr)

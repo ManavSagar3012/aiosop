@@ -49,7 +49,15 @@ def _gt(id, type, endpoint="", expected=True, expected_evidence=None):
     )
 
 
-def _finding(id, vuln_type, endpoint="", confidence=0.9, evidence=None, tool_source="sqlmap"):
+def _finding(
+    id,
+    vuln_type,
+    endpoint="",
+    confidence=0.9,
+    evidence=None,
+    tool_source="sqlmap",
+    validated=True,
+):
     return {
         "id": id,
         "vuln_type": vuln_type,
@@ -57,6 +65,7 @@ def _finding(id, vuln_type, endpoint="", confidence=0.9, evidence=None, tool_sou
         "confidence": confidence,
         "evidence": evidence if evidence is not None else [{"type": "request"}],
         "tool_source": tool_source,
+        "validated": validated,
         "title": f"{vuln_type} finding",
     }
 
@@ -251,6 +260,40 @@ def test_evidence_complete_when_all_present():
     ]
     card = score_findings(findings, manifest)
     assert card["summary"]["evidence_completeness"] == 1.0
+
+
+def test_unvalidated_identity_match_is_not_a_validated_true_positive():
+    """A lead can preserve discovery recall without inflating proof of impact."""
+    manifest = [_gt("JS-001", "SQLi", "/rest/user/login", expected_evidence=["request"])]
+    findings = [_finding("f1", "sqli", "/rest/user/login", validated=False)]
+
+    card = score_findings(findings, manifest)
+    s = card["summary"]
+
+    assert s["recall"] == 1.0
+    assert s["validated_true_positives"] == 0
+    assert s["validated_recall"] == 0.0
+    assert s["unvalidated_matches"] == 1
+    assert card["unvalidated_matches"][0]["validation_reasons"] == ["finding_validated_false"]
+
+
+def test_incomplete_required_evidence_prevents_validated_credit():
+    manifest = [
+        _gt(
+            "JS-001",
+            "SQLi",
+            "/rest/user/login",
+            expected_evidence=["request", "response"],
+        )
+    ]
+    findings = [_finding("f1", "sqli", "/rest/user/login", evidence=[{"type": "request"}])]
+
+    card = score_findings(findings, manifest)
+    s = card["summary"]
+
+    assert s["recall"] == 1.0
+    assert s["validated_recall"] == 0.0
+    assert "missing_evidence:response" in card["unvalidated_matches"][0]["validation_reasons"]
 
 
 # --------------------------------------------------------------------------- #

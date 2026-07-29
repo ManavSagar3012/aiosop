@@ -112,6 +112,7 @@ jobs:
         --manifest benchmarks/ground_truth/juice_shop.yaml
         --out scorecard-ci.json
         --min-recall 0.4
+        --min-validated-recall 0.2
         --max-fp 0
 
     - name: Upload scorecard
