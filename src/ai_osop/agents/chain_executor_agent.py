@@ -17,6 +17,10 @@ logger = structlog.get_logger(__name__)
 class ChainExecutorAgent(BaseAgent):
     """Executes pre-computed exploit chains in order, treating each as a real task."""
 
+    # Exploit delegate. Injected by the runtime; kept as `Any` so tests can stub a
+    # facade without dragging the full ExploitAgent into scope.
+    _exploit: Any = None
+
     @property
     def agent_type(self) -> AgentType:
         return AgentType.ATTACK_CHAIN
