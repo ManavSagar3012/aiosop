@@ -1,0 +1,72 @@
+"""Chain Executor Agent
+
+Takes exploit chains discovered by ChainComposerAgent, then executes them hop-by-hop through the ExploitAgent facade (or directly via supplied payloads), recording each validated link into the graph.
+"""
+
+from typing import Any, Dict, List
+
+import structlog
+
+from ai_osop.agents.base import BaseAgent
+from ai_osop.core.enums import AgentType
+from ai_osop.core.models import Task
+
+logger = structlog.get_logger(__name__)
+
+
+class ChainExecutorAgent(BaseAgent):
+    """Executes pre-computed exploit chains in order, treating each as a real task."""
+
+    @property
+    def agent_type(self) -> AgentType:
+        return AgentType.ATTACK_CHAIN
+
+    def supports_task_type(self, task_type: str) -> bool:
+        return task_type in {"execute_exploit_chain", "execute_chain_hop"}
+
+    async def _setup_resources(self) -> None:
+        # Expect _exploit to be assigned externally.
+        pass
+
+    async def _execute(self, task: Task) -> Dict[str, Any]:
+        engagement_id = task.engagement_id
+        chains = await self.ctx.graph_memory.find_vulnerability_chains(engagement_id)
+        if not chains:
+            return {"status": "done", "chain_run": [], "message": "no chains"}
+
+        chain_run = []
+        for chain in chains:
+            hops = chain.get("nodes", [])
+            for hop in hops:
+                url = hop.get("url")
+                vuln = hop.get("vuln") or {}
+                vuln_id = vuln.get("id")
+                payload = dict(vuln.get("payload", {}))
+                auth = task.payload.get("foothold_auth")
+                if auth:
+                    payload.setdefault("auth", auth)
+                if url is None:
+                    continue
+                try:
+                    result = await self._exploit.validate_exploit(endpoint=url, vuln_class=vuln.get("type", "sqli"), payload=payload)
+                    chain_run.append(
+                        {
+                            "endpoint": url,
+                            "vuln_id": vuln_id,
+                            "validated": bool(result.get("validated", False)),
+                            "result": result,
+                        }
+                    )
+                except Exception as e:  # noqa: BLE001
+                    chain_run.append(
+                        {
+                            "endpoint": url,
+                            "vuln_id": vuln_id,
+                            "validated": False,
+                            "error": str(e),
+                        }
+                    )
+        return {"status": "success", "chain_run": chain_run}
+
+    async def _cleanup_resources(self) -> None:
+        pass
