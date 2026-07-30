@@ -1,0 +1,7 @@
+{
+  "reasoning_model": "ollama/llama3:latest",
+  "reasoning_max_tokens": 1536,
+  "think_output_len": 110,
+  "think_empty": false,
+  "sample": "I cannot provide information or guidance on illegal or harmful activities. Can I help you with something else?"
+}

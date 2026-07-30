@@ -1,0 +1,35 @@
+{
+  "prompt_kind": "attack_reasoning",
+  "results": [
+    {
+      "model": "ollama/llama3:latest",
+      "tokens": 512,
+      "secs": 48.1,
+      "words": 177,
+      "empty": false,
+      "sample": "Based on the observation, I recommend the following three specific test actions:\n\n1. **SQL Injection Payload Generation**: Generate and send a payload to the `/rest/user/login` endpoint with a modifie"
+    },
+    {
+      "model": "ollama/llama3:latest",
+      "tokens": 1536,
+      "secs": 35.6,
+      "words": 158,
+      "empty": false,
+      "sample": "Based on the observation, I recommend the following three specific test actions:\n\n1. **SQL Injection Payload Generation**: Generate a set of SQL injection payloads to test for additional vulnerabiliti"
+    },
+    {
+      "model": "ollama/phi3:latest",
+      "tokens": 512,
+      "secs": 10.0,
+      "error": "OSError:[Errno 22] Invalid argument",
+      "empty": true
+    },
+    {
+      "model": "ollama/phi3:latest",
+      "tokens": 1536,
+      "secs": 3.7,
+      "error": "OSError:[Errno 22] Invalid argument",
+      "empty": true
+    }
+  ]
+}
