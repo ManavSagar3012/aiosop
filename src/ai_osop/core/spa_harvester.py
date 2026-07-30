@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import parse_qsl, urljoin, urlparse
 
 from ai_osop.core.models import Endpoint
@@ -29,7 +29,7 @@ _STATIC_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".css", "
 class Candidate:
     url: str
     source: str
-    parameters: tuple = field(default_factory=tuple)
+    parameters: Tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def merge_key(self) -> str:
@@ -56,8 +56,8 @@ class Candidate:
 class MergedCandidate:
     url: str
     source: str
-    sources: tuple
-    parameters: tuple = field(default_factory=tuple)
+    sources: Tuple[str, ...]
+    parameters: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_candidate(self) -> Candidate:
         return Candidate(self.url, "{%s}" % "+".join(sorted(set(self.sources))) if self.sources else self.source, self.parameters)
@@ -82,7 +82,7 @@ class HarvestResult:
     endpoints_persisted: int = 0
 
 
-def _to_tuples(params: Iterable[str]) -> tuple:
+def _to_tuples(params: Iterable[str]) -> Tuple[str, ...]:
     return tuple(sorted(set(params)))
 
 
@@ -227,7 +227,6 @@ async def harvest_spa_endpoints(
     """Fetch target HTML and referenced JS to harvest and persist real endpoints."""
     cfg = cfg or SpaHarvestConfig()
     result = HarvestResult()
-    seen_hosts: Set[str] = set()
 
     def _is_js_url(u: str) -> bool:
         lu = (u or "").lower()

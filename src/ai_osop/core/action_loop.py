@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 
 @dataclass
@@ -46,7 +46,7 @@ class LoopState:
 @dataclass
 class LoopResult:
     steps_taken: int
-    findings: list = field(default_factory=list)
+    findings: List[Dict[str, Any]] = field(default_factory=list)
     completed: bool = False
     aborted: bool = False
     error: Optional[str] = None
@@ -106,7 +106,7 @@ class ActionLoop:
         self.llm = llm
         self.tools = tools
 
-    async def _complete(self, messages: list) -> str:
+    async def _complete(self, messages: List[Dict[str, Any]]) -> str:
         resp = await self.llm.complete(messages)
         if isinstance(resp, str):
             return resp
@@ -119,7 +119,7 @@ class ActionLoop:
                     content = getattr(content, "content", None)
                     if isinstance(content, str):
                         return content
-        except Exception:
+        except (AttributeError, IndexError, KeyError):
             pass
         if isinstance(resp, dict):
             choices = resp.get("choices") or []
@@ -130,7 +130,7 @@ class ActionLoop:
                     return content
         return ""
 
-    def _build_prompt(self, state: LoopState, history: Sequence[ActionResult]) -> list:
+    def _build_prompt(self, state: LoopState, history: Sequence[ActionResult]) -> List[Dict[str, Any]]:
         tool_hints = []
         for name in sorted(state.allowed_tools):
             tool = getattr(self.tools, name, None)
@@ -170,8 +170,8 @@ class ActionLoop:
         return messages
 
     async def run(self, state: LoopState, max_steps: int = 10) -> LoopResult:
-        history: list = []
-        findings: list = []
+        history: List[ActionResult] = []
+        findings: List[Dict[str, Any]] = []
         error_msg: Optional[str] = None
         completed = False
 
