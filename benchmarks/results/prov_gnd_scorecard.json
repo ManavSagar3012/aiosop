@@ -1,0 +1,178 @@
+{
+  "summary": {
+    "manifest_positives": 5,
+    "manifest_negative_controls": 4,
+    "findings_total": 10,
+    "findings_real": 10,
+    "findings_simulated_dropped": 0,
+    "true_positives": 5,
+    "validated_true_positives": 5,
+    "unvalidated_matches": 0,
+    "false_negatives": 0,
+    "false_positives": 0,
+    "extras_for_triage": 5,
+    "precision": 1.0,
+    "recall": 1.0,
+    "validated_recall": 1.0,
+    "coverage": 1.0,
+    "evidence_completeness": 1.0,
+    "mock_llm": false
+  },
+  "matched": [
+    {
+      "gt_id": "JS-001",
+      "finding_id": "vuln-7d330f16e416",
+      "finding_type": "sqli",
+      "endpoint": "",
+      "confidence": 1.0,
+      "evidence_kinds": [
+        "cwe",
+        "http_status",
+        "owasp",
+        "payload",
+        "proof",
+        "provenance",
+        "sqli_login_bypass",
+        "token_prefix",
+        "type"
+      ],
+      "evidence_complete": true,
+      "missing_evidence": [],
+      "validation_satisfied": true,
+      "validation_reasons": []
+    },
+    {
+      "gt_id": "JS-002",
+      "finding_id": "vuln-ec0c58e95037",
+      "finding_type": "sqli",
+      "endpoint": "",
+      "confidence": 1.0,
+      "evidence_kinds": [
+        "cwe",
+        "db_error_excerpt",
+        "http_status",
+        "owasp",
+        "payload",
+        "provenance",
+        "sqli_search_error",
+        "type"
+      ],
+      "evidence_complete": true,
+      "missing_evidence": [],
+      "validation_satisfied": true,
+      "validation_reasons": []
+    },
+    {
+      "gt_id": "JS-003",
+      "finding_id": "vuln-b87ff13080c9",
+      "finding_type": "broken_access_control",
+      "endpoint": "",
+      "confidence": 1.0,
+      "evidence_kinds": [
+        "cwe",
+        "ftp_directory_listing",
+        "listing_found",
+        "owasp",
+        "provenance",
+        "status",
+        "type"
+      ],
+      "evidence_complete": true,
+      "missing_evidence": [],
+      "validation_satisfied": true,
+      "validation_reasons": []
+    },
+    {
+      "gt_id": "JS-004",
+      "finding_id": "vuln-0a7fe6d52fa2",
+      "finding_type": "jwt_abuse",
+      "endpoint": "",
+      "confidence": 0.95,
+      "evidence_kinds": [
+        "confirmed_count",
+        "cwe",
+        "detail",
+        "jwt_forgery",
+        "owasp",
+        "provenance",
+        "technique",
+        "token",
+        "type"
+      ],
+      "evidence_complete": true,
+      "missing_evidence": [],
+      "validation_satisfied": true,
+      "validation_reasons": []
+    },
+    {
+      "gt_id": "JS-005",
+      "finding_id": "vuln-4b7319a0f7d6",
+      "finding_type": "mass_assignment",
+      "endpoint": "",
+      "confidence": 1.0,
+      "evidence_kinds": [
+        "admin_registration",
+        "created_role",
+        "cwe",
+        "owasp",
+        "persisted_role",
+        "provenance",
+        "readback_status",
+        "registration_status",
+        "type",
+        "user_id"
+      ],
+      "evidence_complete": true,
+      "missing_evidence": [],
+      "validation_satisfied": true,
+      "validation_reasons": []
+    }
+  ],
+  "unvalidated_matches": [],
+  "false_negatives": [],
+  "false_positives": [],
+  "extras": [
+    {
+      "finding_id": "vuln-2a4493918253",
+      "type": "idor",
+      "endpoint": "",
+      "confidence": 0.9,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-700c9a4bc736",
+      "type": "xss",
+      "endpoint": "",
+      "confidence": 1.0,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-11314dff894d",
+      "type": "broken_access_control",
+      "endpoint": "",
+      "confidence": 1.0,
+      "severity": "medium"
+    },
+    {
+      "finding_id": "vuln-a841089c7c95",
+      "type": "authentication_weakness",
+      "endpoint": "",
+      "confidence": 1.0,
+      "severity": "medium"
+    },
+    {
+      "finding_id": "vuln-35eb12c2b0c8",
+      "type": "broken_access_control",
+      "endpoint": "",
+      "confidence": 1.0,
+      "severity": "medium"
+    }
+  ],
+  "notes": [
+    "recall measured over manifest positives (what MUST be found).",
+    "validated_recall counts only matches with validated=true, no manual confirmation requirement, and complete manifest-required evidence.",
+    "precision measured only against explicit negative controls; None means no negative controls were defined.",
+    "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+    "simulated/mock findings dropped before scoring."
+  ]
+}
