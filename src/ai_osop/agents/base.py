@@ -1123,8 +1123,14 @@ class BaseAgent(ABC):
             final_answer = str(text or "")
             spent_tokens += this_cap  # conservative: charge full cap per call
 
-            # Did it call a tool?
-            m = self._TOOL_CALL_RE or (_re.compile(r"^TOOL_CALL:\s*(\S+)\s+(\{.*)$", _re.DOTALL))
+            # Did it call a tool? Lenient: accept JSON ({...}), Python call
+            # (k=v...) or bare k=v args — real models emit all three. A strict
+            # JSON-only parser silently turns a genuine tool call into a final
+            # answer (observed live with ollama/llama3 emitting
+            # "TOOL_CALL: check_response(status_code=200)").
+            m = self._TOOL_CALL_RE or (
+                _re.compile(r"^TOOL_CALL:\s*([A-Za-z_][\w]*)\s*(.*)$", _re.DOTALL)
+            )
             self._TOOL_CALL_RE = m
             stripped = final_answer.strip()
             call = None
@@ -1135,26 +1141,72 @@ class BaseAgent(ABC):
                     break
             if call is None:
                 break  # final answer, no tool call -> done
-            name, args_json = call.group(1), call.group(2)
+            name, raw_args = call.group(1), call.group(2).strip()
             fn = tools.get(name)
+
+            def _parse_args(s: str) -> Dict[str, Any]:
+                """Lenient arg parser: JSON dict, Python k=v call args, or positional
+                args mapped onto the tool's parameter names (observed live: llama3
+                emits `lookup_endpoint('/rest/products/search')` — a bare positional
+                string that the k=v parser would miss, leaving the tool unrun)."""
+                s = s.strip()
+                if not s:
+                    return {}
+                # strip Python-call parens: (k=v, ...) -> k=v, ...
+                if s.startswith("(") and s.endswith(")"):
+                    s = s[1:-1]
+                if s.startswith("{"):
+                    try:
+                        return dict(_json.loads(s))
+                    except Exception:
+                        pass
+                # k=v / k="v" pairs, comma or space separated
+                out: Dict[str, Any] = {}
+                matched_spans = []
+                for mt in _re.finditer(r'(\w+)\s*=\s*("[^"]*"|\'[^\']*\'|[^,\s()]+)', s):
+                    matched_spans.append(mt.span())
+                    k, v = mt.group(1), mt.group(2).strip("\"'")
+                    try:
+                        out[k] = int(v)
+                    except (ValueError, TypeError):
+                        try:
+                            out[k] = float(v)
+                        except (ValueError, TypeError):
+                            out[k] = v
+                if out:
+                    return out
+                # No k=v pairs: treat bare tokens as POSITIONAL args, mapped onto the
+                # tool's parameter names (skip *args/self). This is what a small local
+                # model actually emits for a single-arg tool.
+                param_names = [
+                    pname
+                    for pname, p in (getattr(fn, "__annotations__", {}) or {}).items()
+                    if pname not in ("return", "self")
+                ]
+                if not param_names:
+                    # fall back to the function's real signature order via inspect
+                    import inspect as _ins
+
+                    try:
+                        param_names = list(_ins.signature(fn).parameters.keys())
+                    except (TypeError, ValueError):
+                        param_names = []
+                positional = [t.strip().strip("\"'") for t in _re.split(r",\s*", s) if t.strip()]
+                return dict(zip(param_names, positional))
+
             result_text: str
             if fn is None:
                 result_text = f"<tool_error> unknown tool '{name}'; available: {list(tools)} </tool_error>"
             else:
+                args = _parse_args(raw_args)
                 try:
-                    args = _json.loads(args_json)
+                    if asyncio.iscoroutinefunction(fn):
+                        result = await fn(**args)
+                    else:
+                        result = fn(**args)
+                    result_text = _json.dumps(result, default=str)[:2000]
                 except Exception as e:
-                    args = {}
-                    result_text = f"<tool_error> bad json args: {e} </tool_error>"
-                else:
-                    try:
-                        if asyncio.iscoroutinefunction(fn):
-                            result = await fn(**args)
-                        else:
-                            result = fn(**args)
-                        result_text = _json.dumps(result, default=str)[:2000]
-                    except Exception as e:
-                        result_text = f"<tool_error> {name} raised {type(e).__name__}: {e} </tool_error>"
+                    result_text = f"<tool_error> {name} raised {type(e).__name__}: {e} </tool_error>"
 
             # Sanitize the untrusted tool output before feeding it back as a
             # user message (prompt-injection defense on the tool boundary).

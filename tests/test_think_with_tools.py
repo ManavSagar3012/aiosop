@@ -146,3 +146,60 @@ async def test_no_tools_falls_back_to_plain_think(monkeypatch):
         out = await agent.think_with_tools("ctx", [], {})
     assert out == "plain answer"
     assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_python_style_args_are_parsed(monkeypatch):
+    """Regression: the live llama3 run emitted `TOOL_CALL: check_response(status_code=200)`
+    (Python call syntax, not JSON). The strict parser missed it and the loop
+    concluded without running the tool. The lenient parser must catch it and run
+    the tool with status_code=200."""
+    from ai_osop.core import config
+    monkeypatch.setattr(config.settings, "llm_reasoning_model", "", raising=False)
+    monkeypatch.setattr(config.settings, "llm_reasoning_max_tokens", 800, raising=False)
+
+    seen = {}
+
+    def check_response(status_code: int):
+        seen["status_code"] = status_code
+        return {"accessible": status_code == 200}
+
+    llm = _ScriptedLLM([
+        "TOOL_CALL: check_response(status_code=200)\n\n",
+        "Endpoint is anonymously accessible -> broken access control.",
+    ])
+    agent = _ToolAgent(llm)
+    with patch.object(BaseAgent, "_load_skill", _no_skill):
+        out = await agent.think_with_tools("ctx", [], {"check_response": check_response})
+
+    assert seen == {"status_code": 200}
+    assert "broken access control" in out
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_positional_arg_call_is_parsed(monkeypatch):
+    """Regression: the live llama3 run emitted
+    `TOOL_CALL: lookup_endpoint('/rest/products/search', {})` — a positional string
+    arg. The k=v parser found no pairs and the tool was never invoked. Positional
+    args must be mapped onto the tool's parameter names so the loop runs it."""
+    from ai_osop.core import config
+    monkeypatch.setattr(config.settings, "llm_reasoning_model", "", raising=False)
+    monkeypatch.setattr(config.settings, "llm_reasoning_max_tokens", 800, raising=False)
+
+    seen = []
+
+    def lookup_endpoint(path: str):
+        seen.append(path)
+        return {"status": 200}
+
+    llm = _ScriptedLLM([
+        "TOOL_CALL: lookup_endpoint('/rest/products/search')",
+        "Endpoint returns 200 anon -> confirmed.",
+    ])
+    agent = _ToolAgent(llm)
+    with patch.object(BaseAgent, "_load_skill", _no_skill):
+        out = await agent.think_with_tools("ctx", [], {"lookup_endpoint": lookup_endpoint})
+
+    assert seen == ["/rest/products/search"]
+    assert "confirmed" in out

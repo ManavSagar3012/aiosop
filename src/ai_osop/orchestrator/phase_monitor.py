@@ -442,6 +442,33 @@ class PhaseMonitor:
                             timeout_seconds=180,
                         )
                         await self._orch.task_scheduler.schedule_task(login_task)
+
+                    # SPA/JS fallback harvester (Post-registration): a deterministic,
+                    # no-browser endpoint mining pass that reads inline <script> bodies
+                    # and referenced .js bundles. Catches routes the guest browser HAR
+                    # never noticed (e.g. client-side navigation to /account/* behind
+                    # tokens gated on registration). Runs once per domain, after the
+                    # authenticated login settles so headers/cookies exist. This is
+                    # how we close the Juice Shop recall gap the browser-only pass
+                    # still misses on registration-gated routes.
+                    harvest_task = Task(
+                        type="spa_harvest",
+                        priority=4,
+                        agent_type=AgentType.RECON,
+                        payload={
+                            "engagement_id": session.canonical_engagement_id,
+                            "url": surface_url,
+                            "target": surface_url,
+                            "scope_hosts": scope_hosts,
+                            # Defer until both identities' logins complete.
+                            # We reference login_task.id for identity 'b' as the
+                            # final gate; tasks run when dependencies are satisfied.
+                        },
+                        engagement_id=session.canonical_engagement_id,
+                        dependencies=[login_task.id],
+                        timeout_seconds=180,
+                    )
+                    await self._orch.task_scheduler.schedule_task(harvest_task)
             url_hint = (
                 self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
                 if session.scope.domains
