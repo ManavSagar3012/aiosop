@@ -111,6 +111,7 @@ class ReconAgent(BaseAgent):
             "cert_transparency",
             "wayback_discovery",
             "waf_detection",
+            "spa_harvest",
         ]
 
     async def _setup_resources(self) -> None:
@@ -291,6 +292,8 @@ class ReconAgent(BaseAgent):
             return await self._execute_wayback_discovery(payload)
         elif task_type == "waf_detection":
             return await self._execute_waf_detection(payload)
+        elif task_type == "spa_harvest":
+            return await self._execute_spa_harvest(payload)
         else:
             raise AgentException(f"Unknown recon task type: {task_type}")
 
@@ -1540,6 +1543,35 @@ class ReconAgent(BaseAgent):
                 pass
 
         return result
+
+    async def _execute_spa_harvest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """JS/SPA-aware fallback harvester. Discovers routes hidden in inline scripts
+        and referenced bundles that a pure href crawler (or even XHR-only HAR) misses.
+        Confirmed gap: Juice Shop's injectable /rest/products/search?q= was invisible
+        without this pass (the 0% recall observed on the 2026-07-27 benchmark)."""
+        from ai_osop.core.spa_harvester import SpaHarvestConfig, harvest_spa_endpoints
+
+        url = payload.get("url") or payload.get("target")
+        if not url:
+            raise AgentException("spa_harvest requires url/target")
+        cfg = SpaHarvestConfig(
+            max_bundle_fetches=payload.get("max_bundle_fetches", 5),
+            js_route_limit=payload.get("js_route_limit", 200),
+        )
+        async with self.get_governed_client(tool="spa_harvest") as client:
+            result = await harvest_spa_endpoints(
+                url,
+                client=client,
+                graph=self.ctx.graph_memory,
+                engagement_id=self.ctx.current_task.engagement_id,
+                cfg=cfg,
+            )
+        return {
+            "status": "completed",
+            "endpoints_persisted": result.endpoints_persisted,
+            "js_files_seen": result.js_files_seen,
+            "candidates_found": result.candidates_found,
+        }
 
     async def _cleanup_resources(self) -> None:
         """Cleanup recon resources."""
