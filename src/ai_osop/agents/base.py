@@ -1077,10 +1077,12 @@ class BaseAgent(ABC):
         import time as _time
 
         skills_content = "\n\n".join([self._load_skill(s) for s in skill_names])
-        tool_block = "\n".join(
-            f"- {name}({', '.join((getattr(fn,'__annotations__',{}) or {}).keys()) or ''}): {getattr(fn,'__doc__', '') or ''}"
-            for name, fn in tools.items()
-        )
+        tool_block_lines = []
+        for name, fn in tools.items():
+            params = ", ".join((getattr(fn, "__annotations__", {}) or {}).keys())
+            doc = ((getattr(fn, "__doc__", "") or "").strip().splitlines() or [""])[0]
+            tool_block_lines.append(f"- {name}({params}): {doc}")
+        tool_block = "\n".join(tool_block_lines)
         system = (
             f"You are an AI {self.ctx.agent_type.value.replace('_', ' ').title()} Agent "
             "operating with EXPLICIT AUTHORIZATION inside the engagement scope below. "
@@ -1196,7 +1198,10 @@ class BaseAgent(ABC):
 
             result_text: str
             if fn is None:
-                result_text = f"<tool_error> unknown tool '{name}'; available: {list(tools)} </tool_error>"
+                result_text = (
+                    f"<tool_error> unknown tool '{name}'; "
+                    f"available: {list(tools)} </tool_error>"
+                )
             else:
                 args = _parse_args(raw_args)
                 try:
@@ -1206,7 +1211,10 @@ class BaseAgent(ABC):
                         result = fn(**args)
                     result_text = _json.dumps(result, default=str)[:2000]
                 except Exception as e:
-                    result_text = f"<tool_error> {name} raised {type(e).__name__}: {e} </tool_error>"
+                    result_text = (
+                        f"<tool_error> {name} raised "
+                        f"{type(e).__name__}: {e} </tool_error>"
+                    )
 
             # Sanitize the untrusted tool output before feeding it back as a
             # user message (prompt-injection defense on the tool boundary).

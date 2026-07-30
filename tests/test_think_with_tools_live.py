@@ -19,10 +19,10 @@ pytestmark = pytest.mark.skipif(
 @pytest.mark.asyncio
 async def test_live_tool_loop_produces_nonempty_answer():
     from types import SimpleNamespace
+
     from ai_osop.agents.base import BaseAgent
     from ai_osop.core.enums import AgentType
     from ai_osop.core.llm_client import LiteLLMClient
-    from ai_osop.core.config import settings
 
     # Use the proven-working local model
     os.environ["OSOP_LLM_PRIMARY_MODEL"] = "ollama/llama3:latest"
