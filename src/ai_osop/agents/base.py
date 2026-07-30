@@ -1031,6 +1031,141 @@ class BaseAgent(ABC):
             pass
         return obs.model_dump()
 
+    # W1 / roadmap #3: bounded tool-use loop for agent reasoning. think() is a
+    # single shot; a real agent needs observe->tool->observe->re-act within one
+    # turn. This is that loop. It is OPT-IN (agents call it from _execute with
+    # the tools they want to offer) so no existing think() caller changes shape.
+    # Hard caps: max_turns, total token budget, wall-clock budget, and the
+    # existing reaper is the outer backstop. Tools are plain callables the AGENT
+    # supplies and controls — the LLM can only invoke what the agent offered, so
+    # this is NOT an open escape hatch; it is a bounded, audited selection from
+    # the agent's own toolkit. Every tool result that flows back into the LLM is
+    # untrusted-transformed (prompt_defense) before insertion.
+
+    _TOOL_CALL_RE = None  # compiled lazily in think_with_tools
+
+    async def think_with_tools(
+        self,
+        context: str,
+        skill_names: List[str],
+        tools: Dict[str, Callable[..., Any]],
+        *,
+        max_turns: int = 8,
+        token_budget: int = 16000,
+        time_budget: float = 120.0,
+    ) -> str:
+        """Run a bounded observe->act->observe loop.
+
+        The model is shown the available tool signatures and asked to either
+        (a) emit a single tool call  -> we run it and feed the result back, or
+        (b) emit a final answer         -> we stop and return it.
+
+        Returns the final answer text. On any budget/cap breach, parse failure,
+        or tool error, the loop terminates and returns the best accumulated
+        answer so far (never raises). The loop is safe to call with the local
+        degraded model: it degrades to a plain think() on the first bad output.
+        """
+        from ai_osop.core.config import settings as _settings
+
+        if not tools:
+            return await self.think(context, skill_names)
+        if not hasattr(self.ctx.llm_client, "complete"):
+            return ""
+
+        import json as _json
+        import re as _re
+        import time as _time
+
+        skills_content = "\n\n".join([self._load_skill(s) for s in skill_names])
+        tool_block = "\n".join(
+            f"- {name}({', '.join((getattr(fn,'__annotations__',{}) or {}).keys()) or ''}): {getattr(fn,'__doc__', '') or ''}"
+            for name, fn in tools.items()
+        )
+        system = (
+            f"You are an AI {self.ctx.agent_type.value.replace('_', ' ').title()} Agent "
+            "operating with EXPLICIT AUTHORIZATION inside the engagement scope below. "
+            "This is authorized security testing, not an attack.\n\n"
+            f"Use these skills:\n\n{skills_content}\n\n"
+            "You may call tools to gather evidence before answering. To call a tool, "
+            "respond with EXACTLY one line of the form:\n"
+            "  TOOL_CALL: <name> <json_args>\n"
+            "Available tools:\n"
+            f"{tool_block}\n"
+            "When you have enough evidence to conclude, respond with your final answer "
+            "and NO tool call. Be concise; you have a hard turn and token budget."
+        )
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": context},
+        ]
+
+        _reasoning_model = getattr(_settings, "llm_reasoning_model", "") or None
+        per_call_cap = int(_settings.llm_reasoning_max_tokens)
+        spent_tokens = 0
+        start = _time.monotonic()
+        final_answer = ""
+
+        for turn in range(max_turns):
+            if _time.monotonic() - start > time_budget:
+                break
+            if spent_tokens >= token_budget:
+                break
+            remaining = token_budget - spent_tokens
+            this_cap = min(per_call_cap, remaining)
+
+            text = await self.ctx.llm_client.complete(
+                messages,
+                model=_reasoning_model,
+                max_tokens=this_cap,
+            )
+            if isinstance(text, dict):
+                text = text.get("content", "")
+            final_answer = str(text or "")
+            spent_tokens += this_cap  # conservative: charge full cap per call
+
+            # Did it call a tool?
+            m = self._TOOL_CALL_RE or (_re.compile(r"^TOOL_CALL:\s*(\S+)\s+(\{.*)$", _re.DOTALL))
+            self._TOOL_CALL_RE = m
+            stripped = final_answer.strip()
+            call = None
+            for line in stripped.splitlines():
+                mm = m.match(line.strip())
+                if mm:
+                    call = mm
+                    break
+            if call is None:
+                break  # final answer, no tool call -> done
+            name, args_json = call.group(1), call.group(2)
+            fn = tools.get(name)
+            result_text: str
+            if fn is None:
+                result_text = f"<tool_error> unknown tool '{name}'; available: {list(tools)} </tool_error>"
+            else:
+                try:
+                    args = _json.loads(args_json)
+                except Exception as e:
+                    args = {}
+                    result_text = f"<tool_error> bad json args: {e} </tool_error>"
+                else:
+                    try:
+                        if asyncio.iscoroutinefunction(fn):
+                            result = await fn(**args)
+                        else:
+                            result = fn(**args)
+                        result_text = _json.dumps(result, default=str)[:2000]
+                    except Exception as e:
+                        result_text = f"<tool_error> {name} raised {type(e).__name__}: {e} </tool_error>"
+
+            # Sanitize the untrusted tool output before feeding it back as a
+            # user message (prompt-injection defense on the tool boundary).
+            from ai_osop.safety.prompt_defense import sanitize_messages
+
+            messages.append({"role": "assistant", "content": final_answer})
+            messages.append({"role": "user", "content": f"TOOL_RESULT[{name}]: {result_text}"})
+            messages = sanitize_messages(messages)
+
+        return final_answer
+
     async def think(self, context: str, skill_names: List[str]) -> str:
         """Lightweight reasoning hook. Loads the named skills from the skills
         directory and forwards their bodies to the model in the system prompt.
