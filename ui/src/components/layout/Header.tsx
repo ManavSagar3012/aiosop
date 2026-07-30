@@ -17,6 +17,7 @@ export const Header: React.FC = () => {
   // tracks — selecting a past engagement re-points the socket + hydration to it.
   const currentSessionId = useIntelligenceStore((s) => s.sessionId);
   const setSessionId = useIntelligenceStore((s) => s.setSessionId);
+  const lastEventAt = useIntelligenceStore((s) => s.lastEventAt);
   const [engagements, setEngagements] = useState<any[]>([]);
 
   // Populate the selector's options (does NOT choose the active one — NetworkHealth
@@ -104,7 +105,26 @@ export const Header: React.FC = () => {
 
   const handlePrintReport = async () => {
      if (!currentSessionId) return;
-     window.open(`${API_BASE}/engagements/${currentSessionId}/report?token=${AUTH_TOKEN}`, '_blank');
+     try {
+       // Fetch with the Authorization header (NOT a ?token= query param, which
+       // would leak the bearer token into browser history, logs, and Referer).
+       const resp = await fetch(`${API_BASE}/engagements/${currentSessionId}/report`, {
+         headers: authHeaders()
+       });
+       if (!resp.ok) throw new Error(`Report fetch failed (${resp.status})`);
+       const data = await resp.json();
+       const html = data.html || data.body_html;
+       const blob = html
+         ? new Blob([html], { type: 'text/html' })
+         : new Blob([data.markdown || ''], { type: 'text/markdown' });
+       const url = URL.createObjectURL(blob);
+       const win = window.open(url, '_blank');
+       if (!win) addToast('Popup blocked. Allow popups to view the report.', 'warning');
+       // Revoke after the new window loads to free the blob.
+       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+     } catch (e) {
+       addToast('Report generation failed. Checking connectivity.', 'error');
+     }
   };
 
   return (
@@ -118,6 +138,11 @@ export const Header: React.FC = () => {
             <span className="font-label-caps text-label-caps text-on-surface-variant whitespace-nowrap">TARGET: {currentObjective.toUpperCase()}</span>
             <span className="font-label-caps text-label-caps text-primary-container whitespace-nowrap">PHASE: {currentPhase.toUpperCase().replace(/_/g, ' ')}</span>
           </div>
+          {lastEventAt && (
+            <span className="font-code-sm text-[9px] text-on-surface-variant/60 mb-0.5 whitespace-nowrap">
+              DATA AS OF {lastEventAt.toLocaleTimeString('en-GB', { hour12: false })}
+            </span>
+          )}
           <select
             aria-label="Active engagement"
             value={currentSessionId ?? ''}

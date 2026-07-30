@@ -1,12 +1,12 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React from 'react';
 import { Link2, ChevronRight, Activity } from 'lucide-react';
-import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
 import { StatTile } from '../components/shared/StatTile';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { Skeleton } from '../components/shared/Skeleton';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useApiData } from '../hooks/useApiData';
 
 interface AttackChain {
   chain_type: string;
@@ -17,41 +17,17 @@ interface AttackChain {
 
 export const AttackChains: React.FC = () => {
   const sessionId = useIntelligenceStore((s) => s.sessionId);
-  const [chains, setChains] = useState<AttackChain[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchChains = useCallback(async () => {
-    if (!sessionId) { setLoading(false); return; }
-    try {
-      const resp = await fetch(`${API_BASE}/engagements/${sessionId}/attack-chains`, {
-        headers: authHeaders(),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        setChains(data.chains || []);
-        setError(null);
-      } else {
-        setError(`API Error: ${resp.status}`);
-      }
-    } catch (e: any) {
-      setError(e.message || 'Network error');
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
-
-  useEffect(() => {
-    fetchChains();
-    const interval = setInterval(fetchChains, 10000);
-    return () => clearInterval(interval);
-  }, [fetchChains]);
+  const { data, loading, error, refetch } = useApiData<{ chains: AttackChain[] }>(
+    sessionId ? `/engagements/${sessionId}/attack-chains` : null,
+    { pollInterval: 10000 }
+  );
+  const chains = data?.chains || [];
 
   if (loading && chains.length === 0) {
     return <div className="space-y-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-48 w-full" /></div>;
   }
   if (error && chains.length === 0) {
-    return <ErrorState message={error} onRetry={fetchChains} />;
+    return <ErrorState message={error} onRetry={refetch} />;
   }
   if (!sessionId) {
     return (

@@ -26,14 +26,14 @@ export const LearningAnalytics: React.FC = () => {
   const { skillStats, findings } = useIntelligenceStore();
 
   const palette = useMemo(() => ({
-    primary:   cssVar('--primary', '#39ff14'),                    // success / operational (green)
-    secondary: cssVar('--secondary', '#00f1fd'),                  // active / interactive (cyan)
-    error:     cssVar('--error', '#ff3131'),                      // critical (red)
-    warning:   cssVar('--warning', '#ff9f00'),                    // warning / medium (amber)
-    purple:    '#a259ff',                                         // 5th qualitative series — no dedicated token
-    axis:      cssVar('--on-surface-variant', '#baccb0'),         // muted axis/legend text
-    grid:      cssVar('--surface-container-highest', '#2a2a2d'),  // grid lines
-    tooltipBg: cssVar('--surface-container', '#131314'),          // tooltip background
+    primary:   cssVar('--primary', '#22d3ee'),                    // verified / operational
+    secondary: cssVar('--secondary', '#38bdf8'),                  // active / interactive
+    error:     cssVar('--error', '#f87171'),                      // critical
+    warning:   cssVar('--warning', '#fbbf24'),                    // warning / medium (amber)
+    purple:    '#a78bfa',                                         // qualitative series (violet-400)
+    axis:      cssVar('--on-surface-variant', '#93a3b3'),         // muted axis/legend text
+    grid:      cssVar('--surface-container-highest', '#243040'),  // grid lines
+    tooltipBg: cssVar('--surface-container', '#141c24'),          // tooltip background
   }), []);
 
   const tooltipStyle = useMemo(() => ({
@@ -262,7 +262,7 @@ export const LearningAnalytics: React.FC = () => {
                      </span>
                   </div>
                   <div className="h-1.5 bg-surface-variant w-full overflow-hidden">
-                     <div className="h-full bg-primary-fixed glow-cyan shadow-[0_0_10px_rgba(57,255,20,0.5)]" style={{ width: `${Math.min(100, (safeStats.revenue_roi || 0.1) * 50)}%` }}></div>
+                     <div className="h-full bg-primary" style={{ width: `${Math.min(100, (safeStats.revenue_roi || 0.1) * 50)}%` }}></div>
                   </div>
                </div>
             </div>

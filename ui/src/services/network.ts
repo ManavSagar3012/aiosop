@@ -23,6 +23,7 @@ export class NetworkService {
   private eventThroughput = 0;
   private eventCount = 0;
   private throughputTimer: ReturnType<typeof setInterval> | null = null;
+  private lastEventAt: Date | null = null;
 
   constructor(onStatusChange: (status: ConnectionStatus) => void) {
     this.onStatusChange = onStatusChange;
@@ -35,54 +36,55 @@ export class NetworkService {
   async hydrate(sessionId: string) {
     useIntelligenceStore.getState().setSessionId(sessionId);
     const headers = authHeaders();
+    const intel = useIntelligenceStore.getState;
+
+    // Helper: fetch one endpoint, return parsed JSON or null on failure
+    const j = (path: string) =>
+      fetch(`${API_BASE}${path}`, { headers })
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null);
+
     try {
-      // 1. Session Info
-      const sessionRes = await fetch(`${API_BASE}/engagements/${sessionId}`, { headers });
-      if (sessionRes.ok) {
-         const sessionData = await sessionRes.json();
-         useSwarmStore.getState().setPhase(sessionData.phase || 'INITIALIZING');
-         useSwarmStore.getState().setObjective(sessionData.scope?.domains?.[0] || 'ACTIVE MISSION');
+      const [
+        session, agents, findings, skills, audit, diffs,
+        unc, graph, trace, cog, critic, inv, payouts
+      ] = await Promise.all([
+        j(`/engagements/${sessionId}`),
+        j(`/agents`),
+        j(`/engagements/${sessionId}/findings`),
+        j(`/system/skills/stats`),
+        j(`/engagements/${sessionId}/audit-log`),
+        j(`/engagements/${sessionId}/diff-auth`),
+        j(`/engagements/${sessionId}/uncertainty`),
+        j(`/engagements/${sessionId}/graph`),
+        j(`/engagements/${sessionId}/reasoning-trace`),
+        j(`/engagements/${sessionId}/cognition-summary`),
+        j(`/engagements/${sessionId}/critic-review`),
+        j(`/engagements/${sessionId}/invariants`),
+        j(`/engagements/${sessionId}/payouts`),
+      ]);
+
+      const s = useSwarmStore.getState();
+      const i = intel();
+
+      if (session) {
+        s.setPhase(session.phase || 'INITIALIZING');
+        s.setObjective(session.scope?.domains?.[0] || 'ACTIVE MISSION');
       }
+      if (agents) s.setAgents(agents);
+      if (findings) i.setFindings(findings);
+      if (skills) i.setSkillStats(skills);
+      if (audit) i.setAuditLog(audit);
+      if (diffs) i.setDiffAuthFindings(diffs);
+      if (unc) i.setUncertainties(unc);
+      if (graph) i.setGraphData(graph);
+      if (trace) i.setReasoningTrace(trace.trace || []);
+      if (cog) i.setCognitionSummary(cog);
+      if (critic) i.setCriticReview(critic.critiques || []);
+      if (inv) i.setInvariants(inv);
+      if (payouts) i.setPayouts(payouts);
 
-      // 2. Agents
-      const agentsRes = await fetch(`${API_BASE}/agents`, { headers });
-      if (agentsRes.ok) useSwarmStore.getState().setAgents(await agentsRes.json());
-
-      // 3. Findings
-      const findingsRes = await fetch(`${API_BASE}/engagements/${sessionId}/findings`, { headers });
-      if (findingsRes.ok) useIntelligenceStore.getState().setFindings(await findingsRes.json());
-      
-      // 4. Skill Stats
-      const skillsRes = await fetch(`${API_BASE}/system/skills/stats`, { headers });
-      if (skillsRes.ok) useIntelligenceStore.getState().setSkillStats(await skillsRes.json());
-
-      // 5. Audit Log
-      const auditRes = await fetch(`${API_BASE}/engagements/${sessionId}/audit-log`, { headers });
-      if (auditRes.ok) useIntelligenceStore.getState().setAuditLog(await auditRes.json());
-
-      // 6. Diff Auth
-      const diffRes = await fetch(`${API_BASE}/engagements/${sessionId}/diff-auth`, { headers });
-      if (diffRes.ok) useIntelligenceStore.getState().setDiffAuthFindings(await diffRes.json());
-
-      // 7. Uncertainty
-      const uncRes = await fetch(`${API_BASE}/engagements/${sessionId}/uncertainty`, { headers });
-      if (uncRes.ok) useIntelligenceStore.getState().setUncertainties(await uncRes.json());
-
-      // 8. Graph Data
-      const graphRes = await fetch(`${API_BASE}/engagements/${sessionId}/graph`, { headers });
-      if (graphRes.ok) useIntelligenceStore.getState().setGraphData(await graphRes.json());
-
-      // 9. Reasoning Trace
-      const traceRes = await fetch(`${API_BASE}/engagements/${sessionId}/reasoning-trace`, { headers });
-      if (traceRes.ok) useIntelligenceStore.getState().setReasoningTrace((await traceRes.json()).trace || []);
-
-      // 10. Cognition Summary
-      const cogRes = await fetch(`${API_BASE}/engagements/${sessionId}/cognition-summary`, { headers });
-      if (cogRes.ok) useIntelligenceStore.getState().setCognitionSummary(await cogRes.json());
-
-      // 11. Critic Review
-      const criticRes = await fetch(`${API_BASE}/engagements/${sessionId}/critic-review`, { headers });
-      if (criticRes.ok) useIntelligenceStore.getState().setCriticReview((await criticRes.json()).critiques || []);
+      this.lastEventAt = new Date();
     } catch (e) {
       console.error("[Network] Hydration failed", e);
     }
@@ -95,7 +97,13 @@ export class NetworkService {
     this.updateStatus('reconnecting');
     
     try {
-      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}?token=${AUTH_TOKEN}`);
+      // Pass the bearer token via Sec-WebSocket-Protocol subprotocol (osop/token pair)
+      // instead of a ?token= URL query param, which would leak into proxy logs and
+      // browser history. Backend reads it from the subprotocol header.
+      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}`, [
+        'osop',
+        `bearer.${AUTH_TOKEN}`
+      ]);
 
       this.ws.onopen = () => {
         this.updateStatus('connected');
@@ -134,6 +142,8 @@ export class NetworkService {
     if (this.eventBuffer.length > 100) this.eventBuffer.shift();
     const swarm = useSwarmStore.getState();
     const intel = useIntelligenceStore.getState();
+    // Track data freshness for the header "data as of" indicator
+    if (event.event_type !== 'heartbeat') intel.setLastEventAt(new Date());
 
     // Append to audit log for live timeline (excluding heartbeats for noise reduction)
     if (event.event_type !== 'heartbeat') {
@@ -213,7 +223,8 @@ export class NetworkService {
     return {
       status: this.status,
       latency: this.lastLatency,
-      throughput: this.eventThroughput
+      throughput: this.eventThroughput,
+      lastEventAt: this.lastEventAt,
     };
   }
 

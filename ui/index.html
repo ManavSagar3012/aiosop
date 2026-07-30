@@ -3,12 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI-OSOP // COMMAND CORE</title>
-    <!-- Tailwind is now compiled by the PostCSS build (see src/styles.css +
-         tailwind.config.js); the cdn.tailwindcss.com runtime script and its
-         inline config have been removed for production correctness. -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet"/>
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    <title>AI-OSOP // Command Core</title>
+
+    <!-- SEO / platform metadata. Internal ops console — keep crawlers out. -->
+    <meta name="description" content="AI Offensive Security Orchestration Platform — real-time command core for engagement orchestration, differential-auth verification, and evidence reporting." />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#0a0f14" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Open Graph (harmless for internal tooling; keeps link unfurls sane). -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="AI-OSOP // Command Core" />
+    <meta property="og:description" content="AI Offensive Security Orchestration Platform — engagement command core." />
+
+    <!-- Inline SVG favicon (no binary asset, zero extra request). -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0f14'/%3E%3Crect x='6' y='6' width='20' height='20' rx='3' fill='none' stroke='%2338bdf8' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%2322d3ee'/%3E%3C/svg%3E" />
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0f14'/%3E%3Crect x='6' y='6' width='20' height='20' rx='3' fill='none' stroke='%2338bdf8' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%2322d3ee'/%3E%3C/svg%3E" />
+
+    <!-- Fonts: preconnect + a single combined request. Inter = body, JetBrains
+         Mono = operational data, Space Grotesk = display. Material Symbols font
+         removed (unused — all icons are lucide-react). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body class="font-body-md text-body-md">
     <div id="root"></div>

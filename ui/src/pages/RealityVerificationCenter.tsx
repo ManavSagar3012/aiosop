@@ -114,7 +114,7 @@ export const RealityVerificationCenter: React.FC = () => {
             <span className="font-code-sm text-primary text-[14px]">BALANCED_CONSENSUS (REQUIRES 2+ INDEPENDENT AGENTS)</span>
          </div>
          <div className="flex items-center gap-6">
-            <div class_Name="text-right">
+            <div className="text-right">
                <div className="font-code-sm text-primary text-[14px]">{verificationRate}%</div>
                <div className="font-label-caps text-label-caps text-on-surface-variant">OVERALL VERIFICATION RATE</div>
             </div>

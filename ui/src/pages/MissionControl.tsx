@@ -23,8 +23,8 @@ export const MissionControl: React.FC = () => {
   const { auditLog, sessionId, hasCheckedSession } = useIntelligenceStore();
 
   const palette = useMemo(() => ({
-    primary:      cssVar('--primary', '#39ff14'),                    // success / operational (green)
-    secondary:    cssVar('--secondary', '#00f1fd'),                  // active / interactive (cyan)
+    primary:      cssVar('--primary', '#22d3ee'),                    // verified / operational
+    secondary:    cssVar('--secondary', '#38bdf8'),                  // active / interactive
     onSurface:    cssVar('--on-surface', '#e5e2e3'),
     tooltipBg:    cssVar('--surface-container', '#131314'),
     tooltipBorder: cssVar('--surface-container-highest', '#2a2a2d'),

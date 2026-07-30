@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { Crosshair } from 'lucide-react';
-import { API_BASE, authHeaders } from '../services/api';
+import { useApiData } from '../hooks/useApiData';
 import { Card } from '../components/shared/Card';
 import { StatTile } from '../components/shared/StatTile';
 import { DataTable, Column } from '../components/shared/DataTable';
@@ -20,53 +20,26 @@ interface AuthControl {
 
 export const AuthAudit: React.FC = () => {
   const [controls, setControls] = useState<AuthControl[]>([]);
-  const [sessionStats, setSessionStats] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const sessionId = useIntelligenceStore((s) => s.sessionId);
 
-  const fetchLatest = useCallback(async () => {
-    if (!sessionId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(`${API_BASE}/engagements/${sessionId}`, {
-        headers: authHeaders()
-      });
-      if (response.ok) {
-        const current = await response.json();
-        setSessionStats(current);
-
-        // Re-using findings for now to populate enforcement matrix if real audit engine is still processing
-        const findRes = await fetch(`${API_BASE}/engagements/${sessionId}/findings`, {
-           headers: authHeaders()
-        });
-        if (findRes.ok) {
-            const findings = await findRes.json();
-            setControls(findings.map((f: any) => ({
-                endpoint: f.endpoint_id || '/api/v1/unknown',
-                workflow: f.title,
-                roleRequired: f.severity === 'high' ? 'Admin' : 'User',
-                observedEnforcement: f.status === 'verified' ? 'ENFORCED' : 'BYPASSED',
-                confidence: f.confidence
-            })));
-        }
-      } else {
-        setError(`Failed to load auth audit data (${response.status})`);
-      }
-    } catch (e) {
-      setError('Failed to reach the audit API.');
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
+  const { data: sessionStats, loading, error, refetch } = useApiData<any>(
+    sessionId ? `/engagements/${sessionId}` : null
+  );
+  const { data: findings } = useApiData<any[]>(
+    sessionId ? `/engagements/${sessionId}/findings` : null
+  );
 
   useEffect(() => {
-    fetchLatest();
-  }, [fetchLatest]);
+    if (findings) {
+      setControls(findings.map((f: any) => ({
+        endpoint: f.endpoint_id || '/api/v1/unknown',
+        workflow: f.title,
+        roleRequired: f.severity === 'high' ? 'Admin' : 'User',
+        observedEnforcement: f.status === 'verified' ? 'ENFORCED' : 'BYPASSED',
+        confidence: f.confidence
+      })));
+    }
+  }, [findings]);
 
   const safeStats = sessionStats || {
       coverage: 0,
@@ -183,7 +156,7 @@ export const AuthAudit: React.FC = () => {
       <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
         <Card title="Authorization Enforcement Matrix" className="col-span-2 overflow-y-auto">
            {error ? (
-              <ErrorState message={error} onRetry={fetchLatest} />
+              <ErrorState message={error} onRetry={refetch} />
            ) : loading ? (
               <div className="space-y-2 p-3">
                  <Skeleton className="h-8 w-full" />

@@ -6,8 +6,9 @@ interface CardProps {
   children: React.ReactNode;
   className?: string;
   glow?: 'cyan' | 'red' | 'green' | 'none';
+  action?: React.ReactNode;
 }
 
-export const Card: React.FC<CardProps> = ({ title, children, className = '', glow = 'none' }) => (
-  <Panel title={title} glow={glow} className={className}>{children}</Panel>
+export const Card: React.FC<CardProps> = ({ title, children, className = '', glow = 'none', action }) => (
+  <Panel title={title} glow={glow} className={className} action={action}>{children}</Panel>
 );

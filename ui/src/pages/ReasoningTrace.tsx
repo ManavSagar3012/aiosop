@@ -1,6 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React from 'react';
 import { Brain, Activity, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
-import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
 import { StatTile } from '../components/shared/StatTile';
 import { DataTable, Column } from '../components/shared/DataTable';
@@ -8,6 +7,7 @@ import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { Skeleton } from '../components/shared/Skeleton';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useApiData } from '../hooks/useApiData';
 
 interface TraceEntry {
   timestamp: string;
@@ -46,35 +46,11 @@ const RESULT_COLORS: Record<string, string> = {
 
 export const ReasoningTrace: React.FC = () => {
   const sessionId = useIntelligenceStore((s) => s.sessionId);
-  const [trace, setTrace] = useState<TraceEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchTrace = useCallback(async () => {
-    if (!sessionId) { setLoading(false); return; }
-    try {
-      const resp = await fetch(`${API_BASE}/engagements/${sessionId}/reasoning-trace`, {
-        headers: authHeaders(),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        setTrace(data.trace || []);
-        setError(null);
-      } else {
-        setError(`API Error: ${resp.status}`);
-      }
-    } catch (e: any) {
-      setError(e.message || 'Network error');
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
-
-  useEffect(() => {
-    fetchTrace();
-    const interval = setInterval(fetchTrace, 5000);
-    return () => clearInterval(interval);
-  }, [fetchTrace]);
+  const { data, loading, error, refetch } = useApiData<{ trace: TraceEntry[] }>(
+    sessionId ? `/engagements/${sessionId}/reasoning-trace` : null,
+    { pollInterval: 5000 }
+  );
+  const trace = data?.trace || [];
 
   if (loading && trace.length === 0) {
     return (
@@ -87,7 +63,7 @@ export const ReasoningTrace: React.FC = () => {
   }
 
   if (error && trace.length === 0) {
-    return <ErrorState message={error} onRetry={fetchTrace} />;
+    return <ErrorState message={error} onRetry={refetch} />;
   }
 
   if (!sessionId) {

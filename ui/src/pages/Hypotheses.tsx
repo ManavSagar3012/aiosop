@@ -1,6 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Brain, ChevronRight, CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-react';
-import { API_BASE, authHeaders } from '../services/api';
+import React from 'react';
+import { Brain, CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-react';
 import { Card } from '../components/shared/Card';
 import { StatTile } from '../components/shared/StatTile';
 import { DataTable, Column } from '../components/shared/DataTable';
@@ -8,6 +7,7 @@ import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { Skeleton } from '../components/shared/Skeleton';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useApiData } from '../hooks/useApiData';
 
 interface Hypothesis {
   id: string;
@@ -31,41 +31,17 @@ const STATUS_COLORS: Record<string, string> = {
 
 export const Hypotheses: React.FC = () => {
   const sessionId = useIntelligenceStore((s) => s.sessionId);
-  const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchHypotheses = useCallback(async () => {
-    if (!sessionId) { setLoading(false); return; }
-    try {
-      const resp = await fetch(`${API_BASE}/engagements/${sessionId}/hypotheses?limit=20`, {
-        headers: authHeaders(),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        setHypotheses(data.hypotheses || []);
-        setError(null);
-      } else {
-        setError(`API Error: ${resp.status}`);
-      }
-    } catch (e: any) {
-      setError(e.message || 'Network error');
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
-
-  useEffect(() => {
-    fetchHypotheses();
-    const interval = setInterval(fetchHypotheses, 10000);
-    return () => clearInterval(interval);
-  }, [fetchHypotheses]);
+  const { data, loading, error, refetch } = useApiData<{ hypotheses: Hypothesis[] }>(
+    sessionId ? `/engagements/${sessionId}/hypotheses?limit=20` : null,
+    { pollInterval: 10000 }
+  );
+  const hypotheses = data?.hypotheses || [];
 
   if (loading && hypotheses.length === 0) {
     return <div className="space-y-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-48 w-full" /></div>;
   }
   if (error && hypotheses.length === 0) {
-    return <ErrorState message={error} onRetry={fetchHypotheses} />;
+    return <ErrorState message={error} onRetry={refetch} />;
   }
   if (!sessionId) {
     return (
@@ -115,7 +91,7 @@ export const Hypotheses: React.FC = () => {
         <StatTile label="Confirmed" value={confirmed} accent="secondary" icon={<CheckCircle2 size={16} />} delay={120} />
         <StatTile label="Refuted" value={refuted} accent="error" icon={<XCircle size={16} />} delay={180} />
       </div>
-      <Card title="Security Hypotheses" glow="cyan" action={<button onClick={fetchHypotheses} className="text-primary-fixed hover:text-primary text-xs flex items-center gap-1"><RefreshCw size={12} />Refresh</button>}>
+      <Card title="Security Hypotheses" glow="cyan" action={<button onClick={refetch} className="text-primary-fixed hover:text-primary text-xs flex items-center gap-1"><RefreshCw size={12} />Refresh</button>}>
         {hypotheses.length === 0 ? (
           <EmptyState message="No hypotheses generated yet." icon={<Brain size={32} />} hint="The HypothesisEngine will populate this during an engagement." />
         ) : (

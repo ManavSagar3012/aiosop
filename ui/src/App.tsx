@@ -1,27 +1,29 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/layout/Layout';
-import { Overview } from './pages/Overview';
-import { MissionControl } from './pages/MissionControl';
-import { ResearchIntelligence } from './pages/ResearchIntelligence';
-import { KnowledgeGraphs } from './pages/KnowledgeGraphs';
-import { FindingsVerification } from './pages/FindingsVerification';
-import { LearningAnalytics } from './pages/LearningAnalytics';
-import { DifferentialAuth } from './pages/DifferentialAuth';
-import { VisualContext } from './pages/VisualContext';
-import { UncertaintyEngine } from './pages/UncertaintyEngine';
-import { RealityVerificationCenter } from './pages/RealityVerificationCenter';
-import { Administration } from './pages/Administration';
-import { SkillIntelligence } from './pages/SkillIntelligence';
-import { AuthAudit } from './pages/AuthAudit';
 import { AlertTriangle } from 'lucide-react';
 import { PageErrorBoundary } from './components/shared/PageErrorBoundary';
-import { MissionTimeline } from './pages/MissionTimeline';
-import { MissionReport } from './pages/MissionReport';
-import { ReasoningTrace } from './pages/ReasoningTrace';
-import { CognitionDashboard } from './pages/CognitionDashboard';
-import { Hypotheses } from './pages/Hypotheses';
-import { AttackChains } from './pages/AttackChains';
+import { Skeleton } from './components/shared/Skeleton';
+
+const Overview = lazy(() => import('./pages/Overview').then((m) => ({ default: m.Overview })));
+const MissionControl = lazy(() => import('./pages/MissionControl').then((m) => ({ default: m.MissionControl })));
+const ResearchIntelligence = lazy(() => import('./pages/ResearchIntelligence').then((m) => ({ default: m.ResearchIntelligence })));
+const KnowledgeGraphs = lazy(() => import('./pages/KnowledgeGraphs').then((m) => ({ default: m.KnowledgeGraphs })));
+const FindingsVerification = lazy(() => import('./pages/FindingsVerification').then((m) => ({ default: m.FindingsVerification })));
+const LearningAnalytics = lazy(() => import('./pages/LearningAnalytics').then((m) => ({ default: m.LearningAnalytics })));
+const DifferentialAuth = lazy(() => import('./pages/DifferentialAuth').then((m) => ({ default: m.DifferentialAuth })));
+const VisualContext = lazy(() => import('./pages/VisualContext').then((m) => ({ default: m.VisualContext })));
+const UncertaintyEngine = lazy(() => import('./pages/UncertaintyEngine').then((m) => ({ default: m.UncertaintyEngine })));
+const RealityVerificationCenter = lazy(() => import('./pages/RealityVerificationCenter').then((m) => ({ default: m.RealityVerificationCenter })));
+const Administration = lazy(() => import('./pages/Administration').then((m) => ({ default: m.Administration })));
+const SkillIntelligence = lazy(() => import('./pages/SkillIntelligence').then((m) => ({ default: m.SkillIntelligence })));
+const AuthAudit = lazy(() => import('./pages/AuthAudit').then((m) => ({ default: m.AuthAudit })));
+const MissionTimeline = lazy(() => import('./pages/MissionTimeline').then((m) => ({ default: m.MissionTimeline })));
+const MissionReport = lazy(() => import('./pages/MissionReport').then((m) => ({ default: m.MissionReport })));
+const ReasoningTrace = lazy(() => import('./pages/ReasoningTrace').then((m) => ({ default: m.ReasoningTrace })));
+const CognitionDashboard = lazy(() => import('./pages/CognitionDashboard').then((m) => ({ default: m.CognitionDashboard })));
+const Hypotheses = lazy(() => import('./pages/Hypotheses').then((m) => ({ default: m.Hypotheses })));
+const AttackChains = lazy(() => import('./pages/AttackChains').then((m) => ({ default: m.AttackChains })));
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
   constructor(props: any) {
@@ -56,31 +58,43 @@ class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasErr
   }
 }
 
+const PageFallback: React.FC = () => (
+  <div className="flex flex-col gap-4 p-2">
+    <Skeleton className="h-8 w-64" />
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <Skeleton key={i} className="h-24" />
+      ))}
+    </div>
+    <Skeleton className="h-64 w-full" />
+  </div>
+);
+
 export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<PageErrorBoundary pageName="Overview"><Overview /></PageErrorBoundary>} />
-            <Route path="mission-control" element={<PageErrorBoundary pageName="MissionControl"><MissionControl /></PageErrorBoundary>} />
-            <Route path="intelligence" element={<PageErrorBoundary pageName="ResearchIntelligence"><ResearchIntelligence /></PageErrorBoundary>} />
-            <Route path="knowledge-graphs" element={<PageErrorBoundary pageName="KnowledgeGraphs"><KnowledgeGraphs /></PageErrorBoundary>} />
-            <Route path="findings" element={<PageErrorBoundary pageName="FindingsVerification"><FindingsVerification /></PageErrorBoundary>} />
-            <Route path="verification" element={<PageErrorBoundary pageName="RealityVerificationCenter"><RealityVerificationCenter /></PageErrorBoundary>} />
-            <Route path="uncertainty" element={<PageErrorBoundary pageName="UncertaintyEngine"><UncertaintyEngine /></PageErrorBoundary>} />
-            <Route path="skills" element={<PageErrorBoundary pageName="SkillIntelligence"><SkillIntelligence /></PageErrorBoundary>} />
-            <Route path="auth-audit" element={<PageErrorBoundary pageName="AuthAudit"><AuthAudit /></PageErrorBoundary>} />
-            <Route path="timeline" element={<PageErrorBoundary pageName="MissionTimeline"><MissionTimeline /></PageErrorBoundary>} />
-            <Route path="learning" element={<PageErrorBoundary pageName="LearningAnalytics"><LearningAnalytics /></PageErrorBoundary>} />
-            <Route path="differential-auth" element={<PageErrorBoundary pageName="DifferentialAuth"><DifferentialAuth /></PageErrorBoundary>} />
-            <Route path="visual-context" element={<PageErrorBoundary pageName="VisualContext"><VisualContext /></PageErrorBoundary>} />
-            <Route path="admin" element={<PageErrorBoundary pageName="Administration"><Administration /></PageErrorBoundary>} />
-            <Route path="report/:sessionId" element={<PageErrorBoundary pageName="MissionReport"><MissionReport /></PageErrorBoundary>} />
-            <Route path="reasoning" element={<PageErrorBoundary pageName="Reasoning"><ReasoningTrace /></PageErrorBoundary>} />
-            <Route path="cognition" element={<PageErrorBoundary pageName="Cognition"><CognitionDashboard /></PageErrorBoundary>} />
-            <Route path="hypotheses" element={<PageErrorBoundary pageName="Hypotheses"><Hypotheses /></PageErrorBoundary>} />
-            <Route path="attack-chains" element={<PageErrorBoundary pageName="AttackChains"><AttackChains /></PageErrorBoundary>} />
+            <Route index element={<PageErrorBoundary pageName="Overview"><Suspense fallback={<PageFallback />}><Overview /></Suspense></PageErrorBoundary>} />
+            <Route path="mission-control" element={<PageErrorBoundary pageName="MissionControl"><Suspense fallback={<PageFallback />}><MissionControl /></Suspense></PageErrorBoundary>} />
+            <Route path="intelligence" element={<PageErrorBoundary pageName="ResearchIntelligence"><Suspense fallback={<PageFallback />}><ResearchIntelligence /></Suspense></PageErrorBoundary>} />
+            <Route path="knowledge-graphs" element={<PageErrorBoundary pageName="KnowledgeGraphs"><Suspense fallback={<PageFallback />}><KnowledgeGraphs /></Suspense></PageErrorBoundary>} />
+            <Route path="findings" element={<PageErrorBoundary pageName="FindingsVerification"><Suspense fallback={<PageFallback />}><FindingsVerification /></Suspense></PageErrorBoundary>} />
+            <Route path="verification" element={<PageErrorBoundary pageName="RealityVerificationCenter"><Suspense fallback={<PageFallback />}><RealityVerificationCenter /></Suspense></PageErrorBoundary>} />
+            <Route path="uncertainty" element={<PageErrorBoundary pageName="UncertaintyEngine"><Suspense fallback={<PageFallback />}><UncertaintyEngine /></Suspense></PageErrorBoundary>} />
+            <Route path="skills" element={<PageErrorBoundary pageName="SkillIntelligence"><Suspense fallback={<PageFallback />}><SkillIntelligence /></Suspense></PageErrorBoundary>} />
+            <Route path="auth-audit" element={<PageErrorBoundary pageName="AuthAudit"><Suspense fallback={<PageFallback />}><AuthAudit /></Suspense></PageErrorBoundary>} />
+            <Route path="timeline" element={<PageErrorBoundary pageName="MissionTimeline"><Suspense fallback={<PageFallback />}><MissionTimeline /></Suspense></PageErrorBoundary>} />
+            <Route path="learning" element={<PageErrorBoundary pageName="LearningAnalytics"><Suspense fallback={<PageFallback />}><LearningAnalytics /></Suspense></PageErrorBoundary>} />
+            <Route path="differential-auth" element={<PageErrorBoundary pageName="DifferentialAuth"><Suspense fallback={<PageFallback />}><DifferentialAuth /></Suspense></PageErrorBoundary>} />
+            <Route path="visual-context" element={<PageErrorBoundary pageName="VisualContext"><Suspense fallback={<PageFallback />}><VisualContext /></Suspense></PageErrorBoundary>} />
+            <Route path="admin" element={<PageErrorBoundary pageName="Administration"><Suspense fallback={<PageFallback />}><Administration /></Suspense></PageErrorBoundary>} />
+            <Route path="report/:sessionId" element={<PageErrorBoundary pageName="MissionReport"><Suspense fallback={<PageFallback />}><MissionReport /></Suspense></PageErrorBoundary>} />
+            <Route path="reasoning" element={<PageErrorBoundary pageName="Reasoning"><Suspense fallback={<PageFallback />}><ReasoningTrace /></Suspense></PageErrorBoundary>} />
+            <Route path="cognition" element={<PageErrorBoundary pageName="Cognition"><Suspense fallback={<PageFallback />}><CognitionDashboard /></Suspense></PageErrorBoundary>} />
+            <Route path="hypotheses" element={<PageErrorBoundary pageName="Hypotheses"><Suspense fallback={<PageFallback />}><Hypotheses /></Suspense></PageErrorBoundary>} />
+            <Route path="attack-chains" element={<PageErrorBoundary pageName="AttackChains"><Suspense fallback={<PageFallback />}><AttackChains /></Suspense></PageErrorBoundary>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

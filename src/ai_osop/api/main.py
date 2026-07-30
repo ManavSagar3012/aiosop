@@ -775,11 +775,25 @@ from ai_osop.api.deps import assert_engagement_access  # noqa: E402
 
 
 async def get_websocket_operator(websocket: WebSocket) -> Dict[str, Any]:
+    # Order: query param (legacy compat) -> Authorization header -> Sec-WebSocket-Protocol.
+    # The protocol channel is how browser clients pass a bearer token without
+    # putting it in the URL (which leaks into proxy logs, history, Referer).
     token = websocket.query_params.get("token")
     if not token:
         auth_header = websocket.headers.get("authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ", 1)[1]
+    if not token:
+        proto = websocket.headers.get("sec-websocket-protocol")
+        if proto:
+            # Accept either a bare token or a "bearer.<token>" scheme entry.
+            for part in proto.split(","):
+                part = part.strip()
+                if part.lower().startswith("bearer."):
+                    token = part[len("bearer."):]
+                    break
+                if part and not part.startswith("osop"):
+                    token = part
     if not token:
         raise HTTPException(status_code=403, detail="Missing token")
     return await verify_ws_token(token)
@@ -800,7 +814,9 @@ async def websocket_engagement(
     session=Depends(get_websocket_session),
 ):
     """WebSocket for real-time engagement updates."""
-    await websocket.accept()
+    # Must echo back the FIRST supported subprotocol ("osop") so the browser's
+    # WebSocket handshake succeeds — the client sends ["osop", "bearer.<token>"].
+    await websocket.accept(subprotocol="osop")
     orch = state["orchestrator"]
     # AIOSOP-WS-PUSH-001 (2026-07-03): the handler was request-response ONLY, so the
     # dashboard's heartbeat/telemetry (LATENCY / THROUGHPUT) and live phase updates

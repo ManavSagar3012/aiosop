@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { API_BASE, authHeaders } from '../services/api';
+import React from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Card } from '../components/shared/Card';
 import { EmptyState } from '../components/shared/EmptyState';
 import { Skeleton } from '../components/shared/Skeleton';
+import { useApiData } from '../hooks/useApiData';
 import { ChevronLeft, Download, Shield, FileText, Printer } from 'lucide-react';
 
 interface ReportData {
@@ -15,34 +15,13 @@ interface ReportData {
 
 export const MissionReport: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const [report, setReport] = useState<ReportData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: report, loading } = useApiData<ReportData>(
+    sessionId ? `/engagements/${sessionId}/report` : null
+  );
 
   const handlePrint = () => {
     window.print();
   };
-
-  useEffect(() => {
-    const fetchReport = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/engagements/${sessionId}/report`, {
-          headers: authHeaders()
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setReport(data);
-        }
-      } catch (e) {
-        console.error("Failed to fetch report", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (sessionId) {
-      fetchReport();
-    }
-  }, [sessionId]);
 
   if (loading) {
     return (

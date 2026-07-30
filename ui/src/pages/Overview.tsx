@@ -213,7 +213,7 @@ export const Overview: React.FC = () => {
                   Active Swarm Engine
                 </div>
                 <div className="flex items-center gap-4">
-                  <Cpu size={22} className="text-primary-fixed animate-pulse-neon" />
+                  <Cpu size={22} className="text-primary-fixed" />
                   <div className="font-display-lg text-display-lg text-primary-fixed leading-none">
                     {(agents || []).length}
                   </div>

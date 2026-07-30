@@ -1,12 +1,12 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Activity, Brain, AlertTriangle, Link2, Target, Zap } from 'lucide-react';
-import { API_BASE, authHeaders } from '../services/api';
+import React from 'react';
+import { Activity, Brain, AlertTriangle, Link2, Target } from 'lucide-react';
 import { Card } from '../components/shared/Card';
 import { StatTile } from '../components/shared/StatTile';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
 import { Skeleton } from '../components/shared/Skeleton';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useApiData } from '../hooks/useApiData';
 
 interface CognitionSummary {
   reasoning_trace: { total_steps: number; confirmed: number; refuted: number; chains: number; pivots: number; };
@@ -20,34 +20,10 @@ interface CognitionSummary {
 
 export const CognitionDashboard: React.FC = () => {
   const sessionId = useIntelligenceStore((s) => s.sessionId);
-  const [summary, setSummary] = useState<CognitionSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchSummary = useCallback(async () => {
-    if (!sessionId) { setLoading(false); return; }
-    try {
-      const resp = await fetch(`${API_BASE}/engagements/${sessionId}/cognition-summary`, {
-        headers: authHeaders(),
-      });
-      if (resp.ok) {
-        setSummary(await resp.json());
-        setError(null);
-      } else {
-        setError(`API Error: ${resp.status}`);
-      }
-    } catch (e: any) {
-      setError(e.message || 'Network error');
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
-
-  useEffect(() => {
-    fetchSummary();
-    const interval = setInterval(fetchSummary, 10000);
-    return () => clearInterval(interval);
-  }, [fetchSummary]);
+  const { data: summary, loading, error, refetch } = useApiData<CognitionSummary>(
+    sessionId ? `/engagements/${sessionId}/cognition-summary` : null,
+    { pollInterval: 10000 }
+  );
 
   if (loading && !summary) {
     return (
@@ -63,7 +39,7 @@ export const CognitionDashboard: React.FC = () => {
   }
 
   if (error && !summary) {
-    return <ErrorState message={error} onRetry={fetchSummary} />;
+    return <ErrorState message={error} onRetry={refetch} />;
   }
 
   if (!sessionId) {

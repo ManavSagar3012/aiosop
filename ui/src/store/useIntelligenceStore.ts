@@ -90,6 +90,7 @@ interface GraphData {
 interface IntelligenceState {
   sessionId: string | null
   hasCheckedSession: boolean
+  lastEventAt: Date | null
   findings: Finding[]
   verifications: VerificationRequest[]
   uncertainties: Uncertainty[]
@@ -100,8 +101,11 @@ interface IntelligenceState {
   reasoningTrace: any[]
   cognitionSummary: any | null
   criticReview: any[]
+  invariants: any[]
+  payouts: any[]
   setSessionId: (id: string) => void
   setHasCheckedSession: (checked: boolean) => void
+  setLastEventAt: (at: Date) => void
   appendFinding: (finding: Finding) => void
   updateFinding: (id: string, updates: Partial<Finding>) => void
   setFindings: (findings: Finding[]) => void
@@ -118,11 +122,14 @@ interface IntelligenceState {
   setReasoningTrace: (trace: any[]) => void
   setCognitionSummary: (summary: any) => void
   setCriticReview: (review: any[]) => void
+  setInvariants: (invariants: any[]) => void
+  setPayouts: (payouts: any[]) => void
 }
 
 export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   sessionId: null,
   hasCheckedSession: false,
+  lastEventAt: null,
   findings: [],
   verifications: [],
   uncertainties: [],
@@ -133,6 +140,8 @@ export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   reasoningTrace: [],
   cognitionSummary: null,
   criticReview: [],
+  invariants: [],
+  payouts: [],
   setSessionId: (sessionId) => set({
     sessionId,
     findings: [],
@@ -144,8 +153,11 @@ export const useIntelligenceStore = create<IntelligenceState>((set) => ({
     reasoningTrace: [],
     cognitionSummary: null,
     criticReview: [],
+    invariants: [],
+    payouts: [],
   }),
   setHasCheckedSession: (hasCheckedSession) => set({ hasCheckedSession }),
+  setLastEventAt: (lastEventAt) => set({ lastEventAt }),
   appendFinding: (finding) => set((state) => ({ 
     findings: [...state.findings.filter(f => f.id !== finding.id), finding] 
   })),
@@ -172,4 +184,6 @@ export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   setReasoningTrace: (reasoningTrace) => set({ reasoningTrace }),
   setCognitionSummary: (cognitionSummary) => set({ cognitionSummary }),
   setCriticReview: (criticReview) => set({ criticReview }),
+  setInvariants: (invariants) => set({ invariants }),
+  setPayouts: (payouts) => set({ payouts }),
 }))

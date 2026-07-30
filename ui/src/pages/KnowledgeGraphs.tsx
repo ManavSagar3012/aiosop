@@ -84,14 +84,14 @@ export const KnowledgeGraphs: React.FC = () => {
 
   // React Flow color tokens — identical hexes as before, now sourced from styles.css.
   const flowColors = useMemo(() => ({
-    edgeStroke:     cssVar('--on-surface-variant', '#baccb0'),
-    edgeLabelFill:  cssVar('--on-surface', '#e5e2e3'),
-    edgeLabelBg:    cssVar('--surface-container-low', '#0a0a0b'),
-    bgGrid:         cssVar('--surface-container-high', '#1a1a1d'),
-    vuln:           cssVar('--error', '#ff3131'),
-    cloudResource:  cssVar('--primary', '#39ff14'),
-    asset:          cssVar('--secondary', '#00f1fd'),
-    miniMapDefault: cssVar('--surface-container-highest', '#2a2a2d'),
+    edgeStroke:     cssVar('--on-surface-variant', '#93a3b3'),
+    edgeLabelFill:  cssVar('--on-surface', '#e8edf2'),
+    edgeLabelBg:    cssVar('--surface-container-low', '#0e141b'),
+    bgGrid:         cssVar('--surface-container-high', '#1b252f'),
+    vuln:           cssVar('--error', '#f87171'),
+    cloudResource:  cssVar('--primary', '#22d3ee'),
+    asset:          cssVar('--secondary', '#38bdf8'),
+    miniMapDefault: cssVar('--surface-container-highest', '#243040'),
   }), []);
 
   // 1. Graph Highlighting Logic
@@ -212,7 +212,7 @@ export const KnowledgeGraphs: React.FC = () => {
         }
 
         // Apply Layout Positions
-        let pos = { x: 0, y: 0 };
+        let pos: { x: number; y: number };
         if (connectedNodeIds.has(n.id)) {
             const dNode = dagreGraph.node(n.id);
             pos = { x: (dNode?.x || 0) - NODE_WIDTH / 2, y: (dNode?.y || 0) - NODE_HEIGHT / 2 };
@@ -289,8 +289,8 @@ export const KnowledgeGraphs: React.FC = () => {
             key={g}
             onClick={() => setActiveGraph(g as any)}
             className={`px-8 py-2.5 font-label-caps text-[11px] border transition-all ${
-              activeGraph === g 
-                ? 'bg-primary-container/10 border-primary-fixed text-primary-fixed glow-cyan shadow-[inset_0_0_10px_rgba(57,255,20,0.1)]' 
+              activeGraph === g
+                ? 'bg-secondary/10 border-secondary text-secondary shadow-sm'
                 : 'bg-surface-container border-outline-variant text-on-surface-variant hover:bg-surface-variant hover:text-on-surface'
             }`}
           >

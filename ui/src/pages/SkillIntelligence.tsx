@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { API_BASE, authHeaders } from '../services/api';
+import React from 'react';
 import { Card } from '../components/shared/Card';
 import { StatTile } from '../components/shared/StatTile';
 import { DataTable, Column } from '../components/shared/DataTable';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
+import { useApiData } from '../hooks/useApiData';
 import { Zap, Target, DollarSign, Layers, Search, Activity } from 'lucide-react';
 
 interface SkillStats {
@@ -41,41 +41,20 @@ interface SkillStats {
 type SkillRow = SkillStats['top_skills'][number] & { _key: string };
 
 export const SkillIntelligence: React.FC = () => {
-  const [stats, setStats] = useState<SkillStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const fetchStats = useCallback(async () => {
-    try {
-      const response = await fetch(`${API_BASE}/system/skills/stats`, {
-        headers: authHeaders()
-      });
-      if (response.ok) {
-        const data = await response.json();
-
+  const { data: stats, loading, error, refetch } = useApiData<SkillStats>(
+    '/system/skills/stats',
+    {
+      pollInterval: 10000,
+      transform: (data: any) => {
         // V6.5 Fix: Filter out unrelated historical skills (Disk Imaging, Active Directory, etc)
         const relevantCategories = ["web", "auth", "logic", "graphql", "api", "mobile", "recon", "explo", "bypass", "reset", "oauth", "mfa", "session"];
         const filtered = (data.top_skills || []).filter((s: any) =>
            relevantCategories.some(cat => s.id.toLowerCase().includes(cat))
         );
-
-        setStats({...data, top_skills: filtered});
-        setError(null);
-      } else {
-        setError(`API Error: ${response.status}`);
-      }
-    } catch (e: any) {
-      console.error("Failed to fetch skill stats", e);
-      setError(e.message || "Network error");
-    } finally {
-      setLoading(false);
+        return { ...data, top_skills: filtered };
+      },
     }
-  }, []);
-
-  useEffect(() => {
-    fetchStats();
-    const interval = setInterval(fetchStats, 10000);
-    return () => clearInterval(interval);
-  }, [fetchStats]);
+  );
 
   if (loading && !stats) {
     return (
@@ -89,7 +68,7 @@ export const SkillIntelligence: React.FC = () => {
   if (error && !stats) {
     return (
       <div className="h-full flex items-center justify-center">
-        <ErrorState message={error} onRetry={fetchStats} />
+        <ErrorState message={error} onRetry={refetch} />
       </div>
     );
   }
