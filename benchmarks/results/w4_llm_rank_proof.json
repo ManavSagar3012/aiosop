@@ -1,0 +1,5 @@
+{
+  "picked_id": "h-sqli-login",
+  "picked_category": "sqli",
+  "note": "llama3 ranked by attack-chain value; arithmetic alone would pick h-dirlist (conf 0.95)"
+}
