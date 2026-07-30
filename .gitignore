@@ -287,3 +287,4 @@ mcp_launch.s*.err
 # counts are mutated on every run; do not commit churn.
 /src/ai_osop/agents/.skill_stats.json
 
+ui/.dev_token
