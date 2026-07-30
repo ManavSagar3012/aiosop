@@ -50,6 +50,7 @@ class LoopResult:
     completed: bool = False
     aborted: bool = False
     error: Optional[str] = None
+    depends_on_history: bool = True  # whether prompt included all observations
 
 
 class _ParseError(ValueError):
@@ -165,7 +166,18 @@ class ActionLoop:
                 }
             )
             obs = step.observation if step.error is None else {"error": step.error}
-            messages.append({"role": "user", "content": "Observation: " + json.dumps(obs)})
+            # Explicit replan hint: a failed step carries a one-line self-critique so
+            # the next LLM decision sees both the failing action and the concrete
+            # observation and can change strategy rather than repeat the same call.
+            hint = ""
+            if step.error is not None or step.observation.get("found") is False:
+                hint = " (prior step was unproductive; plan a different tool/param now)"
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Observation: " + json.dumps(obs) + hint,
+                }
+            )
         messages.append({"role": "user", "content": "Pick the next action now."})
         return messages
 

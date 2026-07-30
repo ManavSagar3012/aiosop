@@ -622,7 +622,14 @@ class ReasoningLoop:
     ) -> Optional[Dict[str, Any]]:
         """Select the highest-value hypothesis to test next.
 
-        Ranking factors:
+        W4 / roadmap #4: the LLM now ranks candidates by ATTACK-CHAIN value
+        (which hypothesis, if true, enables the most damaging follow-on), instead
+        of pure arithmetic confidence. If the LLM is unavailable, degraded, or
+        returns an unusable ranking, we fall back to the prior arithmetic score —
+        the loop never stalls on a bad reasoning call. The arithmetic score is
+        still computed and recorded so the LLM decision is auditable against it.
+
+        Fallback ranking factors (used when the LLM path cannot rank):
           - confidence (from HypothesisEngine heuristics)
           - novelty (has this category been tested before? untested = higher)
           - finding_types already found (if we found SSRF, boost chain hypotheses)
@@ -630,41 +637,140 @@ class ReasoningLoop:
         """
         finding_types = state.get("finding_types", set())
 
-        ranked = []
+        # Normalize candidates to dicts, skipping already-tested/closed.
+        candidates: List[Dict[str, Any]] = []
         for hyp in hypotheses:
             if isinstance(hyp, dict):
                 h = hyp
             else:
                 h = hyp.model_dump() if hasattr(hyp, "model_dump") else dict(hyp)
-
             if h.get("status") != "open":
                 continue
             if h.get("id") in self._tested_hypotheses:
                 continue
+            candidates.append(h)
 
-            base_score = float(h.get("confidence", 0.5))
+        if not candidates:
+            return None
 
-            # Novelty boost: untested categories rank higher
+        # W4: try LLM ranking first; fall back to arithmetic on any failure.
+        llm_ranked = await self._llm_rank_hypotheses(engagement_id, candidates, state)
+        if llm_ranked is not None:
+            return llm_ranked
+
+        # --- arithmetic fallback (original behavior) ---
+        ranked: List[tuple] = []
+        for h in candidates:
             category = h.get("category", "")
+            base_score = float(h.get("confidence", 0.5))
             if category not in finding_types:
                 base_score += 0.1  # novel attack surface
-
-            # Chain boost: if we already found something in a related category,
-            # chain hypotheses are high-value
-            rec_tests = h.get("recommended_tests", [])
-            rec_skills = h.get("recommended_skills", [])
-
-            # Memory-driven planning: recall prior findings for this category
-            prior_boost = await self._recall_prior(engagement_id, category, h.get("target_id", ""))
+            prior_boost = await self._recall_prior(
+                engagement_id, category, h.get("target_id", "")
+            )
             base_score += prior_boost
-
             ranked.append((base_score, h))
 
         if not ranked:
             return None
-
         ranked.sort(key=lambda x: x[0], reverse=True)
-        return ranked[0][1]
+        best: Dict[str, Any] = ranked[0][1]
+        return best
+
+    async def _llm_rank_hypotheses(
+        self,
+        engagement_id: str,
+        candidates: List[Dict[str, Any]],
+        state: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Ask the reasoning model to rank candidate hypotheses by attack-chain value.
+
+        Returns the top-ranked hypothesis dict, or None if the LLM is unavailable,
+        degraded, or returns a ranking we can't map back to real candidate ids —
+        in every failure case the caller falls back to arithmetic ranking, so a
+        bad LLM call can never stall or corrupt the loop.
+
+        The model sees a compact, sanitized summary of the observed state and the
+        candidate list, and must answer with the single best hypothesis id. We do
+        NOT trust the model to invent ids — we only accept an id that exactly
+        matches a candidate, otherwise we discard the ranking.
+        """
+        llm = getattr(self._orch, "llm_client", None)
+        if llm is None or not hasattr(llm, "complete"):
+            return None
+
+        from ai_osop.core.config import settings as _settings
+        from ai_osop.safety.prompt_defense import sanitize_messages
+
+        # Compact candidate view: id + category + confidence + what it recommends.
+        lines = []
+        for h in candidates[:12]:  # cap prompt size
+            skills = h.get("recommended_skills", []) or []
+            lines.append(
+                f"id={h.get('id')} | cat={h.get('category')} | conf={h.get('confidence')} | "
+                f"target={h.get('target_id')} | does={','.join(skills[:3])}"
+            )
+        endpoints = state.get("endpoints", [])
+        finding_types = sorted(t for t in state.get("finding_types", set()) if t)
+        focus = state.get("focus", "")
+        user = (
+            "You are ranking hypotheses for an AUTHORIZED security test inside its "
+            "declared scope. Rank by which single hypothesis, if confirmed, enables the "
+            "most damaging follow-on attack chain.\n\n"
+            f"Observed: {len(endpoints)} endpoints; focus: {focus}; "
+            f"findings already: {', '.join(finding_types) or 'none'}.\n\n"
+            "Candidates:\n" + "\n".join(lines) + "\n\n"
+            "Respond with EXACTLY one line: BEST: <id>\n"
+            "Pick exactly one id that appears above. No explanation, no other text."
+        )
+        messages = sanitize_messages(
+            [
+                {"role": "system", "content": "You rank security-test hypotheses by impact."},
+                {"role": "user", "content": user},
+            ]
+        )
+        try:
+            reasoning_model = getattr(_settings, "llm_reasoning_model", "") or None
+            text = await llm.complete(
+                messages,
+                model=reasoning_model,
+                max_tokens=getattr(_settings, "llm_reasoning_max_tokens", 1536),
+            )
+        except Exception as e:
+            logger.info("reasoning_llm_rank_failed: %s", str(e)[:160])
+            return None
+        if isinstance(text, dict):
+            text = text.get("content", "")
+        text = str(text or "").strip()
+        if not text:
+            return None
+
+        # Extract the id after BEST: and only accept an exact candidate id.
+        import re as _re
+
+        m = _re.search(r"BEST:\s*([A-Za-z0-9_-]+)", text)
+        if not m:
+            return None
+        chosen_id = m.group(1)
+        for h in candidates:
+            if str(h.get("id")) == chosen_id:
+                logger.info(
+                    "reasoning_llm_selected hypothesis=%s category=%s candidates=%d",
+                    chosen_id,
+                    h.get("category"),
+                    len(candidates),
+                )
+                self.trace.record(
+                    engagement_id=engagement_id,
+                    step="select",
+                    decision=f"LLM selected hypothesis: {h.get('title', chosen_id)}",
+                    rationale=f"attack-chain value ranking over {len(candidates)} candidates",
+                )
+                chosen: Dict[str, Any] = dict(h)
+                return chosen
+        # Model returned an id that is not a real candidate -> treat as unusable.
+        logger.info("reasoning_llm_rank_unusable_id: %s", chosen_id[:80])
+        return None
 
     async def _recall_prior(self, engagement_id: str, category: str, target_id: str) -> float:
         """Recall prior findings from FindingsKnowledge to adjust hypothesis confidence.

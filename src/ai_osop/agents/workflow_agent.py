@@ -211,6 +211,10 @@ class PlaywrightAgent(BaseAgent):
             return {
                 "status": "partial",
                 "error": "HAR not produced",
+                # Honesty guard (base.py, Phase-1 #7): we navigated and attempted a
+                # HAR flush against the real target — the partial result is genuine
+                # execution evidence, not a fabricated success.
+                "execution_verified": True,
                 "har": har,
                 "navigation": nav,
             }
@@ -229,6 +233,8 @@ class PlaywrightAgent(BaseAgent):
             "user_label": user_label,
             "har_path": har_path,
             "navigation_status": nav.get("status"),
+            # Real nav + HAR flush + extraction ran against the target.
+            "execution_verified": True,
             **inventory,
         }
 

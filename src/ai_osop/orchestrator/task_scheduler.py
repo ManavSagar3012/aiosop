@@ -956,15 +956,20 @@ class TaskScheduler:
         await self._orch.graph_memory.upsert_task(
             task, result_summary={"retry_attempt": task.retry_count}
         )
+        # Recovery rebuilds its active task set from the warm store, not only
+        # from the Redis queue. Persist the incremented retry count and pending
+        # status before the backoff so a process restart cannot resurrect the
+        # prior running row and silently reset the retry budget.
+        await self._orch.session_memory.store_task(task)
         await self._orch._retry_sleep(backoff)
         # Phase-1 issue #6 fix: a retry that goes straight to _assign_task
         # lives ONLY in the in-memory _tasks dict. If the orchestrator
         # restarts between this retry dispatch and execution, the task is
-        # lost — recover_state() only restores from the Redis queue, not
-        # from in-memory state. Re-queue to Redis FIRST so the task is
-        # durable across a restart, THEN attempt immediate assignment. If
-        # assignment fails (no agent available) the task stays queued and
-        # the scheduler loop picks it up on its next tick.
+        # lost — recovery restores its active task set from the warm store
+        # (persisted above), while the queue is still needed to wake normal
+        # scheduler consumers. Re-queue to Redis, THEN attempt immediate
+        # assignment. If assignment fails (no agent available) the task stays
+        # queued and the scheduler loop picks it up on its next tick.
         try:
             await self._orch.session_memory.push_task_queue(
                 f"tasks:{task.engagement_id}", task.model_dump()

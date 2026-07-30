@@ -390,7 +390,9 @@ class ReconAgent(BaseAgent):
                             if resp.status_code not in (404,):
                                 # Path exists (200, 401, 403, 500, etc.) — persist it
                                 ep = self._mk_endpoint(
-                                    probe_url, engagement_id, source="targeted_permutator",
+                                    probe_url,
+                                    engagement_id,
+                                    source="targeted_permutator",
                                 )
                                 await self._persist_endpoint(ep)
                                 self.endpoint_inventory[ep.id] = ep
@@ -483,6 +485,7 @@ class ReconAgent(BaseAgent):
         scope = ScopeEnforcer(self.ctx.scope) if getattr(self.ctx, "scope", None) else None
         spec = None
         found_url = ""
+        attempted = 0  # real HTTP GETs issued (honesty-guard execution evidence)
         async with self.get_governed_client(tool="recon") as session:
             for cand in candidates:
                 if scope is not None:
@@ -493,6 +496,7 @@ class ReconAgent(BaseAgent):
                         continue  # out of scope / invalid -> skip
                 try:
                     resp = await session.get(cand, timeout=10.0)
+                    attempted += 1  # a request was issued, regardless of status
                     if resp.status_code != 200:
                         continue
                     doc = resp.json()
@@ -504,9 +508,15 @@ class ReconAgent(BaseAgent):
         if spec is None:
             return {
                 "status": "success",
+                # Honesty guard (base.py, Phase-1 #7): the probe genuinely ran (we
+                # issued in-scope HTTP GETs to candidate spec URLs) and reported an
+                # honest zero-result. execution_verified = work attempted, NOT a
+                # finding was produced — a true negative is still verifiable execution.
+                "execution_verified": attempted > 0,
                 "target": target,
                 "spec_found": False,
                 "endpoints_found": 0,
+                "candidates_probed": attempted,
             }
         descriptors = parse_spec(spec, base_url=payload.get("base_url") or target)
         added = 0
@@ -532,6 +542,8 @@ class ReconAgent(BaseAgent):
         logger.info("openapi_ingested", spec_url=found_url, endpoints=added)
         return {
             "status": "success",
+            # A spec was found and parsed: execution is verifiable by construction.
+            "execution_verified": True,
             "target": target,
             "spec_found": True,
             "spec_url": found_url,
@@ -830,32 +842,40 @@ class ReconAgent(BaseAgent):
 
         # 5a. Certificate Transparency (crt.sh) — passive subdomain discovery
         try:
-            ct_result = await self._execute_cert_transparency({
-                "domain": domain,
-                "engagement_id": self.ctx.current_task.engagement_id,
-            })
+            ct_result = await self._execute_cert_transparency(
+                {
+                    "domain": domain,
+                    "engagement_id": self.ctx.current_task.engagement_id,
+                }
+            )
             logger.info(f"CT logs found {ct_result.get('subdomains_found', 0)} subdomains")
         except Exception as e:
             logger.warning(f"CT log lookup failed: {e}")
 
         # 5b. Wayback Machine — historical URL discovery
         try:
-            wb_result = await self._execute_wayback_discovery({
-                "domain": domain,
-                "engagement_id": self.ctx.current_task.engagement_id,
-            })
+            wb_result = await self._execute_wayback_discovery(
+                {
+                    "domain": domain,
+                    "engagement_id": self.ctx.current_task.engagement_id,
+                }
+            )
             logger.info(f"Wayback found {wb_result.get('urls_found', 0)} historical URLs")
         except Exception as e:
             logger.warning(f"Wayback discovery failed: {e}")
 
         # 5c. WAF Detection — identify WAF for context-aware payload generation
         try:
-            waf_result = await self._execute_waf_detection({
-                "domain": domain,
-                "engagement_id": self.ctx.current_task.engagement_id,
-            })
+            waf_result = await self._execute_waf_detection(
+                {
+                    "domain": domain,
+                    "engagement_id": self.ctx.current_task.engagement_id,
+                }
+            )
             if waf_result.get("waf_detected"):
-                logger.info(f"WAF detected: {waf_result['waf_detected']} (signals: {waf_result['waf_signals']})")
+                logger.info(
+                    f"WAF detected: {waf_result['waf_detected']} (signals: {waf_result['waf_signals']})"
+                )
         except Exception as e:
             logger.warning(f"WAF detection failed: {e}")
 
@@ -880,7 +900,9 @@ class ReconAgent(BaseAgent):
         # (always) plus any discovered endpoints to the graph. Surface that verifiable
         # execution so a real recon is not downgraded to error for lacking the flag —
         # mirrors vuln_agent's `execution_verified = ... or bool(all_endpoints)`.
-        execution_verified = bool(self.asset_inventory) or bool(self.endpoint_inventory) or endpoints_found > 0
+        execution_verified = (
+            bool(self.asset_inventory) or bool(self.endpoint_inventory) or endpoints_found > 0
+        )
         return {
             "status": "success",
             "execution_verified": execution_verified,
@@ -1218,9 +1240,7 @@ class ReconAgent(BaseAgent):
                                         js_auth_req = (
                                             user_label != "anonymous"
                                             if is_js_new
-                                            else self.endpoint_inventory[
-                                                script_url
-                                            ].auth_required
+                                            else self.endpoint_inventory[script_url].auth_required
                                         )
                                         js_final_label = (
                                             user_label
@@ -1351,7 +1371,10 @@ class ReconAgent(BaseAgent):
         may not publicize — a core recon technique for elite researchers.
         Uses the governed client so the egress is scope-checked + rate-limited.
         """
-        domain = payload.get("domain") or payload.get("url", "").replace("https://", "").replace("http://", "").split("/")[0]
+        domain = (
+            payload.get("domain")
+            or payload.get("url", "").replace("https://", "").replace("http://", "").split("/")[0]
+        )
         if not domain:
             return {"status": "failed", "error": "domain parameter is required"}
 
@@ -1365,12 +1388,17 @@ class ReconAgent(BaseAgent):
                 resp = await client.get(f"https://crt.sh/?q=%.{domain}&output=json")
                 if resp.status_code == 200:
                     import json as _json
+
                     try:
                         data = _json.loads(resp.text)
                         for entry in data:
                             for name in entry.get("name_value", "").split("\n"):
                                 name = name.strip().lower()
-                                if name and name.endswith(f".{domain}") and name not in found_subdomains:
+                                if (
+                                    name
+                                    and name.endswith(f".{domain}")
+                                    and name not in found_subdomains
+                                ):
                                     found_subdomains.append(name)
                     except Exception:
                         pass
@@ -1407,7 +1435,10 @@ class ReconAgent(BaseAgent):
         from the current site — old API paths, deprecated admin panels,
         removed features that are still live. This is a core recon technique.
         """
-        domain = payload.get("domain") or payload.get("url", "").replace("https://", "").replace("http://", "").split("/")[0]
+        domain = (
+            payload.get("domain")
+            or payload.get("url", "").replace("https://", "").replace("http://", "").split("/")[0]
+        )
         if not domain:
             return {"status": "failed", "error": "domain parameter is required"}
 
@@ -1423,6 +1454,7 @@ class ReconAgent(BaseAgent):
                 )
                 if resp.status_code == 200:
                     import json as _json
+
                     try:
                         data = _json.loads(resp.text)
                         if len(data) > 1:  # first row is headers

@@ -107,4 +107,4 @@ testpaths = ["tests"]
 # (not installed, no conftest) so the whole suite errored on collection. Putting
 # src on sys.path lets `pytest` run out-of-the-box without `pip install -e .`.
 pythonpath = ["src"]
-addopts = "--cov=src/ai_osop --cov-report=term-missing --cov-report=html --cov-fail-under=55 --timeout=120 --timeout-method=thread"
+addopts = "--cov=src/ai_osop --cov-report=term-missing --cov-report=html --cov-fail-under=70 --timeout=120 --timeout-method=thread"

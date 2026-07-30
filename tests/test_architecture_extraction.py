@@ -121,6 +121,7 @@ class TestTaskScheduler:
         result = await scheduler._maybe_retry(task, {"error": "test"})
         assert result is True
         assert task.retry_count == 1
+        scheduler._orch.session_memory.store_task.assert_awaited_once_with(task)
 
     async def test_maybe_retry_exhausted_sends_to_dlq(self, scheduler):
         """_maybe_retry should send to DLQ when retries exhausted."""

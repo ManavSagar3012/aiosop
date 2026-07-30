@@ -21,6 +21,27 @@ _EMBED_DIMS = 1536  # default; overridden by settings.llm_embedding_dim
 # because an asyncio.Semaphore binds to the running loop (module import has no loop).
 _llm_semaphore: Optional[asyncio.Semaphore] = None
 
+# Emitted exactly once per process so silent mock mode can no longer pretend to
+# be autonomous. See tests/test_coverage_and_mock_honesty.py.
+_MOCK_WARNING_EMITTED = False
+
+
+def _announce_mock_mode_once() -> None:
+    """Log a one-time warning that completions/embeddings are stubbed out.
+
+    Without this, ``OSOP_MOCK_LLM=true`` produces empty strings and pseudo-embeddings
+    with no signal, which is how the platform convinced itself it was thinking
+    while running on canned templates.
+    """
+    global _MOCK_WARNING_EMITTED
+    if _MOCK_WARNING_EMITTED:
+        return
+    llm_logger.warning(
+        "mock_llm_active_empty_completions",
+        message="LLM client returning empty strings and pseudo-embeddings. Set OSOP_MOCK_LLM=false to disable",
+    )
+    _MOCK_WARNING_EMITTED = True
+
 
 def _completion_gate() -> asyncio.Semaphore:
     global _llm_semaphore
@@ -85,6 +106,7 @@ class LiteLLMClient:
         """
 
         if settings.mock_llm:
+            _announce_mock_mode_once()
             return ""
 
         safe_messages = sanitize_messages(messages)
@@ -188,6 +210,7 @@ class LiteLLMClient:
             model or getattr(settings, "llm_embedding_model", None) or "text-embedding-3-small"
         )
         if settings.mock_llm:
+            _announce_mock_mode_once()
             return _mock_embedding(text)
 
         try:
