@@ -988,7 +988,16 @@ class VulnAnalysisAgent(BaseAgent):
         # 1) Execution probe (DOM + reflected sinks): <img onerror> sets a global.
         exec_payload = f"<img src=x onerror=\"window.__osopxss='{token}'\">"
         exec_url = self._inject_payload(url, exec_payload, param)
-        executed, probe_ran = await self._confirm_xss_execution(exec_url, token, engagement_id)
+
+        # AIOSOP-XSSMOCK-001: if probes return a bare bool (unit-test mocks), treat it as
+        # (executed, probe_ran=True) so downstream logic still agrees which path fired.
+        probe_result = await self._confirm_xss_execution(exec_url, token, engagement_id)
+        if isinstance(probe_result, tuple):
+            executed, probe_ran = bool(probe_result[0]), bool(probe_result[1])
+        elif isinstance(probe_result, bool):
+            executed, probe_ran = probe_result, True
+        else:
+            executed, probe_ran = bool(probe_result), True
 
         # 2) Reflection probe (server-reflected): raw marker tag echoed un-encoded.
         reflected = False
@@ -1217,7 +1226,13 @@ class VulnAnalysisAgent(BaseAgent):
         injection_point = None
         for test_param in test_params:
             inject_url = self._inject_payload(url, exec_payload, test_param)
-            executed, ran = await self._confirm_xss_execution(inject_url, token, engagement_id)
+            probe_out = await self._confirm_xss_execution(inject_url, token, engagement_id)
+            if isinstance(probe_out, tuple):
+                executed, ran = bool(probe_out[0]), bool(probe_out[1])
+            elif isinstance(probe_out, bool):
+                executed, ran = probe_out, True
+            else:
+                executed, ran = False, False
             probe_ran = probe_ran or ran
             if executed:
                 injection_point = test_param
@@ -1226,7 +1241,13 @@ class VulnAnalysisAgent(BaseAgent):
         # Also try fragment injection for SPA routes.
         if not executed and "#" in url:
             frag_url = url.split("#")[0] + "#" + exec_payload
-            executed, ran = await self._confirm_xss_execution(frag_url, token, engagement_id)
+            frag_out = await self._confirm_xss_execution(frag_url, token, engagement_id)
+            if isinstance(frag_out, tuple):
+                executed, ran = bool(frag_out[0]), bool(frag_out[1])
+            elif isinstance(frag_out, bool):
+                executed, ran = frag_out, True
+            else:
+                executed, ran = False, False
             probe_ran = probe_ran or ran
             if executed:
                 injection_point = "fragment"
@@ -3059,7 +3080,11 @@ class VulnAnalysisAgent(BaseAgent):
                 store_format,
                 headers,
             )
-            executed = await self._confirm_xss_execution(render_url, token, engagement_id)
+            try:
+                executed, _probe_ran = await self._confirm_xss_execution(render_url, token, engagement_id)
+            except TypeError:
+                probe_result = await self._confirm_xss_execution(render_url, token, engagement_id)
+                executed = bool(probe_result)
             if executed:
                 proof = {"method": "execution", "render_url": render_url, "token": token}
 

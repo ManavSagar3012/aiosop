@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.models import Task, Vulnerability
+from ai_osop.core.validation_ledger import ValidatedFindingEvent, ValidationLedger
 
 # Max chars of an HTTP response body persisted as finding evidence. Bounds graph
 # storage and avoids dumping unbounded/PII-heavy bodies while keeping enough of
@@ -12,17 +13,45 @@ _EVIDENCE_BODY_SNIPPET = 2048
 
 class BaseVulnerabilityAgent(BaseAgent):
     """
-    Base class for all vulnerability scanner agents, providing
-    standardized finding persistence and error handling.
+    Standardized vulnerability scanner, providing finding persistence and the
+    audit-coupled validation ledger write so every finding is tracked.
     """
 
+    async def _create_ledger(self) -> ValidationLedger:
+        ledger = ValidationLedger(self.ctx.session_memory)
+        await ledger.initialize()
+        return ledger
+
     async def persist_finding(self, vuln: Vulnerability) -> None:
-        """Persist a vulnerability finding to the Graph Memory."""
+        """Persist a vuln to graph + audit ledger. Idempotent against duplicate IDs."""
         try:
             await self.ctx.graph_memory.add_vulnerability(vuln)
             self.findings[vuln.id] = vuln
         except Exception as e:
             self.logger.error(f"Failed to add vulnerability {vuln.id} to graph: {e}")
+
+        state = "manual_review" if vuln.confidence < 0.7 else "validated"
+        event = ValidatedFindingEvent(
+            id=finding_event_id(vuln),
+            vuln_id=vuln.id,
+            endpoint_id=vuln.endpoint_id or "",
+            state=state,
+            evidence_summary=vuln.evidence[0].get("proof", "") if vuln.evidence else "",
+            trust_score=vuln.confidence,
+        )
+        try:
+            ledger = await self._create_ledger()
+            await ledger.record(event)
+        except Exception as e:
+            # Never let ledger noise kill the pipeline; log only when logger is real.
+            log = getattr(self, "logger", None)
+            if log is not None and hasattr(log, "warning"):
+                log.warning("validation_ledger_record_failed", vuln_id=vuln.id, error=str(e))
+
+
+def finding_event_id(vuln: Vulnerability) -> str:
+    """Stable ID used by the ledger for later state transitions and audits."""
+    return f"ledger-{vuln.id}"
 
     def _build_evidence(
         self,
