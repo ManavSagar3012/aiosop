@@ -87,10 +87,27 @@ class MCPExecutionGate:
 
     _ALLOWED_PARAMS: Dict[str, set] = {
         "scan_endpoint": {"url", "method", "payload", "headers", "endpoint", "target"},
-        "capture_session": {"target_host", "username", "password", "register_url", "login_url", "credentials", "user_label", "scope_hosts", "headers"},
+        "capture_session": {
+            "target_host",
+            "username",
+            "password",
+            "register_url",
+            "login_url",
+            "credentials",
+            "user_label",
+            "scope_hosts",
+            "headers",
+        },
         "fetch_page": {"url", "timeout_s", "headers", "params"},
         "write_report": {"title", "body", "findings"},
-        "spa_harvest": {"target", "url", "scope_hosts", "engagement_id", "js_route_limit", "max_bundle_fetches"},
+        "spa_harvest": {
+            "target",
+            "url",
+            "scope_hosts",
+            "engagement_id",
+            "js_route_limit",
+            "max_bundle_fetches",
+        },
     }
 
     _ALLOWED_TYPES: Dict[str, tuple] = {
