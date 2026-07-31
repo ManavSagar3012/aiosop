@@ -1,62 +1,86 @@
-"""A2 metrics module: prometheus-compatible counters for platform analytics.
+"""Minimal metrics_a2 logic: renderable by Prometheus, produces outputs assertable in tests.
 
-Originally part of the commit titled 'A2 Validate Ledger Metrics' that was lost;
-recreated here so instrumentation helpers stay in the codebase alongside the
-registry factory via ``MetricsRegistry``.
+Fenced from import cycles against core.metrics' MetricsRegistry.
 """
 
-from __future__ import annotations
+from contextlib import contextmanager
+from typing import Any, Dict
 
-from typing import Any, Dict, List
+from prometheus_client import REGISTRY, Counter
 
-from ai_osop.core.metrics import MetricsRegistry
+# Scoped name->collector map to avoid global collisions.
+_COUNTERS: Dict[str, Counter] = {}
+
+
+def _get(name: str, labels: tuple = ()) -> Counter:
+    key = f"{name}{{'sorted_labels':{labels}}}"
+    if key not in _COUNTERS:
+        for coll in list(REGISTRY._collector_to_names):
+            if getattr(coll, "_name", "") == name:
+                _COUNTERS[key] = coll
+                return coll
+        c = Counter(name, name, labels, registry=REGISTRY)
+        _COUNTERS[key] = c
+    return _COUNTERS[key]
 
 
 def reset() -> None:
-    MetricsRegistry.reset()
+    # Unregister our own collectors from the default prometheus REGISTRY so a
+    # reset truly clears state between tests. Iterate over a copy to be safe.
+    for coll in list(REGISTRY._collector_to_names.keys()):
+        names = REGISTRY._collector_to_names.get(coll) or []
+        if any(n.startswith("ai_osop_a2_") for n in names):
+            try:
+                REGISTRY.unregister(coll)
+            except KeyError:
+                pass
+    _COUNTERS.clear()
+
 
 
 def findings_detected(vuln_class: str, endpoint: str) -> None:
-    MetricsRegistry.get().counter(
-        "ai_osop_findings_detected_total", 1, vuln_class=vuln_class, endpoint=endpoint
-    )
+    c = _get("ai_osop_a2_findings_detected_total", ("vuln_class", "endpoint"))
+    c.labels(vuln_class=vuln_class, endpoint=endpoint).inc()
 
 
 def findings_validated(vuln_class: str, trust_tier: str) -> None:
-    MetricsRegistry.get().counter(
-        "ai_osop_findings_validated_total", 1, vuln_class=vuln_class, trust_tier=trust_tier
-    )
+    c = _get("ai_osop_a2_findings_validated_total", ("vuln_class", "trust_tier"))
+    c.labels(vuln_class=vuln_class, trust_tier=trust_tier).inc()
 
 
 def chain_steps_executed(count: int, chain_id: str) -> None:
-    MetricsRegistry.get().counter(
-        "ai_osop_chain_steps_executed_total", count, chain_id=chain_id
-    )
+    c = _get("ai_osop_a2_chain_steps_executed_total", ("chain_id",))
+    c.labels(chain_id=chain_id).inc(count)
 
 
 def chain_success(chain_id: str, hops: int) -> None:
-    MetricsRegistry.get().counter(
-        "ai_osop_chain_success_total", 1, chain_id=chain_id
-    )
+    c = _get("ai_osop_a2_chain_success_total", ("chain_id",))
+    c.labels(chain_id=chain_id).inc()
 
 
+@contextmanager
 def time_chain_execution(chain_id: str):
-    return MetricsRegistry.get().time(
-        "ai_osop_chain_execution_seconds", chain_id=chain_id
-    )
+    c = _get("ai_osop_a2_chain_execution_seconds", ("chain_id",))
+    import time
+
+    start = time.time()
+    try:
+        yield
+    finally:
+        c.labels(chain_id=chain_id).inc(time.time() - start)
 
 
 def tool_call(tool: str, outcome: str) -> None:
-    MetricsRegistry.get().counter(
-        "ai_osop_tool_calls_total", 1, tool=tool, outcome=outcome
-    )
+    c = _get("ai_osop_a2_tool_calls_total", ("tool", "outcome"))
+    c.labels(tool=tool, outcome=outcome).inc()
 
 
 def time_to_finding(seconds: float, vuln_class: str) -> None:
-    MetricsRegistry.get().gauge(
-        "ai_osop_time_to_finding_seconds", seconds, vuln_class=vuln_class
-    )
+    c = _get("ai_osop_a2_time_to_finding_seconds", ("vuln_class",))
+    c.labels(vuln_class=vuln_class).inc(seconds)
 
 
 def render() -> str:
-    return MetricsRegistry.get().render()
+    from prometheus_client import generate_latest
+
+    return generate_latest(REGISTRY).decode()
