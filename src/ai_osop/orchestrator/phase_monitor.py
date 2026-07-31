@@ -277,8 +277,15 @@ class PhaseMonitor:
                         )
                     else:
                         self._hyp_gate_first_tick.pop(gate_key, None)
-                except Exception:
-                    pass  # if the graph query fails, fall through to the normal path
+                except Exception as e:
+                    # Never swallow silently — a graph/loop failure here leaves the
+                    # gate permanently open and the phase never advances.
+                    logger.warning(
+                        "hyp_gate_check_failed",
+                        session_id=session_id,
+                        phase=phase.value,
+                        error=str(e),
+                    )
 
             # Check if all tasks for current phase are complete
             if await self._orch._is_phase_complete(session_id, phase):
