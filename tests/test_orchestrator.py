@@ -13,7 +13,13 @@ from ai_osop.orchestrator.orchestrator import EngagementPhase, Orchestrator
 async def mock_orchestrator():
     session_memory = AsyncMock()
     graph_memory = AsyncMock()
+    # mcp_registry is an AsyncMock so async methods await cleanly, but the
+    # requirement-checker is a SYNC method that returns a list. The scheduler calls
+    # `checker(requirements)` inside a sync list comprehension — an AsyncMock there
+    # returns a coroutine ('coroutine' object is not iterable), crashing every task
+    # assignment. Override it with a sync MagicMock returning "all available".
     mcp_registry = AsyncMock()
+    mcp_registry.check_tool_requirements = MagicMock(return_value=[])
     llm_client = AsyncMock()
 
     orch = Orchestrator(session_memory, graph_memory, mcp_registry, llm_client)

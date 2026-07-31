@@ -189,7 +189,21 @@ class _RecoveryOrch(_Orch):
     def __init__(self, active_tasks):
         super().__init__()
         self.dlq = AsyncMock()
-        self.session_memory.list_all_sessions = AsyncMock(return_value=[])
+        # AIOSOP-RECOVERY-ORPHAN-001: the recovery orphan gate cancels any recovered
+        # task whose engagement has NO restored session. These tests target
+        # approval/re-attempt behavior (not orphan handling), so provide a session
+        # for the test's engagement so the gate sees it as live. The _sessions
+        # mapping drives the phase_by_engagement lookup (session.session-like
+        # attributes are enough — the gate only reads session_id /
+        # canonical_engagement_id / phase).
+        session = _signed_session(phase="exploitation")
+        # _RecoveryOrch uses SimpleNamespace sessions; give it the attributes the
+        # gate reads.
+        session.session_id = "sess-eng-1"
+        session.canonical_engagement_id = "eng-1"
+        self._sessions = {"sess-eng-1": session}
+        self.session_memory.list_all_sessions = AsyncMock(return_value=["session:sess-eng-1"])
+        self.session_memory.get_session_state = AsyncMock(return_value=session)
         self.session_memory.list_pending_approvals = AsyncMock(return_value=[])
         self.session_memory.load_all_active_tasks = AsyncMock(return_value=active_tasks)
         self.session_memory.push_task_queue = AsyncMock()

@@ -197,7 +197,12 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
             await mcp_registry.initialize_server(
                 server_id,
                 scope={},
-                credentials={},
+                # AIOSOP-MCP-AUTH-BOOT-001: pass the server's bearer token as the
+                # auth credential so servers that enforce an Authorization header
+                # (e.g. shodan-mcp, source-map-mcp) actually init instead of
+                # staying registered-with-no-tools forever. Previously the boot
+                # handshake ran with credentials={} and the server rejected it.
+                credentials={"auth_token": token} if token else {},
                 session_id="api-bootstrap",
             )
             mcp_log.info(f"MCP server {server_id} registered and initialized.")
