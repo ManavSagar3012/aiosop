@@ -168,6 +168,54 @@ async def get_report(session_id: str, operator: Dict[str, Any] = Depends(verify_
     }
 
 
+@router.get("/{session_id}/report/bounty")
+async def bounty_report(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+    """Generate a bug-bounty formatted report from live findings.
+
+    AIOSOP-REPORT-BB-001 (2026-07-31): the report endpoint previously 404'd because
+    reporting only happened at the REPORTING phase and persisted to disk. The
+    reporting-mcp was recently fixed to register (tool contract relaxed), so this
+    generator is the operator-requested path: it compiles findings on demand against
+    the live graph state and returns the artifact content directly.
+    """
+    session = await assert_engagement_access(operator, session_id)
+    orch = state.get("orchestrator")
+    if orch is None or orch.mcp_registry is None:
+        raise HTTPException(status_code=503, detail="No orchestrator/MCP registry available")
+
+    # Compile via reporting-mcp (the correct path: the reporting service owns report
+    # generation). We ask for markdown + html so the UI can render either.
+    resp = await orch.mcp_registry.execute_tool(
+        "reporting-mcp",
+        "compile_findings",
+        {
+            "engagement_id": session_id,
+            "format": "html",
+            "include_evidence": True,
+        },
+        trust_server_scope=True,
+    )
+    if resp.status != "success":
+        raise HTTPException(status_code=500, detail=resp.error or "report compile failed")
+
+    result = resp.result or {}
+    content = result.get("content") or result.get("markdown") or result.get("html")
+    if not content:
+        raise HTTPException(
+            status_code=502,
+            detail="compile_findings succeeded but returned no report content",
+        )
+
+    return {
+        "report_id": result.get("report_id") or f"report-{session_id}",
+        "markdown": result.get("markdown", ""),
+        "html": content,
+        "body_html": content,
+        "generated_at": result.get("generated_at"),
+        "source": "reporting-mcp/compile_findings",
+    }
+
+
 @router.get("/{session_id}/diff-auth")
 async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Differential-authorization findings for an engagement."""

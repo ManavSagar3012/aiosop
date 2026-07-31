@@ -120,6 +120,7 @@ class Orchestrator:
         # Evaluate → Learn → re-hypothesize. Adds adaptive work the fixed
         # phase pipeline would never schedule.
         from ai_osop.orchestrator.reasoning_loop import ReasoningLoop
+
         self.reasoning_loop = ReasoningLoop(self)
 
         self._running = False
@@ -848,12 +849,27 @@ class Orchestrator:
         VULNERABILITY_DISCOVERY -> REPORTING, so fall back to it and let the mission
         terminate cleanly at COMPLETED. (AIOSOP-AUTO-2026-06-16)
         """
+        # AIOSOP-GRAPH-KEY-001 (2026-07-31): the graph query needs the *scope*
+        # engagement_id ("own-gate-001"), not the API-side session_id
+        # ("eng-20260731120749-own-gate-001"). Findings are persisted under the
+        # scope id; asking graph_memory with the api id returned 0 vulnerabilities
+        # and blocked the whole phase chain.
         if desired_next == EngagementPhase.EXPLOITATION:
+            # AIOSOP-GRAPH-KEY-001 (2026-07-31): the graph query needs the *scope*
+            # engagement_id ("own-gate-001") — findings are persisted under the
+            # scope key, not the API-side session_id
+            # ("eng-20260731120749-own-gate-001"). Querying with the api id
+            # returned 0 vulnerabilities and blocked phase advancement forever.
+            session = self._sessions.get(session_id)
+            graph_key = session.canonical_engagement_id if session is not None else session_id
             try:
-                stats = await self.graph_memory.get_graph_stats(session_id)
+                stats = await self.graph_memory.get_graph_stats(graph_key)
             except Exception as e:
-                logger.error(
-                    "resolve_auto_next_graph_stats_failed", session_id=session_id, error=str(e)
+                logger.warning(
+                    "resolve_auto_next_graph_stats_failed",
+                    session_id=session_id,
+                    graph_key=graph_key,
+                    error=str(e),
                 )
                 stats = {}
             if stats.get("vulnerabilities", 0) == 0:
