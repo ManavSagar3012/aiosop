@@ -218,6 +218,28 @@ class RecoveryService:
                 self._orch._sessions[session.session_id] = session
                 recovered["engagements"] += 1
 
+            # 1b) AIOSOP-RECOVERY-PG-001 (2026-07-31): Redis is a cache, Postgres is the
+            # durable warm store. After a Redis restart/flush the recovery above returns
+            # 0 sessions and the operator console shows an empty engagement list even
+            # though the engagement(s) exist in Postgres. Always supplement Redis with
+            # the Postgres set so restart recovery covers cache misses too; duplicates
+            # are deduped and the Postgres rows are canonical for `_sessions`.
+            try:
+                hydrated_pg = await self._orch.session_memory.list_sessions_postgres()
+                added_pg = 0
+                for session in hydrated_pg:
+                    if session.session_id not in self._orch._sessions:
+                        self._orch._sessions[session.session_id] = session
+                        added_pg += 1
+                        recovered["engagements"] += 1
+                if added_pg:
+                    logger.info("recovery_rehydrated_postgres_sessions", count=added_pg)
+            except Exception as pg_err:
+                logger.warning(
+                    "recovery_postgres_rehydrate_failed",
+                    error=str(pg_err),
+                )
+
             # Phase lookup for the resurrection gate in step 3. Key by BOTH ids: a
             # task is keyed by canonical (scope.engagement_id) while the session's
             # own PK is session_id (AIOSOP-FINDINGS-KEY split-brain), so either form

@@ -659,6 +659,37 @@ class SessionMemory:
                 )
             return None
 
+    async def list_sessions_postgres(self) -> List[SessionState]:
+        """List ALL sessions from PostgreSQL (warm/durable tier).
+
+        Recovery currently reads ONLY Redis keys ("session:*"), which vanish on a
+        Redis restart/flush. Postgres is the cold-tier source of truth, so this
+        enumerates every persisted engagement for boot-time rehydration. Returns
+        parsed SessionState objects; a bad row is skipped rather than failing boot.
+        """
+        out: List[SessionState] = []
+        async with self._async_session() as session:
+            result = await session.execute(select(SessionStateORM))
+            for orm in result.scalars().all():
+                try:
+                    out.append(
+                        SessionState(
+                            session_id=orm.session_id,
+                            scope=ScopeDefinition(**orm.scope),
+                            roe=orm.roe,
+                            phase=orm.phase,
+                            agents=orm.agents,
+                            checkpoint_id=orm.checkpoint_id,
+                            audit_log_position=orm.audit_log_position,
+                            created_by=orm.created_by,
+                            created_at=orm.created_at,
+                            updated_at=orm.updated_at,
+                        )
+                    )
+                except Exception:
+                    logger.warning("pg_session_rehydrate_skip", session_id=orm.session_id)
+        return out
+
     async def write_audit_event(self, event: AuditEvent) -> None:
         """Write cryptographically signed audit event with tracing."""
         with trace_span(
