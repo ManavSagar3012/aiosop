@@ -42,6 +42,7 @@ def _orch():
 
     sm = MagicMock()
     sm.push_task_queue = AsyncMock(return_value=None)
+    sm.store_task = AsyncMock(return_value=None)  # a94e1c03: retry now persists to warm store
     orch.session_memory = sm
 
     gm = MagicMock()

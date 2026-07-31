@@ -85,6 +85,62 @@ class MCPExecutionGate:
                 "and none is wired in (fail-closed)"
             )
 
+    _ALLOWED_PARAMS: Dict[str, set] = {
+        "scan_endpoint": {"url", "method", "payload", "headers", "endpoint", "target"},
+        "capture_session": {"target_host", "username", "password", "register_url", "login_url", "credentials", "user_label", "scope_hosts", "headers"},
+        "fetch_page": {"url", "timeout_s", "headers", "params"},
+        "write_report": {"title", "body", "findings"},
+        "spa_harvest": {"target", "url", "scope_hosts", "engagement_id", "js_route_limit", "max_bundle_fetches"},
+    }
+
+    _ALLOWED_TYPES: Dict[str, tuple] = {
+        "url": (str,),
+        "method": (str,),
+        "endpoint": (str,),
+        "target": (str,),
+        "target_host": (str,),
+        "register_url": (str,),
+        "login_url": (str,),
+        "username": (str,),
+        "user_label": (str,),
+        "title": (str,),
+        "body": (str,),
+        "headers": (dict,),
+        "credentials": (dict,),
+        "payload": (dict,),
+        "findings": (list,),
+        "timeout_s": (int,),
+        "scope_hosts": (list,),
+        "js_route_limit": (int,),
+        "max_bundle_fetches": (int,),
+        "engagement_id": (str,),
+    }
+
+    def check_params(self, tool_name: str, params: Dict[str, Any]) -> None:
+        """Check MCP params have known keys and value types (add input boundary)."""
+        allowed = self._ALLOWED_PARAMS.get(tool_name, set())
+        if not allowed:
+            return
+        for k, v in params.items():
+            if k not in allowed:
+                raise ValueError(f"Unknown MCP arg '{k}' for tool {tool_name}")
+            expected = self._ALLOWED_TYPES.get(k)
+            if expected is None:
+                continue
+            if not isinstance(v, expected):
+                raise ValueError(f"MCP arg '{k}' should be {expected} got {type(v)}")
+
+        for urlk in ("url", "target", "endpoint", "register_url", "login_url", "target_host"):
+            u = params.get(urlk)
+            if not isinstance(u, str):
+                continue
+            if ".." in u:
+                raise ValueError(f"MCP param '{urlk}' contains traversal (..)")
+            if ";" in u:
+                raise ValueError(f"MCP param '{urlk}' contains ;")
+            if "'" in u or '"' in u:
+                raise ValueError(f"MCP param '{urlk}' contains quote character")
+
 
 def _extract_target_host(parameters: Dict[str, Any]) -> Optional[str]:
     """Best-effort pull of a target host from common MCP parameter shapes.
