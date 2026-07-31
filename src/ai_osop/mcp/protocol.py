@@ -72,9 +72,7 @@ class MCPExecutionGate:
                 f"MCP tool {server_id}/{tool_name} target host {host!r} is out of scope"
             )
 
-    def check_approval(
-        self, server_id: str, tool_name: str, parameters: Dict[str, Any]
-    ) -> None:
+    def check_approval(self, server_id: str, tool_name: str, parameters: Dict[str, Any]) -> None:
         """Raise MCPApprovalRequired if an approval-flagged tool lacks approval."""
         if self._is_approved is None or not self._is_approved(server_id, tool_name, parameters):
             logger.warning(
@@ -115,7 +113,11 @@ def _extract_target_host(parameters: Dict[str, Any]) -> Optional[str]:
 class MCPToolParameter(BaseModel):
     name: str
     type: str
-    description: str
+    # Tolerate third-party MCP servers that omit per-parameter descriptions
+    # (reporting-mcp, attack-graph-mcp). Previously strict-required, which made
+    # those servers fail init at boot ("4 validation errors for
+    # MCPInitializeResponse") and left them permanently unregistered.
+    description: Optional[str] = ""
     required: bool = True
     default: Optional[Any] = None
     enum: Optional[List[Any]] = None
