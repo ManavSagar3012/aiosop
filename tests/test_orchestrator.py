@@ -86,10 +86,12 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
     mock_orchestrator.session_memory.store_session_state.assert_called()
 
     # Verify auto-task scheduling for recon: GET crawler + guest browser XHR
-    # capture + TWO register+login identity probes (a/b) so diff-auth can run a
-    # user_a-vs-user_b IDOR test (AIOSOP-SPA-XHR-RECON / AIOSOP-REG-PROBE-001 /
-    # AIOSOP-DIFFAUTH-2IDENTITY-001).
-    assert len(mock_orchestrator._tasks) == 7
+    # capture + SPA/JS harvester + TWO register+login identity probes (a/b) so
+    # diff-auth can run a user_a-vs-user_b IDOR test (AIOSOP-SPA-XHR-RECON /
+    # AIOSOP-REG-PROBE-001 / AIOSOP-DIFFAUTH-2IDENTITY-001). The SPA/JS harvester
+    # (ceaf49c3) is the eighth task: a deterministic no-browser pass that mines
+    # client-side routes the guest HAR misses.
+    assert len(mock_orchestrator._tasks) == 8
     by_type = {}
     for t in mock_orchestrator._tasks.values():
         by_type.setdefault(t.type, []).append(t)
@@ -99,6 +101,7 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
         "capture_authenticated_surface",
         "register",
         "authenticate",
+        "spa_harvest",
     }
     assert len(by_type["register"]) == 2
     assert len(by_type["authenticate"]) == 2

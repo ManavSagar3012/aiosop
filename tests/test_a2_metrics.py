@@ -4,15 +4,15 @@ from ai_osop.core import metrics_a2
 
 
 def test_metric_exists_and_renders():
-    names = [
-        "ai_osop_findings_detected_total",
-        "ai_osop_chain_steps_executed_total",
-        "ai_osop_chain_success_total",
-        "ai_osop_time_to_finding_seconds",
-    ]
-    for n in names:
-        assert hasattr(metrics_a2, n.split("_")[-1] if n.endswith("_total") else n)
-        assert callable(getattr(metrics_a2, n.split("_")[-1] if n.endswith("_total") else n))
+    # The module exposes named functions that increment prefixed ai_osop_a2_*
+    # counters; the render() output carries those names (Prometheus exposition).
+    assert callable(metrics_a2.findings_detected)
+    assert callable(metrics_a2.chain_steps_executed)
+    assert callable(metrics_a2.chain_success)
+    assert callable(metrics_a2.time_to_finding)
+    assert callable(metrics_a2.tool_call)
+    assert callable(metrics_a2.findings_validated)
+    assert callable(metrics_a2.time_chain_execution)
 
 
 def test_counters_increment_and_label_values():
@@ -22,10 +22,17 @@ def test_counters_increment_and_label_values():
 
     # Confirm render() contains the expected increment count, not blank.
     txt = metrics_a2.render()
-    assert "ai_osop_findings_detected_total" in txt
-    counters = [l for l in txt.splitlines() if "ai_osop_findings_detected_total" in l and not l.startswith("#")]
-    total = sum(int(float(l.rsplit(" ", 1)[-1])) for l in counters if l.rsplit(" ", 1)[-1].strip().isdigit())
-    assert total >= 2, f"expected >=2 increments, got {total}: {counters}"
+    assert "ai_osop_a2_findings_detected_total" in txt
+    counters = [
+        l for l in txt.splitlines()
+        if "ai_osop_a2_findings_detected_total" in l and not l.startswith("#")
+    ]
+    vals = []
+    for l in counters:
+        tail = l.rsplit(" ", 1)[-1].strip()
+        if tail.replace(".", "", 1).isdigit():
+            vals.append(float(tail))
+    assert sum(vals) >= 2, f"expected >=2 increments, got {vals}: {counters}"
 
 
 def test_chain_timer_smoke():
@@ -33,12 +40,12 @@ def test_chain_timer_smoke():
     with metrics_a2.time_chain_execution("test-chain"):
         pass
     text = metrics_a2.render()
-    assert "ai_osop_chain_execution_seconds" in text
+    assert "ai_osop_a2_chain_execution_seconds" in text
 
 
 def test_reset_clears_counts():
     metrics_a2.findings_validated(vuln_class="xss", trust_tier="high")
     metrics_a2.reset()
     text = metrics_a2.render()
-    assert "ai_osop_findings_validated_total" not in text
+    assert "ai_osop_a2_findings_validated_total" not in text
 

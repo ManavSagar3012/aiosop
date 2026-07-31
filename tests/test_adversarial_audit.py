@@ -243,7 +243,20 @@ async def test_recovery_strips_and_re_gates():
     task.status = "running"
     task.payload["_recovery_attempts"] = 0
     orch = _Orch()
-    orch.session_memory.list_all_sessions = AsyncMock(return_value=[])
+    # Override session restoration so the orphan gate sees a live session for eng-1:
+    # without a restored session, recovery's AIOSOP-RECOVERY-ORPHAN-001 gate cancels
+    # the task instead of exercising the approval-strip path under test. The gate
+    # only reads session_id / canonical_engagement_id / phase, so a minimal
+    # SimpleNamespace suffices.
+    from types import SimpleNamespace
+
+    session = SimpleNamespace(
+        session_id="eng-1",                # matches task.engagement_id
+        canonical_engagement_id="eng-1",
+        phase="exploitation",
+    )
+    orch.session_memory.list_all_sessions = AsyncMock(return_value=["session:eng-1"])
+    orch.session_memory.get_session_state = AsyncMock(return_value=session)
     orch.session_memory.list_pending_approvals = AsyncMock(return_value=[])
     orch.session_memory.load_all_active_tasks = AsyncMock(return_value=[task])
     orch.session_memory.push_task_queue = AsyncMock()
