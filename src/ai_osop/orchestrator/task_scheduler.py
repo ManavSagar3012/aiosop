@@ -785,6 +785,9 @@ class TaskScheduler:
             return True
         t = (task.type or "").lower()
         return any(marker in t for marker in cls.DANGEROUS_TASK_MARKERS)
+
+    @staticmethod
+    def _sanitize_external_payload(task: Task) -> None:
         """Strip operator-approval tokens injected by any non-orchestrator producer
         (agents, queue producers, recovered/persisted records).
 
