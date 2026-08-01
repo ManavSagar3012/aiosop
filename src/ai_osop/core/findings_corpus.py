@@ -50,6 +50,21 @@ class FindingCorpusService:
             logger.error("failed_aggregate_accepted_findings", error=str(e))
         logger.info("Finding corpus aggregation complete.")
 
+    async def ingest_external(self, entries) -> int:
+        """Ingest externally sourced corpus entries; withdrawn entries are refused.
+
+        Withdrawal is the read-only policy escape valve for the benchmark corpus:
+        once an entry is withdrawn (e.g. takedown, bad provenance), it must never
+        re-enter the training/validation path.
+        """
+        rejected = [e for e in entries if e.get("withdrawn")]
+        if rejected:
+            raise ValueError(
+                f"refusing {len(rejected)} withdrawn corpus entries: "
+                f"{[e.get('id') for e in rejected]}"
+            )
+        return len(entries)
+
     async def ingest_outcomes(self, engagement_id: str) -> int:
         """Pull real submission outcomes and record them (with their true status).
 
