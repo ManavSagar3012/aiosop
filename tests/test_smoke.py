@@ -16,3 +16,11 @@ def test_litellm_client_uses_configured_models():
 
 def test_unicode_encoding_pipeline():
     assert EncodingPipeline.apply("AZ", ["unicode"]) == "\\u0041\\u005a"
+
+
+def test_evidence_receipts_flag_defaults_off():
+    from ai_osop.core.config import Settings
+
+    s = Settings()
+    assert s.evidence_receipts_enabled is False
+    assert s.evidence_root == "./evidence"

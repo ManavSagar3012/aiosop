@@ -164,6 +164,10 @@ class Settings(BaseSettings):
     allow_simulated_findings: bool = Field(
         default=False, validation_alias="OSOP_ALLOW_SIMULATED_FINDINGS"
     )
+    evidence_receipts_enabled: bool = Field(
+        default=False, validation_alias="OSOP_EVIDENCE_RECEIPTS_ENABLED"
+    )
+    evidence_root: str = Field(default="./evidence", validation_alias="OSOP_EVIDENCE_ROOT")
 
     # MCP
     mcp_server_host: str = "0.0.0.0"
