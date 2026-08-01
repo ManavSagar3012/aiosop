@@ -253,9 +253,27 @@ async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Dep
 
 @router.get("/{session_id}/uncertainty")
 async def get_uncertainties(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
-    """Open uncertainties for an engagement."""
-    await assert_engagement_access(operator, session_id)
-    return []
+    """Open uncertainties for an engagement.
+
+    FIX (audit 2026-08-01): this stub returned ``[]`` unconditionally, so the UI's
+    UncertaintyEngine panel rendered empty even when the reasoning loop had real
+    open uncertainties. Now backed by the same source as cognition/uncertainties:
+    the reasoning loop's UncertaintyTracker.
+    """
+    session = await assert_engagement_access(operator, session_id)
+    orch = state["orchestrator"]
+    rl = getattr(orch, "reasoning_loop", None)
+    if rl is None or not hasattr(rl, "_uncertainty_tracker"):
+        return {"session_id": session_id, "count": 0, "uncertainties": [], "summary": {}}
+    tracker = rl._uncertainty_tracker
+    forms = engagement_id_forms(session, session_id)
+    open_uncs = tracker.get_open_uncertainties(*forms)
+    return {
+        "session_id": session_id,
+        "count": len(open_uncs),
+        "uncertainties": [getattr(u, "__dict__", u) for u in open_uncs],
+        "summary": tracker.get_summary(*forms),
+    }
 
 
 @router.get("/{session_id}/invariants")
@@ -267,9 +285,23 @@ async def get_invariants(session_id: str, operator: Dict[str, Any] = Depends(ver
 
 @router.get("/{session_id}/payouts")
 async def get_payouts(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
-    """Predicted/realised bug-bounty payouts for an engagement."""
+    """Predicted/realised bug-bounty payouts for an engagement.
+
+    FIX (audit 2026-08-01): this stub returned ``[]`` unconditionally, so the UI's
+    payouts panel presented "no payouts" as fact even though there is genuinely no
+    payout-estimation capability implemented (submission_intelligence computes
+    acceptance *probability*, not payout). 404 (capability not implemented) is the
+    honest signal; it prevents the UI from silently rendering fake emptiness.
+    """
     await assert_engagement_access(operator, session_id)
-    return []
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            "Payout estimation is not implemented. Acceptance probability is available "
+            "via submission intelligence; realised payouts are recorded on the finding "
+            "after external submission."
+        ),
+    )
 
 
 @router.post("/{session_id}/discovery/trigger")

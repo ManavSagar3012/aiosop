@@ -253,22 +253,13 @@ async def deterministic_scan(
     }
 
 
-@router.get("/{session_id}/report/bounty")
-async def bounty_report(
-    session_id: str,
-    target: str = "",
-    operator: Dict[str, Any] = Depends(verify_token),
-):
-    """Render a submittable markdown bounty report from the engagement's validated
-    findings (severity-ranked, with CWE/OWASP, evidence, and reproduction steps)."""
-    session = await assert_engagement_access(operator, session_id)
-    engagement_id = session.scope.engagement_id
-    from ai_osop.core.report_generator import generate_bounty_report
-
-    gm = state["orchestrator"].graph_memory
-    tgt = target or (session.scope.domains[0] if session.scope.domains else "")
-    md = await generate_bounty_report(engagement_id, gm, target=tgt)
-    return {"engagement_id": engagement_id, "format": "markdown", "report": md}
+# DUPLICATE ROUTE REMOVED (audit 2026-08-01): GET /{session_id}/report/bounty was
+# defined both here (engagements, registering FIRST in main.py so it won) and in
+# routers/findings.py:171. This handler called core.report_generator.generate_bounty_report
+# directly, bypassing the reporting-mcp; the findings handler is the canonical,
+# reporting-mcp-backed implementation that the working tests + fixtures target.
+# The engagements copy shadowed it. Exactly one bounty-report route remains:
+# findings.py. core/report_generator.py stays available for other callers.
 
 
 @router.post("/{session_id}/transition")
