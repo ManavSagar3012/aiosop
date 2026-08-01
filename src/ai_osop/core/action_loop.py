@@ -20,6 +20,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Set
 
+from ai_osop.core import metrics_a2
+
 
 @dataclass
 class Action:
@@ -186,6 +188,7 @@ class ActionLoop:
         findings: List[Dict[str, Any]] = []
         error_msg: Optional[str] = None
         completed = False
+        tokens_start = getattr(self.llm, "tokens_consumed", None)
 
         for _ in range(max_steps):
             messages = self._build_prompt(state, history)
@@ -258,6 +261,19 @@ class ActionLoop:
                 if step.error and step.error.get("type") == "parse":
                     error_msg = step.error.get("message")
                     break
+
+        # Per-finding token receipts: attribute cumulative LLM tokens consumed
+        # during this loop to its vuln_class so dashboards can cost findings.
+        tokens_end = getattr(self.llm, "tokens_consumed", None)
+        if isinstance(tokens_start, int) and isinstance(tokens_end, int):
+            delta = tokens_end - tokens_start
+            if delta > 0:
+                try:
+                    vuln_class = str(state.context.get("vuln_class", "unknown"))
+                    model = getattr(self.llm, "primary_model", None) or "unknown"
+                    metrics_a2.finding_llm_tokens(delta, model=str(model), vuln_class=vuln_class)
+                except Exception:  # noqa: BLE001 - metrics must never break the loop
+                    pass
 
         return LoopResult(
             steps_taken=len(history),

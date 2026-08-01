@@ -678,22 +678,46 @@ class MCPRegistry:
             if not conn:
                 raise MCPConnectionError(f"Server {server_id} not registered")
 
+            _outcome = "allowed"
+
+            def _track(outcome: str) -> None:
+                try:
+                    from ai_osop.core import metrics_a2
+
+                    metrics_a2.tool_call(tool_name, outcome)
+                except Exception:  # noqa: BLE001 - metrics must never block enforcement
+                    pass
+
             tool = conn._tools.get(tool_name)
             if tool is not None and self.execution_gate is not None:
                 # Approval is non-negotiable: a tool that declared
                 # requires_approval=True must not fire without a wired approval.
                 if getattr(tool, "requires_approval", False):
-                    self.execution_gate.check_approval(server_id, tool_name, parameters)
+                    try:
+                        self.execution_gate.check_approval(server_id, tool_name, parameters)
+                    except Exception:
+                        _track("denied_approval")
+                        raise
                 # Scope is defense-in-depth on top of the server-side check, so a
                 # caller may opt out per-call when the server already enforces it.
                 if getattr(tool, "scope_check", False) and not trust_server_scope:
-                    self.execution_gate.check_scope(server_id, tool_name, parameters)
+                    try:
+                        self.execution_gate.check_scope(server_id, tool_name, parameters)
+                    except Exception:
+                        _track("denied_scope")
+                        raise
 
             self.call_counts[server_id] = self.call_counts.get(server_id, 0) + 1
             request = MCPExecuteRequest(
                 tool_name=tool_name, parameters=parameters, timeout_override=timeout_override
             )
-            return await conn.execute(request)
+            try:
+                resp = await conn.execute(request)
+            except Exception:
+                _track("error")
+                raise
+            _track("allowed")
+            return resp
 
     async def broadcast_execute(
         self,

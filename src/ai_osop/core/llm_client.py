@@ -90,6 +90,8 @@ class LiteLLMClient:
         self.fallback_model = fallback_model or settings.llm_fallback_model
         self.temperature = temperature if temperature is not None else settings.llm_temperature
         self.max_tokens = max_tokens or settings.llm_max_tokens
+        # Cumulative token counter for per-finding cost attribution (Task A2).
+        self.tokens_consumed: int = 0
 
     async def complete(
         self,
@@ -157,6 +159,11 @@ class LiteLLMClient:
                     **_extra(self.fallback_model),
                     **kwargs,
                 )
+
+        usage = getattr(response, "usage", None)
+        total = getattr(usage, "total_tokens", None)
+        if isinstance(total, int) and total > 0:
+            self.tokens_consumed += total
 
         return response.choices[0].message.content or ""
 
