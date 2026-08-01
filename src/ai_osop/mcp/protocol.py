@@ -133,19 +133,34 @@ class MCPExecutionGate:
         "engagement_id": (str,),
     }
 
+    def register_tool_schema(self, tool: str, schema: Dict[str, type]) -> None:
+        """Merge an adapter-declared schema into the allowed-params map.
+
+        ``schema`` maps arg name -> allowed python type (or tuple of types).
+        """
+        self._ALLOWED_PARAMS[tool] = set(schema.keys())
+        for arg, allowed_t in schema.items():
+            self._ALLOWED_TYPES[arg] = (
+                tuple(allowed_t) if isinstance(allowed_t, (tuple, list)) else (allowed_t,)
+            )
+
     def check_params(self, tool_name: str, params: Dict[str, Any]) -> None:
-        """Check MCP params have known keys and value types (add input boundary)."""
-        allowed = self._ALLOWED_PARAMS.get(tool_name, set())
-        if not allowed:
-            return
+        """Fail-closed: every executed tool must have a registered schema."""
+        from ai_osop.core.exceptions import ScopeValidationError
+
+        allowed = self._ALLOWED_PARAMS.get(tool_name)
+        if allowed is None:
+            raise ScopeValidationError(
+                f"MCP tool '{tool_name}' has no registered schema; refusing params"
+            )
         for k, v in params.items():
             if k not in allowed:
-                raise ValueError(f"Unknown MCP arg '{k}' for tool {tool_name}")
+                raise ScopeValidationError(f"Unknown MCP arg '{k}' for tool {tool_name}")
             expected = self._ALLOWED_TYPES.get(k)
             if expected is None:
                 continue
             if not isinstance(v, expected):
-                raise ValueError(f"MCP arg '{k}' should be {expected} got {type(v)}")
+                raise ScopeValidationError(f"MCP arg '{k}' should be {expected} got {type(v)}")
 
         for urlk in ("url", "target", "endpoint", "register_url", "login_url", "target_host"):
             u = params.get(urlk)

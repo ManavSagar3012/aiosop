@@ -96,10 +96,19 @@ class ValidationLedger:
         rows = await self.session_mem.run_read(
             f"SELECT state FROM {self.TABLE_NAME} WHERE id = $1", event_id
         )
-        if rows:
+        if rows and rows[0].get("state"):
+            # Enforce the legal funnel against the ledger's current recorded state.
             self.ensure_transition(rows[0]["state"], to_state)
+        elif rows:
+            # Row exists but state column read back empty — treat as corrupt, keep
+            # the audit trail honest by refusing the transition rather than
+            # writing an unvalidated state change on top of it.
+            raise WorkflowTransitionError(
+                "ledger row has no readable state; refusing transition",
+                details={"event_id": event_id, "to_state": to_state},
+            )
         else:
-            # No prior row: only 'detected' is a legal entry point into the funnel.
+            # No prior row: only 'detected' is a legal entry point into the funnel
             if to_state != "detected":
                 raise WorkflowTransitionError(
                     "first ledger event for a finding must be 'detected'",

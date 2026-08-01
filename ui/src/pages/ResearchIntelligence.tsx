@@ -59,7 +59,7 @@ export const ResearchIntelligence: React.FC = () => {
       } else {
         setError(`Failed to load research intelligence data (${response.status})`);
       }
-    } catch (e) {
+    } catch {
       setError('Failed to reach the engagements API.');
     } finally {
       setLoading(false);

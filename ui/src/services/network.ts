@@ -130,7 +130,7 @@ export class NetworkService {
         this.updateStatus('error');
       };
 
-    } catch (e) {
+    } catch {
       this.updateStatus('error');
       this.attemptReconnect(sessionId);
     }

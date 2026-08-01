@@ -25,7 +25,7 @@ export const DifferentialAuth: React.FC = () => {
               headers: authHeaders()
           });
           addToast("Exploit validation task queued.", "success");
-      } catch (e) {
+      } catch {
           setValidateError('Failed to queue exploit validation task.');
       }
   };

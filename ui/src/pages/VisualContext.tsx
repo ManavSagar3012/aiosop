@@ -110,7 +110,7 @@ export const VisualContext: React.FC = () => {
       } else {
         addToast(`Dispatch rejected by API (${resp.status}).`, 'error');
       }
-    } catch (e) {
+    } catch {
       addToast('Dispatch failed. Check API connectivity and retry.', 'error');
     } finally {
       setSubmitting(false);

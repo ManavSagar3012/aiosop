@@ -795,7 +795,7 @@ async def get_websocket_operator(websocket: WebSocket) -> Dict[str, Any]:
             for part in proto.split(","):
                 part = part.strip()
                 if part.lower().startswith("bearer."):
-                    token = part[len("bearer."):]
+                    token = part[len("bearer.") :]
                     break
                 if part and not part.startswith("osop"):
                     token = part
@@ -884,8 +884,13 @@ async def websocket_engagement(
         instead of only the 2s heartbeat. A compact projection is sent — never the
         full task `result` blob — to keep WS frames small (cf. report-bloat fix)."""
         _TOPICS = (
-            "task.scheduled", "task.assigned", "task.completed", "task.failed",
-            "finding.recorded", "hypothesis.generated", "chain.discovered",
+            "task.scheduled",
+            "task.assigned",
+            "task.completed",
+            "task.failed",
+            "finding.recorded",
+            "hypothesis.generated",
+            "chain.discovered",
             "feedback.payload_validated",
         )
 

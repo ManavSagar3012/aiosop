@@ -7,6 +7,7 @@ the request to the target MCP server.
 
 import pytest
 
+from ai_osop.core.exceptions import ScopeValidationError
 from ai_osop.mcp.protocol import MCPExecutionGate
 
 
@@ -36,7 +37,7 @@ def test_structural_schema_accepts_valid_shape(tool, params):
     ],
 )
 def test_structural_schema_rejects_bad_types(tool, params, bad_param):
-    with pytest.raises(ValueError, match=bad_param):
+    with pytest.raises(ScopeValidationError, match=bad_param):
         _gate().check_params(tool, params)
 
 
@@ -47,7 +48,7 @@ def test_structural_schema_denies_paths_and_injection_tokens():
         "capture_session": {"target_host": "localhost;echo", "username": "admin' OR 1=1"},
     }
     for tool, params in bad.items():
-        with pytest.raises(ValueError):
+        with pytest.raises((ValueError, ScopeValidationError)):
             g.check_params(tool, params)
 
 

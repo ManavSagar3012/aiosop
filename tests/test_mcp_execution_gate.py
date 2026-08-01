@@ -122,3 +122,26 @@ async def test_gate_none_preserves_legacy_behavior() -> None:
 
     await reg.execute_tool("srv", "t", {"url": "https://evil.example.com/"})
     reg._servers["srv"].execute.assert_awaited_once()
+
+
+def test_unknown_tool_rejected_when_schemas_registered():
+    from ai_osop.core.exceptions import ScopeValidationError
+    from ai_osop.mcp.protocol import MCPExecutionGate
+
+    gate = MCPExecutionGate()
+    gate.register_tool_schema("scan_endpoint", {"url": str, "timeout_s": int})
+    with pytest.raises(ScopeValidationError):
+        gate.check_params("unknown_tool", {"url": "http://x"})
+    with pytest.raises(ScopeValidationError):
+        gate.check_params("scan_endpoint", {"url": "http://x", "bad_arg": 1})
+    # Known tool with declared params still passes
+    gate.check_params("scan_endpoint", {"url": "http://x", "timeout_s": 5})
+
+
+def test_unregistered_tool_fails_closed_for_write_ops():
+    from ai_osop.core.exceptions import ScopeValidationError
+    from ai_osop.mcp.protocol import MCPExecutionGate
+
+    gate = MCPExecutionGate()
+    with pytest.raises(ScopeValidationError):
+        gate.check_params("totally_new_tool", {"target": "http://x"})

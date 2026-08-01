@@ -66,6 +66,23 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--surface-container-highest); }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--secondary); }
 
+/* Text selection — on-brand, legible against dark slate. */
+::selection { background: rgba(34, 211, 238, 0.24); color: #eaf6fb; }
+
+/* Keyboard focus — visible ring for a11y; suppressed for pointer clicks. */
+:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* Respect users who prefer reduced motion — kill decoration, keep content. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin, .animate-pulse { animation: none !important; }
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}
+
 /* Typography */
 h1, h2, h3, h4 { font-family: 'Space Grotesk', sans-serif; margin: 0; letter-spacing: 0.05em; }
 .font-mono { font-family: 'JetBrains Mono', monospace; }
