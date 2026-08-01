@@ -29,3 +29,15 @@ def test_scope_definition_serializes_org():
     )
     dumped = scope.model_dump()
     assert dumped["organization_id"] == "org-b"
+
+
+def test_tenant_queue_key_partitions_by_tenant():
+    from ai_osop.core.tenant_isolation import tenant_queue_key
+
+    k_a = tenant_queue_key("org-blue", "tasks:eng-1")
+    k_b = tenant_queue_key("org-red", "tasks:eng-1")
+    k_default = tenant_queue_key(None, "tasks:eng-1")
+    assert k_a.startswith("tenant/org-blue::")
+    assert k_b.startswith("tenant/org-red::")
+    assert k_default.startswith("default::")
+    assert k_a != k_b

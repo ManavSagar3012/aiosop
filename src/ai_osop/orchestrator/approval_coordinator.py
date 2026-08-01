@@ -229,7 +229,9 @@ class ApprovalCoordinator:
 
             return request
 
-    def is_task_approved(self, task_id: str) -> bool:
+    def is_task_approved(
+        self, task_id: str, tenant_id: Optional[str] = None
+    ) -> bool:
         """Single source of authority for whether a task may run.
 
         Returns True ONLY if an ApprovalRequest for this task was resolved
@@ -237,9 +239,17 @@ class ApprovalCoordinator:
         ``task.payload["operator_approved"]`` — that field is agent-writable and
         persisted to Neo4j/Redis, so trusting it is the GAP-2-1/GAP-2-2 bypass.
         Approval lives in the (operator-resolved) ApprovalRequest record only.
+
+        When ``tenant_id`` is given, only approvals recorded for that tenant
+        qualify (Step E: tenant-based approvals).
         """
         for req in self._orch._approval_requests.values():
-            if req.task_id == task_id and req.status == "approved" and req.operator_id:
+            if (
+                req.task_id == task_id
+                and req.status == "approved"
+                and req.operator_id
+                and (tenant_id is None or req.organization_id == tenant_id)
+            ):
                 return True
         return False
 

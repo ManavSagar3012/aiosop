@@ -286,6 +286,8 @@ class ApprovalRequest(BaseModel):
     requested_at: datetime = Field(default_factory=datetime.utcnow)
     responded_at: Optional[datetime] = None
     engagement_id: str
+    # Step E: tenant on the approval gate (defaults to "default" for single-tenant).
+    organization_id: str = "default"
 
 
 class ScopeDefinition(BaseModel):

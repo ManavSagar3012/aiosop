@@ -30,3 +30,13 @@ def tenant_prefixed_key(tenant_id: Optional[str], key: str) -> str:
 def tenant_can_access(tenant_id: Optional[str], resource_tenant: Optional[str]) -> bool:
     """Authorize a tenant against a resource that carries a tenant progenitor."""
     return tenant_scope(tenant_id) == tenant_scope(resource_tenant)
+
+
+def tenant_queue_key(tenant_id: Optional[str], logical_queue: str) -> str:
+    """Build a Redis queue key partitioned by tenant.
+
+    Key shape: ``queue:tenant/{tenant_id}:{logical_queue}`` so a Redis SCAN of
+    one tenant's keys cannot enumerate another's, and eviction policies apply
+    per-tenant rather than across the shared instance.
+    """
+    return tenant_prefixed_key(tenant_id, f"queue:{logical_queue}")
