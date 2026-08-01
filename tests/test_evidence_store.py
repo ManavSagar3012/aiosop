@@ -7,7 +7,10 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 async def sa_engine():
-    """Real SQLAlchemy AsyncEngine from SessionMemory (mirrors session_memory.py:321)."""
+    """Real SQLAlchemy AsyncEngine from SessionMemory (mirrors session_memory.py:321).
+
+    Cleans the exploit_receipts table before yield so tests remain idempotent
+    when Postgres is running (multiple runs reuse the same receipt ids)."""
     from ai_osop.memory.session_memory import SessionMemory
 
     sm = SessionMemory()
@@ -15,6 +18,14 @@ async def sa_engine():
         await sm.connect()
     except Exception as e:
         pytest.skip(f"Postgres not available: {e}")
+    try:
+        from sqlalchemy import text
+
+        async with sm._pg_engine.begin() as conn:
+            await conn.execute(text("DELETE FROM exploit_receipts"))
+    except Exception:
+        # table may not exist yet on the very first run; tests create it
+        pass
     yield sm._pg_engine
     await sm.close()
 
