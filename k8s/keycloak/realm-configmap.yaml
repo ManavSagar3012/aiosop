@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: keycloak
+data:
+  # Realm export for ai-osop. The mapper shape carries tenant_id and org_id claims
+  # into issued access tokens — that's what src/ai_osop/api/deps.py reads.
+  ai-osop-realm.json: |
+    {
+      "realm": "ai-osop",
+      "enabled": true,
+      "sslRequired": "external",
+      "registrationAllowed": false,
+      "loginWithEmailAllowed": true,
+      "duplicateEmailsAllowed": false,
+      "resetPasswordAllowed": true,
+      "editUsernameAllowed": false,
+      "bruteForceProtected": true,
+      "attributes": {
+        "frontendUrl": "https://keycloak.ai-osop.internal"
+      },
+      "clients": [
+        {
+          "clientId": "ai-osop-api",
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "serviceAccountsEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "standardFlowEnabled": true,
+          "implicitFlowEnabled": false,
+          "bearerOnly": false,
+          "consentRequired": false,
+          "redirectUris": ["http://localhost:8200/*", "https://*.ai-osop.internal/*"],
+          "webOrigins": ["http://localhost:8200"],
+          "protocolMappers": [
+            {
+              "name": "tenant-id-mapper",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-attribute-mapper",
+              "consentRequired": false,
+              "config": {
+                "userinfo.token.claim": "true",
+                "user.attribute": "tenant_id",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "claim.name": "tenant_id",
+                "jsonType.label": "String",
+                "multivalued": false
+              }
+            },
+            {
+              "name": "org-id-mapper",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-attribute-mapper",
+              "consentRequired": false,
+              "config": {
+                "userinfo.token.claim": "true",
+                "user.attribute": "org_id",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "claim.name": "org_id",
+                "jsonType.label": "String",
+                "multivalued": false
+              }
+            }
+          ]
+        }
+      ],
+      "roles": {
+        "realm": [
+          {"name": "senior_operator", "description": "Full access"},
+          {"name": "operator", "description": "Engagement-scoped access"},
+          {"name": "viewer", "description": "Read-only dashboards"}
+        ]
+      }
+    }

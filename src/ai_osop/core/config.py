@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     # working. When True, engagement access denies a cross-tenant read/write.
     strict_tenancy: bool = Field(default=False, validation_alias="OSOP_STRICT_TENANCY")
 
+    # Envelope encryption (Step F): which KMS provider SessionEncryption's
+    # per-tenant async surface uses. "none" (default) keeps the existing Fernet
+    # path; "local" exercises LocalKMSProvider for dev; "aws" uses AWSKMSProvider
+    # and needs `OSOP_KMS_KEY_ID` (alias ARN or CMK id from bootstrap_kms.py).
+    kms_provider: str = Field(default="none", validation_alias="OSOP_KMS_PROVIDER")
+    kms_key_id: str = Field(default="", validation_alias="OSOP_KMS_KEY_ID")
+    kms_region: str = Field(default="", validation_alias="OSOP_KMS_REGION")
+
     # LLM / AI
     llm_primary_provider: str = Field(default="openai", validation_alias="OSOP_LLM_PRIMARY")
     llm_primary_model: str = Field(default="gpt-4o", validation_alias="OSOP_LLM_PRIMARY_MODEL")

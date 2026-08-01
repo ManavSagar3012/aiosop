@@ -61,6 +61,7 @@ flake8 = "^7.0.0"
 mypy = "^1.8.0"
 pre-commit = "^3.6.0"
 aiosqlite = "^0.22.1"
+boto3 = "^1.43.62"
 
 [tool.poetry.scripts]
 ai-osop = "ai_osop.cli:main"

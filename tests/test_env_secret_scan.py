@@ -25,3 +25,10 @@ def test_scan_environ_flags_jwt_like_values():
     }
     findings = scan_environ(fake_env)
     assert any(f["pattern"] == "jwt_like" for f in findings)
+
+
+def test_hibp_range_returns_none_when_unset(monkeypatch):
+    from ai_osop.core.env_secret_scan import check_hibp_range
+
+    monkeypatch.delenv("OSOP_ENV_SCAN_HIBP_URL", raising=False)
+    assert check_hibp_range("a94a8fe5ccb19ba61c4c0873d391e987982fbbd3") is None

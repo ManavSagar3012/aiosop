@@ -163,6 +163,35 @@ class SessionEncryption:
                 result[k] = v
         return result
 
+    async def encrypt_for_tenant(self, plaintext: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+        """Per-tenant AES-GCM envelope encryption when a KMS driver is configured
+        (`OSOP_KMS_PROVIDER=aws` requires boto3 + a configured CMK). Returns None
+        when envelope mode isn't enabled, signaling callers to stay on Fernet.
+        """
+        provider = getattr(settings, "kms_provider", None)
+        if not provider or provider == "none":
+            return None
+        try:
+            if provider == "aws":
+                from ai_osop.core.envelope_crypto import AWSKMSProvider, EnvelopeCipher
+
+                kms = AWSKMSProvider(
+                    key_id=settings.kms_key_id,
+                    region=getattr(settings, "kms_region", None),
+                )
+            elif provider == "local":
+                from ai_osop.core.envelope_crypto import EnvelopeCipher, LocalKMSProvider
+
+                kms = LocalKMSProvider()
+            else:
+                logger.warning("unknown_kms_provider", provider=provider)
+                return None
+            cipher = EnvelopeCipher(kms)
+            return await cipher.encrypt(plaintext.encode("utf-8"), tenant_id=tenant_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("envelope_encrypt_failed", error=str(e), tenant=tenant_id)
+            return None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ORM
