@@ -195,15 +195,34 @@ async def get_vuln_education(vuln_class: str, operator: Dict[str, Any] = Depends
 
 @router.get("/engagements/{session_id}/waf-profiles")
 async def get_waf_profiles(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
-    """Get learned WAF profiles for the engagement."""
-    await assert_engagement_access(operator, session_id)
-    return [
+    """Get WAF profiles actually detected for the engagement (from the graph).
+
+    FIX (audit 2026-08-01): this endpoint previously returned a HARDCODED,
+    fabricated profile for "ginandjuice.shop" regardless of input — the operator
+    console was showing canned WAF intel for a target that may not even be in
+    scope, presented as a real detection. Now it queries the graph for Asset /
+    Endpoint nodes that actually carry a detected WAF, and reports NOTHING (an
+    empty profile count) when no WAF was observed — never invented data.
+    """
+    session = await assert_engagement_access(operator, session_id)
+    forms = engagement_id_forms(session, session_id)
+    gm = state["orchestrator"].graph_memory
+    try:
+        assets = await gm.run_read_query(
+            "MATCH (a:Asset) WHERE a.engagement_id IN $ids AND a.waf IS NOT NULL "
+            "RETURN a.value AS target, a.waf AS waf_type LIMIT 200",
+            {"ids": forms},
+        )
+    except Exception as e:  # noqa: BLE001 - report empty rather than 500 the console
+        logger.warning("waf_profiles_query_failed", session_id=session_id, error=str(e))
+        assets = []
+    profiles = [
         {
-            "target": "ginandjuice.shop",
-            "waf_type": "Cloudflare/V2",
-            "blocked_patterns": ["' OR 1=1", "<script>", "UNION SELECT"],
-            "bypass_success_rate": 0.65,
-            "evolved_bypasses": 12,
-            "confidence": 0.85,
+            "target": a.get("target"),
+            "waf_type": a.get("waf_type"),
+            "confidence": None,  # not yet measured per-detection; unknown, not fabricated
+            "source": "runtime-detection",
         }
+        for a in (assets or [])
     ]
+    return {"session_id": session_id, "count": len(profiles), "profiles": profiles}

@@ -318,7 +318,16 @@ class Settings(BaseSettings):
     # reports to a live program. Set OSOP_BUG_BOUNTY_SIMULATION=false to enable real
     # platform calls (requires valid h1/bc credentials).
     bug_bounty_simulation: bool = Field(
-        default=False, validation_alias="OSOP_BUG_BOUNTY_SIMULATION"
+        # FIX (audit 2026-08-01): default was False while the docstring + adapter
+        # claimed "Defaults to SIMULATION". Because settings.bug_bounty_simulation
+        # always exists, the adapter's getattr(settings, ..., True) never used its
+        # safe True default — this field's False won, so simulation was effectively
+        # DISABLED out of the box, and the findings router hardcodes
+        # live_submit_approved=True. The only thing stopping a live -> HackerOne
+        # submission was absent credentials. Flip the default to True so the safe
+        # (simulation) behavior is real; set OSOP_BUG_BOUNTY_SIMULATION=false to
+        # enable live platform calls (still requires credentials + approval).
+        default=True, validation_alias="OSOP_BUG_BOUNTY_SIMULATION"
     )
 
     browser_mcp_host: str = Field(default="127.0.0.1", validation_alias="OSOP_BROWSER_MCP_HOST")
