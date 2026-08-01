@@ -14,11 +14,20 @@ class _FakeSessionMemory:
     def __init__(self) -> None:
         self.writes = []
         self.reads = []
+        self.states: Dict[str, str] = {}
 
     async def run_write(self, query: str, *params) -> None:
         self.writes.append((query, params))
+        if "INSERT INTO" in query:
+            self.states[params[0]] = params[3]
+        elif "UPDATE" in query and len(params) >= 2:
+            self.states[params[0]] = params[1]
 
     async def run_read(self, query: str, *params) -> list:
+        # Existence/state probe used by transition() before enforcing the funnel.
+        if "SELECT state FROM" in query and params:
+            state = self.states.get(params[0])
+            return [{"state": state}] if state else []
         # The real driver returns list[dict] with keys from the SELECT; the summarize
         # method expects "suspicious_ids" present when manual_review exists.
         if "summarize" in query or "GROUP BY" in query:
@@ -57,15 +66,18 @@ async def test_ledger_records_finding_lifecycle():
         id="f-1",
         vuln_id="vuln-1",
         endpoint_id="ep-1",
-        state="validated",
+        state="detected",
         evidence_summary="SQLi on login",
-        trust_score=0.92,
+        trust_score=0.5,
     )
     await ledger.record(finding)
     assert len(mem.writes) == 2  # TABLE + insert
     assert "INSERT INTO" in mem.writes[-1][0]
-    assert mem.writes[-1][1][:4] == ("f-1", "vuln-1", "ep-1", "validated")
+    assert mem.writes[-1][1][:4] == ("f-1", "vuln-1", "ep-1", "detected")
 
+    # Follow the legal funnel: detected -> validated -> manual_review
+    await ledger.transition("f-1", "validated", "oracle confirmed payload")
+    assert "UPDATE" in mem.writes[-1][0]
     await ledger.transition("f-1", "manual_review", "oracle failed to confirm payload")
     assert "UPDATE" in mem.writes[-1][0]
     assert "manual_review" in mem.writes[-1][1][1]
@@ -110,3 +122,18 @@ async def test_precision_gate_counts_confirmed_vs_flagged():
     summary = await ledger.summarize()
     assert "manual_review" in {s[0] for s in summary["states"]}
     assert summary["needs_review_sample"] is not None
+
+
+def test_legal_and_illegal_transitions():
+    from ai_osop.core.exceptions import WorkflowTransitionError
+
+    ledger = ValidationLedger(session_memory=None)
+    assert ledger.can_transition("detected", "validated")
+    assert ledger.can_transition("validated", "chain_executed")
+    assert ledger.can_transition("chain_executed", "successful_chain")
+    assert ledger.can_transition("chain_executed", "chain_failed")
+    assert ledger.can_transition("chain_failed", "detected")
+    assert not ledger.can_transition("detected", "successful_chain")
+    assert not ledger.can_transition("successful_chain", "detected")
+    with pytest.raises(WorkflowTransitionError):
+        ledger.ensure_transition("detected", "successful_chain")

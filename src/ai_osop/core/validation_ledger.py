@@ -12,6 +12,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from ai_osop.core.exceptions import WorkflowTransitionError
+
+LEGAL_TRANSITIONS = {
+    "detected": {"validated", "manual_review", "rejected"},
+    "validated": {"chain_executed", "escalated", "manual_review"},
+    "manual_review": {"validated", "rejected"},
+    "chain_executed": {"successful_chain", "chain_failed"},
+    "escalated": {"validated"},
+    "chain_failed": {"detected"},
+    "successful_chain": set(),
+    "rejected": set(),
+}
+
 
 @dataclass
 class ValidatedFindingEvent:
@@ -32,6 +45,16 @@ class ValidationLedger:
 
     def __init__(self, session_memory: Any):
         self.session_mem = session_memory
+
+    def can_transition(self, from_state: str, to_state: str) -> bool:
+        return to_state in LEGAL_TRANSITIONS.get(from_state, set())
+
+    def ensure_transition(self, from_state: str, to_state: str) -> None:
+        if not self.can_transition(from_state, to_state):
+            raise WorkflowTransitionError(
+                f"illegal ledger transition: {from_state} -> {to_state}",
+                details={"from_state": from_state, "to_state": to_state},
+            )
 
     async def initialize(self) -> None:
         """Ensure the table exists with the right schema; no-op if already present."""
@@ -69,7 +92,19 @@ class ValidationLedger:
         return finding
 
     async def transition(self, event_id: str, to_state: str, reason: str = "") -> None:
-        """Move an event to a new state and append audit metadata about the change."""
+        """Move an event to a new state, enforcing the legal lifecycle funnel."""
+        rows = await self.session_mem.run_read(
+            f"SELECT state FROM {self.TABLE_NAME} WHERE id = $1", event_id
+        )
+        if rows:
+            self.ensure_transition(rows[0]["state"], to_state)
+        else:
+            # No prior row: only 'detected' is a legal entry point into the funnel.
+            if to_state != "detected":
+                raise WorkflowTransitionError(
+                    "first ledger event for a finding must be 'detected'",
+                    details={"event_id": event_id, "to_state": to_state},
+                )
         _meta = {"change_reason": reason, "changed_at": datetime.utcnow().isoformat()}
         q = f"""
             UPDATE {self.TABLE_NAME}
