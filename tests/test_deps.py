@@ -249,3 +249,90 @@ class TestUpdateActiveAgents:
         # Should not raise
         update_active_agents(5)
         update_active_agents(0)
+
+
+class TestTenantScopingOnAccess:
+    """Step E (multi-tenancy): engagement access is tenant-aware when
+    OSOP_STRICT_TENANCY is on. Default mode stays permissive for migration."""
+
+    def _session(self, session_id: str, org_id: str) -> "SessionState":
+        from ai_osop.core.models import ScopeDefinition, SessionState
+
+        scope = ScopeDefinition(
+            engagement_id=session_id, domains=["example.com"], organization_id=org_id
+        )
+        return SessionState(session_id=session_id, phase="reconnaissance", scope=scope, roe={})
+
+    def _state_with(self, session):
+        from ai_osop.api.deps import state
+
+        mock_orch = MagicMock()
+        mock_orch._sessions = {session.session_id: session}
+        mock_orch.session_memory = MagicMock()
+        mock_orch.session_memory.load_session_state = AsyncMock(return_value=session)
+        state["orchestrator"] = mock_orch
+        return state
+
+    def test_cross_tenant_denied_in_strict_mode(self) -> None:
+        import asyncio
+        from unittest.mock import patch
+
+        import ai_osop.core.config as _cfg
+        from fastapi import HTTPException
+
+        from ai_osop.api.deps import assert_engagement_access, state
+
+        session = self._session("eng-t1", "org-blue")
+        self._state_with(session)
+        try:
+            with patch.object(_cfg.settings, "strict_tenancy", True):
+                with pytest.raises(HTTPException) as exc:
+                    asyncio.run(
+                        assert_engagement_access(
+                            {"sub": "senior-op", "role": "senior_operator", "tenant_id": "org-red"},
+                            "eng-t1",
+                        )
+                    )
+                assert exc.value.status_code == 403
+        finally:
+            state.pop("orchestrator", None)
+
+    def test_same_tenant_allowed_in_strict_mode(self) -> None:
+        import asyncio
+        from unittest.mock import patch
+
+        import ai_osop.core.config as _cfg
+
+        from ai_osop.api.deps import assert_engagement_access, state
+
+        session = self._session("eng-t2", "org-blue")
+        self._state_with(session)
+        try:
+            with patch.object(_cfg.settings, "strict_tenancy", True):
+                out = asyncio.run(
+                    assert_engagement_access(
+                        {"sub": "senior-op", "role": "senior_operator", "tenant_id": "org-blue"},
+                        "eng-t2",
+                    )
+                )
+                assert out is session
+        finally:
+            state.pop("orchestrator", None)
+
+    def test_non_strict_mode_still_permits(self) -> None:
+        import asyncio
+
+        from ai_osop.api.deps import assert_engagement_access, state
+
+        session = self._session("eng-t3", "org-blue")
+        self._state_with(session)
+        try:
+            out = asyncio.run(
+                assert_engagement_access(
+                    {"sub": "senior-op", "role": "senior_operator", "tenant_id": "org-red"},
+                    "eng-t3",
+                )
+            )
+            assert out is session
+        finally:
+            state.pop("orchestrator", None)

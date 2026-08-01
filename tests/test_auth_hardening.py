@@ -340,3 +340,31 @@ def test_assert_secrets_passes_when_strong():
         _cfg.settings.neo4j_password = orig_pass
         _cfg.settings.jwt_secret = orig_jwt
         _cfg.settings.audit_secret_key = orig_audit
+
+
+async def test_jwt_tenant_id_extracted_and_defaults():
+    """A JWT carrying a tenant_id claim surfaces it on the operator dict;
+    a JWT without one falls back to 'default'."""
+    secret = "a" * 32
+    with patch.object(_cfg.settings, "jwt_secret", secret), patch.object(
+        _cfg.settings, "jwt_algorithm", "HS256"
+    ), patch.object(_cfg.settings, "jwt_audience", None), patch.object(
+        _cfg.settings, "jwt_issuer", None
+    ):
+        from jose import jwt as _jwt
+        import time as _t
+
+        claims = {
+            "sub": "user-t",
+            "role": "senior_operator",
+            "exp": int(_t.time()) + 3600,
+            "tenant_id": "org-blue",
+        }
+        token = _jwt.encode(claims, secret, algorithm="HS256")
+        op = await _deps._authenticate(token)
+        assert op["tenant_id"] == "org-blue"
+
+        claims.pop("tenant_id")
+        token = _jwt.encode(claims, secret, algorithm="HS256")
+        op = await _deps._authenticate(token)
+        assert op["tenant_id"] == "default"

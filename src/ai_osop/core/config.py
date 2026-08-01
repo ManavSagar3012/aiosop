@@ -52,6 +52,13 @@ class Settings(BaseSettings):
         default=10.0, validation_alias="OSOP_AGENT_CLEANUP_TIMEOUT"
     )
 
+    # Multi-tenancy (Step E): when False (default), a JWT tenant_id is surfaced
+    # on the operator dict but not enforced — single-tenant deployments keep
+    # working. When True, engagement access denies a cross-tenant read/write.
+    strict_tenancy: bool = Field(
+        default=False, validation_alias="OSOP_STRICT_TENANCY"
+    )
+
     # LLM / AI
     llm_primary_provider: str = Field(default="openai", validation_alias="OSOP_LLM_PRIMARY")
     llm_primary_model: str = Field(default="gpt-4o", validation_alias="OSOP_LLM_PRIMARY_MODEL")

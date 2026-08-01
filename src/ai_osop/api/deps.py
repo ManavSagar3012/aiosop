@@ -142,14 +142,17 @@ async def _authenticate(presented: Optional[str]) -> Dict[str, Any]:
         role = payload.get("role")
         if not sub or not role:
             raise HTTPException(status_code=401, detail="JWT missing sub or role claim")
-        return {"sub": sub, "role": role, "claims": payload}
+        # Tenant claim: `tenant_id` preferred, Keycloak's `org_id` / `azp` as
+        # fallbacks. Default "default" keeps single-tenant deployments working.
+        tenant_id = payload.get("tenant_id") or payload.get("org_id") or "default"
+        return {"sub": sub, "role": role, "claims": payload, "tenant_id": tenant_id}
 
     if settings.api_token:
         import hmac
 
         if not hmac.compare_digest(presented or "", settings.api_token):
             raise HTTPException(status_code=401, detail="Invalid bearer token")
-        return {"sub": "operator-1", "role": "senior_operator"}
+        return {"sub": "operator-1", "role": "senior_operator", "tenant_id": "default"}
 
     import logging
 
@@ -226,6 +229,17 @@ async def assert_engagement_access(operator: Dict[str, Any], session_id: str) ->
 
     if not session:
         raise HTTPException(status_code=404, detail="Engagement not found")
+
+    # Step E: when strict tenancy is on, deny access across organization_id.
+    # Default (strict_tenancy=False) keeps single-tenant deployments working.
+    if settings.strict_tenancy:
+        op_tenant = operator.get("tenant_id") or "default"
+        session_tenant = getattr(session.scope, "organization_id", "default")
+        if op_tenant != session_tenant:
+            raise HTTPException(
+                status_code=403,
+                detail="Engagement belongs to a different tenant",
+            )
 
     role = operator.get("role", "")
     if role == "senior_operator":
