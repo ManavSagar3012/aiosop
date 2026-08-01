@@ -252,6 +252,7 @@ class Settings(BaseSettings):
     sandbox_network_mode: str = "isolated"
     sandbox_cpu_limit: str = "2"
     sandbox_memory_limit: str = "4Gi"
+    sandbox_timeout_seconds: int = 30
 
     # Orchestration
     max_concurrent_agents: int = (
