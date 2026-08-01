@@ -18,6 +18,34 @@ from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition
 
 logger = structlog.get_logger()
 
+
+def _apply_egress_rules(iptables_cmds: List[List[str]]) -> None:
+    """Apply sandbox egress iptables rules, failing CLOSED.
+
+    Every rule must apply. A failed terminal DROP or FORWARD->chain jump would
+    otherwise leave the sandbox able to egress freely, so a partial setup must
+    raise (and let the caller tear the sandbox down) rather than run with an
+    unenforced network policy. (AIOSOP-SANDBOX-FAILCLOSED) Previously this loop
+    only logged a warning and continued, silently running wide open on any
+    iptables failure.
+    """
+    import subprocess
+
+    failures: List[str] = []
+    for cmd in iptables_cmds:
+        result = subprocess.run(cmd, check=False, capture_output=True)
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")[:200]
+            logger.error("iptables_rule_failed", cmd=cmd, stderr=stderr)
+            failures.append(" ".join(cmd))
+    if failures:
+        raise SandboxException(
+            "sandbox egress iptables setup failed; refusing to run with an "
+            f"unenforced network policy ({len(failures)} rule(s) failed, "
+            f"first: {failures[0]})"
+        )
+
+
 # Strip a trailing ":<port>" from a host. Scope domains are host-based; a URL's
 # parsed hostname never carries the port, so an allowed domain stored WITH a port
 # (e.g. "localhost:3000") could never match the extracted host "localhost",
@@ -480,7 +508,6 @@ class SandboxManager:
            - DROP everything else
         """
         import socket
-        import subprocess
 
         sandbox_id = container.labels.get("ai-osop.sandbox.id", container.short_id)
 
@@ -565,11 +592,11 @@ class SandboxManager:
         # Drop everything else
         iptables_cmds.append(["iptables", "-A", chain_name, "-j", "DROP"])
 
-        # Apply rules
-        for cmd in iptables_cmds:
-            result = subprocess.run(cmd, check=False, capture_output=True)
-            if result.returncode != 0:
-                logger.warning("iptables_rule_failed", cmd=cmd, stderr=result.stderr.decode()[:200])
+        # Apply rules. Fail CLOSED: if any rule fails, the effective egress
+        # policy is unknown — most dangerously a failed terminal DROP or the
+        # FORWARD->chain jump leaves the sandbox egressing freely — so raise
+        # and let the caller tear the sandbox down. (AIOSOP-SANDBOX-FAILCLOSED)
+        _apply_egress_rules(iptables_cmds)
 
         # 3. Store network info for cleanup
         self._active_sandboxes[sandbox_id]["network"] = {

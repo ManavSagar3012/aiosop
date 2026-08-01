@@ -5,7 +5,7 @@ All engagement lifecycle endpoints: create, list, get, transition, halt.
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ai_osop.api.deps import (
     CreateEngagementRequest,
@@ -64,8 +64,17 @@ async def create_engagement(
 
 
 @router.get("")
-async def list_engagements(operator: Dict[str, Any] = Depends(verify_token)):
-    """List all active engagements sorted by creation time (latest last)."""
+async def list_engagements(
+    operator: Dict[str, Any] = Depends(verify_token),
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+):
+    """List engagements, newest first. Bounded by limit/offset.
+
+    AIOSOP-SCALE-003 (2026-08-01): previously returned every in-memory session
+    unbounded (same class of issue as list_tasks before AIOSOP-SCALE-002). Apply
+    a server-side default cap; clients that need more can page with limit/offset.
+    """
     try:
         orch = state.get("orchestrator")
         if orch is None:
@@ -76,6 +85,7 @@ async def list_engagements(operator: Dict[str, Any] = Depends(verify_token)):
         # senior_operator sees all.
         if operator.get("role") != "senior_operator":
             sessions = [s for s in sessions if s.created_by == operator.get("sub")]
+        sessions = sessions[offset : offset + limit]
         return [s.model_dump(mode="json") for s in sessions]
     except Exception as e:
         import traceback
