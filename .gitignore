@@ -58,6 +58,17 @@ env/
 .env.production.local
 .envrc
 
+# Credential / token artifacts — must never be committed (audit 2026-08-01).
+# A live senior-operator JWT was previously tracked as .bench_token.
+.bench_token
+.bench_token.*
+*.bearer
+*.jwt
+token
+token.*
+*.token
+ui/.dev_token
+
 # Node / UI
 ui/node_modules/
 ui/dist/

@@ -4,13 +4,13 @@ Fenced from import cycles against core.metrics' MetricsRegistry.
 """
 
 from contextlib import contextmanager
-from typing import Dict
+from typing import Any, Dict, Iterator, cast
 
 from prometheus_client import REGISTRY, Counter, Histogram
 
 # Scoped name->collector map to avoid global collisions.
-_COUNTERS: Dict[str, Counter] = {}
-_HISTOGRAMS: Dict[str, Histogram] = {}
+_COUNTERS: Dict[str, Any] = {}
+_HISTOGRAMS: Dict[str, Any] = {}
 
 
 def _get(name: str, labels: tuple = ()) -> Counter:
@@ -19,10 +19,10 @@ def _get(name: str, labels: tuple = ()) -> Counter:
         for coll in list(REGISTRY._collector_to_names):
             if getattr(coll, "_name", "") == name:
                 _COUNTERS[key] = coll
-                return coll
+                return cast(Counter, coll)
         c = Counter(name, name, labels, registry=REGISTRY)
         _COUNTERS[key] = c
-    return _COUNTERS[key]
+    return cast(Counter, _COUNTERS[key])
 
 
 def _get_hist(name: str, labels: tuple = ()) -> Histogram:
@@ -31,10 +31,10 @@ def _get_hist(name: str, labels: tuple = ()) -> Histogram:
         for coll in list(REGISTRY._collector_to_names):
             if getattr(coll, "_name", "") == name:
                 _HISTOGRAMS[key] = coll
-                return coll
+                return cast(Histogram, coll)
         h = Histogram(name, name, labels, registry=REGISTRY)
         _HISTOGRAMS[key] = h
-    return _HISTOGRAMS[key]
+    return cast(Histogram, _HISTOGRAMS[key])
 
 
 def chain_hop_seconds(seconds: float, chain_id: str, hop_idx: str) -> None:
@@ -82,7 +82,7 @@ def chain_success(chain_id: str, hops: int) -> None:
 
 
 @contextmanager
-def time_chain_execution(chain_id: str):
+def time_chain_execution(chain_id: str) -> Iterator[None]:
     c = _get("ai_osop_a2_chain_execution_seconds", ("chain_id",))
     import time
 

@@ -306,8 +306,13 @@ async def resolve_finding(
 ):
     """Operator resolves a finding's outcome."""
     await assert_engagement_access(operator, session_id)
+    # FIX (audit 2026-08-01): this previously read state["session_memory"] /
+    # state["graph_memory"], but only state["orchestrator"] is ever populated
+    # (main.py lifespan). Every call raised KeyError -> 500. Source both memory
+    # tiers from the bound orchestrator instead.
+    orch = state["orchestrator"]
     return await FindingConversionEngine.resolve_finding(
-        finding_id, status, state["session_memory"], state["graph_memory"]
+        finding_id, status, orch.session_memory, orch.graph_memory
     )
 
 

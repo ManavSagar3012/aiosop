@@ -20,7 +20,7 @@ class GroundTruthEntry:
     confidence: float = 1.0
     withdrawn: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.expected_result not in ("accepted", "rejected"):
             raise ValueError("expected_result must be 'accepted' or 'rejected'")
 
@@ -28,7 +28,7 @@ class GroundTruthEntry:
 class CorpusBenchmark:
     """Grounds detector validation in a labeled local corpus."""
 
-    def __init__(self, entries: List[GroundTruthEntry]):
+    def __init__(self, entries: List[GroundTruthEntry]) -> None:
         self.entries = list(entries)
 
     def count(self) -> int:
@@ -89,7 +89,9 @@ class CorpusBenchmark:
             },
         }
 
-    async def run(self, agent_runner=None, dry_run: bool = False) -> List[Dict[str, Any]]:
+    async def run(
+        self, agent_runner: Any = None, dry_run: bool = False
+    ) -> List[Dict[str, Any]]:
         """Execute the corpus reference facts and verify the scoring contract.
 
         - ``agent_runner`` provided: call run(reference_exploit) and treat the output

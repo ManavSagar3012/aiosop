@@ -52,15 +52,42 @@ async def get_system_config(
 async def get_sandbox_status(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
 ):
-    """Get execution sandbox health and guard status."""
+    """Get execution sandbox status — reports only what the platform can verify.
+
+    FIX (audit 2026-08-01): this endpoint previously returned FABRICATED values
+    (ebpf_filter_active=True, active_blocks=42, cpu_load=0.15, ...). Nothing in the
+    process actually enforces eBPF at runtime — safety/ebpf_filter.py only emits
+    Kubernetes NetworkPolicy / Tetragon manifest *templates* an operator must apply
+    themselves. Reporting ``ebpf_filter_active: True`` made the operator console
+    claim containment that does not exist. We now report the real executor state
+    and mark every unmeasured/unenforced field explicitly.
+    """
+    sandbox_manager = state.get("sandbox_manager")
+    manager_present = sandbox_manager is not None
+    active_sandboxes: Dict[str, Any] = (
+        getattr(sandbox_manager, "_active_sandboxes", {}) if manager_present else {}
+    )
     return {
         "runtime": settings.sandbox_runtime,
-        "ebpf_filter_active": True,
-        "tetragon_policy": "ai-osop-strict-v1",
-        "active_blocks": 42,
-        "cpu_load": 0.15,
-        "memory_usage": "256Mi",
-        "network_guard_status": "enforcing",
+        # True only if a SandboxManager is alive in this process (not a proxy for
+        # actual container creation succeeding — see active_sandbox_count).
+        "sandbox_manager_initialized": manager_present,
+        # Real count of sandboxes the manager believes are live.
+        "active_sandbox_count": len(active_sandboxes),
+        "active_sandbox_ids": list(active_sandboxes.keys()),
+        # Honest negatives: these controls exist only as manifest templates and are
+        # NOT verified/applier-verified by this process. Reported as unknown, not True.
+        "ebpf_filter_active": None,  # unknown — not verifiable from this process
+        "tetragon_policy": None,  # manifest template only
+        "network_guard_status": "unverified",
+        # Resource metrics are not instrumented; report null rather than invent.
+        "cpu_load": None,
+        "memory_usage": None,
+        "note": (
+            "eBPF/Tetragon enforcement is manifest-generation only "
+            "(safety/ebpf_filter.py); this process does not verify the policies are "
+            "applied. Treat containment as unverified until proven by the cluster."
+        ),
     }
 
 
