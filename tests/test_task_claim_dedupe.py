@@ -103,5 +103,47 @@ def test_task_claim_dedupe():
     asyncio.run(_run())
 
 
+def _mk(task_type: str, **kw) -> Task:
+    return Task(
+        type=task_type,
+        priority=5,
+        agent_type=kw.pop("agent_type", AgentType.RECON),
+        payload={},
+        engagement_id="eng-x",
+        **kw,
+    )
+
+
+def test_dangerous_markers_force_approval_gate():
+    """AIOSOP-APPROVAL-SURFACE-001: every dangerous-class task name variant must be flagged."""
+    ts = TaskScheduler.__new__(TaskScheduler)
+    for t in (
+        "exploit",
+        "validate_exploit",
+        "exploit_validation",
+        "exploit_chain",
+        "sqlmap_scan",
+        "rce_trigger",
+        "shell_upload",
+        "sqli_deep",
+        "privesc_check",
+        "data_exfiltration",
+        "backdoor_install",
+        "lateral_movement",
+    ):
+        assert ts._is_dangerous_task(_mk(t)) is True, t
+
+
+def test_harmless_types_do_not_trigger_gate():
+    ts = TaskScheduler.__new__(TaskScheduler)
+    for t in ("full_recon", "subdomain_enum", "map_workflow", "http_probe", "spa_harvest"):
+        assert ts._is_dangerous_task(_mk(t)) is False, t
+
+
+def test_exploit_validation_agent_type_always_gates():
+    ts = TaskScheduler.__new__(TaskScheduler)
+    assert ts._is_dangerous_task(_mk("history_import", agent_type=AgentType.EXPLOIT_VALIDATION)) is True
+
+
 if __name__ == "__main__":
     test_task_claim_dedupe()

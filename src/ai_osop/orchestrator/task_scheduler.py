@@ -176,14 +176,13 @@ class TaskScheduler:
                 "approval_required": task.approval_required,
             },
         ):
-            # REL-006: exploit-class tasks ALWAYS require approval and may never
+            # REL-006: dangerous-class tasks ALWAYS require approval and may never
             # carry a caller-supplied approval token. Only resolve_approval (after a
             # real operator decision) re-adds the token. Sanitizing here closes the
             # GAP-2-1 self-authorization vector for anything entering via schedule_task.
-            if task.agent_type == AgentType.EXPLOIT_VALIDATION or task.type in (
-                "validate_exploit",
-                "exploit_validation",
-            ):
+            # AIOSOP-APPROVAL-SURFACE-001: widened from 2 hardcoded strings to the
+            # canonical DANGEROUS_TASK_MARKERS set so naming variants cannot slip through.
+            if self._is_dangerous_task(task):
                 task.approval_required = True
             self._sanitize_external_payload(task)
             self._orch._tasks[task.id] = task
@@ -397,10 +396,9 @@ class TaskScheduler:
             # altered after creation — refuse to run the exploit and audit it.
             # P0-005: fail closed on unsigned scopes too; legacy unsigned scopes are
             # no longer permitted for exploit-class tasks.
-            if task.agent_type == AgentType.EXPLOIT_VALIDATION or task.type in (
-                "validate_exploit",
-                "exploit_validation",
-            ):
+            # AIOSOP-APPROVAL-SURFACE-001: same canonical dangerous set as the
+            # approval gate, so a renamed exploit cannot skip scope verification either.
+            if self._is_dangerous_task(task):
                 _sess = self._orch._sessions.get(task.engagement_id)
                 _scope = getattr(_sess, "scope", None) if _sess is not None else None
                 if _scope is None or not getattr(_scope, "signature", None):
@@ -749,8 +747,44 @@ class TaskScheduler:
         except Exception as e:  # noqa: BLE001 — TTL self-heals a missed release
             logger.warning("task_lock_release_failed", task_id=task_id, error=str(e))
 
-    @staticmethod
-    def _sanitize_external_payload(task: Task) -> None:
+    # AIOSOP-APPROVAL-SURFACE-001 (2026-08-01): canonical set of task types that must
+    # ALWAYS require operator approval regardless of what the producer set. Previously
+    # only {"validate_exploit","exploit_validation"} (2 strings) forced the gate, so an
+    # operator could enqueue e.g. task_type="exploit" / "exploit_chain" / "sqlmap" (no
+    # underscore) — or any active-attack scanner — straight through create_task without
+    # a human ever seeing it. This set is matched as a SUBSTRING against the lowercase
+    # task type so naming variants (exploit, exploit_chain, exploit_validation, ...) all
+    # catch. Keep it aligned with ApprovalGate.HIGH_IMPACT_ACTIONS in safety/scope.py.
+    DANGEROUS_TASK_MARKERS = (
+        "exploit",          # exploit, validate_exploit, exploit_validation, exploit_chain
+        "validate_exploit",
+        "rce",
+        "sqli",
+        "sqlmap",
+        "lateral_movement",
+        "data_exfiltration",
+        "exfil",
+        "privilege_escalation",
+        "privesc",
+        "persistence",
+        "backdoor",
+        "command_injection",
+        "code_exec",
+        "shell",
+    )
+
+    @classmethod
+    def _is_dangerous_task(cls, task: "Task") -> bool:
+        """True if a task must be forced behind the operator-approval gate.
+
+        Centralizes the previously-duplicated exploit-guard checks. Matches the
+        canonical dangerous markers as substrings of the lowercase task type, and
+        always treats the EXPLOIT_VALIDATION agent class as dangerous.
+        """
+        if task.agent_type == AgentType.EXPLOIT_VALIDATION:
+            return True
+        t = (task.type or "").lower()
+        return any(marker in t for marker in cls.DANGEROUS_TASK_MARKERS)
         """Strip operator-approval tokens injected by any non-orchestrator producer
         (agents, queue producers, recovered/persisted records).
 
@@ -768,11 +802,11 @@ class TaskScheduler:
         Queue producers include agents (e.g. AttackChainAgent), so this is an
         UNTRUSTED boundary: re-apply REL-006 and strip any self-granted approval
         token before assignment. Without this, an agent could push a pre-approved
-        exploit_validation task straight to the queue and bypass the gate."""
-        if task.agent_type == AgentType.EXPLOIT_VALIDATION or task.type in (
-            "validate_exploit",
-            "exploit_validation",
-        ):
+        exploit_validation task straight to the queue and bypass the gate.
+        AIOSOP-APPROVAL-SURFACE-001: widened from 2 hardcoded strings to the
+        canonical DANGEROUS_TASK_MARKERS set so a renamed exploit bypass cannot
+        slip past Redis ingress either."""
+        if self._is_dangerous_task(task):
             task.approval_required = True
         self._sanitize_external_payload(task)
         await self._assign_task(task)
