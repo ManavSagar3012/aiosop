@@ -726,11 +726,32 @@ class Orchestrator:
                             inflight_counts[eid] = current + 1
                             await self._assign_task(task)
                         else:
-                            all_deps_complete = all(
-                                self.state.get_task(dep_id)
-                                and self.state.get_task(dep_id).status == "completed"
-                                for dep_id in task.dependencies
-                            )
+                            # AIOSOP-DEP-CYCLE-001: if ANY dependency id is unknown or
+                            # points back to this task, refuse to schedule it. Previously
+                            # an unknown dep id meant the and-short-circuit returned falsy
+                            # but a circular dep (A depends on B, B depends on A) would
+                            # deadlock the engagement: neither task could complete so
+                            # neither could unblock the other. Detect and reject early.
+                            deps = []
+                            bad_dep = False
+                            for dep_id in task.dependencies:
+                                if dep_id == task.id:
+                                    bad_dep = True
+                                    break
+                                t = self.state.get_task(dep_id)
+                                if t is None:
+                                    bad_dep = True
+                                    break
+                                deps.append(t)
+                            if bad_dep:
+                                logger.error(
+                                    "task_dependency_broken",
+                                    task_id=task.id,
+                                    engagement_id=task.engagement_id,
+                                )
+                                task.status = "failed"
+                                continue
+                            all_deps_complete = all(d.status == "completed" for d in deps)
                             if all_deps_complete:
                                 inflight_counts[eid] = current + 1
                                 await self._assign_task(task)
