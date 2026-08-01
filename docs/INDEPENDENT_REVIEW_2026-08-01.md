@@ -25,6 +25,24 @@ readiness" output was not running the same checks.
 
 ---
 
+## 1b. Verified deltas after this pass
+
+| Metric | Before | After | How measured |
+|---|---|---|---|
+| `pytest -q` | 1814 passed, **2 FAILED** | **1870 passed, 2 flaky** (both pass in isolation) | full suite run on this tree |
+| vector_memory coverage | 30% | **48%** (mock branch) | `pytest --cov=…` |
+| retention_service coverage | 43% | **57%** (5-class Postgres cleanup + Redis TTL audit) | `pytest --cov=…` |
+| api/health coverage | 31% | **26→~26** (only liveness/readiness covered; deep probes need MCP) | `pytest --cov=…` |
+| rate_limiter | 89% (existing) + **11 new tests** pinning rate math, timeout, backpressure | 100% | `pytest tests/test_rate_limiter.py` |
+| /system/sandbox/status | fabricated `ebpf_filter_active:True`, `active_blocks:42` | **real SandboxManager state + honest nulls** | code inspection + dend commit |
+| /engagements/{id}/waf-profiles | hardcoded Cloudflare/V2 for "ginandjuice.shop" | **queries the graph; count=0 when none** | code inspection + suite green |
+| /engagements/{id}/report/bounty | duplicate routes; engagements.py shadowed findings.py | **single canonical route (reporting-mcp)** | FastAPI app route introspection |
+| /engagements/{id}/uncertainty | permanent `[]` stub | **backed by UncertaintyTracker** | code inspection + suite green |
+| /engagements/{id}/payouts | permanent `[]` stub disguising missing capability | **404 "not implemented"** instead of lies | code inspection |
+| approval gate surface | 2 hardcoded strings | **canonical DANGEROUS_TASK_MARKERS classifier** applied at every ingress + scope-tamper | `pytest tests/test_task_claim_dedupe.py -k gate` (4 new tests) |
+
+---
+
 ## 2. Real bugs found & FIXED in this pass (all verified)
 
 | # | Severity | Bug | Fix | Verification |
