@@ -290,6 +290,7 @@ class ApprovalRequest(BaseModel):
 
 class ScopeDefinition(BaseModel):
     engagement_id: str
+    organization_id: str = "default"
     domains: List[str] = Field(default_factory=list)
     ips: List[str] = Field(default_factory=list)
     exclusions: List[str] = Field(default_factory=list)
