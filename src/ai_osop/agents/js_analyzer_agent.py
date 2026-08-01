@@ -196,6 +196,8 @@ class JSAnalysisResult(BaseModel):
     finding_ids: List[str]
     secrets: List[Dict[str, Any]]
     note: Optional[str] = None
+    # C1: sink/source weaponization summary; exploit tasking gates on max score.
+    weaponization: Optional[Dict[str, Any]] = None
 
 
 class JSAnalyzerAgent(BaseAgent):
@@ -215,6 +217,70 @@ class JSAnalyzerAgent(BaseAgent):
     # Maximum bytes to fetch per JS bundle (defensive against huge files).
     MAX_FETCH_BYTES = 8 * 1024 * 1024  # 8 MiB
     FETCH_TIMEOUT_SECONDS = 20.0
+
+    # Weaponization gating: exploit fan-out from JS findings requires score >= threshold.
+    JS_EXPLOIT_THRESHOLD = 0.4
+
+    _JS_SOURCE_PATTERNS = [
+        r"location\.hash",
+        r"location\.search",
+        r"document\.referrer",
+        r"window\.name",
+        r"addEventListener\(['\"]message",
+    ]
+    _JS_SINK_PATTERNS = [
+        r"innerHTML",
+        r"document\.write",
+        r"\beval\(",
+        r"new Function",
+        r"setTimeout\(['\"]",
+    ]
+    _JS_SECRET_SOURCES = [r"document\.cookie", r"localStorage", r"sessionStorage"]
+    _JS_EXFIL_SINKS = [r"\bfetch\(", r"XMLHttpRequest", r"navigator\.sendBeacon"]
+
+    @staticmethod
+    def weaponization_assessment(bundle_content: str, secrets_live: int) -> Dict[str, Any]:
+        """Score a JS bundle for exploitability: sink/source pairs + live secrets.
+
+        - +0.2 per confirmed (source, sink) pair, capped at 0.4.
+        - +0.3 per live-verified secret, capped at 0.6.
+        Returns: {"weaponization_score": float, "pairs": [...], "verified_secrets": int}.
+        """
+        import re
+
+        pairs: List[Dict[str, str]] = []
+
+        def _hits(patterns: List[str]) -> List[str]:
+            # Return the matched *text* (e.g. "location.hash"), not the regex
+            # pattern (e.g. "location\\.hash"), so pair records carry readable
+            # evidence instead of escaped source strings.
+            found = []
+            for pat in patterns:
+                m = re.search(pat, bundle_content)
+                if m:
+                    found.append(m.group(0))
+            return found
+
+        dom_src = _hits(JSAnalyzerAgent._JS_SOURCE_PATTERNS)
+        dom_sink = _hits(JSAnalyzerAgent._JS_SINK_PATTERNS)
+        for src in dom_src:
+            for sink in dom_sink:
+                pairs.append({"source": src, "sink": sink})
+
+        exfil_src = _hits(JSAnalyzerAgent._JS_SECRET_SOURCES)
+        exfil_sink = _hits(JSAnalyzerAgent._JS_EXFIL_SINKS)
+        for src in exfil_src:
+            for sink in exfil_sink:
+                pairs.append({"source": src, "sink": sink})
+
+        pair_score = min(0.2 * len(pairs), 0.4)
+        secret_score = min(secrets_live, 2) * 0.3
+        score = pair_score + secret_score
+        return {
+            "weaponization_score": round(score, 2),
+            "pairs": pairs,
+            "verified_secrets": secrets_live,
+        }
 
     @property
     def agent_type(self) -> AgentType:
@@ -482,8 +548,12 @@ class JSAnalyzerAgent(BaseAgent):
         all_endpoints: set = set()
         finding_ids: List[str] = []
         secret_summary: List[Dict[str, Any]] = []
+        weaponization_by_url: Dict[str, Dict[str, Any]] = {}
 
         for source_url, content in sources:
+            # C1 weaponization check: score sink/source pairs before fan-out.
+            w = JSAnalyzerAgent.weaponization_assessment(content, secrets_live=0)
+            weaponization_by_url[source_url] = w
             if do_endpoints:
                 eps = self._extract_endpoints(content)
                 all_endpoints.update(eps)
@@ -519,6 +589,9 @@ class JSAnalyzerAgent(BaseAgent):
             logger.debug("js_analyzer_reasoning_skipped", error=str(e))
 
         self.discovered_endpoints = sorted(all_endpoints)
+        max_weapon_score = max(
+            (w["weaponization_score"] for w in weaponization_by_url.values()), default=0.0
+        )
         return JSAnalysisResult(
             status="success",
             sources_analyzed=len(sources),
@@ -527,6 +600,11 @@ class JSAnalyzerAgent(BaseAgent):
             vulnerabilities_created=len(finding_ids),
             finding_ids=finding_ids,
             secrets=secret_summary,
+            weaponization={
+                "max_score": round(max_weapon_score, 2),
+                "per_source": weaponization_by_url,
+                "exploit_gating_allowed": max_weapon_score >= JSAnalyzerAgent.JS_EXPLOIT_THRESHOLD,
+            },
         )
 
     async def _cleanup_resources(self) -> None:
