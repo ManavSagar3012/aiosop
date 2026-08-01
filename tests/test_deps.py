@@ -319,20 +319,61 @@ class TestTenantScopingOnAccess:
         finally:
             state.pop("orchestrator", None)
 
-    def test_non_strict_mode_still_permits(self) -> None:
+
+class TestAutoStrictTenancy:
+    """Auto-strict: a non-default tenant on either side engages the isolation gate
+    even when OSOP_STRICT_TENANCY is unset."""
+
+    def _access(self, session_org, op_tenant):
         import asyncio
-
+        from unittest.mock import MagicMock, AsyncMock
         from ai_osop.api.deps import assert_engagement_access, state
+        from ai_osop.core.models import ScopeDefinition, SessionState
 
-        session = self._session("eng-t3", "org-blue")
-        self._state_with(session)
+        scope = ScopeDefinition(engagement_id="e-1", domains=["x"], organization_id=session_org)
+        session = SessionState(session_id="e-1", phase="reconnaissance", scope=scope, roe={})
+        mock_orch = MagicMock()
+        mock_orch._sessions = {"e-1": session}
+        mock_orch.session_memory = MagicMock()
+        mock_orch.session_memory.load_session_state = AsyncMock(return_value=session)
+        state["orchestrator"] = mock_orch
         try:
-            out = asyncio.run(
+            return asyncio.run(
                 assert_engagement_access(
-                    {"sub": "senior-op", "role": "senior_operator", "tenant_id": "org-red"},
-                    "eng-t3",
+                    {"sub": "op", "role": "senior_operator", "tenant_id": op_tenant},
+                    "e-1",
                 )
             )
-            assert out is session
         finally:
             state.pop("orchestrator", None)
+
+    def test_default_default_passes(self):
+        from fastapi import HTTPException
+
+        out = self._access("default", "default")
+        assert out.session_id == "e-1"
+
+    def test_org_red_vs_blue_denied_even_without_global_flag(self):
+        from fastapi import HTTPException
+        import ai_osop.core.config as _cfg
+
+        org_flag = _cfg.settings.strict_tenancy
+        _cfg.settings.strict_tenancy = False
+        try:
+            try:
+                self._access("org-blue", "org-red")
+                raise AssertionError("expected 403")
+            except HTTPException as e:
+                assert e.status_code == 403
+        finally:
+            _cfg.settings.strict_tenancy = org_flag
+
+    def test_org_vs_default_denied_both_directions(self):
+        from fastapi import HTTPException
+
+        for s_org, o_tenant in [("org-blue", "default"), ("default", "org-red")]:
+            try:
+                self._access(s_org, o_tenant)
+                raise AssertionError(f"expected 403 for session={s_org}, op={o_tenant}")
+            except HTTPException as e:
+                assert e.status_code == 403

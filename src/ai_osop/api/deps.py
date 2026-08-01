@@ -230,11 +230,12 @@ async def assert_engagement_access(operator: Dict[str, Any], session_id: str) ->
     if not session:
         raise HTTPException(status_code=404, detail="Engagement not found")
 
-    # Step E: when strict tenancy is on, deny access across organization_id.
-    # Default (strict_tenancy=False) keeps single-tenant deployments working.
-    if settings.strict_tenancy:
-        op_tenant = operator.get("tenant_id") or "default"
-        session_tenant = getattr(session.scope, "organization_id", "default")
+    # Step E: cross-tenant access denial. Strict when (a) OSOP_STRICT_TENANCY=true
+    # (global policy), OR (b) either side carries a non-default tenant bit — which
+    # means a multi-tenant engagement exists, so isolation is already implied.
+    op_tenant = operator.get("tenant_id") or "default"
+    session_tenant = getattr(session.scope, "organization_id", "default")
+    if settings.strict_tenancy or (op_tenant != "default" or session_tenant != "default"):
         if op_tenant != session_tenant:
             raise HTTPException(
                 status_code=403,

@@ -150,15 +150,13 @@ class Orchestrator:
         # the expensive durable-store read until task statuses settle.
         self._phase_complete_cache: TTLCache = TTLCache(maxsize=256, ttl=5)
 
-        # Start phase monitor + reasoning loop if an event loop is running
-        # (avoids test errors when no loop is available).
-        try:
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                self._phase_monitor_task = loop.create_task(self.phase_monitor._phase_monitor())
-                self.reasoning_loop.start()
-        except RuntimeError:
-            pass
+        # AIOSOP-TEST-ISOLATION-001 (2026-08-01): do NOT spawn background tasks here.
+        # Starting _phase_monitor_task/reasoning_loop in __init__ (whenever an event
+        # loop happens to be running) leaked tasks past tests that never call
+        # initialize()/shutdown(), poisoning the NEXT test with
+        # "RuntimeError: Event loop is closed". initialize() (the documented canonical
+        # startup entry point) idempotently starts every background task; removing the
+        # constructor autostart eliminates the leak without losing production behavior.
 
     # ---- Shared-state proxies -------------------------------------------------
     # State lives in OrchestrationState (self.state). The extracted components and

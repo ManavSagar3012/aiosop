@@ -1834,7 +1834,10 @@ class GraphMemory:
                 await (await s.run(cypher, params)).consume()
             return True
         except Exception as e:
-            logger.error("log_skipped_scan_failed", task_id=task_id, error=str(e))
+            # %-style args, not kwargs: if the logger is stdlib logging (test
+            # harness, or structlog not yet configured), kwargs crash with
+            # TypeError instead of returning the documented safe default False.
+            logger.error("log_skipped_scan_failed task_id=%s error=%s", task_id, str(e))
             return False
 
     async def upsert_task(self, task: Any, result_summary: Optional[Dict[str, Any]] = None) -> bool:
