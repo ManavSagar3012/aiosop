@@ -105,3 +105,16 @@ async def test_verify_chain_detects_tamper(sa_engine, tmp_path):
             .values(verdict="not_confirmed")
         )
     assert await store.verify_chain("eng-t") is False
+
+
+async def test_for_vulnerability_returns_only_matching(sa_engine, tmp_path):
+    from ai_osop.evidence.migrations import ensure_schema
+    from ai_osop.evidence.store import ReceiptStore
+    from ai_osop.safety.scope import AuditIntegrity
+
+    await ensure_schema(sa_engine)
+    store = ReceiptStore(sa_engine=sa_engine, integrity=AuditIntegrity(b"k-q"), evidence_root=tmp_path)
+    await store.record(_mk_receipt("rq-1", vuln="v-1"))
+    await store.record(_mk_receipt("rq-2", vuln="v-2"))
+    matches = await store.for_vulnerability("v-1")
+    assert [m.receipt_id for m in matches] == ["rq-1"]

@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import insert, select
 
@@ -146,4 +146,19 @@ class ReceiptStore:
                 return False
             prev = row["integrity_sig"]
         return True
+
+    async def _fetch_where(self, clause) -> "List[ExploitReceipt]":
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(exploit_receipts).where(clause).order_by(exploit_receipts.c.created_at)
+                )
+            ).mappings().all()
+        return [ExploitReceipt(**dict(r)) for r in rows]
+
+    async def for_vulnerability(self, vuln_id: str) -> "List[ExploitReceipt]":
+        return await self._fetch_where(exploit_receipts.c.vuln_id == vuln_id)
+
+    async def for_engagement(self, engagement_id: str) -> "List[ExploitReceipt]":
+        return await self._fetch_where(exploit_receipts.c.engagement_id == engagement_id)
 
