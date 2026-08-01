@@ -194,8 +194,21 @@ class GraphMemory:
                         continue
                     logger.warning("DDL statement failed: %s | error: %s", cypher, e)
 
+    async def _enqueue_outbox(self, entity_type: str, entity_id: str, payload: dict) -> None:
+        """Enqueue a graph write for async projection via the durable Postgres outbox.
+
+        AIOSOP-FINDINGS-OUTBOX extends beyond vulns: assets, endpoints, attacks, and
+        other graph-mutating calls all need an outbox safety net so a Neo4j outage
+        no longer loses the entity with zero audit trail. Passed through the
+        session's Postgres outbox and re-projected on recovery by OutboxProcessor.
+        """
+        _sink = getattr(self, "outbox_sink", None)
+        if _sink is None:
+            return
+        await _sink.enqueue_outbox(entity_type, entity_id, payload)
+
     async def add_asset(self, asset: Asset) -> str:
-        """Add or update an Asset node with tracing."""
+        """Add or update an Asset node. Post the write path through the outbox."""
         with trace_span(
             "neo4j.add_asset",
             attributes={
@@ -219,26 +232,34 @@ class GraphMemory:
             RETURN a.id
             """
 
-            async with self._driver.session() as session:
-                result = await session.run(
-                    cypher,
-                    {
-                        "id": asset.id,
-                        "type": asset.type,
-                        "value": asset.value,
-                        "source": asset.source,
-                        "confidence": asset.confidence,
-                        "metadata": json.dumps(asset.metadata),
-                        "first_seen": asset.first_seen.isoformat(),
-                        "last_seen": asset.last_seen.isoformat(),
-                        "engagement_id": asset.engagement_id,
-                    },
+            payload = {
+                "id": asset.id,
+                "type": asset.type,
+                "value": asset.value,
+                "source": asset.source,
+                "confidence": asset.confidence,
+                "metadata": asset.metadata,
+                "first_seen": asset.first_seen.isoformat(),
+                "last_seen": asset.last_seen.isoformat(),
+                "engagement_id": asset.engagement_id,
+            }
+
+            try:
+                async with self._driver.session() as session:
+                    result = await session.run(cypher, payload)
+                    record = await result.single()
+                    return record["a.id"] if record else asset.id
+            except Exception as neo_err:  # noqa: BLE001 - outbox durability net below
+                await self._enqueue_outbox("asset", asset.id, payload)
+                logger.warning(
+                    "asset_neo4j_write_failed_queued_for_replay id=%s error=%s",
+                    asset.id,
+                    neo_err,
                 )
-                record = await result.single()
-                return record["a.id"]
+                raise
 
     async def add_endpoint(self, endpoint: Endpoint) -> str:
-        """Add or update an Endpoint node. Handles both web and api endpoint types."""
+        """Add or update an Endpoint node. Post the write through the outbox."""
         cypher = """
         MERGE (e:Endpoint {id: $id})
         SET e.url = $url,
@@ -266,7 +287,7 @@ class GraphMemory:
             e.response_content_type = $response_content_type,
             e.user_label = $user_label,
             e.workflow_id = $workflow_id,
-            e.first_seen = CASE WHEN e.first_seen IS NULL THEN $first_seen ELSE e.first_seen END,
+            e.first_seen = CASE WHEN e.first_seen IS NULL THEN$first_seen ELSE e.first_seen END,
             e.last_seen = $last_seen,
             e.observations = $observations
         WITH e
@@ -282,54 +303,62 @@ class GraphMemory:
         RETURN e.id AS id
         """
 
-        async with self._driver.session() as session:
-            with trace_span(
-                "graph_memory.add_endpoint",
-                attributes={
-                    "endpoint_id": endpoint.id,
-                    "endpoint_type": endpoint.type,
-                    "engagement_id": endpoint.engagement_id,
-                },
-            ):
-                result = await session.run(
-                    cypher,
-                    {
-                        "id": endpoint.id,
-                        "url": endpoint.url,
-                        "method": endpoint.method,
-                        "type": endpoint.type,
-                        "status_code": endpoint.status_code,
-                        "title": endpoint.title,
-                        "technologies": endpoint.technologies,
-                        "parameters": endpoint.parameters,
-                        "auth_required": endpoint.auth_required,
-                        "source": endpoint.source,
-                        "confidence": endpoint.confidence,
+        payload = {
+            "id": endpoint.id,
+            "url": endpoint.url,
+            "method": endpoint.method,
+            "type": endpoint.type,
+            "status_code": endpoint.status_code,
+            "title": endpoint.title,
+            "technologies": endpoint.technologies,
+            "parameters": endpoint.parameters,
+            "auth_required": endpoint.auth_required,
+            "source": endpoint.source,
+            "confidence": endpoint.confidence,
+            "engagement_id": endpoint.engagement_id,
+            "screenshot_path": endpoint.screenshot_path,
+            "asset_id": endpoint.asset_id,
+            "host": endpoint.host,
+            "path": endpoint.path,
+            "query_keys": endpoint.query_keys,
+            "has_body": endpoint.has_body,
+            "content_type": endpoint.content_type,
+            "body_schema_keys": endpoint.body_schema_keys,
+            "auth_class": endpoint.auth_class,
+            "request_headers_sample": endpoint.request_headers_sample,
+            "status_codes_seen": endpoint.status_codes_seen,
+            "response_size_avg": endpoint.response_size_avg,
+            "response_content_type": endpoint.response_content_type,
+            "user_label": endpoint.user_label,
+            "workflow_id": endpoint.workflow_id,
+            "first_seen": endpoint.first_seen.isoformat(),
+            "last_seen": endpoint.last_seen.isoformat(),
+            "observations": endpoint.observations,
+        }
+
+        try:
+            async with self._driver.session() as session:
+                with trace_span(
+                    "graph_memory.add_endpoint",
+                    attributes={
+                        "endpoint_id": endpoint.id,
+                        "endpoint_type": endpoint.type,
                         "engagement_id": endpoint.engagement_id,
-                        "screenshot_path": endpoint.screenshot_path,
-                        "asset_id": endpoint.asset_id,
-                        "host": endpoint.host,
-                        "path": endpoint.path,
-                        "query_keys": endpoint.query_keys,
-                        "has_body": endpoint.has_body,
-                        "content_type": endpoint.content_type,
-                        "body_schema_keys": endpoint.body_schema_keys,
-                        "auth_class": endpoint.auth_class,
-                        "request_headers_sample": json.dumps(endpoint.request_headers_sample),
-                        "status_codes_seen": endpoint.status_codes_seen,
-                        "response_size_avg": endpoint.response_size_avg,
-                        "response_content_type": endpoint.response_content_type,
-                        "user_label": endpoint.user_label,
-                        "workflow_id": endpoint.workflow_id,
-                        "first_seen": endpoint.first_seen.isoformat(),
-                        "last_seen": endpoint.last_seen.isoformat(),
-                        "observations": endpoint.observations,
                     },
-                )
-                record = await result.single()
-                # Invalidate graph stats cache since we added a new node
-                await self.invalidate_graph_stats_cache(endpoint.engagement_id)
-                return record["id"] if record else endpoint.id
+                ):
+                    result = await session.run(cypher, payload)
+                    record = await result.single()
+                    # Invalidate graph stats cache since we added a new node
+                    await self.invalidate_graph_stats_cache(endpoint.engagement_id)
+                    return record["id"] if record else endpoint.id
+        except Exception as neo_err:  # noqa: BLE001 - outbox durability net below
+            await self._enqueue_outbox("endpoint", endpoint.id, payload)
+            logger.warning(
+                "endpoint_neo4j_write_failed_queued_for_replay id=%s error=%s",
+                endpoint.id,
+                neo_err,
+            )
+            raise
 
     async def _write_vulnerability_cypher(self, vuln: Any, cypher: str, params: dict) -> Any:
         """Execute the Vulnerability upsert Cypher and return the single record.
@@ -952,6 +981,24 @@ class GraphMemory:
 
         async with self._driver.session() as session:
             await session.run(cypher, {"edges": edges})
+
+        # Unlike vulns/endpoints/assets, an attack path is a graph-shaping,
+        # path-dependent record — post-write, enqueue for projection on recovery.
+        # payload is encoded minimally; path_id is the write-key.
+        try:
+            outbox_payload = {
+                "id": path.id,
+                "node_ids": path.node_ids,
+                "confidence": path.confidence,
+                "total_time_estimate": path.total_time_estimate,
+                "detection_risk": path.detection_risk,
+                "edges": edges,
+            }
+            await self._enqueue_outbox("attack_path", path.id, outbox_payload)
+        except Exception as obe:  # noqa: BLE001 - never block chain persistence
+            logger.warning(
+                "attack_path_outbox_enqueue_failed id=%s error=%s", path.id, str(obe)[:80]
+            )
 
         return path.id
 
