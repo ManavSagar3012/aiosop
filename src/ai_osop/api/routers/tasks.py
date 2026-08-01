@@ -5,7 +5,7 @@ Task creation, listing, and status retrieval.
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ai_osop.api.deps import (
     CreateTaskRequest,
@@ -21,12 +21,23 @@ from ai_osop.core.models import Task
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
+# AIOSOP-SCALE-002 (2026-08-01): bound the previously-unbounded in-memory dump.
+# list_tasks returned every task in the orchestrator's _tasks dict — which lives
+# for the whole process lifetime. On a long-lived engagement or after recovery of
+# a large backlog this returned thousands of Task objects per call, wasting CPU +
+# memory and leaking task details to any caller. Apply a sane server-side cap; a
+# client that wants more can paginate with limit/offset.
+_DEFAULT_TASK_LIST_LIMIT = 200
+_MAX_TASK_LIST_LIMIT = 2000
+
+
 @router.get("", response_model=List[Task])
 async def list_tasks(
     engagement_id: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1),
     operator: Dict[str, Any] = Depends(verify_token),
 ):
-    """List tasks, optionally filtered by engagement_id."""
+    """List tasks, optionally filtered by engagement_id. Bounded by `limit`."""
     all_tasks = state["orchestrator"]._tasks
     if engagement_id:
         session = await assert_engagement_access(operator, engagement_id)
@@ -39,7 +50,10 @@ async def list_tasks(
         tasks = [t for t in all_tasks.values() if t.engagement_id in forms]
     else:
         tasks = list(all_tasks.values())
-    return tasks
+    # Bound the response. Sort newest-first so the cap returns the most relevant.
+    tasks.sort(key=lambda t: t.created_at or "", reverse=True)
+    effective = _DEFAULT_TASK_LIST_LIMIT if limit is None else min(limit, _MAX_TASK_LIST_LIMIT)
+    return tasks[:effective]
 
 
 @router.post("", response_model=Task)
