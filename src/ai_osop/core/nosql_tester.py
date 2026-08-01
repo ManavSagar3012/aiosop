@@ -63,9 +63,7 @@ class NoSQLTester:
 
         if client is not None:
             return await self._scan(client, target_url, body, method, findings)
-        async with httpx.AsyncClient(
-            timeout=self.timeout_seconds, follow_redirects=False
-        ) as owned:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as owned:
             return await self._scan(owned, target_url, body, method, findings)
 
     async def _scan(

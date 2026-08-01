@@ -18,11 +18,28 @@ from ai_osop.core.url_intelligence import classify_url, endpoint_template, extra
 
 _ABS_URL_RE = re.compile(r"""["'`](https?://[^"'`<>\s)]+)["'`]""")
 _REL_PATH_RE = re.compile(r"""["'`](/(?:[A-Za-z0-9_.\-~]+/?)+(?:\?[^"'`<>\s]+)?)["'`]""")
-_FETCH_ROUTE_RE = re.compile(r"""(?:fetch|axios\.(?:get|post|put|delete))\(\s*[`'"]([^`'"<>\s]+)[`'"]""")
-_TEMPLATE_API_RE = re.compile(r"""(/(?:rest|api|graphql)/[A-Za-z0-9_\-./]+(?:\?[A-Za-z0-9_&=-]+)?)""")
+_FETCH_ROUTE_RE = re.compile(
+    r"""(?:fetch|axios\.(?:get|post|put|delete))\(\s*[`'"]([^`'"<>\s]+)[`'"]"""
+)
+_TEMPLATE_API_RE = re.compile(
+    r"""(/(?:rest|api|graphql)/[A-Za-z0-9_\-./]+(?:\?[A-Za-z0-9_&=-]+)?)"""
+)
 _SCRIPT_SRC_RE = re.compile(r"""<script[^>]+src\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
-_INLINE_SCRIPT_RE = re.compile(r"""<script(?![^>]+src)[^>]*>(.*?)</script>""", re.IGNORECASE | re.DOTALL)
-_STATIC_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".css", ".woff", ".woff2", ".map")
+_INLINE_SCRIPT_RE = re.compile(
+    r"""<script(?![^>]+src)[^>]*>(.*?)</script>""", re.IGNORECASE | re.DOTALL
+)
+_STATIC_EXTENSIONS = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".css",
+    ".woff",
+    ".woff2",
+    ".map",
+)
 
 
 @dataclass(frozen=True)
@@ -60,13 +77,30 @@ class MergedCandidate:
     parameters: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_candidate(self) -> Candidate:
-        return Candidate(self.url, "{%s}" % "+".join(sorted(set(self.sources))) if self.sources else self.source, self.parameters)
+        return Candidate(
+            self.url,
+            "{%s}" % "+".join(sorted(set(self.sources))) if self.sources else self.source,
+            self.parameters,
+        )
 
 
 _SCRIPT_SRC_RE = re.compile(r"""<script[^>]+src\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
-_INLINE_SCRIPT_RE = re.compile(r"""<script(?![^>]+src)[^>]*>(.*?)</script>""", re.IGNORECASE | re.DOTALL)
+_INLINE_SCRIPT_RE = re.compile(
+    r"""<script(?![^>]+src)[^>]*>(.*?)</script>""", re.IGNORECASE | re.DOTALL
+)
 _FORM_ACTION_RE = re.compile(r"""<form[^>]+action\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
-_STATIC_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".css", ".woff", ".woff2", ".map")
+_STATIC_EXTENSIONS = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".css",
+    ".woff",
+    ".woff2",
+    ".map",
+)
 
 
 @dataclass(frozen=True)
@@ -102,7 +136,9 @@ def _normalize(raw: str, base_url: str) -> Optional[str]:
     return target
 
 
-def _candidate_from_url(url: str, base_url: str, source: str, base_host_override: str = "") -> Optional[Candidate]:
+def _candidate_from_url(
+    url: str, base_url: str, source: str, base_host_override: str = ""
+) -> Optional[Candidate]:
     normalized = _normalize(url, base_url)
     if not normalized:
         return None
@@ -174,7 +210,10 @@ def endpoint_candidates_from_html(html_text: str, base_url: str) -> List[Candida
     out: List[Candidate] = []
     for match in _INLINE_SCRIPT_RE.finditer(html_text):
         out.extend(endpoint_candidates_from_js_text(match.group(1), base_url=base_url))
-    out = [Candidate(c.url, "html_inline" if c.source != "js_bundle_url" else c.source, c.parameters) for c in out]
+    out = [
+        Candidate(c.url, "html_inline" if c.source != "js_bundle_url" else c.source, c.parameters)
+        for c in out
+    ]
     for match in _SCRIPT_SRC_RE.finditer(html_text):
         cand = _candidate_from_url(match.group(1), base_url, "script_src")
         if cand:
@@ -237,7 +276,9 @@ async def harvest_spa_endpoints(
     except Exception:  # noqa: BLE001
         return result
 
-    landing_candidates = endpoint_candidates_from_html(getattr(landing, "text", "") or "", base_url=target_url)
+    landing_candidates = endpoint_candidates_from_html(
+        getattr(landing, "text", "") or "", base_url=target_url
+    )
     bundle_urls = [c.url for c in landing_candidates if _is_js_url(c.url)]
     direct_candidates = [c for c in landing_candidates if not _is_js_url(c.url)]
     result.candidates_found += len(direct_candidates)

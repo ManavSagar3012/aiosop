@@ -17,6 +17,7 @@ This test pins the two behaviours the fix depends on:
 
 Run: .venv/Scripts/python.exe tests/test_js_route_extraction.py
 """
+
 import re
 
 # The exact patterns used in recon_agent._active_crawl_target.

@@ -9,6 +9,7 @@ marked failed. These assertions fail if any live terminal path regresses.
 
 Run: python tests/test_csrf_jwt_execution_verified.py
 """
+
 import asyncio
 import sys
 
@@ -30,10 +31,18 @@ def survives(d):
 CSRF_NOT_APPLICABLE = {"status": "skipped", "confirmed": False, "reason": "r", "findings_count": 0}
 CSRF_NO_COOKIE = {"status": "skipped", "confirmed": False, "reason": "bearer", "findings_count": 0}
 CSRF_PROBE_REJECTED = {
-    "status": "success", "tool": "csrf_scan", "confirmed": False,
-    "reason": "rejected", "findings_count": 0, "execution_verified": True,
+    "status": "success",
+    "tool": "csrf_scan",
+    "confirmed": False,
+    "reason": "rejected",
+    "findings_count": 0,
+    "execution_verified": True,
 }
-JWT_NO_TOKEN = {"status": "skipped", "message": "skipped: no JWT token in scope", "findings_count": 0}
+JWT_NO_TOKEN = {
+    "status": "skipped",
+    "message": "skipped: no JWT token in scope",
+    "findings_count": 0,
+}
 JWT_ANALYZED = {"status": "success", "message": "JWT scan completed", "execution_verified": True}
 
 # --- The old broken shapes that caused csrf/jwt to always fail ---
@@ -56,7 +65,9 @@ def main():
     assert not survives(CSRF_OLD_BROKEN), "old csrf success-without-evidence must be rejected"
     assert not survives(JWT_OLD_BROKEN), "old jwt success-without-evidence must be rejected"
 
-    print("csrf/jwt execution_verified contract OK: live terminal paths survive, old shapes rejected")
+    print(
+        "csrf/jwt execution_verified contract OK: live terminal paths survive, old shapes rejected"
+    )
 
 
 if __name__ == "__main__":

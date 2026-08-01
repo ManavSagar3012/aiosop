@@ -81,7 +81,11 @@ async def test_actionloop_runs_llm_tool_cycle_and_returns_findings():
     assert "fetch_page" in tool_names
     assert "done" in tool_names
 
-    sqli_hits = [c for c in tools.calls if c.get("technique") == "sqli" and c.get("endpoint", "").endswith("/login")]
+    sqli_hits = [
+        c
+        for c in tools.calls
+        if c.get("technique") == "sqli" and c.get("endpoint", "").endswith("/login")
+    ]
     assert len(sqli_hits) == 1
 
     assert result.steps_taken == 4
@@ -142,12 +146,16 @@ async def test_actionloop_feeds_observation_back_into_next_prompt():
     for msg in llm.calls[1]["messages"]:
         second_call_content += str(msg.get("content", "")) + "\n"
     assert "fetch_page" in second_call_content  # the tool call we just made
-    assert "200" in second_call_content or "/privacy" in second_call_content or "observation" in second_call_content.lower()
+    assert (
+        "200" in second_call_content
+        or "/privacy" in second_call_content
+        or "observation" in second_call_content.lower()
+    )
 
 
 @pytest.mark.asyncio
 async def test_actionloop_handles_malformed_json_with_fallback():
-    llm = _FakeLLM(["{\"not_valid\": true", '{"action": "done", "reasoning": "giving up"}'])
+    llm = _FakeLLM(['{"not_valid": true', '{"action": "done", "reasoning": "giving up"}'])
     tools = MagicMock()
     tools.done = AsyncMock(return_value={"done": True})
 
@@ -161,15 +169,17 @@ async def test_actionloop_handles_malformed_json_with_fallback():
     result = await loop.run(state, max_steps=4)
 
     assert result.error is not None
-    assert "invalid" in result.error.lower() or "parse" in result.error.lower() or "json" in result.error.lower()
+    assert (
+        "invalid" in result.error.lower()
+        or "parse" in result.error.lower()
+        or "json" in result.error.lower()
+    )
     tools.done.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_actionloop_aborts_when_max_steps_reached():
-    llm = _FakeLLM(
-        ['{"action": "fetch_page", "endpoint": "/", "reasoning": "more"}'] * 10
-    )
+    llm = _FakeLLM(['{"action": "fetch_page", "endpoint": "/", "reasoning": "more"}'] * 10)
     tools = _ToyTools()
     loop = ActionLoop(llm=llm, tools=tools)
     state = LoopState(

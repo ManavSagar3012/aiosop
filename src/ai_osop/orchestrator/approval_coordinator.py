@@ -248,9 +248,7 @@ class ApprovalCoordinator:
 
             return request
 
-    def is_task_approved(
-        self, task_id: str, tenant_id: Optional[str] = None
-    ) -> bool:
+    def is_task_approved(self, task_id: str, tenant_id: Optional[str] = None) -> bool:
         """Single source of authority for whether a task may run.
 
         Returns True ONLY if an ApprovalRequest for this task was resolved

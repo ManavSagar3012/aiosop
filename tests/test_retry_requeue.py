@@ -67,10 +67,10 @@ async def test_retry_pushes_task_to_redis_queue_before_assign():
     ok = await ts._maybe_retry(task, {"error": "transient timeout"})
 
     assert ok is True
-    # The task was pushed to the durable Redis queue.
+    # The task was pushed to the durable Redis queue, under the tenant-scoped key.
     orch.session_memory.push_task_queue.assert_awaited_once()
     queue_name, payload = orch.session_memory.push_task_queue.await_args.args
-    assert queue_name == "tasks:eng-test"
+    assert queue_name.endswith(":queue:tasks:eng-test"), queue_name
     assert payload["id"] == task.id
     assert payload["status"] == "pending"
     # AND immediate assignment was attempted (fast-path).

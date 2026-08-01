@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Uncertainty:
     """A single uncertainty the system should resolve."""
+
     id: str
     category: str  # technology, authentication, parameter_behavior, etc.
     description: str  # 'I don't know if /api/users requires authentication'
@@ -146,44 +147,50 @@ class UncertaintyTracker:
             if status in (401, 403) or auth_required:
                 desc = f"Endpoint {url} returns {status} — is it auth-gated or just broken?"
                 if desc not in existing:
-                    uncertainties.append(Uncertainty(
-                        id=f"unc-auth-{url[:30]}",
-                        category="authentication",
-                        description=desc,
-                        target=url,
-                        resolution_action="Test with and without auth tokens",
-                        resolution_task_type="capture_authenticated_surface",
-                        priority=0.8,
-                    ))
+                    uncertainties.append(
+                        Uncertainty(
+                            id=f"unc-auth-{url[:30]}",
+                            category="authentication",
+                            description=desc,
+                            target=url,
+                            resolution_action="Test with and without auth tokens",
+                            resolution_task_type="capture_authenticated_surface",
+                            priority=0.8,
+                        )
+                    )
 
             # Technology uncertainty: no framework detected
             if not technologies:
                 desc = f"No framework detected on {url} — what stack does it run?"
                 if desc not in existing:
-                    uncertainties.append(Uncertainty(
-                        id=f"unc-tech-{url[:30]}",
-                        category="technology",
-                        description=desc,
-                        target=url,
-                        resolution_action="Run technology_fingerprint + provoke error states",
-                        resolution_task_type="technology_fingerprint",
-                        priority=0.6,
-                    ))
+                    uncertainties.append(
+                        Uncertainty(
+                            id=f"unc-tech-{url[:30]}",
+                            category="technology",
+                            description=desc,
+                            target=url,
+                            resolution_action="Run technology_fingerprint + provoke error states",
+                            resolution_task_type="technology_fingerprint",
+                            priority=0.6,
+                        )
+                    )
 
         # Check for WAF uncertainty from findings
         for f in findings:
             if f.get("vuln_type") == "ssrf" or "waf" in str(f.get("evidence", "")).lower():
                 desc = "WAF may be present — which characters/patterns are filtered?"
                 if desc not in existing:
-                    uncertainties.append(Uncertainty(
-                        id="unc-waf",
-                        category="waf_filtering",
-                        description=desc,
-                        target="",
-                        resolution_action="Run WAF character probing",
-                        resolution_task_type="waf_detection",
-                        priority=0.9,
-                    ))
+                    uncertainties.append(
+                        Uncertainty(
+                            id="unc-waf",
+                            category="waf_filtering",
+                            description=desc,
+                            target="",
+                            resolution_action="Run WAF character probing",
+                            resolution_task_type="waf_detection",
+                            priority=0.9,
+                        )
+                    )
 
         # Store new uncertainties
         self._uncertainties.setdefault(engagement_id, []).extend(uncertainties)
@@ -222,17 +229,21 @@ class UncertaintyTracker:
         """
         hypotheses = []
         for u in self.get_open_uncertainties(engagement_id):
-            hypotheses.append({
-                "title": f"Resolve uncertainty: {u.description[:60]}",
-                "description": u.resolution_action,
-                "category": f"uncertainty_{u.category}",
-                "target_id": u.target,
-                "confidence": u.priority,
-                "recommended_tests": [u.resolution_action],
-                "recommended_skills": [u.resolution_task_type] if u.resolution_task_type else [],
-                "status": "open",
-                "engagement_id": engagement_id,
-            })
+            hypotheses.append(
+                {
+                    "title": f"Resolve uncertainty: {u.description[:60]}",
+                    "description": u.resolution_action,
+                    "category": f"uncertainty_{u.category}",
+                    "target_id": u.target,
+                    "confidence": u.priority,
+                    "recommended_tests": [u.resolution_action],
+                    "recommended_skills": (
+                        [u.resolution_task_type] if u.resolution_task_type else []
+                    ),
+                    "status": "open",
+                    "engagement_id": engagement_id,
+                }
+            )
         return hypotheses
 
     def get_summary(self, engagement_id: str, *aliases: str) -> Dict[str, Any]:

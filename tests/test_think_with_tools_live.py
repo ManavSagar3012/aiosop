@@ -42,14 +42,24 @@ async def test_live_tool_loop_produces_nonempty_answer():
     class _Agent(BaseAgent):
         def __init__(self):
             self.ctx = SimpleNamespace(
-                agent_id="live", agent_type=AgentType.RECON,
-                llm_client=LiteLLMClient(), scope=None, rate_limiter=None,
+                agent_id="live",
+                agent_type=AgentType.RECON,
+                llm_client=LiteLLMClient(),
+                scope=None,
+                rate_limiter=None,
             )
 
-        def agent_type(self): return AgentType.RECON
-        async def _setup_resources(self): pass
-        async def _cleanup_resources(self): pass
-        async def _execute(self, task): return {}
+        def agent_type(self):
+            return AgentType.RECON
+
+        async def _setup_resources(self):
+            pass
+
+        async def _cleanup_resources(self):
+            pass
+
+        async def _execute(self, task):
+            return {}
 
     agent = _Agent()
     ctx = (
@@ -59,8 +69,12 @@ async def test_live_tool_loop_produces_nonempty_answer():
         "this is a broken access control vulnerability."
     )
     out = await agent.think_with_tools(
-        ctx, [], {"check_response": check_response},
-        max_turns=4, time_budget=90.0, token_budget=4096,
+        ctx,
+        [],
+        {"check_response": check_response},
+        max_turns=4,
+        time_budget=90.0,
+        token_budget=4096,
     )
 
     assert out != "", "live think_with_tools returned empty — model/client is degraded"

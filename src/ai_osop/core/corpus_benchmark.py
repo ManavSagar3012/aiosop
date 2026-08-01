@@ -89,9 +89,7 @@ class CorpusBenchmark:
             },
         }
 
-    async def run(
-        self, agent_runner: Any = None, dry_run: bool = False
-    ) -> List[Dict[str, Any]]:
+    async def run(self, agent_runner: Any = None, dry_run: bool = False) -> List[Dict[str, Any]]:
         """Execute the corpus reference facts and verify the scoring contract.
 
         - ``agent_runner`` provided: call run(reference_exploit) and treat the output

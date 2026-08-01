@@ -221,7 +221,12 @@ class TaskScheduler:
             from ai_osop.core.tenant_isolation import tenant_queue_key
 
             _session = self._orch._sessions.get(task.engagement_id)
-            _tenant = getattr(_session.scope, "organization_id", "default") if _session else "default"
+            _tenant = "default"
+            _scope = getattr(_session, "scope", None)
+            if _scope is not None:
+                _org = getattr(_scope, "organization_id", None)
+                if isinstance(_org, str) and _org:
+                    _tenant = _org
             await self._orch.session_memory.push_task_queue(
                 tenant_queue_key(_tenant, f"tasks:{task.engagement_id}"), task.model_dump()
             )
@@ -760,7 +765,7 @@ class TaskScheduler:
     # task type so naming variants (exploit, exploit_chain, exploit_validation, ...) all
     # catch. Keep it aligned with ApprovalGate.HIGH_IMPACT_ACTIONS in safety/scope.py.
     DANGEROUS_TASK_MARKERS = (
-        "exploit",          # exploit, validate_exploit, exploit_validation, exploit_chain
+        "exploit",  # exploit, validate_exploit, exploit_validation, exploit_chain
         "validate_exploit",
         "rce",
         "sqli",
@@ -1015,7 +1020,12 @@ class TaskScheduler:
             from ai_osop.core.tenant_isolation import tenant_queue_key
 
             _session = self._orch._sessions.get(task.engagement_id)
-            _tenant = getattr(_session.scope, "organization_id", "default") if _session else "default"
+            _tenant = "default"
+            _scope = getattr(_session, "scope", None)
+            if _scope is not None:
+                _org = getattr(_scope, "organization_id", None)
+                if isinstance(_org, str) and _org:
+                    _tenant = _org
             await self._orch.session_memory.push_task_queue(
                 tenant_queue_key(_tenant, f"tasks:{task.engagement_id}"), task.model_dump()
             )

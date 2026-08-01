@@ -145,13 +145,15 @@ class CloudMCPAdapter:
                     resp = await client.get(u)
                     creds = extract_credentials(resp.text)
                     for c in creds:
-                        findings.append({
-                            "url": u,
-                            "provider": c["provider"],
-                            "kind": c["kind"],
-                            "redacted": c["redacted"],
-                            "http_status": resp.status_code,
-                        })
+                        findings.append(
+                            {
+                                "url": u,
+                                "provider": c["provider"],
+                                "kind": c["kind"],
+                                "redacted": c["redacted"],
+                                "http_status": resp.status_code,
+                            }
+                        )
                 except Exception:
                     continue
         finally:
@@ -229,15 +231,16 @@ class CloudMCPAdapter:
                 try:
                     resp = await client.get(url)
                     if resp.status_code == 200 and (
-                        "<ListBucketResult" in resp.text
-                        or "<EnumerationResults" in resp.text
+                        "<ListBucketResult" in resp.text or "<EnumerationResults" in resp.text
                     ):
-                        findings.append({
-                            "bucket": clean_target,
-                            "url": url,
-                            "issue": "Publicly readable cloud storage bucket listing",
-                            "status_code": resp.status_code,
-                        })
+                        findings.append(
+                            {
+                                "bucket": clean_target,
+                                "url": url,
+                                "issue": "Publicly readable cloud storage bucket listing",
+                                "status_code": resp.status_code,
+                            }
+                        )
                 except Exception:
                     continue
         finally:

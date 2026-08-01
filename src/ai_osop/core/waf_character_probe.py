@@ -25,25 +25,26 @@ import httpx
 # We send each group as a single parameter value and check if the response
 # changes (status code, body length, or WAF challenge page).
 _CHAR_GROUPS = [
-    ("sql_basic", "'\";--"),           # SQL injection basics
-    ("sql_operators", "()<>="),       # SQL operators
+    ("sql_basic", "'\";--"),  # SQL injection basics
+    ("sql_operators", "()<>="),  # SQL operators
     ("sql_keywords", "UNION SELECT"),  # SQL keywords (case-sensitive test)
-    ("xss_html", "<>\"'"),            # XSS HTML context
-    ("xss_script", "<script>"),        # XSS script tag
+    ("xss_html", "<>\"'"),  # XSS HTML context
+    ("xss_script", "<script>"),  # XSS script tag
     ("xss_event", "onerror=alert(1)"),  # XSS event handler
     ("xss_svg", "<svg onload=alert(1)>"),  # XSS SVG
-    ("path_traversal", "../..\\"),    # Path traversal
+    ("path_traversal", "../..\\"),  # Path traversal
     ("command_injection", ";|&`$()"),  # Command injection
     ("template_injection", "{{7*7}}"),  # SSTI
-    ("nosql", "$ne $gt $where"),      # NoSQL operators
-    ("xml", "<!ENTITY"),              # XXE
-    ("special", "{}[]!@#%^*+=~?"),    # Special chars
+    ("nosql", "$ne $gt $where"),  # NoSQL operators
+    ("xml", "<!ENTITY"),  # XXE
+    ("special", "{}[]!@#%^*+=~?"),  # Special chars
 ]
 
 
 @dataclass
 class WAFCharacterProbeResult:
     """Result of probing a target for character filtering."""
+
     target_url: str
     waf_detected: Optional[str] = None
     blocked_groups: List[str] = field(default_factory=list)
@@ -102,9 +103,7 @@ async def probe_waf_characters(
     for group_name, chars in _CHAR_GROUPS:
         try:
             if method.upper() == "GET":
-                resp = await client.get(
-                    target_url, params={param: chars}, timeout=timeout
-                )
+                resp = await client.get(target_url, params={param: chars}, timeout=timeout)
             else:
                 resp = await client.request(
                     method, target_url, data={param: chars}, timeout=timeout
@@ -118,10 +117,17 @@ async def probe_waf_characters(
 
             # Check 2: WAF challenge page patterns
             body_lower = resp.text[:2000].lower()
-            if any(p in body_lower for p in (
-                "just a moment", "cf-browser-verification", "access denied",
-                "request blocked", "security check", "captcha",
-            )):
+            if any(
+                p in body_lower
+                for p in (
+                    "just a moment",
+                    "cf-browser-verification",
+                    "access denied",
+                    "request blocked",
+                    "security check",
+                    "captcha",
+                )
+            ):
                 blocked = True
 
             # Check 3: Significant body length change (>50% reduction = likely

@@ -8,6 +8,7 @@ completion — so `authenticate` stayed 'pending' forever, pinning RECONNAISSANC
 
 Run: .venv/Scripts/python.exe tests/test_depgate_deadlock.py
 """
+
 import asyncio
 import sys
 
@@ -36,12 +37,29 @@ class _FakeOrch:
 
 
 async def _run():
-    parent = Task(id="task-reg", type="register", agent_type=AgentType.WORKFLOW,
-                  engagement_id="e", status="failed")
-    child = Task(id="task-auth", type="authenticate", agent_type=AgentType.WORKFLOW,
-                 engagement_id="e", status="pending", dependencies=["task-reg"])
-    waiting = Task(id="task-wait", type="authenticate", agent_type=AgentType.WORKFLOW,
-                   engagement_id="e", status="pending", dependencies=["task-reg", "task-other"])
+    parent = Task(
+        id="task-reg",
+        type="register",
+        agent_type=AgentType.WORKFLOW,
+        engagement_id="e",
+        status="failed",
+    )
+    child = Task(
+        id="task-auth",
+        type="authenticate",
+        agent_type=AgentType.WORKFLOW,
+        engagement_id="e",
+        status="pending",
+        dependencies=["task-reg"],
+    )
+    waiting = Task(
+        id="task-wait",
+        type="authenticate",
+        agent_type=AgentType.WORKFLOW,
+        engagement_id="e",
+        status="pending",
+        dependencies=["task-reg", "task-other"],
+    )
 
     orch = _FakeOrch({t.id: t for t in (parent, child, waiting)})
     sched = TaskScheduler.__new__(TaskScheduler)  # skip heavy __init__
@@ -51,6 +69,7 @@ async def _run():
 
     async def _fake_assign(t):
         assigned.append(t.id)
+
     sched._assign_task = _fake_assign
 
     await sched._trigger_downstream_tasks(parent)

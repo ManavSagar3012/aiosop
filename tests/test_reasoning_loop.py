@@ -79,13 +79,17 @@ async def test_reasoning_loop_starts_and_stops():
 async def test_observe_reads_graph_state():
     """_observe queries endpoints + findings + hypotheses from the graph."""
     orch = _mock_orchestrator()
-    orch.graph_memory.run_read_query = AsyncMock(side_effect=[
-        [{"url": "http://t.test/api/users", "id": "ep-1"}],  # endpoints
-        [{"vuln_type": "sqli", "severity": "high"}],  # findings
-    ])
-    orch.graph_memory.get_hypotheses_by_engagement = AsyncMock(return_value=[
-        {"id": "hyp-1", "status": "open"},
-    ])
+    orch.graph_memory.run_read_query = AsyncMock(
+        side_effect=[
+            [{"url": "http://t.test/api/users", "id": "ep-1"}],  # endpoints
+            [{"vuln_type": "sqli", "severity": "high"}],  # findings
+        ]
+    )
+    orch.graph_memory.get_hypotheses_by_engagement = AsyncMock(
+        return_value=[
+            {"id": "hyp-1", "status": "open"},
+        ]
+    )
     rl = ReasoningLoop(orch)
     state = await rl._observe("eng-test")
     assert len(state["endpoints"]) == 1
@@ -99,12 +103,24 @@ async def test_select_hypothesis_picks_highest_confidence():
     orch = _mock_orchestrator()
     rl = ReasoningLoop(orch)
     hypotheses = [
-        {"id": "h-1", "title": "Low confidence", "category": "authz",
-         "confidence": 0.3, "status": "open", "recommended_skills": ["jwt_scan"],
-         "target_id": "ep-1"},
-        {"id": "h-2", "title": "High confidence", "category": "graphql",
-         "confidence": 0.9, "status": "open", "recommended_skills": ["ssrf_scan"],
-         "target_id": "ep-2"},
+        {
+            "id": "h-1",
+            "title": "Low confidence",
+            "category": "authz",
+            "confidence": 0.3,
+            "status": "open",
+            "recommended_skills": ["jwt_scan"],
+            "target_id": "ep-1",
+        },
+        {
+            "id": "h-2",
+            "title": "High confidence",
+            "category": "graphql",
+            "confidence": 0.9,
+            "status": "open",
+            "recommended_skills": ["ssrf_scan"],
+            "target_id": "ep-2",
+        },
     ]
     state = {"finding_types": set(), "open_hypotheses": {"h-1", "h-2"}}
     selected = await rl._select_hypothesis("eng-test", hypotheses, state)
@@ -118,12 +134,24 @@ async def test_select_hypothesis_novelty_boost():
     orch = _mock_orchestrator()
     rl = ReasoningLoop(orch)
     hypotheses = [
-        {"id": "h-1", "title": "Already found", "category": "sqli",
-         "confidence": 0.8, "status": "open", "recommended_skills": ["sqli_scan"],
-         "target_id": "ep-1"},
-        {"id": "h-2", "title": "Novel category", "category": "graphql",
-         "confidence": 0.75, "status": "open", "recommended_skills": ["ssrf_scan"],
-         "target_id": "ep-2"},
+        {
+            "id": "h-1",
+            "title": "Already found",
+            "category": "sqli",
+            "confidence": 0.8,
+            "status": "open",
+            "recommended_skills": ["sqli_scan"],
+            "target_id": "ep-1",
+        },
+        {
+            "id": "h-2",
+            "title": "Novel category",
+            "category": "graphql",
+            "confidence": 0.75,
+            "status": "open",
+            "recommended_skills": ["ssrf_scan"],
+            "target_id": "ep-2",
+        },
     ]
     # sqli already found → h-1 gets 0.8, h-2 gets 0.75 + 0.1 novelty = 0.85
     state = {"finding_types": {"sqli"}, "open_hypotheses": {"h-1", "h-2"}}
@@ -135,9 +163,11 @@ async def test_select_hypothesis_novelty_boost():
 async def test_dispatch_hypothesis_creates_task():
     """_dispatch_hypothesis creates a Task with the right agent_type + payload."""
     orch = _mock_orchestrator()
-    orch.graph_memory.run_read_query = AsyncMock(return_value=[
-        {"url": "http://t.test/api/users"},
-    ])
+    orch.graph_memory.run_read_query = AsyncMock(
+        return_value=[
+            {"url": "http://t.test/api/users"},
+        ]
+    )
     rl = ReasoningLoop(orch)
     hypothesis = {
         "id": "hyp-1",
@@ -228,9 +258,15 @@ async def test_finding_event_published_on_persist():
     gm.coordination_bus.publish = AsyncMock()
 
     vuln = Vulnerability(
-        cwe="CWE-89", vuln_type=VulnClass.SQLI, severity=Severity.HIGH,
-        title="SQLi", description="test", tool_source="test",
-        confidence=0.9, validated=True, engagement_id="eng-test",
+        cwe="CWE-89",
+        vuln_type=VulnClass.SQLI,
+        severity=Severity.HIGH,
+        title="SQLi",
+        description="test",
+        tool_source="test",
+        confidence=0.9,
+        validated=True,
+        engagement_id="eng-test",
     )
     await gm._publish_finding_event(vuln, "vuln-123")
     gm.coordination_bus.publish.assert_awaited_once()
@@ -244,11 +280,24 @@ async def test_finding_event_published_on_persist():
 async def test_skill_to_agent_type_mapping_covers_all_scanners():
     """Every scanner task type must map to an AgentType in _SKILL_TO_AGENT_TYPE."""
     required = {
-        "sqli_scan", "xss_scan", "ssrf_scan", "ssti_scan", "csrf_scan",
-        "jwt_scan", "smuggling_scan", "race_scan", "upload_scan",
-        "pollution_scan", "websocket_scan", "saml_scan", "takeover_scan",
-        "mass_assignment_scan", "nosql_scan", "cache_poisoning_scan",
-        "open_redirect_scan", "oauth_reset_scan",
+        "sqli_scan",
+        "xss_scan",
+        "ssrf_scan",
+        "ssti_scan",
+        "csrf_scan",
+        "jwt_scan",
+        "smuggling_scan",
+        "race_scan",
+        "upload_scan",
+        "pollution_scan",
+        "websocket_scan",
+        "saml_scan",
+        "takeover_scan",
+        "mass_assignment_scan",
+        "nosql_scan",
+        "cache_poisoning_scan",
+        "open_redirect_scan",
+        "oauth_reset_scan",
     }
     mapped = set(_SKILL_TO_AGENT_TYPE.keys())
     missing = required - mapped

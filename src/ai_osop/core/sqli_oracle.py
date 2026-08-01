@@ -483,6 +483,7 @@ async def scan_sqli(
             from ai_osop.safety.rate_limiter import RateLimiter
             from ai_osop.safety.scope import ScopeEnforcer
             from ai_osop.core.models import ScopeDefinition
+
             # Build a scope-less governed client (rate + header only — no
             # engagement scope available in the standalone oracle path).
             async with governed_client(
@@ -500,10 +501,19 @@ async def scan_sqli(
                 timeout=timeout,
             ) as c:
                 await _run_sqli_oracles(
-                    c, login_url, search_url, base_or_url, is_base, data,
-                    search_param, include_time_blind, timeout,
-                    second_order_store_url, second_order_read_url,
-                    second_order_field, findings,
+                    c,
+                    login_url,
+                    search_url,
+                    base_or_url,
+                    is_base,
+                    data,
+                    search_param,
+                    include_time_blind,
+                    timeout,
+                    second_order_store_url,
+                    second_order_read_url,
+                    second_order_field,
+                    findings,
                 )
         except ImportError:
             # Fallback: raw httpx if governed_client is not importable. Route the
@@ -517,10 +527,19 @@ async def scan_sqli(
                 timeout=timeout,
             ) as c:
                 await _run_sqli_oracles(
-                    c, login_url, search_url, base_or_url, is_base, data,
-                    search_param, include_time_blind, timeout,
-                    second_order_store_url, second_order_read_url,
-                    second_order_field, findings,
+                    c,
+                    login_url,
+                    search_url,
+                    base_or_url,
+                    is_base,
+                    data,
+                    search_param,
+                    include_time_blind,
+                    timeout,
+                    second_order_store_url,
+                    second_order_read_url,
+                    second_order_field,
+                    findings,
                 )
     return findings
 

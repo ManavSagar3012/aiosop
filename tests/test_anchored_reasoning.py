@@ -72,7 +72,9 @@ async def test_next_step_references_last_tool_result():
 @pytest.mark.asyncio
 async def test_action_sequence_is_bounded():
     llm = AsyncMock()
-    llm.complete.side_effect = lambda msgs: ReasoningOutput(think=msgs[-1].get("content") or "", action={"tool": "noop"})
+    llm.complete.side_effect = lambda msgs: ReasoningOutput(
+        think=msgs[-1].get("content") or "", action={"tool": "noop"}
+    )
     recorder = _Recorder()
     reasoner = AnchoredReasoner(llm=llm, anchor_tool=recorder.inspect_evidence, max_window=2)
     await reasoner.reason_step({"observations": ["a"]})

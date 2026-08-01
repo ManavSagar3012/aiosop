@@ -17,7 +17,12 @@ class _Judge:
         self.calls: List[List[Dict[str, Any]]] = []
         self._plan = [
             {"action": "fetch_page", "endpoint": "/", "reasoning": "open the surface"},
-            {"action": "scan_endpoint", "endpoint": "/about", "technique": "sqli", "reasoning": "I see an about page; try SQLi"},
+            {
+                "action": "scan_endpoint",
+                "endpoint": "/about",
+                "technique": "sqli",
+                "reasoning": "I see an about page; try SQLi",
+            },
             {"action": "done", "reasoning": "no signal to follow up"},
         ]
         self._idx = 0
@@ -50,7 +55,11 @@ async def test_loop_replans_after_unproductive_step():
     llm = _Judge()
     tools = _FailingTools()
     loop = ActionLoop(llm=llm, tools=tools)
-    state = LoopState(target="https://example.local", goal="test", allowed_tools={"fetch_page", "scan_endpoint", "done"})
+    state = LoopState(
+        target="https://example.local",
+        goal="test",
+        allowed_tools={"fetch_page", "scan_endpoint", "done"},
+    )
 
     result = await loop.run(state, max_steps=5)
 

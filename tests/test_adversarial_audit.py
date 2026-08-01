@@ -251,7 +251,7 @@ async def test_recovery_strips_and_re_gates():
     from types import SimpleNamespace
 
     session = SimpleNamespace(
-        session_id="eng-1",                # matches task.engagement_id
+        session_id="eng-1",  # matches task.engagement_id
         canonical_engagement_id="eng-1",
         phase="exploitation",
     )

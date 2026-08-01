@@ -40,7 +40,7 @@ class AnchoredReasoner:
     ) -> ReasoningOutput:
         observations = list(state.get("observations") or [])
         if len(observations) > self.max_window:
-            observations = observations[-self.max_window:]
+            observations = observations[-self.max_window :]
         state["observations"] = observations
         # Tool result to route to reasoner: retain only what matters
         prompt = self._serialize(state, step_id)

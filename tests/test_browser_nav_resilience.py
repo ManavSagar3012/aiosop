@@ -5,6 +5,7 @@ register's whole 180s task budget. navigate() now retries transient network
 errors briefly; real navigation failures still raise immediately; the existing
 local-http SSL downgrade is preserved.
 """
+
 import asyncio
 
 from ai_osop.adapters.browser_mcp import BrowserMCPAdapter
@@ -65,7 +66,9 @@ async def _run():
     except MCPException:
         raised = True
     assert raised, "exhausted retries should raise"
-    assert calls3["n"] == a._NAV_MAX_ATTEMPTS, f"expected {a._NAV_MAX_ATTEMPTS} attempts, got {calls3['n']}"
+    assert (
+        calls3["n"] == a._NAV_MAX_ATTEMPTS
+    ), f"expected {a._NAV_MAX_ATTEMPTS} attempts, got {calls3['n']}"
 
     # 4. Local-http SSL downgrade preserved (one-shot, https -> http).
     a = _adapter()

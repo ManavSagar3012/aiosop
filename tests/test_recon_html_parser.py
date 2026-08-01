@@ -26,7 +26,7 @@ def test_extracts_anchor_hrefs_and_script_srcs():
 
 
 def test_anchor_without_href_and_script_without_src_are_ignored():
-    p = _parse('<a>no href</a><script>no src</script>')
+    p = _parse("<a>no href</a><script>no src</script>")
     assert p.links == []
     assert p.scripts == []
 
@@ -51,9 +51,7 @@ def test_form_method_defaults_to_get():
 
 def test_inputs_outside_a_form_are_dropped():
     p = _parse(
-        '<input name="loose">'
-        '<form action="/f"><input name="in"></form>'
-        '<input name="after">'
+        '<input name="loose">' '<form action="/f"><input name="in"></form>' '<input name="after">'
     )
     # Only the input inside the open form binds; loose + post-close are dropped.
     assert [f["inputs"] for f in p.forms] == [["in"]]

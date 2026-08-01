@@ -55,9 +55,7 @@ class Settings(BaseSettings):
     # Multi-tenancy (Step E): when False (default), a JWT tenant_id is surfaced
     # on the operator dict but not enforced — single-tenant deployments keep
     # working. When True, engagement access denies a cross-tenant read/write.
-    strict_tenancy: bool = Field(
-        default=False, validation_alias="OSOP_STRICT_TENANCY"
-    )
+    strict_tenancy: bool = Field(default=False, validation_alias="OSOP_STRICT_TENANCY")
 
     # LLM / AI
     llm_primary_provider: str = Field(default="openai", validation_alias="OSOP_LLM_PRIMARY")
@@ -334,7 +332,8 @@ class Settings(BaseSettings):
         # submission was absent credentials. Flip the default to True so the safe
         # (simulation) behavior is real; set OSOP_BUG_BOUNTY_SIMULATION=false to
         # enable live platform calls (still requires credentials + approval).
-        default=True, validation_alias="OSOP_BUG_BOUNTY_SIMULATION"
+        default=True,
+        validation_alias="OSOP_BUG_BOUNTY_SIMULATION",
     )
 
     browser_mcp_host: str = Field(default="127.0.0.1", validation_alias="OSOP_BROWSER_MCP_HOST")

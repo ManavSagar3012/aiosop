@@ -125,6 +125,9 @@ async def test_empty_or_tested_candidates_return_none():
     state = {"endpoints": [], "finding_types": set(), "focus": ""}
     assert await loop._select_hypothesis("eng-1", [_cand("cand-a", "sqli")], state) is None
     # closed
-    assert await loop._select_hypothesis(
-        "eng-1", [_cand("cand-a", "sqli") | {"status": "closed"}], state
-    ) is None
+    assert (
+        await loop._select_hypothesis(
+            "eng-1", [_cand("cand-a", "sqli") | {"status": "closed"}], state
+        )
+        is None
+    )

@@ -24,41 +24,160 @@ import httpx
 # can prioritize high-value parameters first.
 _PARAM_WORDLIST = [
     # High-value admin/debug params
-    "admin", "debug", "test", "dev", "internal", "secret", "key", "token",
-    "api_key", "apikey", "auth", "authentication", "authorization",
+    "admin",
+    "debug",
+    "test",
+    "dev",
+    "internal",
+    "secret",
+    "key",
+    "token",
+    "api_key",
+    "apikey",
+    "auth",
+    "authentication",
+    "authorization",
     # Injection-relevant params
-    "url", "redirect", "redirect_url", "redirect_uri", "return_url", "returnUrl",
-    "next", "callback", "webhook", "target", "dest", "destination", "to",
-    "file", "filename", "path", "filepath", "page", "include", "require",
-    "template", "render", "view", "document", "doc", "load",
+    "url",
+    "redirect",
+    "redirect_url",
+    "redirect_uri",
+    "return_url",
+    "returnUrl",
+    "next",
+    "callback",
+    "webhook",
+    "target",
+    "dest",
+    "destination",
+    "to",
+    "file",
+    "filename",
+    "path",
+    "filepath",
+    "page",
+    "include",
+    "require",
+    "template",
+    "render",
+    "view",
+    "document",
+    "doc",
+    "load",
     # SQL/DB params
-    "id", "uid", "user_id", "userid", "account", "account_id", "order",
-    "order_id", "query", "search", "filter", "sort", "column", "table",
+    "id",
+    "uid",
+    "user_id",
+    "userid",
+    "account",
+    "account_id",
+    "order",
+    "order_id",
+    "query",
+    "search",
+    "filter",
+    "sort",
+    "column",
+    "table",
     # Business logic params
-    "role", "isAdmin", "is_admin", "admin_role", "role_id", "permission",
-    "permissions", "privilege", "user_type", "account_type", "tier", "level",
-    "price", "amount", "quantity", "total", "discount", "coupon", "voucher",
-    "currency", "payment", "checkout", "cart", "order_total",
+    "role",
+    "isAdmin",
+    "is_admin",
+    "admin_role",
+    "role_id",
+    "permission",
+    "permissions",
+    "privilege",
+    "user_type",
+    "account_type",
+    "tier",
+    "level",
+    "price",
+    "amount",
+    "quantity",
+    "total",
+    "discount",
+    "coupon",
+    "voucher",
+    "currency",
+    "payment",
+    "checkout",
+    "cart",
+    "order_total",
     # Tech-specific params
-    "cmd", "command", "exec", "execute", "run", "action", "method",
-    "format", "output", "type", "mode", "env", "config", "setting",
-    "version", "branch", "ref", "commit", "sha", "tag",
+    "cmd",
+    "command",
+    "exec",
+    "execute",
+    "run",
+    "action",
+    "method",
+    "format",
+    "output",
+    "type",
+    "mode",
+    "env",
+    "config",
+    "setting",
+    "version",
+    "branch",
+    "ref",
+    "commit",
+    "sha",
+    "tag",
     # IDOR/object params
-    "user", "username", "email", "mail", "phone", "address", "name",
-    "profile", "account_id", "customer_id", "tenant_id", "org_id",
-    "resource", "resource_id", "object", "object_id", "item", "item_id",
+    "user",
+    "username",
+    "email",
+    "mail",
+    "phone",
+    "address",
+    "name",
+    "profile",
+    "account_id",
+    "customer_id",
+    "tenant_id",
+    "org_id",
+    "resource",
+    "resource_id",
+    "object",
+    "object_id",
+    "item",
+    "item_id",
     # SSRF params
-    "proxy", "fetch", "retrieve", "source", "src", "href", "link",
-    "image", "img", "avatar", "logo", "icon", "media", "upload",
+    "proxy",
+    "fetch",
+    "retrieve",
+    "source",
+    "src",
+    "href",
+    "link",
+    "image",
+    "img",
+    "avatar",
+    "logo",
+    "icon",
+    "media",
+    "upload",
     # Format/content params
-    "json", "xml", "data", "payload", "body", "content", "raw",
-    "accept", "content_type", "contentType", "mimetype",
+    "json",
+    "xml",
+    "data",
+    "payload",
+    "body",
+    "content",
+    "raw",
+    "accept",
+    "content_type",
+    "contentType",
+    "mimetype",
 ]
 
 
 @dataclass
 class ParamMinerResult:
     """Result of mining an endpoint for hidden parameters."""
+
     target_url: str
     method: str
     baseline_status: int = 0
@@ -102,9 +221,13 @@ async def mine_parameters(
     # 1. Baseline: send with a benign value to establish normal response
     try:
         if method.upper() == "GET":
-            base_resp = await client.get(target_url, params={"_osop_baseline": "1"}, timeout=timeout)
+            base_resp = await client.get(
+                target_url, params={"_osop_baseline": "1"}, timeout=timeout
+            )
         else:
-            base_resp = await client.request(method, target_url, data={"_osop_baseline": "1"}, timeout=timeout)
+            base_resp = await client.request(
+                method, target_url, data={"_osop_baseline": "1"}, timeout=timeout
+            )
         result.baseline_status = base_resp.status_code
         result.baseline_length = len(base_resp.text)
     except Exception:
@@ -123,7 +246,9 @@ async def mine_parameters(
             if method.upper() == "GET":
                 resp = await client.get(target_url, params={param: "osop_probe"}, timeout=timeout)
             else:
-                resp = await client.request(method, target_url, data={param: "osop_probe"}, timeout=timeout)
+                resp = await client.request(
+                    method, target_url, data={param: "osop_probe"}, timeout=timeout
+                )
         except Exception:
             continue
 

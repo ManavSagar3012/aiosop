@@ -106,26 +106,28 @@ class StatefulLogicAgent(BaseAgent):
 
         # 4. Generate Violation Hypotheses
         from ai_osop.core.business_state_machine import LogicalBusinessStateMachine
-        
+
         step_dicts = []
         for step in steps:
-            step_dicts.append({
-                "url": step.get("url") or step.get("endpoint") or "",
-                "method": step.get("method") or "GET",
-                "action_type": step.get("action_type") or "NAVIGATE",
-                "order": step.get("order") or 0
-            })
-            
+            step_dicts.append(
+                {
+                    "url": step.get("url") or step.get("endpoint") or "",
+                    "method": step.get("method") or "GET",
+                    "action_type": step.get("action_type") or "NAVIGATE",
+                    "order": step.get("order") or 0,
+                }
+            )
+
         lbsm = LogicalBusinessStateMachine(step_dicts)
         concrete_payloads = lbsm.generate_bypass_payloads()
-        
+
         violation_tasks = []
         for inv in invariants:
             tests = self.business_logic_engine.generate_violation_tests(inv)
             for t in tests:
                 cp = next((p for p in concrete_payloads if p["strategy"] == t["strategy"]), None)
                 payload_data = cp if cp else {**t, "invariant_id": inv.id}
-                
+
                 violation_tasks.append(
                     Task(
                         type="violate_invariant",

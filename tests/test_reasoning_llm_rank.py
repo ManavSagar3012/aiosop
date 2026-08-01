@@ -124,6 +124,6 @@ async def test_no_open_candidates_returns_none():
     # all-tested also yields None
     loop2 = _loop(_ScriptedLLM(["BEST: cand-a"]))
     loop2._tested_hypotheses = {"cand-a"}
-    assert await loop2._select_hypothesis(
-        "eng-1", [_hyp("cand-a", "sqli", conf=0.9)], state
-    ) is None
+    assert (
+        await loop2._select_hypothesis("eng-1", [_hyp("cand-a", "sqli", conf=0.9)], state) is None
+    )

@@ -145,7 +145,6 @@ async def get_critic_review(
     }
 
 
-
 @router.get("/engagements/{session_id}/cognition-summary")
 async def get_cognition_summary(
     session_id: str,
@@ -177,6 +176,7 @@ async def get_cognition_summary(
     chain_count = 0
     try:
         from ai_osop.core.graph_pathfinder import GraphPathfinder
+
         pathfinder = GraphPathfinder(orch.graph_memory)
         chains = await pathfinder.find_chains(session_id, max_depth=5)
         chain_count = len(chains)
@@ -187,6 +187,7 @@ async def get_cognition_summary(
     critic_count = 0
     try:
         from ai_osop.agents.critic_agent import PostEngagementCriticAgent
+
         critic = PostEngagementCriticAgent(orch.session_memory, orch.graph_memory)
         critiques = await critic.audit_findings(session_id)
         critic_count = len(critiques)
@@ -197,6 +198,7 @@ async def get_cognition_summary(
     high_value = 0
     try:
         from ai_osop.core.business_context import batch_categorize
+
         endpoints = await orch.graph_memory.run_read_query(
             "MATCH (e:Endpoint) WHERE e.engagement_id IN $ids "
             "RETURN e.url AS url, e.path AS path, e.query_keys AS query_keys "

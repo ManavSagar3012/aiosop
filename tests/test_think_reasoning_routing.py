@@ -78,9 +78,7 @@ async def test_think_routes_to_pinned_reasoning_model(monkeypatch):
     reasoning runs on the pinned (frontier) model while bulk stays local."""
     from ai_osop.core import config
 
-    monkeypatch.setattr(
-        config.settings, "llm_reasoning_model", "claude-opus-4-8", raising=False
-    )
+    monkeypatch.setattr(config.settings, "llm_reasoning_model", "claude-opus-4-8", raising=False)
     monkeypatch.setattr(config.settings, "llm_reasoning_max_tokens", 4096, raising=False)
 
     llm = _CapturingLLM()

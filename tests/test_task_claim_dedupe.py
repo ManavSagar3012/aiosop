@@ -7,6 +7,7 @@ concurrently — same identity on the shared browser, all timing out at 180s.
 An NX lock keyed by task id serialises dispatch; the loser releases its agent
 and drops out. The lock is freed on terminal completion so legit retries run.
 """
+
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -82,8 +83,13 @@ async def _run():
 
     sched._execute_via_agent = fake_exec
 
-    task = Task(type="register", agent_type=AgentType.WORKFLOW,
-                engagement_id="eng-x", status="pending", timeout_seconds=180)
+    task = Task(
+        type="register",
+        agent_type=AgentType.WORKFLOW,
+        engagement_id="eng-x",
+        status="pending",
+        timeout_seconds=180,
+    )
 
     # Two copies of the SAME task id dispatched concurrently (the live bug).
     await asyncio.gather(sched._assign_task(task), sched._assign_task(task))
@@ -142,7 +148,10 @@ def test_harmless_types_do_not_trigger_gate():
 
 def test_exploit_validation_agent_type_always_gates():
     ts = TaskScheduler.__new__(TaskScheduler)
-    assert ts._is_dangerous_task(_mk("history_import", agent_type=AgentType.EXPLOIT_VALIDATION)) is True
+    assert (
+        ts._is_dangerous_task(_mk("history_import", agent_type=AgentType.EXPLOIT_VALIDATION))
+        is True
+    )
 
 
 if __name__ == "__main__":

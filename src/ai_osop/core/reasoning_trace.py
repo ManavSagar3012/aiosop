@@ -36,9 +36,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TraceEntry:
     """One step in the reasoning trace."""
+
     timestamp: str = ""
     engagement_id: str = ""
-    step: str = ""  # observe, orient, hypothesize, select, dispatch, evaluate, critique, learn, pivot
+    step: str = (
+        ""  # observe, orient, hypothesize, select, dispatch, evaluate, critique, learn, pivot
+    )
     decision: str = ""  # what was decided
     rationale: str = ""  # WHY this decision was made
     hypothesis_id: str = ""
@@ -153,7 +156,8 @@ class ReasoningTrace:
         Answers: 'Why did you abandon this hypothesis?'
         """
         return [
-            e.to_dict() for e in self._entries
+            e.to_dict()
+            for e in self._entries
             if e.result in ("refuted", "inconclusive")
             and (not engagement_id or e.engagement_id == engagement_id)
         ]
@@ -161,9 +165,9 @@ class ReasoningTrace:
     def get_confirmed_hypotheses(self, engagement_id: str = "") -> List[Dict[str, Any]]:
         """Get all confirmed hypotheses with their rationale."""
         return [
-            e.to_dict() for e in self._entries
-            if e.result == "confirmed"
-            and (not engagement_id or e.engagement_id == engagement_id)
+            e.to_dict()
+            for e in self._entries
+            if e.result == "confirmed" and (not engagement_id or e.engagement_id == engagement_id)
         ]
 
     def explain_decision(self, hypothesis_id: str) -> str:

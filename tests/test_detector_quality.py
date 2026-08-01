@@ -22,6 +22,7 @@ from tests._mocks import stub_session_memory
 
 # ---- NoSQL Injection -------------------------------------------------------
 
+
 def _nosql_agent(monkeypatch, transport_handler):
     from types import SimpleNamespace
 
@@ -41,6 +42,7 @@ def _nosql_agent(monkeypatch, transport_handler):
     async def _persist(vuln):
         await agent.ctx.graph_memory.add_vulnerability(vuln)
         agent.findings[vuln.id] = vuln
+
     agent.persist_finding = _persist
 
     real_async_client = httpx.AsyncClient
@@ -58,8 +60,12 @@ def _nosql_task(url, body=None):
     if body:
         payload["json_body"] = body
     return Task(
-        id="task-nosql-1", type="nosql_scan", agent_type="vuln_analysis",
-        engagement_id="eng-test", priority=5, payload=payload,
+        id="task-nosql-1",
+        type="nosql_scan",
+        agent_type="vuln_analysis",
+        engagement_id="eng-test",
+        priority=5,
+        payload=payload,
     )
 
 
@@ -80,8 +86,9 @@ async def test_nosql_confirmed_on_operator_injection(monkeypatch):
         return httpx.Response(401, json={"error": "invalid credentials"})
 
     agent = _nosql_agent(monkeypatch, handler)
-    task = _nosql_task("https://target.test/api/login",
-                       body={"username": "admin", "password": "pass"})
+    task = _nosql_task(
+        "https://target.test/api/login", body={"username": "admin", "password": "pass"}
+    )
     result = await agent._execute_nosql_scan(task.payload)
 
     assert result["findings_count"] >= 1
@@ -94,12 +101,14 @@ async def test_nosql_confirmed_on_operator_injection(monkeypatch):
 async def test_nosql_not_confirmed_when_no_differential(monkeypatch):
     """When both baseline and injected payloads return the same status (401),
     there is no differential signal => no finding."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "invalid credentials"})
 
     agent = _nosql_agent(monkeypatch, handler)
-    task = _nosql_task("https://target.test/api/login",
-                       body={"username": "admin", "password": "pass"})
+    task = _nosql_task(
+        "https://target.test/api/login", body={"username": "admin", "password": "pass"}
+    )
     result = await agent._execute_nosql_scan(task.payload)
 
     assert result["findings_count"] == 0
@@ -107,6 +116,7 @@ async def test_nosql_not_confirmed_when_no_differential(monkeypatch):
 
 
 # ---- Prototype Pollution ---------------------------------------------------
+
 
 def _proto_agent(monkeypatch, transport_handler):
     from types import SimpleNamespace
@@ -127,6 +137,7 @@ def _proto_agent(monkeypatch, transport_handler):
     async def _persist(vuln):
         await agent.ctx.graph_memory.add_vulnerability(vuln)
         agent.findings[vuln.id] = vuln
+
     agent.persist_finding = _persist
 
     real_async_client = httpx.AsyncClient
@@ -141,8 +152,12 @@ def _proto_agent(monkeypatch, transport_handler):
 
 def _proto_task(url):
     return Task(
-        id="task-proto-1", type="prototype_pollution_scan", agent_type="vuln_analysis",
-        engagement_id="eng-test", priority=5, payload={"pollute_url": url, "engagement_id": "eng-test"},
+        id="task-proto-1",
+        type="prototype_pollution_scan",
+        agent_type="vuln_analysis",
+        engagement_id="eng-test",
+        priority=5,
+        payload={"pollute_url": url, "engagement_id": "eng-test"},
     )
 
 
@@ -150,6 +165,7 @@ def _proto_task(url):
 async def test_prototype_pollution_not_confirmed_on_clean_response(monkeypatch):
     """A server that does NOT reflect the __proto__ payload => no finding.
     This is the false-positive guard: reflection != pollution."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="normal page content")
 
@@ -162,6 +178,7 @@ async def test_prototype_pollution_not_confirmed_on_clean_response(monkeypatch):
 
 
 # ---- Cache Poisoning -------------------------------------------------------
+
 
 def _cache_agent(monkeypatch, transport_handler):
     from types import SimpleNamespace
@@ -182,6 +199,7 @@ def _cache_agent(monkeypatch, transport_handler):
     async def _persist(vuln):
         await agent.ctx.graph_memory.add_vulnerability(vuln)
         agent.findings[vuln.id] = vuln
+
     agent.persist_finding = _persist
 
     real_async_client = httpx.AsyncClient
@@ -196,8 +214,12 @@ def _cache_agent(monkeypatch, transport_handler):
 
 def _cache_task(url):
     return Task(
-        id="task-cache-1", type="cache_poisoning_scan", agent_type="vuln_analysis",
-        engagement_id="eng-test", priority=5, payload={"url": url},
+        id="task-cache-1",
+        type="cache_poisoning_scan",
+        agent_type="vuln_analysis",
+        engagement_id="eng-test",
+        priority=5,
+        payload={"url": url},
     )
 
 
@@ -205,9 +227,9 @@ def _cache_task(url):
 async def test_cache_poisoning_not_confirmed_on_no_cache_headers(monkeypatch):
     """A response with no Cache-Control / no unkeyed header reflection => no
     finding. This is the false-positive guard."""
+
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, text="normal content",
-                              headers={"content-type": "text/html"})
+        return httpx.Response(200, text="normal content", headers={"content-type": "text/html"})
 
     agent = _cache_agent(monkeypatch, handler)
     task = _cache_task("https://target.test/page")
@@ -218,6 +240,7 @@ async def test_cache_poisoning_not_confirmed_on_no_cache_headers(monkeypatch):
 
 
 # ---- File Upload -----------------------------------------------------------
+
 
 def _upload_agent(monkeypatch, transport_handler):
     from types import SimpleNamespace
@@ -238,6 +261,7 @@ def _upload_agent(monkeypatch, transport_handler):
     async def _persist(vuln):
         await agent.ctx.graph_memory.add_vulnerability(vuln)
         agent.findings[vuln.id] = vuln
+
     agent.persist_finding = _persist
 
     real_async_client = httpx.AsyncClient
@@ -252,14 +276,19 @@ def _upload_agent(monkeypatch, transport_handler):
 
 def _upload_task(url):
     return Task(
-        id="task-upload-1", type="file_upload_scan", agent_type="vuln_analysis",
-        engagement_id="eng-test", priority=5, payload={"upload_url": url, "engagement_id": "eng-test"},
+        id="task-upload-1",
+        type="file_upload_scan",
+        agent_type="vuln_analysis",
+        engagement_id="eng-test",
+        priority=5,
+        payload={"upload_url": url, "engagement_id": "eng-test"},
     )
 
 
 @pytest.mark.asyncio
 async def test_file_upload_not_confirmed_on_rejection(monkeypatch):
     """When the server rejects the upload (403/415), no finding is emitted."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="upload not allowed")
 
@@ -272,6 +301,7 @@ async def test_file_upload_not_confirmed_on_rejection(monkeypatch):
 
 
 # ---- OAuth Reset -----------------------------------------------------------
+
 
 def _oauth_agent(monkeypatch, transport_handler):
     from types import SimpleNamespace
@@ -292,6 +322,7 @@ def _oauth_agent(monkeypatch, transport_handler):
     async def _persist(vuln):
         await agent.ctx.graph_memory.add_vulnerability(vuln)
         agent.findings[vuln.id] = vuln
+
     agent.persist_finding = _persist
 
     real_async_client = httpx.AsyncClient
@@ -306,8 +337,12 @@ def _oauth_agent(monkeypatch, transport_handler):
 
 def _oauth_task(url):
     return Task(
-        id="task-oauth-1", type="oauth_reset_scan", agent_type="vuln_analysis",
-        engagement_id="eng-test", priority=5, payload={"url": url},
+        id="task-oauth-1",
+        type="oauth_reset_scan",
+        agent_type="vuln_analysis",
+        engagement_id="eng-test",
+        priority=5,
+        payload={"url": url},
     )
 
 
@@ -315,6 +350,7 @@ def _oauth_task(url):
 async def test_oauth_reset_not_confirmed_on_no_host_header_impact(monkeypatch):
     """When the password-reset endpoint ignores the Host header (returns the
     same response regardless), no finding is emitted."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"message": "reset email sent"})
 

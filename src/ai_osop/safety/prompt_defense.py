@@ -24,8 +24,13 @@ _CONTROL_TOKEN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _INSTRUCTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|directions?|guidance)\b", re.I),
-    re.compile(r"\bdisregard\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?)\b", re.I),
+    re.compile(
+        r"\bignore\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|directions?|guidance)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\bdisregard\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?)\b", re.I
+    ),
     re.compile(r"\breveal\s+(?:the\s+|your\s+)?(?:system|developer)\s+prompt\b", re.I),
     re.compile(r"\bprint\s+(?:the\s+|your\s+)?(?:system|developer)\s+prompt\b", re.I),
     re.compile(r"\bshow\s+(?:the\s+|your\s+)?(?:system|developer)\s+prompt\b", re.I),

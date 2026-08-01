@@ -39,10 +39,10 @@ class _StubSessionMemory:
 async def test_audit_redis_ttl_sets_ttl_on_missing_keys():
     fake = _FakeRedis(
         {
-            "task:1": None,          # no TTL -> should be set
-            "task:2": 3600,          # healthy TTL -> untouched
-            "session:abc": None,      # no TTL -> should be set
-            "approval:x": None,       # no TTL -> should be set
+            "task:1": None,  # no TTL -> should be set
+            "task:2": 3600,  # healthy TTL -> untouched
+            "session:abc": None,  # no TTL -> should be set
+            "approval:x": None,  # no TTL -> should be set
         }
     )
     svc = RetentionService(graph_memory=None, session_memory=_StubSessionMemory(fake))

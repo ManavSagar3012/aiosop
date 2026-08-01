@@ -2,6 +2,7 @@
 browser-mcp calls so the shared Chromium (and the single-process target) are not
 driven into crash-loops by the scanner fan-out.
 """
+
 import asyncio
 
 import ai_osop.adapters.browser_mcp as bm
@@ -32,9 +33,9 @@ async def _run():
     bm._browser_semaphore = asyncio.Semaphore(3)
 
     # Fire 12 concurrent browser ops through the gate.
-    await asyncio.gather(*[
-        a.execute_action("eval", {"expression": "1"}, user_label=f"u{i}") for i in range(12)
-    ])
+    await asyncio.gather(
+        *[a.execute_action("eval", {"expression": "1"}, user_label=f"u{i}") for i in range(12)]
+    )
 
     assert reg.peak <= 3, f"gate did not cap concurrency: peak={reg.peak}"
     assert reg.peak >= 2, f"gate serialised too hard (peak={reg.peak}); expected ~3"

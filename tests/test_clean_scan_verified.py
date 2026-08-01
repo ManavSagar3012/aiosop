@@ -16,6 +16,7 @@ the two halves of that contract:
 
 Run: .venv/Scripts/python.exe tests/test_clean_scan_verified.py
 """
+
 import asyncio
 import sys
 

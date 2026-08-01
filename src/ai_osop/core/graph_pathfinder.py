@@ -111,15 +111,21 @@ class GraphPathfinder:
         chains = []
         for r in recs:
             if r.get("depth", 0) > 0:
-                chains.append({
-                    "chain_type": "ssrf_chain",
-                    "confidence": 0.8,
-                    "steps": [
-                        {"id": r.get("vuln_id"), "type": "vulnerability", "title": r.get("title")},
-                        {"id": "metadata_endpoint", "type": "target"},
-                    ],
-                    "description": "SSRF confirmed → probe cloud metadata → extract credentials",
-                })
+                chains.append(
+                    {
+                        "chain_type": "ssrf_chain",
+                        "confidence": 0.8,
+                        "steps": [
+                            {
+                                "id": r.get("vuln_id"),
+                                "type": "vulnerability",
+                                "title": r.get("title"),
+                            },
+                            {"id": "metadata_endpoint", "type": "target"},
+                        ],
+                        "description": "SSRF confirmed → probe cloud metadata → extract credentials",
+                    }
+                )
         return chains
 
     async def _find_authz_chains(self, eid: str, max_depth: int) -> List[Dict[str, Any]]:
@@ -143,16 +149,25 @@ class GraphPathfinder:
         chains = []
         for r in recs:
             if r.get("admin_endpoints"):
-                chains.append({
-                    "chain_type": "authz_chain",
-                    "confidence": 0.75,
-                    "steps": [
-                        {"id": r.get("vuln_id"), "type": "vulnerability", "title": r.get("title")},
-                        {"id": "admin_endpoints", "type": "target",
-                         "endpoints": r.get("admin_endpoints")},
-                    ],
-                    "description": "IDOR/access-control confirmed → probe admin endpoints → privilege escalation",
-                })
+                chains.append(
+                    {
+                        "chain_type": "authz_chain",
+                        "confidence": 0.75,
+                        "steps": [
+                            {
+                                "id": r.get("vuln_id"),
+                                "type": "vulnerability",
+                                "title": r.get("title"),
+                            },
+                            {
+                                "id": "admin_endpoints",
+                                "type": "target",
+                                "endpoints": r.get("admin_endpoints"),
+                            },
+                        ],
+                        "description": "IDOR/access-control confirmed → probe admin endpoints → privilege escalation",
+                    }
+                )
         return chains
 
     async def _find_xss_chains(self, eid: str, max_depth: int) -> List[Dict[str, Any]]:
@@ -176,16 +191,25 @@ class GraphPathfinder:
         chains = []
         for r in recs:
             if r.get("auth_endpoints"):
-                chains.append({
-                    "chain_type": "xss_chain",
-                    "confidence": 0.6,
-                    "steps": [
-                        {"id": r.get("vuln_id"), "type": "vulnerability", "title": r.get("title")},
-                        {"id": "auth_endpoints", "type": "target",
-                         "endpoints": r.get("auth_endpoints")},
-                    ],
-                    "description": "XSS confirmed → steal session cookies → account takeover",
-                })
+                chains.append(
+                    {
+                        "chain_type": "xss_chain",
+                        "confidence": 0.6,
+                        "steps": [
+                            {
+                                "id": r.get("vuln_id"),
+                                "type": "vulnerability",
+                                "title": r.get("title"),
+                            },
+                            {
+                                "id": "auth_endpoints",
+                                "type": "target",
+                                "endpoints": r.get("auth_endpoints"),
+                            },
+                        ],
+                        "description": "XSS confirmed → steal session cookies → account takeover",
+                    }
+                )
         return chains
 
     async def _find_sqli_chains(self, eid: str, max_depth: int) -> List[Dict[str, Any]]:
@@ -205,15 +229,17 @@ class GraphPathfinder:
 
         chains = []
         for r in recs:
-            chains.append({
-                "chain_type": "sqli_chain",
-                "confidence": 0.85,
-                "steps": [
-                    {"id": r.get("vuln_id"), "type": "vulnerability", "title": r.get("title")},
-                    {"id": "credential_table", "type": "target"},
-                ],
-                "description": "SQLi confirmed → extract credentials → try on auth endpoints",
-            })
+            chains.append(
+                {
+                    "chain_type": "sqli_chain",
+                    "confidence": 0.85,
+                    "steps": [
+                        {"id": r.get("vuln_id"), "type": "vulnerability", "title": r.get("title")},
+                        {"id": "credential_table", "type": "target"},
+                    ],
+                    "description": "SQLi confirmed → extract credentials → try on auth endpoints",
+                }
+            )
         return chains
 
     async def _find_generic_chains(
@@ -247,19 +273,29 @@ class GraphPathfinder:
 
         chains = []
         for r in recs:
-            chains.append({
-                "chain_type": f"{r.get('vuln_type', 'unknown')}_to_high_value",
-                "confidence": 0.5,
-                "steps": [
-                    {"id": r.get("vuln_id"), "type": "vulnerability",
-                     "title": r.get("title"), "vuln_type": r.get("vuln_type")},
-                    {"id": r.get("target_id"), "type": "endpoint",
-                     "url": r.get("target_url"), "path": r.get("target_path")},
-                ],
-                "description": (
-                    f"{r.get('vuln_type', 'vulnerability')} at one endpoint → "
-                    f"probe high-value endpoint {r.get('target_path', '')} "
-                    f"with the same exploit"
-                ),
-            })
+            chains.append(
+                {
+                    "chain_type": f"{r.get('vuln_type', 'unknown')}_to_high_value",
+                    "confidence": 0.5,
+                    "steps": [
+                        {
+                            "id": r.get("vuln_id"),
+                            "type": "vulnerability",
+                            "title": r.get("title"),
+                            "vuln_type": r.get("vuln_type"),
+                        },
+                        {
+                            "id": r.get("target_id"),
+                            "type": "endpoint",
+                            "url": r.get("target_url"),
+                            "path": r.get("target_path"),
+                        },
+                    ],
+                    "description": (
+                        f"{r.get('vuln_type', 'vulnerability')} at one endpoint → "
+                        f"probe high-value endpoint {r.get('target_path', '')} "
+                        f"with the same exploit"
+                    ),
+                }
+            )
         return chains

@@ -51,9 +51,7 @@ def compute_entry_hash(
     tenant_id: str, prev_hash: str, payload: Dict[str, Any], created_at: datetime
 ) -> str:
     """Deterministic SHA-256 over the normalized entry fields."""
-    block = "|".join(
-        [tenant_id, prev_hash, _canonical_json(payload), created_at.isoformat()]
-    )
+    block = "|".join([tenant_id, prev_hash, _canonical_json(payload), created_at.isoformat()])
     return hashlib.sha256(block.encode("utf-8")).hexdigest()
 
 
@@ -134,7 +132,11 @@ class WormAuditLog:
             {"WHERE tenant_id = $1" if tenant_id else ""}
             ORDER BY tenant_id, created_at ASC, id ASC
         """
-        rows = await self.session_mem.run_read(q_all, tenant_id) if tenant_id else await self.session_mem.run_read(q_all)
+        rows = (
+            await self.session_mem.run_read(q_all, tenant_id)
+            if tenant_id
+            else await self.session_mem.run_read(q_all)
+        )
         # Group by tenant, verify each chain in order
         by_tenant: Dict[str, List[Dict[str, Any]]] = {}
         for r in rows:
@@ -150,9 +152,7 @@ class WormAuditLog:
                 created_at = r["created_at"]
                 if isinstance(created_at, str):
                     created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                recomputed = compute_entry_hash(
-                    r["tenant_id"], r["prev_hash"], payload, created_at
-                )
+                recomputed = compute_entry_hash(r["tenant_id"], r["prev_hash"], payload, created_at)
                 if recomputed != r["entry_hash"]:
                     return False
                 expected_prev = r["entry_hash"]

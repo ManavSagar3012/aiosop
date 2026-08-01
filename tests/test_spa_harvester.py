@@ -76,12 +76,8 @@ def test_merge_candidates_dedupes_and_carries_source_and_evidence():
     `/rest/products/search` must remain in the corpus with a `q` query parameter
     (the surface the SQLi scanner needs) and with `productId` (a separate form).
     """
-    html_found = endpoint_candidates_from_html(
-        HTML_SNIPPET, base_url="https://target.local/"
-    )
-    js_found = endpoint_candidates_from_js_text(
-        JS_BUNDLE_SNIPPET, base_url="https://target.local/"
-    )
+    html_found = endpoint_candidates_from_html(HTML_SNIPPET, base_url="https://target.local/")
+    js_found = endpoint_candidates_from_js_text(JS_BUNDLE_SNIPPET, base_url="https://target.local/")
     merged = merge_candidates(html_found, js_found)
 
     urls = {c.url for c in merged}

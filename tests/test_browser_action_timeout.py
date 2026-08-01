@@ -4,16 +4,12 @@ Guards the ACTION_TIMEOUT_MS parse so click/fill never silently fall back to
 Playwright's 30s default (which stacks across register's 4 fills and blows the
 180s agent ceiling).
 """
+
 import importlib.util
 import os
 from pathlib import Path
 
-_MOD = (
-    Path(__file__).resolve().parents[1]
-    / "mcp-servers"
-    / "python"
-    / "browser_mcp.py"
-)
+_MOD = Path(__file__).resolve().parents[1] / "mcp-servers" / "python" / "browser_mcp.py"
 
 
 def _load(env_value=None):

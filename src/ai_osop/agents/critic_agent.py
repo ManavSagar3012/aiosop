@@ -173,9 +173,7 @@ class PostEngagementCriticAgent:
         critiques: List[Dict[str, Any]] = []
 
         try:
-            vulns = await self.graph_memory.get_vulnerabilities_by_engagement(
-                engagement_id
-            )
+            vulns = await self.graph_memory.get_vulnerabilities_by_engagement(engagement_id)
         except Exception:
             return []
 
@@ -189,6 +187,7 @@ class PostEngagementCriticAgent:
 
             # Parse evidence (may be JSON string from Neo4j)
             import json
+
             if isinstance(evidence, str):
                 try:
                     evidence = json.loads(evidence)
@@ -219,8 +218,7 @@ class PostEngagementCriticAgent:
             # Check 4: missing request/response in evidence
             if validated and evidence:
                 has_request = any(
-                    isinstance(e, dict) and ("request" in e or "request_url" in e)
-                    for e in evidence
+                    isinstance(e, dict) and ("request" in e or "request_url" in e) for e in evidence
                 )
                 has_response = any(
                     isinstance(e, dict) and ("response" in e or "http_status" in e)
@@ -232,13 +230,15 @@ class PostEngagementCriticAgent:
                     issues.append("evidence lacks response details — triager cannot verify")
 
             if issues:
-                critiques.append({
-                    "finding_id": vid,
-                    "vuln_type": vtype,
-                    "confidence": confidence,
-                    "validated": validated,
-                    "issues": issues,
-                    "recommendation": "re-verify before reporting; consider downgrading to POTENTIAL",
-                })
+                critiques.append(
+                    {
+                        "finding_id": vid,
+                        "vuln_type": vtype,
+                        "confidence": confidence,
+                        "validated": validated,
+                        "issues": issues,
+                        "recommendation": "re-verify before reporting; consider downgrading to POTENTIAL",
+                    }
+                )
 
         return critiques

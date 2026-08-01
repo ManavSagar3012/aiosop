@@ -556,8 +556,16 @@ class GraphMemory:
                 "finding.recorded",
                 {
                     "finding_id": persisted_id,
-                    "vuln_type": vuln.vuln_type.value if hasattr(vuln.vuln_type, "value") else str(vuln.vuln_type),
-                    "severity": vuln.severity.value if hasattr(vuln.severity, "value") else str(vuln.severity),
+                    "vuln_type": (
+                        vuln.vuln_type.value
+                        if hasattr(vuln.vuln_type, "value")
+                        else str(vuln.vuln_type)
+                    ),
+                    "severity": (
+                        vuln.severity.value
+                        if hasattr(vuln.severity, "value")
+                        else str(vuln.severity)
+                    ),
                     "validated": vuln.validated,
                     "engagement_id": vuln.engagement_id,
                     "endpoint": vuln.endpoint_id or "",
@@ -1759,7 +1767,11 @@ class GraphMemory:
                     "target_id": hypothesis.target_id,
                     "confidence": hypothesis.confidence,
                     "supporting_entities": hypothesis.supporting_entities,
-                    "evidence": json.dumps(hypothesis.evidence, default=str) if hypothesis.evidence else "[]",
+                    "evidence": (
+                        json.dumps(hypothesis.evidence, default=str)
+                        if hypothesis.evidence
+                        else "[]"
+                    ),
                     "recommended_tests": hypothesis.recommended_tests,
                     "recommended_skills": hypothesis.recommended_skills,
                     "status": hypothesis.status,

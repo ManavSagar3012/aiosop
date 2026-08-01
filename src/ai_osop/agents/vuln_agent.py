@@ -571,7 +571,9 @@ class VulnAnalysisAgent(BaseAgent):
                         session_id=session.session_id,
                     )
             except Exception as e:  # never let scope-init crash the scan path
-                logger.warning("nuclei_scope_init_failed", engagement_id=engagement_id, error=str(e))
+                logger.warning(
+                    "nuclei_scope_init_failed", engagement_id=engagement_id, error=str(e)
+                )
 
         # Execute via MCP. Forward severity/tags so the orchestrator's high-signal
         # scoping (AIOSOP-NUCLEI-TIMEOUT-2026-06-24) actually reaches nuclei and the
@@ -3081,7 +3083,9 @@ class VulnAnalysisAgent(BaseAgent):
                 headers,
             )
             try:
-                executed, _probe_ran = await self._confirm_xss_execution(render_url, token, engagement_id)
+                executed, _probe_ran = await self._confirm_xss_execution(
+                    render_url, token, engagement_id
+                )
             except TypeError:
                 probe_result = await self._confirm_xss_execution(render_url, token, engagement_id)
                 executed = bool(probe_result)

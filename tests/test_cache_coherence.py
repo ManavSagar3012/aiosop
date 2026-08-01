@@ -24,6 +24,5 @@ class TestCacheCoherence:
             print(stdout)
             print(stderr)
         assert result.returncode == 0, (
-            f'Cache coherence spike returned exit {result.returncode}. '
-            f'Stdout: {stdout[:500]}'
+            f"Cache coherence spike returned exit {result.returncode}. " f"Stdout: {stdout[:500]}"
         )

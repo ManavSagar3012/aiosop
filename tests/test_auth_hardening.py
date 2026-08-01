@@ -346,10 +346,11 @@ async def test_jwt_tenant_id_extracted_and_defaults():
     """A JWT carrying a tenant_id claim surfaces it on the operator dict;
     a JWT without one falls back to 'default'."""
     secret = "a" * 32
-    with patch.object(_cfg.settings, "jwt_secret", secret), patch.object(
-        _cfg.settings, "jwt_algorithm", "HS256"
-    ), patch.object(_cfg.settings, "jwt_audience", None), patch.object(
-        _cfg.settings, "jwt_issuer", None
+    with (
+        patch.object(_cfg.settings, "jwt_secret", secret),
+        patch.object(_cfg.settings, "jwt_algorithm", "HS256"),
+        patch.object(_cfg.settings, "jwt_audience", None),
+        patch.object(_cfg.settings, "jwt_issuer", None),
     ):
         from jose import jwt as _jwt
         import time as _t

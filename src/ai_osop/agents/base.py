@@ -1212,8 +1212,7 @@ class BaseAgent(ABC):
                     result_text = _json.dumps(result, default=str)[:2000]
                 except Exception as e:
                     result_text = (
-                        f"<tool_error> {name} raised "
-                        f"{type(e).__name__}: {e} </tool_error>"
+                        f"<tool_error> {name} raised " f"{type(e).__name__}: {e} </tool_error>"
                     )
 
             # Sanitize the untrusted tool output before feeding it back as a
