@@ -56,3 +56,29 @@ def test_blob_for_content_is_content_addressed(tmp_path):
     # persisted blob body is redacted at capture
     assert "abc123xyz" not in full.read_text()
     assert "[REDACTED" in full.read_text()
+
+
+def _mk_receipt(rid: str, eng: str = "eng-9", vuln: str = "v-1") -> "ExploitReceipt":
+    from ai_osop.evidence.models import ExploitReceipt
+
+    return ExploitReceipt(
+        receipt_id=rid, engagement_id=eng, vuln_id=vuln, approval_id="apr-1",
+        verdict="confirmed", confidence=0.9, confirmation_note="n", scope_hash="sh",
+    )
+
+
+async def test_record_chains_receipts_hmac(sa_engine, tmp_path):
+    from ai_osop.evidence.migrations import ensure_schema
+    from ai_osop.evidence.store import ReceiptStore
+    from ai_osop.safety.scope import AuditIntegrity
+
+    await ensure_schema(sa_engine)
+    store = ReceiptStore(sa_engine=sa_engine, integrity=AuditIntegrity(b"test-key-1"), evidence_root=tmp_path)
+
+    h1 = await store.record(_mk_receipt("rcpt-a"))
+    r1 = await store.get("rcpt-a")
+    assert r1.integrity_sig == h1 and r1.prev_receipt_hash == ""
+
+    await store.record(_mk_receipt("rcpt-b"))
+    r2 = await store.get("rcpt-b")
+    assert r2.prev_receipt_hash == h1

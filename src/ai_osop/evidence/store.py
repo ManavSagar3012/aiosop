@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from sqlalchemy import insert, select
 
@@ -69,3 +69,58 @@ class ReceiptStore:
         return ReceiptArtifact(
             artifact_id=artifact_id, kind=kind, sha256=digest, blob_path=str(rel)
         )
+
+    async def record(self, receipt: "ExploitReceipt") -> str:
+        prev = await self._last_receipt_hash(receipt.engagement_id)
+        sig = _sign_receipt_fields(
+            self._integrity.signing_key, prev, _receipt_signing_fields(receipt)
+        )
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                insert(exploit_receipts).values(
+                    receipt_id=receipt.receipt_id,
+                    engagement_id=receipt.engagement_id,
+                    vuln_id=receipt.vuln_id,
+                    approval_id=receipt.approval_id,
+                    hop_idx=receipt.hop_idx,
+                    chain_id=receipt.chain_id,
+                    verdict=receipt.verdict,
+                    confidence=receipt.confidence,
+                    confirmation_note=receipt.confirmation_note,
+                    oracle_signals=receipt.oracle_signals,
+                    artifacts=[a.model_dump(mode="json") for a in receipt.artifacts],
+                    request_summary=receipt.request_summary,
+                    response_summary=receipt.response_summary,
+                    scope_hash=receipt.scope_hash,
+                    prev_receipt_hash=prev,
+                    integrity_sig=sig,
+                    simulated=receipt.simulated,
+                    created_at=receipt.timestamp,
+                )
+            )
+        return sig
+
+    async def _last_receipt_hash(self, engagement_id: str) -> str:
+        async with self._engine.connect() as conn:
+            row = await conn.execute(
+                select(exploit_receipts.c.integrity_sig)
+                .where(exploit_receipts.c.engagement_id == engagement_id)
+                .order_by(exploit_receipts.c.created_at.desc())
+                .limit(1)
+            )
+            val = row.scalar_one_or_none()
+        return val or ""
+
+    async def get(self, receipt_id: str) -> "Optional[ExploitReceipt]":
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(exploit_receipts).where(exploit_receipts.c.receipt_id == receipt_id)
+                )
+            ).mappings().first()
+        if not row:
+            return None
+        data = dict(row)
+        # Table column is created_at; model field is timestamp.
+        data["timestamp"] = data.pop("created_at")
+        return ExploitReceipt(**data)
