@@ -218,8 +218,12 @@ class TaskScheduler:
                 },
                 "orchestrator",
             )
+            from ai_osop.core.tenant_isolation import tenant_queue_key
+
+            _session = self._orch._sessions.get(task.engagement_id)
+            _tenant = getattr(_session.scope, "organization_id", "default") if _session else "default"
             await self._orch.session_memory.push_task_queue(
-                f"tasks:{task.engagement_id}", task.model_dump()
+                tenant_queue_key(_tenant, f"tasks:{task.engagement_id}"), task.model_dump()
             )
             # Wake remote scheduler loops immediately.  The ZSET remains the
             # durable source of truth; this event only removes the polling delay.
@@ -1008,8 +1012,12 @@ class TaskScheduler:
         # assignment. If assignment fails (no agent available) the task stays
         # queued and the scheduler loop picks it up on its next tick.
         try:
+            from ai_osop.core.tenant_isolation import tenant_queue_key
+
+            _session = self._orch._sessions.get(task.engagement_id)
+            _tenant = getattr(_session.scope, "organization_id", "default") if _session else "default"
             await self._orch.session_memory.push_task_queue(
-                f"tasks:{task.engagement_id}", task.model_dump()
+                tenant_queue_key(_tenant, f"tasks:{task.engagement_id}"), task.model_dump()
             )
         except Exception as e:  # noqa: BLE001 - never strand a retry on a Redis blip
             logger.warning(
