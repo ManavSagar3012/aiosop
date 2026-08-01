@@ -26,9 +26,16 @@ logger = logging.getLogger(__name__)
 # WAF block signals in HTTP responses
 _WAF_BLOCK_STATUSES = {403, 406, 429, 503}
 _WAF_CHALLENGE_PATTERNS = [
-    "just a moment", "cf-browser-verification", "access denied",
-    "request blocked", "security check", "captcha", "ray id",
-    "attention required", "cloudflare", "akamai",
+    "just a moment",
+    "cf-browser-verification",
+    "access denied",
+    "request blocked",
+    "security check",
+    "captcha",
+    "ray id",
+    "attention required",
+    "cloudflare",
+    "akamai",
 ]
 
 # Threshold: after this many consecutive WAF blocks, pivot to passive.
@@ -38,6 +45,7 @@ _WAF_BLOCK_THRESHOLD = 3
 @dataclass
 class PivotDecision:
     """Result of a pivoting evaluation."""
+
     should_pivot: bool
     reason: str = ""
     pivot_strategy: str = ""

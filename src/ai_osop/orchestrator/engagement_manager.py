@@ -168,7 +168,12 @@ class EngagementManager:
                 f"Invalid transition: {current.value} -> {new_phase.value}"
             )
         if new_phase == EngagementPhase.EXPLOITATION:
-            stats = await self._orch.graph_memory.get_graph_stats(session_id)
+            # AIOSOP-GRAPH-KEY-002 (2026-08-01): same fix as orchestrator._resolve_auto_next —
+            # findings are keyed by scope.engagement_id (canonical). Querying by the raw
+            # API session_id returns 0 even when the engagement has verified vulns, so the
+            # gate falsely blocks a legal transition. Normalize before the stats read.
+            graph_key = getattr(session, "canonical_engagement_id", None) or session_id
+            stats = await self._orch.graph_memory.get_graph_stats(graph_key)
             if stats.get("vulnerabilities", 0) == 0:
                 raise WorkflowException("Cannot transition to exploitation without vulnerabilities")
         # GAP-3-4: compare-and-set. The validation above can await (graph stats), so a

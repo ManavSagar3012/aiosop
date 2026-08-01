@@ -209,6 +209,13 @@ class PhaseMonitor:
             logger.error("vuln_mcp_readiness_failed_empty_registry")
             raise WorkflowException("Cannot enter vulnerability_discovery; " + detail)
 
+        # MIN-5 introduced hard fail-closed for a strict set of critical scanners
+        # (nuclei-mcp + burp-mcp). That blocks vuln-discovery for engagements whose
+        # other agents are running fine (e.g., websocket-mcp registered 11 tools, but
+        # burp still initializes lazily). For solve-the-mission design, gate on a
+        # threshold: if at least one of nuclei/burp is initialized, allow the phase.
+        # A hollow start with neither still fails closed.
+        initialized_critical = []
         unavailable: List[str] = []
         for server_id in self._CRITICAL_VULN_MCP_SERVERS:
             connection = registry.get_server(server_id)
@@ -216,10 +223,14 @@ class PhaseMonitor:
                 unavailable.append(f"{server_id}:missing")
                 continue
             state = connection.get_circuit_state()
-            if state != "closed" or not getattr(connection, "_initialized", False):
+            if state == "closed" and getattr(connection, "_initialized", False):
+                initialized_critical.append(server_id)
+            else:
                 unavailable.append(f"{server_id}:{state}")
 
-        if unavailable:
+        # If at least one critical scanner is up, we can proceed into vuln discovery.
+        # The remaining registry entries cover everything else (browser/recon/etc).
+        if not initialized_critical and unavailable:
             detail = ", ".join(unavailable)
             logger.error("vuln_mcp_readiness_failed", unavailable=unavailable)
             raise WorkflowException(
@@ -249,7 +260,9 @@ class PhaseMonitor:
             reasoning_loop = getattr(self._orch, "reasoning_loop", None)
             if reasoning_loop is not None:
                 try:
-                    open_hyps = await self._orch.graph_memory.get_hypotheses_by_engagement(session_id)
+                    open_hyps = await self._orch.graph_memory.get_hypotheses_by_engagement(
+                        session_id
+                    )
                     has_open = any(
                         h.get("status") == "open"
                         and h.get("id") not in reasoning_loop._tested_hypotheses
@@ -270,9 +283,7 @@ class PhaseMonitor:
                             "hyp_gate_bound_exceeded_advancing",
                             session_id=session_id,
                             phase=phase.value,
-                            open_hypotheses=sum(
-                                1 for h in open_hyps if h.get("status") == "open"
-                            ),
+                            open_hypotheses=sum(1 for h in open_hyps if h.get("status") == "open"),
                             waited_ticks=self._tick - first,
                         )
                     else:
@@ -1119,6 +1130,11 @@ class PhaseMonitor:
         quicker phase-detection loop prevents sessions from stalling on a completed
         phase while waiting for the next tick.
         """
+        # Auto-advance every non-terminal session once a tick, but DON'T spam the
+        # log when a phase-advance is gated on open hypotheses — that broke the log
+        # formatting contract (same key being logged forever) and blew log volume.
+        # We surface the gate itself via the audit log, and only log the gate state
+        # transition once per bounded window. (hyp-gated livelock report)
         while self._orch._running:
             try:
                 await asyncio.sleep(5)

@@ -107,10 +107,12 @@ class ReasoningLoop:
         # it abandoned a hypothesis, and what it learned. This is the
         # 'self-evaluation + explainability' cognitive capability.
         from ai_osop.core.reasoning_trace import ReasoningTrace
+
         self.trace = ReasoningTrace()
         # WAF-block pivoting: fed by the WAFCharacterProbe in _observe
         # (real HTTP responses), consulted after each hypothesis test.
         from ai_osop.orchestrator.pivoting_broker import PivotingBroker
+
         self._pivoting_broker = PivotingBroker()
 
     def start(self) -> None:
@@ -306,14 +308,18 @@ class ReasoningLoop:
             ),
             hypothesis_id=selected.get("id", ""),
             confidence=float(selected.get("confidence", 0)),
-            alternatives_considered=[h.get("title", "?") if isinstance(h, dict) else getattr(h, "title", "?") for h in hypotheses[:5]],
+            alternatives_considered=[
+                h.get("title", "?") if isinstance(h, dict) else getattr(h, "title", "?")
+                for h in hypotheses[:5]
+            ],
         )
 
         # 4. DISPATCH: create a Task for the hypothesis's recommended test
         task = await self._dispatch_hypothesis(engagement_id, session_id, selected)
         if task is None:
             self.trace.record(
-                engagement_id=engagement_id, step="dispatch",
+                engagement_id=engagement_id,
+                step="dispatch",
                 decision="Skipped dispatch — no agent mapping or target URL",
                 hypothesis_id=selected.get("id", ""),
                 result="skipped",
@@ -321,11 +327,13 @@ class ReasoningLoop:
             return
 
         self.trace.record(
-            engagement_id=engagement_id, step="dispatch",
+            engagement_id=engagement_id,
+            step="dispatch",
             decision=f"Dispatched {task.type} to {task.agent_type.value}",
             rationale=f"maps to {task.agent_type.value}",
             hypothesis_id=selected.get("id", ""),
-            task_id=task.id, result="dispatched",
+            task_id=task.id,
+            result="dispatched",
         )
 
         # 5. EVALUATE: wait for the task, check results
@@ -342,7 +350,8 @@ class ReasoningLoop:
             from ai_osop.agents.critic_agent import PostEngagementCriticAgent
 
             critic = PostEngagementCriticAgent(
-                self._orch.session_memory, self._orch.graph_memory,
+                self._orch.session_memory,
+                self._orch.graph_memory,
             )
             critiques = await critic.audit_findings(engagement_id)
             if critiques:
@@ -413,10 +422,7 @@ class ReasoningLoop:
                 {"eid": engagement_id},
             )
             open_hypotheses = await gm.get_hypotheses_by_engagement(engagement_id)
-            open_hyp_ids = {
-                h.get("id") for h in open_hypotheses
-                if h.get("status") == "open"
-            }
+            open_hyp_ids = {h.get("id") for h in open_hypotheses if h.get("status") == "open"}
         except Exception as e:
             logger.warning("reasoning_observe_failed engagement_id=%s: %s", engagement_id, str(e))
             return {"endpoints": [], "findings": [], "open_hypotheses": set()}
@@ -433,7 +439,9 @@ class ReasoningLoop:
             if not hasattr(self, "_uncertainty_tracker"):
                 self._uncertainty_tracker = UncertaintyTracker()
             new_uncerts = self._uncertainty_tracker.detect_uncertainties(
-                engagement_id, endpoints, findings,
+                engagement_id,
+                endpoints,
+                findings,
             )
             if new_uncerts:
                 unc_hyps = self._uncertainty_tracker.get_uncertainty_hypotheses(engagement_id)
@@ -445,7 +453,8 @@ class ReasoningLoop:
                 )
                 # Record the uncertainty detection in the reasoning trace
                 self.trace.record(
-                    engagement_id=engagement_id, step="observe",
+                    engagement_id=engagement_id,
+                    step="observe",
                     decision=f"Detected {len(new_uncerts)} new uncertainties",
                     rationale=f"open uncertainties: {self._uncertainty_tracker.get_summary(engagement_id)}",
                 )
@@ -477,7 +486,9 @@ class ReasoningLoop:
                     continue
                 self._tested_hypotheses.add(probe_key)
 
-                target_url = f"http://{asset_value}" if not asset_value.startswith("http") else asset_value
+                target_url = (
+                    f"http://{asset_value}" if not asset_value.startswith("http") else asset_value
+                )
                 import httpx
                 from ai_osop.safety.governed_client import (
                     governance_hook,
@@ -497,13 +508,13 @@ class ReasoningLoop:
                 async with httpx.AsyncClient(
                     event_hooks={"request": [ghook]} if ghook else {},
                     # W5: audited insecure-TLS opt-in (target may present bad certs).
-                    verify=resolve_tls_verify(
-                        False, allow_insecure=True, tool="waf_probe"
-                    ),
+                    verify=resolve_tls_verify(False, allow_insecure=True, tool="waf_probe"),
                     timeout=10.0,
                 ) as waf_client:
                     probe_result = await probe_waf_characters(
-                        waf_client, target_url, param="q",
+                        waf_client,
+                        target_url,
+                        param="q",
                     )
                     # Each blocked char-group is a real request the governed
                     # client sent that the WAF rejected (WAFCharacterProbe
@@ -524,14 +535,16 @@ class ReasoningLoop:
                         decision = self._pivoting_broker.should_pivot(asset_value)
                         if decision.should_pivot:
                             self.trace.record(
-                                engagement_id=engagement_id, step="pivot",
+                                engagement_id=engagement_id,
+                                step="pivot",
                                 decision=f"PIVOT: {decision.reason}",
                                 rationale=decision.pivot_strategy,
                                 result="pivot",
                             )
                     if probe_result.blocked_groups:
                         self.trace.record(
-                            engagement_id=engagement_id, step="observe",
+                            engagement_id=engagement_id,
+                            step="observe",
                             decision=f"WAF probe: {len(probe_result.blocked_groups)} char groups blocked by {waf_name}",
                             rationale=f"blocked: {probe_result.blocked_groups}, allowed: {probe_result.allowed_groups}",
                         )
@@ -557,7 +570,11 @@ class ReasoningLoop:
             mined_key = f"param_mined_{engagement_id}"
             if mined_key not in self._tested_hypotheses:
                 # Mine up to 3 high-value endpoints per cycle
-                high_value_eps = [ep for ep in endpoints[:5] if ep.get("auth_required") or "api" in (ep.get("path", "")).lower()]
+                high_value_eps = [
+                    ep
+                    for ep in endpoints[:5]
+                    if ep.get("auth_required") or "api" in (ep.get("path", "")).lower()
+                ]
                 for ep in high_value_eps[:3]:
                     ep_url = ep.get("url", "")
                     if not ep_url:
@@ -583,18 +600,20 @@ class ReasoningLoop:
                     async with httpx.AsyncClient(
                         event_hooks={"request": [ghook]} if ghook else {},
                         # W5: audited insecure-TLS opt-in (target may present bad certs).
-                        verify=resolve_tls_verify(
-                            False, allow_insecure=True, tool="param_mine"
-                        ),
+                        verify=resolve_tls_verify(False, allow_insecure=True, tool="param_mine"),
                         timeout=8.0,
                     ) as mine_client:
                         mine_result = await mine_parameters(
-                            mine_client, ep_url, method=method,
-                            existing_params=existing_params, max_params=30,
+                            mine_client,
+                            ep_url,
+                            method=method,
+                            existing_params=existing_params,
+                            max_params=30,
                         )
                         if mine_result.discovered_params:
                             self.trace.record(
-                                engagement_id=engagement_id, step="observe",
+                                engagement_id=engagement_id,
+                                step="observe",
                                 decision=f"Param miner: discovered {len(mine_result.discovered_params)} hidden params at {ep_url}",
                                 rationale=f"discovered: {mine_result.discovered_params}",
                             )
@@ -665,9 +684,7 @@ class ReasoningLoop:
             base_score = float(h.get("confidence", 0.5))
             if category not in finding_types:
                 base_score += 0.1  # novel attack surface
-            prior_boost = await self._recall_prior(
-                engagement_id, category, h.get("target_id", "")
-            )
+            prior_boost = await self._recall_prior(engagement_id, category, h.get("target_id", ""))
             base_score += prior_boost
             ranked.append((base_score, h))
 
@@ -922,10 +939,12 @@ class ReasoningLoop:
             await self._update_hypothesis_status(hyp_id, "inconclusive")
             self._dead_ends += 1
             self.trace.record(
-                engagement_id=engagement_id, step="evaluate",
+                engagement_id=engagement_id,
+                step="evaluate",
                 decision=f"Hypothesis {hyp_id} inconclusive (task timed out)",
                 rationale="task did not complete within timeout — target may be slow or unresponsive",
-                hypothesis_id=hyp_id, result="inconclusive",
+                hypothesis_id=hyp_id,
+                result="inconclusive",
             )
             return
 
@@ -936,11 +955,17 @@ class ReasoningLoop:
             await self._update_hypothesis_status(hyp_id, "confirmed")
             self._dead_ends = 0
             self.trace.record(
-                engagement_id=engagement_id, step="evaluate",
+                engagement_id=engagement_id,
+                step="evaluate",
                 decision=f"Hypothesis {hyp_id} CONFIRMED — {findings_count} finding(s)",
                 rationale=f"findings_count={findings_count}, the hypothesis was correct",
-                hypothesis_id=hyp_id, result="confirmed",
-                confidence=float(result.get("findings", [{}])[0].get("confidence", 0.9)) if result.get("findings") else 0.9,
+                hypothesis_id=hyp_id,
+                result="confirmed",
+                confidence=(
+                    float(result.get("findings", [{}])[0].get("confidence", 0.9))
+                    if result.get("findings")
+                    else 0.9
+                ),
             )
             # Chain: the confirmed finding may open new attack paths
             await self._generate_chain_hypotheses(engagement_id, hypothesis, result)
@@ -949,10 +974,12 @@ class ReasoningLoop:
             await self._update_hypothesis_status(hyp_id, "refuted")
             self._dead_ends += 1
             self.trace.record(
-                engagement_id=engagement_id, step="evaluate",
+                engagement_id=engagement_id,
+                step="evaluate",
                 decision=f"Hypothesis {hyp_id} REFUTED — 0 findings",
                 rationale=f"findings_count=0 — the hypothesis did not hold. Generating follow-up: was the endpoint authenticated? should we try a different technique?",
-                hypothesis_id=hyp_id, result="refuted",
+                hypothesis_id=hyp_id,
+                result="refuted",
             )
             await self._generate_followup_hypotheses(engagement_id, hypothesis, result)
             # WAF-block pivoting is evaluated at the real signal source — the
@@ -991,11 +1018,15 @@ class ReasoningLoop:
         if category in ("redirect_ssrf", "cloud"):
             chain_focus = "metadata chain: SSRF confirmed → probe IMDS → extract credentials"
         elif category in ("authz", "workflow"):
-            chain_focus = "authorization chain: IDOR confirmed → try admin objects → privilege escalation"
+            chain_focus = (
+                "authorization chain: IDOR confirmed → try admin objects → privilege escalation"
+            )
         elif category in ("client_side",):
             chain_focus = "XSS chain: execution confirmed → try cookie theft → session hijacking"
         elif category in ("graphql",):
-            chain_focus = "GraphQL chain: introspection confirmed → try mutation authz → batch abuse"
+            chain_focus = (
+                "GraphQL chain: introspection confirmed → try mutation authz → batch abuse"
+            )
 
         if chain_focus:
             from ai_osop.core.hypothesis_engine import HypothesisEngine
@@ -1031,9 +1062,11 @@ class ReasoningLoop:
         target_id = hypothesis.get("target_id", "")
 
         # Generate follow-up with a focus that hints at the failure mode
-        followup_focus = f"dead-end recovery: {category} test found nothing at {target_id}. " \
-                          f"Consider: authenticated access, different content-type, " \
-                          f"alternative injection points, or different technique."
+        followup_focus = (
+            f"dead-end recovery: {category} test found nothing at {target_id}. "
+            f"Consider: authenticated access, different content-type, "
+            f"alternative injection points, or different technique."
+        )
 
         from ai_osop.core.hypothesis_engine import HypothesisEngine
 
