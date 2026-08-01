@@ -24,9 +24,7 @@ def test_task_carries_engagement_org_bucket():
 
 
 def test_scope_definition_serializes_org():
-    scope = ScopeDefinition(
-        engagement_id="e-4", domains=["example.local"], organization_id="org-b"
-    )
+    scope = ScopeDefinition(engagement_id="e-4", domains=["example.local"], organization_id="org-b")
     dumped = scope.model_dump()
     assert dumped["organization_id"] == "org-b"
 

@@ -76,6 +76,20 @@ class AgentReaper:
                         await self.orch.session_memory.store_task(task)
                         await self.orch.task_scheduler.schedule_task(task)
                         TASK_REQUEUES_TOTAL.inc()
+                        # AIOSOP-REAPER-INMEM-SYNC: keep the orchestrator's in-memory
+                        # task view consistent with this requeue. AgentReaper requeues a
+                        # Redis-reconstructed copy and previously never updated
+                        # orch._tasks[task.id], so it stayed status="running" — and
+                        # RecoveryService._reap_stuck_tasks (which iterates orch._tasks)
+                        # then re-reaped the SAME task: double requeue / double execution.
+                        # Guarded so a fixture/replica without _tasks is unaffected.
+                        # ponytail: full mutual exclusion between the two reapers still
+                        # wants a shared per-task lock (task-recovery:{id}); this closes
+                        # the common sequential re-reap, a lock would close the rare
+                        # concurrent window (needs a live-Redis integration test).
+                        tasks_map = getattr(self.orch, "_tasks", None)
+                        if isinstance(tasks_map, dict):
+                            tasks_map[task.id] = task
                         await self.orch.session_memory.write_audit_event(
                             AuditEvent(
                                 event_type="task_recovered",

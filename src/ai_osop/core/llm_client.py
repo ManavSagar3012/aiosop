@@ -165,7 +165,29 @@ class LiteLLMClient:
         if isinstance(total, int) and total > 0:
             self.tokens_consumed += total
 
-        return response.choices[0].message.content or ""
+        completion_text = response.choices[0].message.content or ""
+
+        # Step F: per-call audit. Best-effort; never block the caller.
+        audit_cb = getattr(self, "_audit_callback", None)
+        if audit_cb is not None:
+            try:
+                usage_dict = {}
+                if usage is not None:
+                    usage_dict = {
+                        "total_tokens": getattr(usage, "total_tokens", None),
+                        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                        "completion_tokens": getattr(usage, "completion_tokens", None),
+                    }
+                await audit_cb(
+                    model=selected_model,
+                    messages=safe_messages,
+                    response_text=completion_text,
+                    usage=usage_dict,
+                )
+            except Exception:  # noqa: BLE001 — audit must never break inference
+                pass
+
+        return completion_text
 
     async def warm_up(self) -> Dict[str, Any]:
         """Pre-load ONLY the primary chat model so the first real engagement call hits

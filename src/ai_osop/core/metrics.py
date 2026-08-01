@@ -357,3 +357,13 @@ AGENT_RECOVERIES_TOTAL = Counter("ai_osop_agent_recoveries_total", "Total agent 
 AGENT_TIMEOUTS_TOTAL = Counter("ai_osop_agent_timeouts_total", "Total agent timeouts")
 TASK_REQUEUES_TOTAL = Counter("ai_osop_task_requeues_total", "Total task requeues")
 STALE_LEASES_TOTAL = Counter("ai_osop_stale_leases_total", "Total stale task leases detected")
+
+# Per-finding decision latency: from persisted detection timestamp to when a
+# criticality decision lands. Sealing the gap between finding and triage is the
+# metric bug bounty teams care about most (time-to-payout).
+FINDING_DECISION_SECONDS = Histogram(
+    "ai_osop_finding_decision_seconds",
+    "Latency from detection until triage decision (validated/rejected/manual_review)",
+    ["state"],
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0],
+)

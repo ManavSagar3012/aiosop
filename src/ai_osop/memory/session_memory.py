@@ -1279,6 +1279,27 @@ class SessionMemory:
 
                 await session.commit()
 
+    async def enqueue_outbox(
+        self, entity_type: str, entity_id: str, payload: dict, action: str = "upsert"
+    ) -> None:
+        """Durably record an entity change (Postgres) for async projection to Neo4j.
+
+        AIOSOP-FINDINGS-OUTBOX: findings/endpoints previously bypassed the outbox
+        (only tasks were replicated), so a Neo4j outage during a finding write lost
+        it with no replay path. Callers enqueue here — Postgres, the durable warm
+        store — and OutboxProcessor projects to Neo4j; projection is idempotent.
+        """
+        async with self._async_session() as session:
+            session.add(
+                OutboxORM(
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    action=action,
+                    payload=payload,
+                )
+            )
+            await session.commit()
+
     async def load_task(self, task_id: str) -> Optional[Task]:
         """Load task from hot tier, fallback to warm."""
         data = await self.retrieve_hot(f"task:{task_id}")

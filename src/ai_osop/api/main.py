@@ -381,6 +381,11 @@ async def lifespan(app: FastAPI):
         except Exception as e:  # noqa: BLE001 - learning brain is optional
             logger.warning(f"Findings knowledge wiring failed: {e}")
 
+        # AIOSOP-FINDINGS-OUTBOX: wire the Postgres outbox sink so a Neo4j outage
+        # during a finding write queues the finding for replay instead of losing it.
+        # Findings previously bypassed the outbox — only tasks were durable.
+        graph_memory.outbox_sink = session_memory
+
         # P2b calibration engine: wire to graph_memory so validate_vulnerability()
         # feeds accepted findings into the Beta-Binomial feedback loop.
         try:

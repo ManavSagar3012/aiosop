@@ -43,12 +43,8 @@ class _FakeMemory:
 @pytest.mark.asyncio
 async def test_append_chains_and_verifies():
     wal = WormAuditLog(_FakeMemory())
-    a1 = await wal.append(
-        {"actor": "sys", "action": "task_created", "task_id": "t-1"}
-    )
-    a2 = await wal.append(
-        {"actor": "sys", "action": "task_completed", "task_id": "t-1"}
-    )
+    a1 = await wal.append({"actor": "sys", "action": "task_created", "task_id": "t-1"})
+    a2 = await wal.append({"actor": "sys", "action": "task_completed", "task_id": "t-1"})
     assert a1.prev_hash == GENESIS_HASH
     assert a2.prev_hash == a1.entry_hash
     assert await wal.verify_chain() is True

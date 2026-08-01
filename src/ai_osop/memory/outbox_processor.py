@@ -71,6 +71,21 @@ class OutboxProcessor:
                             )
                             await session.commit()
                             logger.info(f"Processed outbox entry {entry.id}")
+                        elif entry.entity_type == "vulnerability":
+                            # AIOSOP-FINDINGS-OUTBOX: project a queued finding to
+                            # Neo4j. _from_outbox=True so the projection cannot
+                            # re-enqueue itself (infinite loop).
+                            from ai_osop.core.models import Vulnerability
+
+                            vuln = Vulnerability(**entry.payload)
+                            await self.graph_memory.add_vulnerability(vuln, _from_outbox=True)
+                            await session.execute(
+                                update(OutboxORM)
+                                .where(OutboxORM.id == entry.id)
+                                .values(processed=True)
+                            )
+                            await session.commit()
+                            logger.info(f"Projected finding outbox entry {entry.id}")
                         else:
                             # Phase-1 issue #12: previously an unknown
                             # entity_type was silently skipped forever

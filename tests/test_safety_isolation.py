@@ -25,6 +25,11 @@ async def test_create_sandbox(mock_subproc, mock_docker) -> None:
     sandbox_id = "sb-123"
     policy = {"egress": {"allowed_cidrs": ["10.0.0.0/8"]}}
 
+    # iptables egress rules must apply successfully for the sandbox to come up
+    # (AIOSOP-SANDBOX-FAILCLOSED): a non-zero return now raises SandboxException,
+    # so the happy path must model a successful rule application.
+    mock_subproc.return_value = MagicMock(returncode=0, stderr=b"")
+
     mock_container = MagicMock()
     mock_container.id = "cont-123"
     mock_container.short_id = "cont-123"

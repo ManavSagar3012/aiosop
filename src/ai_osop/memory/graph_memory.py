@@ -74,6 +74,11 @@ class GraphMemory:
         # and other subscribers can react immediately. Left None so GraphMemory
         # stays decoupled from the bus in minimal setups/tests.
         self.coordination_bus: Optional[Any] = None
+        # Optional AIOSOP-FINDINGS-OUTBOX sink (a SessionMemory). When wired (app
+        # lifespan), a Neo4j outage during a finding write queues the finding to the
+        # Postgres outbox for replay instead of losing it. Left None in minimal/test
+        # setups so GraphMemory stays decoupled from Postgres (memory obs 3047).
+        self.outbox_sink: Optional[Any] = None
 
         # AIOSOP-CACHE-001 (2026-07-22): TTLCache for get_graph_stats results.
         # Phase monitor calls this on every tick for each active engagement
@@ -326,7 +331,26 @@ class GraphMemory:
                 await self.invalidate_graph_stats_cache(endpoint.engagement_id)
                 return record["id"] if record else endpoint.id
 
-    async def add_vulnerability(self, vuln: Vulnerability) -> str:
+    async def _write_vulnerability_cypher(self, vuln: Any, cypher: str, params: dict) -> Any:
+        """Execute the Vulnerability upsert Cypher and return the single record.
+
+        Extracted so add_vulnerability can wrap it with the outbox durability net
+        (AIOSOP-FINDINGS-OUTBOX) and so OutboxProcessor can replay a queued finding
+        via add_vulnerability(_from_outbox=True) without re-enqueuing it.
+        """
+        async with self._driver.session() as session:
+            with trace_span(
+                "graph_memory.add_vulnerability",
+                attributes={
+                    "vuln_id": vuln.id,
+                    "vuln_type": vuln.vuln_type.value,
+                    "engagement_id": vuln.engagement_id,
+                },
+            ):
+                result = await session.run(cypher, params)
+                return await result.single()
+
+    async def add_vulnerability(self, vuln: Vulnerability, _from_outbox: bool = False) -> str:
         """Add a Vulnerability and link to its Endpoint."""
         # OSOP-P0-02: refuse to persist simulated/mock findings into the real graph unless
         # explicitly allowed. Without this, fabricated findings flow into the corpus,
@@ -426,42 +450,54 @@ class GraphMemory:
         except Exception:  # noqa: BLE001 - host derivation is best-effort
             vuln_host = ""
 
-        async with self._driver.session() as session:
-            with trace_span(
-                "graph_memory.add_vulnerability",
-                attributes={
-                    "vuln_id": vuln.id,
-                    "vuln_type": vuln.vuln_type.value,
-                    "engagement_id": vuln.engagement_id,
-                },
-            ):
-                result = await session.run(
-                    cypher,
-                    {
-                        "id": vuln.id,
-                        "fresh_id": f"vuln-{uuid.uuid4().hex[:12]}",
-                        "dedup_key": dedup_key,
-                        "host": vuln_host,
-                        "cwe": vuln.cwe,
-                        "vuln_type": vuln.vuln_type.value,
-                        "severity": vuln.severity.value,
-                        "cvss_score": vuln.cvss_score,
-                        "title": vuln.title,
-                        "description": vuln.description,
-                        "evidence": json.dumps(vuln.evidence, default=str),
-                        "tool_source": vuln.tool_source,
-                        "confidence": vuln.confidence,
-                        "entry_point": vuln.entry_point,
-                        "requires_auth": vuln.requires_auth,
-                        "validated": vuln.validated,
-                        "exploitability": vuln.exploitability,
-                        "impact": vuln.impact,
-                        "engagement_id": vuln.engagement_id,
-                        "created_at": vuln.created_at.isoformat(),
-                        "endpoint_id": vuln.endpoint_id,
-                    },
-                )
-                record = await result.single()
+        params = {
+            "id": vuln.id,
+            "fresh_id": f"vuln-{uuid.uuid4().hex[:12]}",
+            "dedup_key": dedup_key,
+            "host": vuln_host,
+            "cwe": vuln.cwe,
+            "vuln_type": vuln.vuln_type.value,
+            "severity": vuln.severity.value,
+            "cvss_score": vuln.cvss_score,
+            "title": vuln.title,
+            "description": vuln.description,
+            "evidence": json.dumps(vuln.evidence, default=str),
+            "tool_source": vuln.tool_source,
+            "confidence": vuln.confidence,
+            "entry_point": vuln.entry_point,
+            "requires_auth": vuln.requires_auth,
+            "validated": vuln.validated,
+            "exploitability": vuln.exploitability,
+            "impact": vuln.impact,
+            "engagement_id": vuln.engagement_id,
+            "created_at": vuln.created_at.isoformat(),
+            "endpoint_id": vuln.endpoint_id,
+        }
+        try:
+            record = await self._write_vulnerability_cypher(vuln, cypher, params)
+        except Exception as neo_err:  # noqa: BLE001 - durability net below
+            # AIOSOP-FINDINGS-OUTBOX: a Neo4j outage during a finding write
+            # previously LOST the finding (only tasks were in the outbox). Queue it
+            # durably in Postgres so OutboxProcessor projects it to Neo4j on
+            # recovery. _from_outbox guards the replay path so the projector cannot
+            # re-enqueue (infinite loop).
+            # getattr, not attribute access: some paths build GraphMemory via
+            # __new__ (bypassing __init__), so the optional hook may be absent.
+            _sink = getattr(self, "outbox_sink", None)
+            if _sink is not None and not _from_outbox:
+                try:
+                    await _sink.enqueue_outbox(
+                        "vulnerability", vuln.id, vuln.model_dump(mode="json")
+                    )
+                    logger.warning(
+                        "vuln_neo4j_write_failed_queued_for_replay id=%s error=%s",
+                        vuln.id,
+                        neo_err,
+                    )
+                    return vuln.id
+                except Exception as ob_err:  # noqa: BLE001 - Postgres also unavailable
+                    logger.error("vuln_outbox_enqueue_failed id=%s error=%s", vuln.id, ob_err)
+            raise
 
         # Compatibility for persisted records returned by older query mocks or a
         # rolling deployment before every worker has the new RETURN aliases.

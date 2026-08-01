@@ -57,6 +57,15 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# Fixed application salt for the session-key KDF (AIOSOP-SESSION-KDF). A random
+# per-deployment salt is stronger against cross-deployment rainbow tables but must
+# then be persisted; the dominant weakness closed here is the *absence of key
+# stretching*, which a fixed salt + scrypt already fixes.
+# ponytail: fixed salt; move to a persisted per-deployment salt if operator keys
+# are ever shared across deployments.
+_SESSION_KDF_SALT = b"ai-osop.session.kdf.v1"
+
+
 class SessionEncryption:
     """Encrypt/decrypt sensitive session fields at rest using Fernet.
 
@@ -81,14 +90,29 @@ class SessionEncryption:
         raw = key or settings.session_encryption_key
         if raw:
             try:
-                # Derive a 32-byte URL-safe base64 key from the provided string
+                # Derive the Fernet key with a work-factored KDF (scrypt) rather than a
+                # single SHA-256 (AIOSOP-SESSION-KDF). A bare sha256(operator_key) is
+                # instant to brute-force, so a low-entropy operator key produced an
+                # equally low-entropy data key. scrypt(n=2**14) raises the per-guess
+                # cost by ~5 orders of magnitude. MultiFernet keeps the legacy sha256
+                # key as a SECONDARY decrypt key so data encrypted before this change
+                # still reads; new data is always encrypted under the scrypt key
+                # (MultiFernet encrypts with the first key, decrypts by trying each).
                 import hashlib
 
-                from cryptography.fernet import Fernet
+                from cryptography.fernet import Fernet, MultiFernet
 
-                key_bytes = hashlib.sha256(raw.encode("utf-8")).digest()
-                b64_key = base64.urlsafe_b64encode(key_bytes)
-                self._fernet = Fernet(b64_key)
+                raw_bytes = raw.encode("utf-8")
+                strong = hashlib.scrypt(
+                    raw_bytes, salt=_SESSION_KDF_SALT, n=2**14, r=8, p=1, dklen=32
+                )
+                legacy = hashlib.sha256(raw_bytes).digest()
+                self._fernet = MultiFernet(
+                    [
+                        Fernet(base64.urlsafe_b64encode(strong)),
+                        Fernet(base64.urlsafe_b64encode(legacy)),
+                    ]
+                )
             except Exception as exc:
                 logger.warning("session_encryption_init_failed", error=str(exc))
         else:
