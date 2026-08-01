@@ -56,6 +56,15 @@ async def list_tasks(
     return tasks[:effective]
 
 
+from ai_osop.core.models import Task
+from ai_osop.core.enums import AgentType
+
+# AIOSOP-APPROVAL-FORCE-001: REMOVED. A duplicate hardcoded string set here would
+# drift from TaskScheduler.DANGEROUS_TASK_MARKERS (substring-match on type +
+# agent-type + scope-check). The single source of truth is
+# TaskScheduler._is_dangerous_task. See AIOSOP-APPROVAL-SURFACE-001.
+
+
 @router.post("", response_model=Task)
 async def create_task(
     request: CreateTaskRequest,
@@ -82,6 +91,13 @@ async def create_task(
         approval_required=request.approval_required,
         engagement_id=canonical_eid,
     )
+    # AIOSOP-APPROVAL-GATE-FORCE-001: dangerous task types must ALWAYS land behind
+    # the operator gate. Task.approval_required comes from the client (trusted path),
+    # but a malicious or misconfigured producer could omit it. Delegate to the single
+    # canonical dangerous-task classifier in TaskScheduler so the rule is defined
+    # in exactly one place (matches schedule_task, ingest_queued_task, scope-tamper).
+    if state["orchestrator"].task_scheduler._is_dangerous_task(task):
+        task.approval_required = True
 
     await state["orchestrator"].schedule_task(task)
     # NOTE (W6/#8): the dead Celery path (execute_task_celery.delay(...)) was
