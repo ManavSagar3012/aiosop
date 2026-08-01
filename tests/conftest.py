@@ -31,11 +31,26 @@ _ast_module.parse = _safe_ast_parse
 @pytest.fixture(autouse=True)
 def clean_global_orchestrator_state():
     """Ensure global orchestrator state is cleaned up after every test to prevent test pollution."""
+    import asyncio
+
     from ai_osop.api.deps import state
 
     state.pop("orchestrator", None)
     yield
     state.pop("orchestrator", None)
+    # Cancel any background tasks the orchestrator spawned (phase monitor,
+    # reasoning loop, graph-integrity sweep, ...) so they don't outlive their
+    # event loop and trigger `RuntimeError: Event loop is closed` in the next test.
+    try:
+        loop = asyncio.get_event_loop()
+        if not loop.is_closed():
+            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+            for t in pending:
+                t.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    except Exception:
+        pass  # The loop may already be closed; that's fine.
 
 
 from ai_osop.mcp.protocol import MCPRegistry

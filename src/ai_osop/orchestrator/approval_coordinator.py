@@ -182,6 +182,25 @@ class ApprovalCoordinator:
 
             await self._orch.session_memory.store_approval_request(request)
 
+            # NOW-1: every approval resolution is a WORM audit entry (tamper-evident).
+            # Best-effort; an audit outage must never block the operator workflow.
+            worm = getattr(self._orch, "worm_log", None)
+            if worm is not None:
+                try:
+                    await worm.append(
+                        {
+                            "event": "approval_resolved",
+                            "request_id": request_id,
+                            "task_id": request.task_id,
+                            "decision": decision,
+                            "operator_id": operator_id,
+                            "engagement_id": request.engagement_id,
+                        },
+                        tenant_id=request.organization_id,
+                    )
+                except Exception as worm_err:  # noqa: BLE001
+                    logger.warning("worm_audit_append_failed", error=str(worm_err))
+
             if decision == "approved":
                 # Grant: inject the operator-resolved approval_id and re-dispatch.
                 task = self._orch._tasks.get(request.task_id)

@@ -747,8 +747,13 @@ class Orchestrator:
                     if session.phase == EngagementPhase.HALTED.value:
                         continue
 
+                    from ai_osop.core.tenant_isolation import tenant_queue_key
+
                     task_data = await self.session_memory.pop_task_queue(
-                        f"tasks:{session.session_id}"
+                        tenant_queue_key(
+                            getattr(session.scope, "organization_id", "default"),
+                            f"tasks:{session.session_id}",
+                        )
                     )
                     if task_data:
                         task = Task(**task_data)
