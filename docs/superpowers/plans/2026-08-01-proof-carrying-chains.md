@@ -6,7 +6,7 @@
 
 **Architecture:** New `src/ai_osop/evidence/` module (models/store/redaction/migrations) records an HMAC-chained `ExploitReceipt` per validation and per chain hop. `ChainComposerAgent` filters chains against scope, `ChainExecutorAgent` aborts on hop failure and persists per-hop receipts. `ExploitValidationAgent` confirms blind classes (XSS/SQLi/SSTI) via a namespaced OAST oracle. A dead phase-policy shadow is removed and phase-entry into EXPLOITATION is operator-gated.
 
-**Tech Stack:** Python 3.11, pydantic v2, asyncpg-backed `ReceiptStore` (injected `db_pool`), Docker sandbox (existing `SandboxManager`), OAST MCP server (existing server, caller-side schema change only), pytest + pytest-asyncio, black/isort/flake8/mypy.
+**Tech Stack:** Python 3.11, pydantic v2, SQLAlchemy-async `ReceiptStore` (injected AsyncEngine), Docker sandbox (existing `SandboxManager`), OAST MCP server (existing server, caller-side schema change only), pytest + pytest-asyncio, black/isort/flake8/mypy.
 
 ---
 
@@ -15,7 +15,7 @@
 1. **Live-verified bar.** No mock-only "done". Where a task produces a real outbound behavior, the corresponding verification step either exercises the ephemeral in-process fixtures (`tests/qualification/conftest.py` pattern) or documents a Juice Shop runbook step. Mocks are acceptable only for unit tests of pure logic (e.g. redaction transforms) and for the LLM.
 2. **Receipt capture never flips a verdict.** Receipt recording is best-effort post-verdict (mirrors the existing ledger pattern at `exploit_agent.py:158-164`).
 3. **Do not touch the OAST server.** `OASTAdapter.register(label, context)` already stores arbitrary provenance; the schema is caller-side only.
-4. **`ValidationLedger` uses `session_memory`.** Mirror the pattern from `src/ai_osop/agents/base_vuln_agent.py:21`: `ValidationLedger(self.ctx.session_memory)`. `ReceiptStore` similarly takes the session-memory's pg engine/pool via dependency injection (constructor arg `db_pool`).
+4. **`ValidationLedger` uses `session_memory`.** Mirror the pattern from `src/ai_osop/agents/base_vuln_agent.py:21`: `ValidationLedger(self.ctx.session_memory)`. `ReceiptStore` similarly takes the session-memory's pg engine/pool via dependency injection (constructor arg `sa_engine`).
 5. **Line length 100** (pyproject.toml `line-length = 100`), isort `profile = "black"`, pytest `asyncio_mode = "auto"` (no `@pytest.mark.asyncio` decorator needed).
 6. **Feature flag defaults OFF.** `evidence_receipts_enabled: bool = False` (`OSOP_EVIDENCE_RECEIPTS_ENABLED`). The live-verification gate (Task 27) is the only place that flips it.
 7. **Redaction at capture, not export.** Secret-bearing headers/bodies are scrubbed before persistence; `redact_secrets=False` in export only changes label verbosity — it cannot recover an original secret (§5 error model).
@@ -1072,7 +1072,7 @@ async def test_receipt_store_none_when_flag_off():
 
     settings.evidence_receipts_enabled = False
     try:
-        assert _build_receipt_store_if_enabled(db_pool=None, integrity=None) is None
+        assert _build_receipt_store_if_enabled(sa_engine=None, integrity=None) is None
     finally:
         settings.evidence_receipts_enabled = False
 ```
@@ -1081,15 +1081,15 @@ async def test_receipt_store_none_when_flag_off():
 - [ ] **Step 3: Implement in `main.py`**
 
 ```python
-def _build_receipt_store_if_enabled(db_pool, integrity):
+def _build_receipt_store_if_enabled(sa_engine, integrity):
     if not settings.evidence_receipts_enabled:
         return None
     from ai_osop.evidence.store import ReceiptStore
-    return ReceiptStore(db_pool=db_pool, integrity=integrity,
+    return ReceiptStore(sa_engine=sa_engine, integrity=integrity,
                         evidence_root=settings.evidence_root)
 ```
 
-In the FastAPI `lifespan` startup (near `PrimitiveLedger` wiring, `main.py:404`): if `settings.evidence_receipts_enabled`, run `ensure_schema(session_memory._pg_pool)` first, then build the store and expose it for agent injection (e.g., stash on `app.state.receipt_store` and have the agent factory copy it onto `agent.receipt_store`).
+In the FastAPI `lifespan` startup (near `PrimitiveLedger` wiring, `main.py:404`): if `settings.evidence_receipts_enabled`, run `ensure_schema(session_memory._pg_engine)` first, then build the store and expose it for agent injection (e.g., stash on `app.state.receipt_store` and have the agent factory copy it onto `agent.receipt_store`).
 
 - [ ] **Step 4: Run** — PASS
 - [ ] **Step 5: Commit** `git commit -m "feat(api): wire ReceiptStore construction behind evidence flag"`
@@ -1507,7 +1507,7 @@ def _sig_blind_ssti(payload: str, status: int, body: str) -> float:
 Register in `_CLASS_DISPATCHERS` under `blind_xss`, `blind_sqli`, `blind_ssti`. Add the orchestration helpers:
 
 ```python
-async def _mnit_namespaced_token(self, vuln_class: str, injection_point: str, payload: str) -> Tuple[str, str]:
+async def _mint_namespaced_token(self, vuln_class: str, injection_point: str, payload: str) -> Tuple[str, str]:
     return await self.oast_adapter.register(
         label=f"{vuln_class}:{injection_point}",
         context={
@@ -1633,7 +1633,7 @@ def blind_sink_target():
 
 ```python
 @pytest.mark.integration
-async def test_blind_ssrf_receipt_chain_verified(blind_sink_target, db_pool, tmp_path):
+async def test_blind_ssrf_receipt_chain_verified(blind_sink_target, sa_engine, tmp_path):
     from ai_osop.adapters.oast_mcp import OASTAdapter
     from ai_osop.evidence.migrations import ensure_schema
     from ai_osop.evidence.store import ReceiptStore
@@ -1695,7 +1695,7 @@ Run each test before/after its impl per task pattern; commit each as `test(safet
 - [ ] **Step 2: Quality gates on touched files**
 
 ```bash
-poetry runblack src/ai_osop/evidence src/ai_osop/agents src/ai_osop/adapters src/ai_osop/orchestrator src/ai_osop/api tests
+poetry run black src/ai_osop/evidence src/ai_osop/agents src/ai_osop/adapters src/ai_osop/orchestrator src/ai_osop/api tests
 poetry run isort src/ai_osop/evidence src/ai_osop/agents src/ai_osop/adapters src/ai_osop/orchestrator src/ai_osop/api tests
 poetry run flake8 src/ai_osop/evidence src/ai_osop/agents src/ai_osop/adapters src/ai_osop/orchestrator
 poetry run mypy src/ai_osop/evidence src/ai_osop/agents src/ai_osop/adapters src/ai_osop/orchestrator
