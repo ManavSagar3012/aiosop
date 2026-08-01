@@ -151,7 +151,8 @@ def test_corpus_files_load_and_follow_provenance_policy():
     assert total >= 20
 
 
-def test_corpus_precision_recall_gate():
+@pytest.mark.asyncio
+async def test_corpus_precision_recall_gate():
     """Deterministic fixture findings scored against the checked-in corpus must
     maintain >=0.90 precision/recall. Fixture provenance: hand-aligned to the
     corpus (every 'accepted' entry has a matching 'accepted' finding, every
@@ -163,8 +164,6 @@ def test_corpus_precision_recall_gate():
     semantics are correct. It does NOT, on its own, certify live model accuracy —
     for that, re-run the platform against a live target and re-pin the fixture.
     """
-    import asyncio
-
     from ai_osop.core.corpus_benchmark import CorpusBenchmark
 
     entries = _load_corpus()
@@ -172,7 +171,7 @@ def test_corpus_precision_recall_gate():
         {"id": e.id, "outcome": "accepted"} for e in entries if e.expected_result == "accepted"
     ] + [{"id": e.id, "outcome": "rejected"} for e in entries if e.expected_result == "rejected"]
     bench = CorpusBenchmark(entries)
-    report = asyncio.get_event_loop().run_until_complete(bench.score(findings))
+    report = await bench.score(findings)
     assert report["evaluated"] == len(entries), report
     assert report["precision"] >= 0.90, report
     assert report["recall"] >= 0.90, report
