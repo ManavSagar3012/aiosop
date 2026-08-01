@@ -72,36 +72,49 @@ class AgentReaper:
                         task_dict["retry_count"] = task_dict.get("retry_count", 0) + 1
 
                         task = Task(**task_dict)
-                        await self.orch.graph_memory.upsert_task(task)
-                        await self.orch.session_memory.store_task(task)
-                        await self.orch.task_scheduler.schedule_task(task)
-                        TASK_REQUEUES_TOTAL.inc()
-                        # AIOSOP-REAPER-INMEM-SYNC: keep the orchestrator's in-memory
-                        # task view consistent with this requeue. AgentReaper requeues a
-                        # Redis-reconstructed copy and previously never updated
-                        # orch._tasks[task.id], so it stayed status="running" — and
-                        # RecoveryService._reap_stuck_tasks (which iterates orch._tasks)
-                        # then re-reaped the SAME task: double requeue / double execution.
-                        # Guarded so a fixture/replica without _tasks is unaffected.
-                        # ponytail: full mutual exclusion between the two reapers still
-                        # wants a shared per-task lock (task-recovery:{id}); this closes
-                        # the common sequential re-reap, a lock would close the rare
-                        # concurrent window (needs a live-Redis integration test).
-                        tasks_map = getattr(self.orch, "_tasks", None)
-                        if isinstance(tasks_map, dict):
-                            tasks_map[task.id] = task
-                        await self.orch.session_memory.write_audit_event(
-                            AuditEvent(
-                                event_type="task_recovered",
-                                severity="INFO",
-                                actor_type="system",
-                                actor_id="reaper",
-                                action={"task_id": task.id},
-                                result={"status": "requeued"},
-                                context={},
-                                engagement_id=task.engagement_id,
-                            )
+                        # DUAL-REAPER RACE FIX (2026-08-01, GAP-6): task recovery must
+                        # serialize through ONE per-task lock so the AgentReaper path
+                        # and the RecoveryService reaper cannot both touch the same
+                        # running task. The recovery lock is long enough to cover the
+                        # task post-write window (where Neo4j would previously blip and
+                        # the scan completion task slipped to another worker). The
+                        # *task-scoped* lock (not a global one) is what actually blocks
+                        # concurrent recovery of the same task between both reapers.
+                        task_lock_key = f"task-recovery:{task.id}"
+                        got_task_lock = await self.orch.session_memory.acquire_lock(
+                            task_lock_key, ttl=120
                         )
+                        if not got_task_lock:
+                            logger.warning(
+                                f"task_recovery_skipped_locked task={task.id} agent={agent_id}"
+                            )
+                            continue
+                        try:
+                            await self.orch.graph_memory.upsert_task(task)
+                            await self.orch.session_memory.store_task(task)
+                            await self.orch.task_scheduler.schedule_task(task)
+                            TASK_REQUEUES_TOTAL.inc()
+                            # AIOSOP-REAPER-INMEM-SYNC: keep the orchestrator's in-memory
+                            # task view consistent with this requeue.
+                            tasks_map = getattr(self.orch, "_tasks", None)
+                            if isinstance(tasks_map, dict):
+                                tasks_map[task.id] = task
+                            await self.orch.session_memory.write_audit_event(
+                                AuditEvent(
+                                    event_type="task_recovered",
+                                    severity="INFO",
+                                    actor_type="system",
+                                    actor_id="reaper",
+                                    action={"task_id": task.id},
+                                    result={"status": "requeued"},
+                                    context={},
+                                    engagement_id=task.engagement_id,
+                                )
+                            )
+                        finally:
+                            await self.orch.session_memory.release_lock(
+                                task_lock_key, lock_value="locked"
+                            )
                     else:
                         logger.debug(
                             f"Task {task_dict.get('id')} not recovered (status={task_dict.get('status')})"
