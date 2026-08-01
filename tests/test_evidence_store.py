@@ -40,3 +40,19 @@ def test_signature_is_deterministic_and_key_dependent():
     sig4 = _sign_receipt_fields(b"key-a", "prev-y", canonical)
     assert sig1 == sig2
     assert sig1 != sig3 and sig1 != sig4
+
+
+def test_blob_for_content_is_content_addressed(tmp_path):
+    from ai_osop.evidence.store import ReceiptStore
+
+    store = ReceiptStore(sa_engine=None, integrity=None, evidence_root=tmp_path)
+    blob = store._blob_for_content(
+        engagement_id="eng-1", kind="http_response", content='{"secret": "abc123xyz"}'
+    )
+    assert len(blob.sha256) == 64
+    assert blob.artifact_id.startswith("art-")
+    full = tmp_path / blob.blob_path
+    assert full.exists()
+    # persisted blob body is redacted at capture
+    assert "abc123xyz" not in full.read_text()
+    assert "[REDACTED" in full.read_text()

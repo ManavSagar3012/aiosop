@@ -13,6 +13,12 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9\-_/+]{24,}={0,2}")
 # Explicitly-tagged bearer material may be shorter than the generic threshold.
 _BEARER_RE = re.compile(r"(?i)(bearer[ \t]+)([A-Za-z0-9\-_./+=]{8,})")
 
+# JSON/key=value style values under secret-labeled keys (e.g. {"secret": "abc123xyz"}).
+_SECRET_KV_RE = re.compile(
+    r"(?i)(\"?(?:secret|secret_[a-z0-9_]*|token|password|passwd|api[_-]?key|apikey|private[_-]?key)\"?"
+    r"[ \t]*[:=][ \t]*\"?)([^\"\s,}]{4,})"
+)
+
 
 def _label(value: str) -> str:
     return f"[REDACTED:sha256:{hashlib.sha256(value.encode()).hexdigest()[:12]}]"
@@ -27,4 +33,5 @@ def redact_headers(headers: Dict[str, str]) -> Dict[str, str]:
 
 def redact_text(text: str) -> str:
     text = _TOKEN_RE.sub(lambda m: _label(m.group(0)), text)
-    return _BEARER_RE.sub(lambda m: m.group(1) + _label(m.group(2)), text)
+    text = _BEARER_RE.sub(lambda m: m.group(1) + _label(m.group(2)), text)
+    return _SECRET_KV_RE.sub(lambda m: m.group(1) + _label(m.group(2)), text)

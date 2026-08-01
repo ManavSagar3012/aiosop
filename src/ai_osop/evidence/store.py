@@ -53,3 +53,19 @@ class ReceiptStore:
         self._engine = sa_engine
         self._integrity = integrity
         self._root = Path(evidence_root)
+
+    def _blob_for_content(self, engagement_id: str, kind: str, content: str) -> "ReceiptArtifact":
+        """Redact then persist content; return its content-addressed artifact."""
+        from ai_osop.evidence.models import ReceiptArtifact
+        from ai_osop.evidence.redaction import redact_text
+
+        scrubbed = redact_text(content)
+        digest = hashlib.sha256(scrubbed.encode()).hexdigest()
+        artifact_id = f"art-{digest[:12]}"
+        rel = Path(engagement_id) / artifact_id
+        target = self._root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(scrubbed)
+        return ReceiptArtifact(
+            artifact_id=artifact_id, kind=kind, sha256=digest, blob_path=str(rel)
+        )
