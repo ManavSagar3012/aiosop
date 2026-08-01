@@ -287,7 +287,7 @@ class GraphMemory:
             e.response_content_type = $response_content_type,
             e.user_label = $user_label,
             e.workflow_id = $workflow_id,
-            e.first_seen = CASE WHEN e.first_seen IS NULL THEN$first_seen ELSE e.first_seen END,
+            e.first_seen = CASE WHEN e.first_seen IS NULL THEN $first_seen ELSE e.first_seen END,
             e.last_seen = $last_seen,
             e.observations = $observations
         WITH e
@@ -325,7 +325,7 @@ class GraphMemory:
             "content_type": endpoint.content_type,
             "body_schema_keys": endpoint.body_schema_keys,
             "auth_class": endpoint.auth_class,
-            "request_headers_sample": endpoint.request_headers_sample,
+            "request_headers_sample": json.dumps(endpoint.request_headers_sample),
             "status_codes_seen": endpoint.status_codes_seen,
             "response_size_avg": endpoint.response_size_avg,
             "response_content_type": endpoint.response_content_type,
