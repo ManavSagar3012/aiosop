@@ -4,7 +4,7 @@ Fenced from import cycles against core.metrics' MetricsRegistry.
 """
 
 from contextlib import contextmanager
-from typing import Any, Dict
+from typing import Dict
 
 from prometheus_client import REGISTRY, Counter, Histogram
 

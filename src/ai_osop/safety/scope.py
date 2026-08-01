@@ -27,7 +27,22 @@ _PORT_SUFFIX = re.compile(r":\d+$")
 
 
 def _strip_port(host: str) -> str:
-    return _PORT_SUFFIX.sub("", host or "")
+    """Strip a trailing ':<port>' from a host, IPv6-safely.
+
+    A bare IPv6 literal ('2001:db8::1') ends in ':<hex>', so the naive regex
+    would mangle it to '2001:db8:' — silently corrupting every IPv6 scope/
+    exclusion check. IPv6 carries a port only in bracketed form '[::1]:3000',
+    so: unwrap brackets, leave bare IPv6 literals untouched, and only strip the
+    IPv4/hostname 'host:port' case. (AIOSOP-SCOPE-EXCLUDE ipv6)
+    """
+    host = host or ""
+    if host.startswith("["):  # [ipv6]:port -> ipv6
+        return host[1:].split("]", 1)[0]
+    try:
+        ipaddress.IPv6Address(host)
+        return host  # bare IPv6 literal — no port to strip
+    except ValueError:
+        return _PORT_SUFFIX.sub("", host)
 
 
 class ScopeEnforcer:
@@ -57,7 +72,39 @@ class ScopeEnforcer:
             except ValueError:
                 logger.warning("scope_skipped_invalid_ip", ip=str(ip))
         self._blocked_targets: Set[str] = set(e.lower() for e in scope.exclusions)
+        # Parse IP/CIDR exclusions into networks so a carve-out range (e.g.
+        # "192.168.1.0/28" excluded from an in-scope "192.168.1.0/24") is
+        # actually enforced. Exclusions were string-only, so a CIDR carve-out
+        # matched nothing and its hosts stayed IN scope — a fail-OPEN hole.
+        # Non-IP exclusions (domains) raise here and fall through to string
+        # matching. (AIOSOP-SCOPE-EXCLUDE)
+        self._excluded_networks: List[ipaddress.ip_network] = []
+        for e in self._blocked_targets:
+            try:
+                self._excluded_networks.append(ipaddress.ip_network(_strip_port(e), strict=False))
+            except ValueError:
+                pass  # domain exclusion — handled by _is_excluded's string match
         self._testing_window = (scope.testing_window_start, scope.testing_window_end)
+
+    def _is_excluded(self, host: str) -> bool:
+        """True if host matches any exclusion — domain (exact/dot-suffix) OR an
+        IP falling inside an excluded IP/CIDR. Single source of truth for both
+        validate_target (raising) and host_in_scope (non-raising). Fail-CLOSED:
+        an excluded range now removes its hosts from scope. (AIOSOP-SCOPE-EXCLUDE)
+        """
+        h = (host or "").lower().strip()
+        if not h:
+            return False
+        # Domain-style exact / dot-suffix (also catches bare-IP exact strings).
+        for exclusion in self._blocked_targets:
+            if h == exclusion or h.endswith(f".{exclusion}"):
+                return True
+        # IP-in-CIDR: only meaningful if h parses as an IP literal.
+        try:
+            ip = ipaddress.ip_address(_strip_port(h))
+        except ValueError:
+            return False
+        return any(ip in net for net in self._excluded_networks)
 
     def validate_target(self, target: str) -> bool:
         """
@@ -72,15 +119,9 @@ class ScopeEnforcer:
 
         target = target.lower().strip()
 
-        # Check exclusions first
-        if target in self._blocked_targets:
-            raise OutOfScopeError(f"Target {target} is explicitly excluded from scope")
-
-        # Check exclusions first — exact match OR suffix match (e.g. *.evil.com blocks
-        # sub.evil.com but not notevil.com). Never use plain substring.
-        for exclusion in self._blocked_targets:
-            if target == exclusion or target.endswith(f".{exclusion}"):
-                raise OutOfScopeError(f"Target {target} matches excluded pattern: {exclusion}")
+        # Check exclusions first — domain (exact/dot-suffix) OR IP/CIDR carve-out.
+        if self._is_excluded(target):
+            raise OutOfScopeError(f"Target {target} is excluded from scope")
 
         # URL validation
         if target.startswith(("http://", "https://")):
@@ -139,9 +180,8 @@ class ScopeEnforcer:
         h = (host or "").lower().strip()
         if not h:
             return False
-        for exclusion in self._blocked_targets:
-            if h == exclusion or h.endswith(f".{exclusion}"):
-                return False
+        if self._is_excluded(h):
+            return False
         # IP-based scope check (e.g. 10.0.0.0/24)
         try:
             ip = ipaddress.ip_address(h)

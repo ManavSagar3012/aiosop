@@ -78,6 +78,50 @@ def test_scope_enforcer_normalizes_port_in_domain():
     assert enforcer.host_in_scope("evil.com") is False
 
 
+def test_scope_enforcer_excludes_cidr_carveout():
+    """An IP/CIDR exclusion carved out of an in-scope range must fail CLOSED.
+    Exclusions were string-only, so an excluded sub-range ('192.168.1.0/28'
+    inside in-scope '192.168.1.0/24') matched nothing and its hosts stayed IN
+    scope — a fail-OPEN hole. (AIOSOP-SCOPE-EXCLUDE)"""
+    enforcer = ScopeEnforcer(
+        ScopeDefinition(
+            engagement_id="e",
+            domains=[],
+            ips=["192.168.1.0/24"],
+            exclusions=["192.168.1.0/28"],
+        )
+    )
+    # In-scope range still resolves outside the carve-out.
+    assert enforcer.host_in_scope("192.168.1.50") is True
+    assert enforcer.validate_target("192.168.1.50") is True
+    # Hosts inside the excluded /28 (.0-.15) are out of scope via BOTH APIs.
+    assert enforcer.host_in_scope("192.168.1.5") is False
+    with pytest.raises(OutOfScopeError):
+        enforcer.validate_target("192.168.1.5")
+    with pytest.raises(OutOfScopeError):
+        enforcer.validate_target("http://192.168.1.5:8080/admin")
+
+
+def test_scope_enforcer_excludes_ipv6_carveout():
+    """IPv6 carve-outs must fail CLOSED too. The naive port-strip regex mangled
+    bare IPv6 literals ('2001:db8::1' -> '2001:db8:'), so every IPv6 exclusion
+    silently matched nothing. (AIOSOP-SCOPE-EXCLUDE ipv6)"""
+    enforcer = ScopeEnforcer(
+        ScopeDefinition(
+            engagement_id="e",
+            domains=[],
+            ips=["2001:db8::/32"],
+            exclusions=["2001:db8:0:1::/64"],
+        )
+    )
+    # In-scope IPv6 outside the carve-out still resolves.
+    assert enforcer.host_in_scope("2001:db8::5") is True
+    # Inside the excluded /64 -> out of scope via both APIs.
+    assert enforcer.host_in_scope("2001:db8:0:1::5") is False
+    with pytest.raises(OutOfScopeError):
+        enforcer.validate_target("2001:db8:0:1::5")
+
+
 def test_scope_enforcer_invalid_targets(dummy_scope):
     enforcer = ScopeEnforcer(dummy_scope)
 

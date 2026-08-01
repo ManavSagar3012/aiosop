@@ -1,10 +1,12 @@
 """Chain Executor Agent
 
-Takes exploit chains discovered by ChainComposerAgent, then executes them hop-by-hop through the ExploitAgent facade (or directly via supplied payloads), recording each validated link into the graph.
+Takes exploit chains discovered by ChainComposerAgent, then executes them
+hop-by-hop through the ExploitAgent facade (or directly via supplied
+payloads), recording each validated link into the graph.
 """
 
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import structlog
 

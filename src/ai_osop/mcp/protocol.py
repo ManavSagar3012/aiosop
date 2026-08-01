@@ -66,22 +66,24 @@ class MCPExecutionGate:
         }
 
     def check_scope(self, server_id: str, tool_name: str, parameters: Dict[str, Any]) -> None:
-        """Raise MCPScopeDenied if the target host of this call is out of scope."""
+        """Raise MCPScopeDenied if ANY target host of this call is out of scope."""
         if self._host_in_scope is None:
             return  # no client-side scope wired -> rely on server-side check
-        host = _extract_target_host(parameters)
-        if host is None:
-            return  # no target host to check (e.g. a payload-generation call)
-        if not self._host_in_scope(host):
-            logger.warning(
-                "mcp_scope_denied",
-                server_id=server_id,
-                tool_name=tool_name,
-                host=host,
-            )
-            raise MCPScopeDenied(
-                f"MCP tool {server_id}/{tool_name} target host {host!r} is out of scope"
-            )
+        # Every scalar target host must be in scope. Checking only the first
+        # would let a second host through unchecked (e.g. an out-of-scope
+        # login_url alongside an in-scope register_url). No host extracted ->
+        # host-less call (e.g. payload generation), allowed as before.
+        for host in _extract_target_hosts(parameters):
+            if not self._host_in_scope(host):
+                logger.warning(
+                    "mcp_scope_denied",
+                    server_id=server_id,
+                    tool_name=tool_name,
+                    host=host,
+                )
+                raise MCPScopeDenied(
+                    f"MCP tool {server_id}/{tool_name} target host {host!r} is out of scope"
+                )
 
     def check_approval(self, server_id: str, tool_name: str, parameters: Dict[str, Any]) -> None:
         """Raise MCPApprovalRequired if an approval-flagged tool lacks approval."""
@@ -190,28 +192,63 @@ class MCPExecutionGate:
                 raise ValueError(f"MCP param '{urlk}' contains quote character")
 
 
-def _extract_target_host(parameters: Dict[str, Any]) -> Optional[str]:
-    """Best-effort pull of a target host from common MCP parameter shapes.
+def _bare_host(val: str) -> Optional[str]:
+    """Strip any path and a trailing ':port' from a bare host, IPv6-safely.
 
-    MCP tools pass targets in a few keys (url, target, host, domain, endpoint);
-    return the hostname for scope comparison, or None when no host is present.
+    A bare IPv6 literal has >1 colon and carries no port; only '[ipv6]:port' or
+    'host:port' should be trimmed. Mirrors scope._strip_port's IPv6 care.
+    """
+    seg = val.split("/")[0]
+    if not seg:
+        return None
+    if seg.startswith("["):  # [ipv6]:port -> ipv6
+        return seg[1:].split("]", 1)[0] or None
+    if seg.count(":") == 1:  # host:port (bare IPv6 has >1 colon)
+        seg = seg.split(":")[0]
+    return seg or None
+
+
+def _extract_target_hosts(parameters: Dict[str, Any]) -> List[str]:
+    """All scalar target hosts across common MCP parameter shapes.
+
+    Two key groups: URL-ish keys (parsed by scheme, or treated as a bare host
+    only when host-like) and explicit host keys (any non-empty value, so a
+    single-label host like 'localhost' is caught). ``register_url`` /
+    ``login_url`` / ``target_host`` were previously MISSED here even though
+    check_params already injection-checks them — so a capture_session browser
+    login could navigate to an out-of-scope host unchecked (fail-open). Every
+    scalar target key is now scope-checked; the caller denies if ANY is out of
+    scope. List params (targets / scope_hosts) stay server-side-checked by
+    design (see test_scope_check_noop_when_no_host_extracted).
     """
     from urllib.parse import urlparse
 
-    for key in ("url", "target", "endpoint"):
+    hosts: List[str] = []
+
+    def _add(h: Optional[str]) -> None:
+        if h and h not in hosts:
+            hosts.append(h)
+
+    # URL-ish keys: scheme -> hostname; scheme-less only when host-like (has a
+    # '.'/':'), so a bare path fragment ('rest/user') is not mistaken for a host.
+    for key in ("url", "target", "endpoint", "register_url", "login_url"):
         val = parameters.get(key)
-        if isinstance(val, str) and "://" in val:
-            parsed = urlparse(val)
-            if parsed.hostname:
-                return parsed.hostname
-        if isinstance(val, str) and val and "://" not in val and "." in val:
-            # bare host/domain
-            return val.split("/")[0].split(":")[0]
-    for key in ("host", "domain"):
+        if not isinstance(val, str) or not val:
+            continue
+        if "://" in val:
+            _add(urlparse(val).hostname)
+        else:
+            seg = val.split("/")[0]
+            if "." in seg or ":" in seg:
+                _add(_bare_host(val))
+
+    # Explicit host keys: any non-empty value is a host (single-label ok).
+    for key in ("target_host", "host", "domain"):
         val = parameters.get(key)
         if isinstance(val, str) and val:
-            return val.split("/")[0].split(":")[0]
-    return None
+            _add(_bare_host(val))
+
+    return hosts
 
 
 class MCPToolParameter(BaseModel):
@@ -699,7 +736,7 @@ class MCPRegistry:
         the server (read-only recon listings) — approval is NEVER skippable.
         """
         with trace_span(
-            f"mcp_registry.execute_tool",
+            "mcp_registry.execute_tool",
             attributes={
                 "ai_osop.mcp.server_id": server_id,
                 "ai_osop.mcp.tool_name": tool_name,
@@ -708,8 +745,6 @@ class MCPRegistry:
             conn = self._servers.get(server_id)
             if not conn:
                 raise MCPConnectionError(f"Server {server_id} not registered")
-
-            _outcome = "allowed"
 
             def _track(outcome: str) -> None:
                 try:
@@ -758,7 +793,7 @@ class MCPRegistry:
     ) -> Dict[str, MCPExecuteResponse]:
         """Execute a tool across multiple servers with tracing."""
         with trace_span(
-            f"mcp_registry.broadcast_execute",
+            "mcp_registry.broadcast_execute",
             attributes={
                 "ai_osop.mcp.tool_name": tool_name,
             },

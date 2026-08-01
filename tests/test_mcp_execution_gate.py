@@ -86,6 +86,54 @@ async def test_scope_flagged_tool_allowed_when_in_scope() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scope_check_covers_capture_session_host_keys() -> None:
+    """capture_session carries its target in target_host / register_url / login_url,
+    not url. The scope extractor previously ignored those keys, so a browser login
+    could navigate to an out-of-scope host unchecked (fail-open)."""
+    reg = _registry(_Conn({"capture_session": _tool(name="capture_session", scope_check=True)}))
+    reg.execution_gate = MCPExecutionGate(host_in_scope=lambda h: h == "in.example.com")
+
+    # Target only in target_host -> must be scope-checked and blocked.
+    with pytest.raises(MCPScopeDenied):
+        await reg.execute_tool("srv", "capture_session", {"target_host": "evil.example.com"})
+    # Host smuggled only in login_url -> still blocked.
+    with pytest.raises(MCPScopeDenied):
+        await reg.execute_tool(
+            "srv", "capture_session", {"login_url": "https://evil.example.com/#/login"}
+        )
+    reg._servers["srv"].execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scope_check_denies_if_any_host_out_of_scope() -> None:
+    """Every target host must be in scope — an in-scope register_url does not
+    excuse an out-of-scope login_url on the same call."""
+    reg = _registry(_Conn({"capture_session": _tool(name="capture_session", scope_check=True)}))
+    reg.execution_gate = MCPExecutionGate(host_in_scope=lambda h: h == "in.example.com")
+
+    with pytest.raises(MCPScopeDenied):
+        await reg.execute_tool(
+            "srv",
+            "capture_session",
+            {
+                "register_url": "https://in.example.com/#/register",
+                "login_url": "https://evil.example.com/#/login",
+            },
+        )
+    reg._servers["srv"].execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scope_check_allows_capture_session_in_scope_host_keys() -> None:
+    """The in-scope path still works: target in target_host, in scope -> allowed."""
+    reg = _registry(_Conn({"capture_session": _tool(name="capture_session", scope_check=True)}))
+    reg.execution_gate = MCPExecutionGate(host_in_scope=lambda h: h == "in.example.com")
+
+    await reg.execute_tool("srv", "capture_session", {"target_host": "in.example.com"})
+    reg._servers["srv"].execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_trust_server_scope_skips_client_scope_check() -> None:
     """A caller may opt out of the client-side scope check when the server
     already enforces it (read-only recon listings) — but approval is never

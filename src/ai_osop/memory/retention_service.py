@@ -143,8 +143,28 @@ class RetentionService:
 
         results = {}
 
+        # BUGFIX (audit 2026-08-01): previously only the FIRST statement (tasks) ran
+        # inside the `async with self.session_memory._async_session()` block; the block
+        # closed at that point, so the sessions / approvals / audit-log / session-state
+        # statements that followed ran against an EXPIRED session and silently no-opped
+        # or raised. All writes now share ONE session + ONE transaction so every class
+        # of retention actually executes and either all succeed or all roll back.
+
         # Completed tasks older than retention period
         task_cutoff = datetime.utcnow() - timedelta(days=settings.postgres_task_retention_days)
+        # Expired user sessions
+        session_cutoff = datetime.utcnow() - timedelta(
+            days=settings.postgres_session_retention_days
+        )
+        # Resolved approvals older than retention period
+        approval_cutoff = datetime.utcnow() - timedelta(
+            days=settings.postgres_approval_retention_days
+        )
+        # Old audit logs — SOFT DELETE (Phase-1 issue #15).
+        audit_cutoff = datetime.utcnow() - timedelta(days=settings.audit_log_retention_days)
+        # Old session states (hot tier recovery checkpoints).
+        state_cutoff = datetime.utcnow() - timedelta(days=settings.session_state_retention_days)
+
         async with self.session_memory._async_session() as session:
             stmt = delete(TaskORM).where(
                 TaskORM.status.in_(["completed", "failed", "cancelled"]),
@@ -153,53 +173,37 @@ class RetentionService:
             result = await session.execute(stmt)
             results["tasks_deleted"] = result.rowcount
 
-        # Expired user sessions
-        session_cutoff = datetime.utcnow() - timedelta(
-            days=settings.postgres_session_retention_days
-        )
-        stmt = delete(UserSessionORM).where(UserSessionORM.expires_at < session_cutoff)
-        result = await session.execute(stmt)
-        results["sessions_deleted"] = result.rowcount
+            # Expired user sessions
+            stmt = delete(UserSessionORM).where(UserSessionORM.expires_at < session_cutoff)
+            result = await session.execute(stmt)
+            results["sessions_deleted"] = result.rowcount
 
-        # Resolved approvals older than retention period
-        approval_cutoff = datetime.utcnow() - timedelta(
-            days=settings.postgres_approval_retention_days
-        )
-        stmt = delete(ApprovalRequestORM).where(
-            ApprovalRequestORM.status != "pending",
-            ApprovalRequestORM.responded_at < approval_cutoff,
-        )
-        result = await session.execute(stmt)
-        results["approvals_deleted"] = result.rowcount
-
-        # Old audit logs — SOFT DELETE (Phase-1 issue #15).
-        # Previously hard-deleted at a hardcoded 7-day window, ignoring the
-        # configurable settings.audit_log_retention_days (default 7 years).
-        # Audit logs are retention-protected for compliance; soft-delete keeps
-        # the row queryable while excluding it from active queries via the
-        # archived flag.
-        audit_cutoff = datetime.utcnow() - timedelta(days=settings.audit_log_retention_days)
-        stmt = (
-            update(AuditLogORM)
-            .where(
-                AuditLogORM.timestamp < audit_cutoff,
-                AuditLogORM.archived == False,  # noqa: E712
+            # Resolved approvals older than retention period
+            stmt = delete(ApprovalRequestORM).where(
+                ApprovalRequestORM.status != "pending",
+                ApprovalRequestORM.responded_at < approval_cutoff,
             )
-            .values(archived=True, archived_at=datetime.utcnow())
-        )
-        result = await session.execute(stmt)
-        results["audit_logs_archived"] = result.rowcount
+            result = await session.execute(stmt)
+            results["approvals_deleted"] = result.rowcount
 
-        # Old session states (hot tier recovery checkpoints). Phase-1 issue #15:
-        # the cutoff was hardcoded to 7 days while every other cutoff reads
-        # from settings.*_retention_days. Read from settings so the retention
-        # window is operator-tunable.
-        state_cutoff = datetime.utcnow() - timedelta(days=settings.session_state_retention_days)
-        stmt = delete(SessionStateORM).where(SessionStateORM.last_accessed < state_cutoff)
-        result = await session.execute(stmt)
-        results["session_states_deleted"] = result.rowcount
+            # Old audit logs — SOFT DELETE (archived flag) so the row remains queryable
+            stmt = (
+                update(AuditLogORM)
+                .where(
+                    AuditLogORM.timestamp < audit_cutoff,
+                    AuditLogORM.archived == False,  # noqa: E712
+                )
+                .values(archived=True, archived_at=datetime.utcnow())
+            )
+            result = await session.execute(stmt)
+            results["audit_logs_archived"] = result.rowcount
 
-        await session.commit()
+            # Old session states (recovery checkpoints)
+            stmt = delete(SessionStateORM).where(SessionStateORM.last_accessed < state_cutoff)
+            result = await session.execute(stmt)
+            results["session_states_deleted"] = result.rowcount
+
+            await session.commit()
 
         return results
 
