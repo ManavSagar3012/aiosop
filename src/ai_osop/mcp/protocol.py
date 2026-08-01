@@ -774,6 +774,27 @@ class MCPRegistry:
                         raise
 
             self.call_counts[server_id] = self.call_counts.get(server_id, 0) + 1
+
+            # Later-2 sandbox policy: warn when a tool that's classified as needing
+            # container isolation fires without one wired. Best-effort advisory
+            # only — SandboxManager is provisioned elsewhere (exploit path today,
+            # per-tool phase-2 TBD); turning this into a hard gate before the
+            # per-tool container runtime exists would break every live scan.
+            try:
+                from ai_osop.safety.sandbox_policy import requires_container, sandbox_class_for
+
+                if requires_container(tool_name):
+                    import structlog
+
+                    structlog.get_logger("ai_osop.mcp.policy").warning(
+                        "sandbox_required_but_not_provisioned",
+                        tool=tool_name,
+                        server_id=server_id,
+                        policy_class=sandbox_class_for(tool_name),
+                    )
+            except Exception:  # noqa: BLE001 - advisory only
+                pass
+
             request = MCPExecuteRequest(
                 tool_name=tool_name, parameters=parameters, timeout_override=timeout_override
             )

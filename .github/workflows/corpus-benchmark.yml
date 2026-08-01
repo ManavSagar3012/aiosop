@@ -1,0 +1,74 @@
+# Weekly corpus-vs-live benchmark (Step B operationalization).
+#
+# Re-runs the labeled corpus against the platform's actual findings under the
+# synthetic-negative fixture; fails if precision or recall drift below 0.90.
+
+name: Corpus Benchmark (weekly)
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"   # Monday 04:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  corpus-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        python-version: ['3.11']
+
+    services:
+      neo4j:
+        image: neo4j:5.18-community
+        env:
+          NEO4J_AUTH: neo4j/test-password
+          NEO4J_PLUGINS: '["apoc"]'
+        ports:
+          - 7687:7687
+          - 7474:7474
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: osop
+          POSTGRES_PASSWORD: osop
+          POSTGRES_DB: osop
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install poetry + deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          poetry install --no-interaction
+
+      - name: Run corpus precision/recall gate
+        env:
+          OSOP_POSTGRES_URI: postgresql+asyncpg://osop:osop@localhost:5432/osop
+          OSOP_REDIS_URI: redis://localhost:6379/0
+          OSOP_NEO4J_URI: bolt://localhost:7687
+          OSOP_NEO4J_USER: neo4j
+          OSOP_NEO4J_PASSWORD: test-password
+        run: |
+          # -p no:cacheprovider keeps runs hermetic (no stale corpus cache).
+          poetry run pytest tests/test_corpus_benchmark.py -p no:cacheprovider --no-cov -v
+
+      - name: Archive corpus report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-failure-report
+          path: |
+            benchmarks/corpus/*.json
+            tests/test_corpus_benchmark.py
+          retention-days: 7

@@ -813,3 +813,21 @@ class AttackChain(BaseModel):
     emitted_finding_id: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UISemanticElement(BaseModel):
+    """One actionable UI element extracted from a rendered page.
+
+    Constructed by the workflow agent from raw DOM scan output; classified by
+    SemanticRiskCatalog into an action_classification + impact + risk list.
+    """
+
+    tag: str
+    label: str
+    action_classification: Optional[str] = None
+    impact_score: float = Field(0.0, ge=0.0, le=10.0)
+    page_url: Optional[str] = None
+    selector: Optional[str] = None
+    potential_risks: List[str] = Field(default_factory=list)
+    engagement_id: Optional[str] = None
+    isVisible: bool = True

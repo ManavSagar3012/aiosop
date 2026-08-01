@@ -107,9 +107,13 @@ def parse_action(text: str, allowed_tools: Set[str]) -> Action:
 class ActionLoop:
     """Prompt -> parse -> execute -> observe loop with safety limits."""
 
-    def __init__(self, llm: Any, tools: Any):
+    def __init__(self, llm: Any, tools: Any, trace_recorder: Any = None):
         self.llm = llm
         self.tools = tools
+        # Step D trace-capture hook: caller passes a TraceRecorder to enable
+        # JSONL emission per engagement; defaults to None so no I/O happens
+        # on test/dev paths unless explicitly enabled.
+        self.trace_recorder = trace_recorder
 
     async def _complete(self, messages: List[Dict[str, Any]]) -> str:
         resp = await self.llm.complete(messages)
@@ -289,6 +293,49 @@ class ActionLoop:
                     metrics_a2.finding_llm_tokens(delta, model=str(model), vuln_class=vuln_class)
                 except Exception:  # noqa: BLE001 - metrics must never break the loop
                     pass
+
+        # Step D trace-capture (opt-in): one ActionTrace per executed step so
+        # weeks of real runs produce the labeled dataset a future fine-tune learns
+        # from. No-ops unless a TraceRecorder is attached.
+        if self.trace_recorder is not None:
+            try:
+                import uuid as _uuid
+                from datetime import datetime as _dt
+
+                from ai_osop.core.trace_capture import ActionTrace
+
+                target = str(getattr(state, "target", "") or "")
+                goal = str(getattr(state, "goal", "") or "")
+                vuln_class = str(state.context.get("vuln_class", "unknown"))
+                engagement_id = str(state.context.get("engagement_id", "unknown"))
+                caller_model = getattr(self.llm, "primary_model", None) or "unknown"
+                for idx, r in enumerate(history):
+                    obs = r.observation if isinstance(r.observation, dict) else {}
+                    obs_status = (
+                        "rejected"
+                        if r.error and r.error.get("type") in {"policy", "parse"}
+                        else ("failed" if r.error else "ok")
+                    )
+                    summary_src = json.dumps(obs, sort_keys=True, default=str)[:500]
+                    self.trace_recorder.record(
+                        ActionTrace(
+                            trace_id=f"{_uuid.uuid4().hex[:8]}",
+                            engagement_id=engagement_id,
+                            goal=goal,
+                            vuln_class=vuln_class,
+                            step_idx=idx,
+                            thought=str(getattr(r.action, "reasoning", "") or "")[:500],
+                            action_name=str(getattr(r.action, "name", "") or ""),
+                            action_params=dict(getattr(r.action, "parameters", {}) or {}),
+                            observation_status=obs_status,
+                            observation_summary=summary_src,
+                            target=target,
+                            caller_model=str(caller_model),
+                            timestamp=_dt.utcnow().isoformat() + "Z",
+                        )
+                    )
+            except Exception:  # noqa: BLE001 - tracing must never break the loop
+                pass
 
         return LoopResult(
             steps_taken=len(history),
