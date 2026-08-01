@@ -53,6 +53,15 @@ class MCPExecutionGate:
     ) -> None:
         self._host_in_scope = host_in_scope
         self._is_approved = is_approved
+        # Per-instance copies of the class-level schema tables. Previously
+        # register_tool_schema mutated the SHARED class dicts, so one gate (or one
+        # test) registering a custom schema permanently rewrote the table for every
+        # other gate in the process — the suite passed/failed depending on pytest
+        # collection order (test_mcp_execution_gate registered a reduced
+        # scan_endpoint schema, breaking test_mcp_structural_schema that ran after).
+        # Instance copies keep fail-closed validation intact while isolating callers.
+        self._allowed_params: Dict[str, set] = {k: set(v) for k, v in self._ALLOWED_PARAMS.items()}
+        self._allowed_types: Dict[str, tuple] = {k: tuple(v) for k, v in self._ALLOWED_TYPES.items()}
 
     def check_scope(self, server_id: str, tool_name: str, parameters: Dict[str, Any]) -> None:
         """Raise MCPScopeDenied if the target host of this call is out of scope."""
@@ -137,10 +146,15 @@ class MCPExecutionGate:
         """Merge an adapter-declared schema into the allowed-params map.
 
         ``schema`` maps arg name -> allowed python type (or tuple of types).
+
+        Merges into (never replaces) the instance-level table so one adapter's
+        declaration cannot shadow the built-in schema for the same tool name, and
+        so registrations never leak across gate instances via shared class state.
         """
-        self._ALLOWED_PARAMS[tool] = set(schema.keys())
+        existing = self._allowed_params.setdefault(tool, set())
+        existing.update(schema.keys())
         for arg, allowed_t in schema.items():
-            self._ALLOWED_TYPES[arg] = (
+            self._allowed_types[arg] = (
                 tuple(allowed_t) if isinstance(allowed_t, (tuple, list)) else (allowed_t,)
             )
 
@@ -148,7 +162,7 @@ class MCPExecutionGate:
         """Fail-closed: every executed tool must have a registered schema."""
         from ai_osop.core.exceptions import ScopeValidationError
 
-        allowed = self._ALLOWED_PARAMS.get(tool_name)
+        allowed = self._allowed_params.get(tool_name)
         if allowed is None:
             raise ScopeValidationError(
                 f"MCP tool '{tool_name}' has no registered schema; refusing params"
@@ -156,7 +170,7 @@ class MCPExecutionGate:
         for k, v in params.items():
             if k not in allowed:
                 raise ScopeValidationError(f"Unknown MCP arg '{k}' for tool {tool_name}")
-            expected = self._ALLOWED_TYPES.get(k)
+            expected = self._allowed_types.get(k)
             if expected is None:
                 continue
             if not isinstance(v, expected):
