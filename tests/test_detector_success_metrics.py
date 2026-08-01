@@ -29,7 +29,6 @@ import pytest
 
 from ai_osop.core.config import AgentType
 
-
 _TESTS_DIR = Path(__file__).resolve().parent
 
 

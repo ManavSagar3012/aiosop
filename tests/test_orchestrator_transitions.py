@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 from ai_osop.core.enums import EngagementPhase
 from ai_osop.orchestrator.orchestrator import Orchestrator
 
-
 # ── _auto_transition_ready ────────────────────────────────────────────────────
 
 

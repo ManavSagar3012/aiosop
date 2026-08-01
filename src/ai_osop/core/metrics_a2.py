@@ -61,7 +61,6 @@ def reset() -> None:
     _HISTOGRAMS.clear()
 
 
-
 def findings_detected(vuln_class: str, endpoint: str) -> None:
     c = _get("ai_osop_a2_findings_detected_total", ("vuln_class", "endpoint"))
     c.labels(vuln_class=vuln_class, endpoint=endpoint).inc()

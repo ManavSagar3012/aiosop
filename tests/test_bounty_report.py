@@ -9,8 +9,8 @@ Tests cover:
 """
 
 from ai_osop.core.bounty_report import finding_signature, render_bounty_report
-from ai_osop.core.models import Vulnerability
 from ai_osop.core.enums import Severity, VulnClass
+from ai_osop.core.models import Vulnerability
 
 
 def _vuln(**over) -> Vulnerability:

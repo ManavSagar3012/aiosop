@@ -43,9 +43,19 @@ class ScopeEnforcer:
     def __init__(self, scope: ScopeDefinition):
         self.scope = scope
         self._allowed_domains: Set[str] = set(_strip_port(d.lower().strip()) for d in scope.domains)
-        self._allowed_ips: List[ipaddress.ip_network] = [
-            ipaddress.ip_network(ip) for ip in scope.ips
-        ]
+        # Parse IP ranges defensively. strict=False accepts host-bits-set CIDRs
+        # (e.g. "10.0.0.5/24" -> 10.0.0.0/24); a single malformed entry is
+        # skipped+logged rather than raised. This matters for safety: a raised
+        # constructor makes callers fall back to `_scope_manager = None`, which
+        # every agent treats as "no scope == allow everything" (fail-OPEN scope
+        # bypass). Dropping a bad entry fails CLOSED — that range just won't
+        # match — which is the safe direction. (AIOSOP-SCOPE-STRICT)
+        self._allowed_ips: List[ipaddress.ip_network] = []
+        for ip in scope.ips:
+            try:
+                self._allowed_ips.append(ipaddress.ip_network(ip, strict=False))
+            except ValueError:
+                logger.warning("scope_skipped_invalid_ip", ip=str(ip))
         self._blocked_targets: Set[str] = set(e.lower() for e in scope.exclusions)
         self._testing_window = (scope.testing_window_start, scope.testing_window_end)
 

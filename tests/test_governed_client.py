@@ -186,8 +186,8 @@ async def test_governed_client_coerces_insecure_by_default(monkeypatch):
     """End-to-end: governed_client(verify=False) with no opt-in builds a client
     whose TLS verification was coerced back to True. Patch httpx.AsyncClient to
     capture the resolved kwarg rather than relying on httpx internals."""
-    from ai_osop.core import config
     import ai_osop.safety.governed_client as gc_mod
+    from ai_osop.core import config
 
     monkeypatch.setattr(config.settings, "tls_verify", True, raising=False)
     captured: dict = {}
@@ -210,8 +210,8 @@ async def test_governed_client_coerces_insecure_by_default(monkeypatch):
 async def test_governed_client_honors_explicit_insecure_opt_in(monkeypatch):
     """End-to-end: governed_client(verify=False, allow_insecure=True) passes
     verify=False through (real target with a self-signed cert)."""
-    from ai_osop.core import config
     import ai_osop.safety.governed_client as gc_mod
+    from ai_osop.core import config
 
     monkeypatch.setattr(config.settings, "tls_verify", True, raising=False)
     captured: dict = {}

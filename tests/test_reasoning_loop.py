@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.orchestrator.reasoning_loop import ReasoningLoop, _SKILL_TO_AGENT_TYPE
 from ai_osop.core.enums import AgentType
+from ai_osop.orchestrator.reasoning_loop import _SKILL_TO_AGENT_TYPE, ReasoningLoop
 
 
 def _mock_orchestrator():

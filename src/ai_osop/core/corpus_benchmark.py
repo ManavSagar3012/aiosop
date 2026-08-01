@@ -80,12 +80,15 @@ class CorpusBenchmark:
     def contracts(self) -> Dict[str, Any]:
         return {
             "version": "1.0.0",
-            "benchmarks": {e.id: {
-                "expected_class": e.vuln_class,
-                "endpoint": e.endpoint,
-                "method": e.method,
-                "expected_result": e.expected_result,
-            } for e in self.entries},
+            "benchmarks": {
+                e.id: {
+                    "expected_class": e.vuln_class,
+                    "endpoint": e.endpoint,
+                    "method": e.method,
+                    "expected_result": e.expected_result,
+                }
+                for e in self.entries
+            },
         }
 
     async def run(self, agent_runner=None, dry_run: bool = False) -> List[Dict[str, Any]]:
@@ -106,12 +109,14 @@ class CorpusBenchmark:
                         "pass dry_run=True for explicit self-echo"
                     )
                 matched = self._matches_expected(entry)
-                results.append({
-                    "id": entry.id,
-                    "expected_class": entry.vuln_class,
-                    "matched": matched,
-                    "reference": entry.reference_exploit,
-                })
+                results.append(
+                    {
+                        "id": entry.id,
+                        "expected_class": entry.vuln_class,
+                        "matched": matched,
+                        "reference": entry.reference_exploit,
+                    }
+                )
             else:
                 candidate = await agent_runner(entry.reference_exploit)
                 if candidate is None:

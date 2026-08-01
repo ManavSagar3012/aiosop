@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ai_osop.core.exceptions import MCPApprovalRequired, MCPScopeDenied
-from ai_osop.mcp.protocol import MCPExecutionGate, MCPExecuteResponse, MCPRegistry
+from ai_osop.mcp.protocol import MCPExecuteResponse, MCPExecutionGate, MCPRegistry
 
 
 class _Conn:
@@ -115,9 +115,7 @@ async def test_gate_none_preserves_legacy_behavior() -> None:
     """With no gate wired (the default until the orchestrator sets one), the
     flags are NOT enforced client-side — existing behavior is preserved. The
     approval gate only becomes fail-closed once a gate is configured."""
-    reg = _registry(
-        _Conn({"t": _tool(name="t", requires_approval=True, scope_check=True)})
-    )
+    reg = _registry(_Conn({"t": _tool(name="t", requires_approval=True, scope_check=True)}))
     reg.execution_gate = None
 
     await reg.execute_tool("srv", "t", {"url": "https://evil.example.com/"})

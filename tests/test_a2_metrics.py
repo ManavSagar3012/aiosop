@@ -1,5 +1,6 @@
 """A2 metrics tests: writing MyRegistry-independent counters to the black-box
 registry. Define realistic test expectations against the concrete interface."""  # noqa: E501
+
 from ai_osop.core import metrics_a2
 
 
@@ -24,7 +25,8 @@ def test_counters_increment_and_label_values():
     txt = metrics_a2.render()
     assert "ai_osop_a2_findings_detected_total" in txt
     counters = [
-        l for l in txt.splitlines()
+        l
+        for l in txt.splitlines()
         if "ai_osop_a2_findings_detected_total" in l and not l.startswith("#")
     ]
     vals = []
@@ -50,9 +52,11 @@ def test_reset_clears_counts():
     assert "ai_osop_a2_findings_validated_total" not in text
 
 
-
 def test_finding_tokens_counter_renders():
     metrics_a2.reset()
     metrics_a2.finding_llm_tokens(120, model="gpt-4o", vuln_class="idor")
     out = metrics_a2.render()
-    assert 'ai_osop_a2_finding_llm_tokens_total{model="gpt-4o",vuln_class="idor"} 120.0' in out or 'ai_osop_a2_finding_llm_tokens_total{model="gpt-4o",vuln_class="idor"} 120' in out
+    assert (
+        'ai_osop_a2_finding_llm_tokens_total{model="gpt-4o",vuln_class="idor"} 120.0' in out
+        or 'ai_osop_a2_finding_llm_tokens_total{model="gpt-4o",vuln_class="idor"} 120' in out
+    )

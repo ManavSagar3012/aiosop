@@ -1130,16 +1130,19 @@ class PhaseMonitor:
         quicker phase-detection loop prevents sessions from stalling on a completed
         phase while waiting for the next tick.
         """
-        # Auto-advance every non-terminal session once a tick, but DON'T spam the
-        # log when a phase-advance is gated on open hypotheses — that broke the log
-        # formatting contract (same key being logged forever) and blew log volume.
-        # We surface the gate itself via the audit log, and only log the gate state
-        # transition once per bounded window. (hyp-gated livelock report)
+        # Auto-advance every non-terminal session once a tick. Skip terminal states
+        # entirely so completed/halted engagements don't spam the monitor every 5s
+        # with a log line for a phase that will never move again. (AIOSOP-MONITOR
+        # SIGNAL-TO-NOISE FIX)
+        _TERMINAL_PHASES = frozenset({"completed", "halted"})
         while self._orch._running:
             try:
                 await asyncio.sleep(5)
                 self._tick += 1
                 for session in list(self._orch._sessions.values()):
+                    cur = session.phase if isinstance(session.phase, str) else str(session.phase)
+                    if cur.lower() in _TERMINAL_PHASES:
+                        continue
                     await self._auto_advance_phase(session)
             except asyncio.CancelledError:
                 raise

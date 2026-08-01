@@ -10,9 +10,7 @@ def test_weaponization_flags_dom_xss_pair():
     """
     out = JSAnalyzerAgent.weaponization_assessment(bundle, secrets_live=0)
     assert out["weaponization_score"] >= 0.2
-    assert any(
-        p["sink"] == "innerHTML" and "location.hash" in p["source"] for p in out["pairs"]
-    )
+    assert any(p["sink"] == "innerHTML" and "location.hash" in p["source"] for p in out["pairs"])
 
 
 def test_weaponization_flags_cookie_exfil():

@@ -61,7 +61,9 @@ class MCPExecutionGate:
         # scan_endpoint schema, breaking test_mcp_structural_schema that ran after).
         # Instance copies keep fail-closed validation intact while isolating callers.
         self._allowed_params: Dict[str, set] = {k: set(v) for k, v in self._ALLOWED_PARAMS.items()}
-        self._allowed_types: Dict[str, tuple] = {k: tuple(v) for k, v in self._ALLOWED_TYPES.items()}
+        self._allowed_types: Dict[str, tuple] = {
+            k: tuple(v) for k, v in self._ALLOWED_TYPES.items()
+        }
 
     def check_scope(self, server_id: str, tool_name: str, parameters: Dict[str, Any]) -> None:
         """Raise MCPScopeDenied if the target host of this call is out of scope."""

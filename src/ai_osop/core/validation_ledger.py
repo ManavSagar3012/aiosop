@@ -153,9 +153,7 @@ class ValidationLedger:
         """
         rows = await self.session_mem.run_read(q, *params)
         return {
-            "states": [
-                (r["state"], r["count"], r["avg_trust"] or 0.0) for r in rows
-            ],
+            "states": [(r["state"], r["count"], r["avg_trust"] or 0.0) for r in rows],
             "needs_review_sample": next(
                 (r["suspicious_ids"] for r in rows if r["state"] == "manual_review"), []
             ),

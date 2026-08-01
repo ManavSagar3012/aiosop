@@ -13,8 +13,8 @@ import sys
 
 sys.path.insert(0, "src")
 
-from ai_osop.core.models import Task  # noqa: E402
 from ai_osop.core.enums import AgentType  # noqa: E402
+from ai_osop.core.models import Task  # noqa: E402
 from ai_osop.orchestrator.task_scheduler import TaskScheduler  # noqa: E402
 
 

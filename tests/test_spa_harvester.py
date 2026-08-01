@@ -16,7 +16,6 @@ from ai_osop.core.spa_harvester import (
     merge_candidates,
 )
 
-
 JS_BUNDLE_SNIPPET = """
 const a = "/rest/products/search?q=";
 const b = "https://target.local/rest/user/login";

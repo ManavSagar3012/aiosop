@@ -1,4 +1,5 @@
 import pytest
+
 from ai_osop.core.business_state_machine import LogicalBusinessStateMachine
 
 

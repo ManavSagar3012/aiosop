@@ -53,7 +53,9 @@ async def test_chain_executor_validates_each_chain_hop():
     executed: List[Dict[str, Any]] = []
 
     class _ExploitFacade:
-        async def validate_exploit(self, endpoint: str, vuln_class: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        async def validate_exploit(
+            self, endpoint: str, vuln_class: str, payload: Dict[str, Any]
+        ) -> Dict[str, Any]:
             executed.append({"endpoint": endpoint, "payload": payload})
             return {
                 "validated": True,
@@ -112,7 +114,9 @@ async def test_chain_hop_records_ledger_and_metrics():
     ctx.agent_id = "chain-executor-2"
 
     class _ExploitFacade:
-        async def validate_exploit(self, endpoint: str, vuln_class: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        async def validate_exploit(
+            self, endpoint: str, vuln_class: str, payload: Dict[str, Any]
+        ) -> Dict[str, Any]:
             return {"validated": True, "technique": vuln_class, "evidence": "ok"}
 
     from ai_osop.agents.chain_executor_agent import ChainExecutorAgent

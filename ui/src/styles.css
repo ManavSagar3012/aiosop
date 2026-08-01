@@ -38,7 +38,46 @@
 
   --outline: #2b3746;
   --outline-variant: #22303c;
+
+  /* Typography scale — consistent rhythm across pages */
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Spacing rhythm — 4px base */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px; --space-12: 48px;
+
+  /* Elevation */
+  --elev-1: 0 1px 2px rgba(0,0,0,.32), 0 1px 3px rgba(0,0,0,.24);
+  --elev-2: 0 4px 8px rgba(0,0,0,.30), 0 2px 4px rgba(0,0,0,.20);
+  --elev-3: 0 12px 24px rgba(0,0,0,.32), 0 4px 12px rgba(0,0,0,.20);
+
+  /* Motion */
+  --ease-out: cubic-bezier(.2,0,.38,1);
+  --ease-in-out: cubic-bezier(.45,0,.2,1);
+  --dur-fast: 120ms; --dur-med: 200ms; --dur-slow: 320ms;
+
+  /* Radii */
+  --radius-xs: 2px; --radius-sm: 4px; --radius-md: 6px; --radius-lg: 10px;
 }
+
+/* Focus ring used for any focusable control. */
+.control-focus {
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.control-focus:focus-visible {
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 3px rgba(56,189,248,.25);
+  outline: none;
+}
+
+/* Status pill — severity-aware tokens */
+.pill { display:inline-flex; align-items:center; gap:6px; padding:2px 8px; border-radius:999px; font-family:var(--font-mono); font-size:10px; letter-spacing:.06em; text-transform:uppercase; border:1px solid transparent; }
+.pill-critical { background: rgba(248,113,113,.12); border-color: rgba(248,113,113,.3); color:#fca5a5; }
+.pill-high { background: rgba(251,191,36,.12); border-color: rgba(251,191,36,.32); color:#fcd34d; }
+.pill-med { background: rgba(56,189,248,.12); border-color: rgba(56,189,248,.28); color:#7dd3fc; }
+.pill-info { background: rgba(148,163,184,.12); border-color: rgba(148,163,184,.25); color:#cbd5e1; }
 
 /* Base Styles */
 body {

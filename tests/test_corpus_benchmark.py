@@ -78,24 +78,31 @@ async def test_corpus_run_deterministic():
 @pytest.mark.asyncio
 async def test_corpus_fails_on_empty_runner():
     corpus = CorpusBenchmark(_make_corpus())
-    async def _empty(*_): return None
+
+    async def _empty(*_):
+        return None
+
     with pytest.raises(AssertionError):
         await corpus.run(agent_runner=_empty)
 
 
-_corrupt = [GroundTruthEntry(
-    id="gt-x",
-    vuln_class="idor",
-    endpoint="/rest/basket/1",
-    method="POST",
-    expected_result="rejected",
-    reference_exploit={"expected_status": 403},
-    severity_expected="low",
-)]
+_corrupt = [
+    GroundTruthEntry(
+        id="gt-x",
+        vuln_class="idor",
+        endpoint="/rest/basket/1",
+        method="POST",
+        expected_result="rejected",
+        reference_exploit={"expected_status": 403},
+        severity_expected="low",
+    )
+]
+
 
 def test_corpus_requires_valid_endpoint_and_reference():
     # Invalid entries silently fail at validation time only if status is nonsense
     from ai_osop.core.corpus_benchmark import CorpusBenchmark as _CB
+
     c = _CB(_corrupt)
     # Current contract: invalid entries are scoped out, only rejected when the
     # expected_result type is nonsensical list/None or reference_exploit is a string.
@@ -163,9 +170,7 @@ def test_corpus_precision_recall_gate():
     entries = _load_corpus()
     findings = [
         {"id": e.id, "outcome": "accepted"} for e in entries if e.expected_result == "accepted"
-    ] + [
-        {"id": e.id, "outcome": "rejected"} for e in entries if e.expected_result == "rejected"
-    ]
+    ] + [{"id": e.id, "outcome": "rejected"} for e in entries if e.expected_result == "rejected"]
     bench = CorpusBenchmark(entries)
     report = asyncio.get_event_loop().run_until_complete(bench.score(findings))
     assert report["evaluated"] == len(entries), report

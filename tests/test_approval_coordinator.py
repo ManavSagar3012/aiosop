@@ -14,7 +14,6 @@ from unittest.mock import MagicMock
 from ai_osop.core.models import ApprovalRequest, Task
 from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
 
-
 # ── _canonical_decision ───────────────────────────────────────────────────────
 
 

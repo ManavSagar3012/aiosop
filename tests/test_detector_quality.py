@@ -20,12 +20,12 @@ from ai_osop.core.config import Severity, VulnClass
 from ai_osop.core.models import Task, Vulnerability
 from tests._mocks import stub_session_memory
 
-
 # ---- NoSQL Injection -------------------------------------------------------
 
 def _nosql_agent(monkeypatch, transport_handler):
-    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
     from types import SimpleNamespace
+
+    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 
     agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)
     agent.ctx = SimpleNamespace(
@@ -109,8 +109,9 @@ async def test_nosql_not_confirmed_when_no_differential(monkeypatch):
 # ---- Prototype Pollution ---------------------------------------------------
 
 def _proto_agent(monkeypatch, transport_handler):
-    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
     from types import SimpleNamespace
+
+    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 
     agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)
     agent.ctx = SimpleNamespace(
@@ -163,8 +164,9 @@ async def test_prototype_pollution_not_confirmed_on_clean_response(monkeypatch):
 # ---- Cache Poisoning -------------------------------------------------------
 
 def _cache_agent(monkeypatch, transport_handler):
-    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
     from types import SimpleNamespace
+
+    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 
     agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)
     agent.ctx = SimpleNamespace(
@@ -218,8 +220,9 @@ async def test_cache_poisoning_not_confirmed_on_no_cache_headers(monkeypatch):
 # ---- File Upload -----------------------------------------------------------
 
 def _upload_agent(monkeypatch, transport_handler):
-    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
     from types import SimpleNamespace
+
+    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 
     agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)
     agent.ctx = SimpleNamespace(
@@ -271,8 +274,9 @@ async def test_file_upload_not_confirmed_on_rejection(monkeypatch):
 # ---- OAuth Reset -----------------------------------------------------------
 
 def _oauth_agent(monkeypatch, transport_handler):
-    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
     from types import SimpleNamespace
+
+    from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 
     agent = VulnAnalysisAgent.__new__(VulnAnalysisAgent)
     agent.ctx = SimpleNamespace(

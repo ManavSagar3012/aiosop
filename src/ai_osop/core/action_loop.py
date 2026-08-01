@@ -98,7 +98,9 @@ def parse_action(text: str, allowed_tools: Set[str]) -> Action:
     if action_name not in allowed_tools:
         raise _DisallowedAction(f"Action '{action_name}' is not allowed")
     reasoning = str(obj.get("reasoning") or obj.get("thought") or "")
-    parameters = {k: v for k, v in obj.items() if k not in {"action", "tool", "reasoning", "thought"}}
+    parameters = {
+        k: v for k, v in obj.items() if k not in {"action", "tool", "reasoning", "thought"}
+    }
     return Action(name=action_name, parameters=parameters, reasoning=reasoning)
 
 
@@ -133,7 +135,9 @@ class ActionLoop:
                     return content
         return ""
 
-    def _build_prompt(self, state: LoopState, history: Sequence[ActionResult]) -> List[Dict[str, Any]]:
+    def _build_prompt(
+        self, state: LoopState, history: Sequence[ActionResult]
+    ) -> List[Dict[str, Any]]:
         tool_hints = []
         for name in sorted(state.allowed_tools):
             tool = getattr(self.tools, name, None)
@@ -241,12 +245,23 @@ class ActionLoop:
                 if not isinstance(observation, dict):
                     observation = {"result": observation}
             except TypeError as exc:
-                observation = {"error": f"invalid parameters for {action.name}: {exc}", "status": "rejected"}
-                history.append(ActionResult(action, observation, error={"type": "parameters", "message": str(exc)}))
+                observation = {
+                    "error": f"invalid parameters for {action.name}: {exc}",
+                    "status": "rejected",
+                }
+                history.append(
+                    ActionResult(
+                        action, observation, error={"type": "parameters", "message": str(exc)}
+                    )
+                )
                 continue
             except Exception as exc:  # noqa: BLE001
                 observation = {"error": f"{action.name} failed: {exc}", "status": "failed"}
-                history.append(ActionResult(action, observation, error={"type": "execution", "message": str(exc)}))
+                history.append(
+                    ActionResult(
+                        action, observation, error={"type": "execution", "message": str(exc)}
+                    )
+                )
             else:
                 history.append(ActionResult(action, observation))
                 if observation.get("found"):

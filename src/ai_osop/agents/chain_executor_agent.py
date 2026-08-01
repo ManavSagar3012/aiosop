@@ -88,9 +88,7 @@ class ChainExecutorAgent(BaseAgent):
                     except Exception as e:  # noqa: BLE001
                         if self.ledger is not None and vuln_id:
                             try:
-                                await self.ledger.transition(
-                                    vuln_id, "chain_failed", reason=str(e)
-                                )
+                                await self.ledger.transition(vuln_id, "chain_failed", reason=str(e))
                             except Exception as ledger_err:  # noqa: BLE001
                                 logger.warning(
                                     "ledger_transition_failed",
@@ -106,9 +104,7 @@ class ChainExecutorAgent(BaseAgent):
                             }
                         )
                     finally:
-                        metrics_a2.chain_hop_seconds(
-                            time.time() - hop_started, chain_id, str(idx)
-                        )
+                        metrics_a2.chain_hop_seconds(time.time() - hop_started, chain_id, str(idx))
         if chain_run and all(entry.get("validated") for entry in chain_run if "validated" in entry):
             metrics_a2.chain_success(chain_id, len(chain_run))
         return {"status": "success", "chain_run": chain_run}

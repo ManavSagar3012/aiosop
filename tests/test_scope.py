@@ -36,6 +36,30 @@ def test_scope_enforcer_valid_targets(dummy_scope):
     assert enforcer.validate_target("http://192.168.1.50:8080/") is True
 
 
+def test_scope_enforcer_accepts_host_bits_cidr():
+    """A CIDR with host bits set ('10.0.0.5/24') must not crash the constructor.
+    A raised constructor makes callers fall back to _scope_manager=None, i.e.
+    'no scope == allow everything' (fail-OPEN scope bypass). strict=False
+    normalizes it to 10.0.0.0/24. (AIOSOP-SCOPE-STRICT regression)
+    """
+    enforcer = ScopeEnforcer(ScopeDefinition(engagement_id="e", domains=[], ips=["10.0.0.5/24"]))
+    assert enforcer.host_in_scope("10.0.0.42") is True
+    assert enforcer.validate_target("10.0.0.42") is True
+    with pytest.raises(OutOfScopeError):
+        enforcer.validate_target("10.0.1.1")
+
+
+def test_scope_enforcer_skips_invalid_ip_without_failing_open():
+    """A single malformed IP entry must not nuke the whole enforcer (which would
+    make callers fail OPEN). The bad entry is skipped; valid ranges still work
+    and everything else stays out of scope (fail CLOSED)."""
+    enforcer = ScopeEnforcer(
+        ScopeDefinition(engagement_id="e", domains=[], ips=["not-an-ip", "192.168.5.0/24"])
+    )
+    assert enforcer.host_in_scope("192.168.5.10") is True
+    assert enforcer.host_in_scope("8.8.8.8") is False
+
+
 def test_scope_enforcer_normalizes_port_in_domain():
     """A scope domain with a port ('localhost:3000') must match the URL host
     ('localhost', port-stripped by urlparse) — else every in-scope browser

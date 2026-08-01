@@ -8,6 +8,7 @@ Skipped unless RUN_LIVE_LLM=1 is set (so CI doesn't hang on Ollama).
 """
 
 import os
+
 import pytest
 
 pytestmark = pytest.mark.skipif(
