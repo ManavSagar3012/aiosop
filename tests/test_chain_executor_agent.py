@@ -88,3 +88,54 @@ async def test_chain_executor_validates_each_chain_hop():
     # Both hops in one chain execute (order preserved)
     assert executed[0]["endpoint"].endswith("/rest/user/login")
     assert executed[1]["endpoint"].endswith("/rest/basket/1")
+
+
+@pytest.mark.asyncio
+async def test_chain_hop_records_ledger_and_metrics():
+    """After a two-hop chain, metrics show per-hop timing + step count, and the
+    injected ledger saw the chain_executed transition per hop."""
+    import ai_osop.core.metrics_a2 as metrics_a2
+
+    metrics_a2.reset()
+
+    transitions: List[Dict[str, Any]] = []
+
+    class _LedgerStub:
+        async def transition(self, event_id: str, to_state: str, reason: str = "") -> None:
+            transitions.append({"event_id": event_id, "to_state": to_state})
+
+    ctx = MagicMock()
+    ctx.graph_memory = _ChainGraph(_make_chain("eng-ledger"))
+    ctx.llm_client = AsyncMock()
+    ctx.session_memory = MagicMock()
+    ctx.vector_memory = MagicMock()
+    ctx.agent_id = "chain-executor-2"
+
+    class _ExploitFacade:
+        async def validate_exploit(self, endpoint: str, vuln_class: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+            return {"validated": True, "technique": vuln_class, "evidence": "ok"}
+
+    from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
+
+    agent = ChainExecutorAgent(ctx)
+    agent._exploit = _ExploitFacade()
+    agent.ledger = _LedgerStub()
+
+    task = Task(
+        type="execute_exploit_chain",
+        agent_type=AgentType.ATTACK_CHAIN,
+        payload={"engagement_id": "eng-ledger"},
+        engagement_id="eng-ledger",
+    )
+    ctx.current_task = task
+
+    result = await agent._execute(task)
+    assert result["status"] == "success"
+    # Ledger saw chain_executed for both hops
+    assert {t["event_id"] for t in transitions} == {"v-1", "v-2"}
+    assert all(t["to_state"] == "chain_executed" for t in transitions)
+    # Metrics rendered: step counter reached 2 and hop histogram exists
+    rendered = metrics_a2.render()
+    assert "ai_osop_a2_chain_steps_executed_total" in rendered
+    assert "ai_osop_a2_chain_hop_seconds_count" in rendered
+    assert "ai_osop_a2_chain_execution_seconds" in rendered
