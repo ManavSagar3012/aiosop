@@ -118,3 +118,28 @@ async def test_for_vulnerability_returns_only_matching(sa_engine, tmp_path):
     await store.record(_mk_receipt("rq-2", vuln="v-2"))
     matches = await store.for_vulnerability("v-1")
     assert [m.receipt_id for m in matches] == ["rq-1"]
+
+
+async def test_export_bundle_redacts_and_never_submits(sa_engine, tmp_path):
+    from ai_osop.evidence.migrations import ensure_schema
+    from ai_osop.evidence.models import ExploitReceipt
+    from ai_osop.evidence.store import ReceiptStore
+    from ai_osop.safety.scope import AuditIntegrity
+
+    await ensure_schema(sa_engine)
+    store = ReceiptStore(sa_engine=sa_engine, integrity=AuditIntegrity(b"k-exp"), evidence_root=tmp_path)
+    await store.record(ExploitReceipt(
+        receipt_id="rx-1", engagement_id="e-1", vuln_id="v-9",
+        approval_id="apr-9", verdict="confirmed", confidence=0.95,
+        confirmation_note="stored XSS via comment field",
+        oracle_signals={"body_signature": 0.85},
+        request_summary={"method": "POST", "url": "https://t/submit",
+                          "headers": {"Authorization": "[REDACTED:sha256:ab12]"}},
+        response_summary={"http_code": 200}, scope_hash="sh",
+    ))
+    bundle = await store.export_bundle("v-9")
+    assert bundle["submitted"] is False
+    assert bundle["receipt_count"] == 1
+    assert "stored XSS" in bundle["markdown"]
+    for rec in bundle["receipts"]:
+        assert "Bearer" not in str(rec.get("request_summary", {}))

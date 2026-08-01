@@ -162,3 +162,27 @@ class ReceiptStore:
     async def for_engagement(self, engagement_id: str) -> "List[ExploitReceipt]":
         return await self._fetch_where(exploit_receipts.c.engagement_id == engagement_id)
 
+    async def export_bundle(self, vuln_id: str, redact_secrets: bool = True) -> Dict[str, Any]:
+        """Bounty-grade export. Redaction is capture-time; export never re-emits
+        originals and never submits — caller hands `markdown` to BugBountyAdapter."""
+        receipts = await self.for_vulnerability(vuln_id)
+        manifest: List[Dict[str, Any]] = []
+        for r in receipts:
+            manifest.extend(a.model_dump() for a in r.artifacts)
+        markdown = (
+            f"## Exploit receipts for {vuln_id}\n\n"
+            + "\n\n".join(
+                f"- **{r.receipt_id}** verdict={r.verdict} confidence={r.confidence:.2f} "
+                f"note={r.confirmation_note} scope_hash={r.scope_hash}"
+                for r in receipts
+            )
+        )
+        return {
+            "markdown": markdown,
+            "manifest": manifest,
+            "receipts": [r.model_dump(mode="json") for r in receipts],
+            "receipt_count": len(receipts),
+            "submitted": False,
+            "redact_secrets": redact_secrets,
+        }
+
