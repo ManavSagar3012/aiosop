@@ -20,6 +20,7 @@ class GroundTruthEntry:
     reference_exploit: Dict[str, Any]
     severity_expected: str
     confidence: float = 1.0
+    withdrawn: bool = False
 
     def __post_init__(self):
         if self.expected_result not in ("accepted", "rejected"):
@@ -33,7 +34,44 @@ class CorpusBenchmark:
         self.entries = list(entries)
 
     def count(self) -> int:
-        return len(self.entries)
+        return sum(1 for e in self.entries if not e.withdrawn)
+
+    async def score(self, findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Compute precision/recall of observed findings against ground truth.
+
+        findings: list of {"id": <entry_id>, "outcome": "accepted"|"rejected"}.
+        TP = expected accepted and got accepted.
+        FP = expected rejected and got accepted.
+        FN = expected accepted and got rejected / missing.
+        Withdrawn entries are excluded from scoring.
+        """
+        by_id = {f["id"]: f["outcome"] for f in findings}
+        tp = fp = fn = 0
+        per_class: Dict[str, Dict[str, int]] = {}
+        active = [e for e in self.entries if not e.withdrawn]
+        for e in active:
+            got = by_id.get(e.id)
+            bucket = per_class.setdefault(e.vuln_class, {"tp": 0, "fp": 0, "fn": 0})
+            if e.expected_result == "accepted" and got == "accepted":
+                tp += 1
+                bucket["tp"] += 1
+            elif e.expected_result == "rejected" and got == "accepted":
+                fp += 1
+                bucket["fp"] += 1
+            elif e.expected_result == "accepted":
+                fn += 1
+                bucket["fn"] += 1
+        precision = tp / (tp + fp) if (tp + fp) else 1.0
+        recall = tp / (tp + fn) if (tp + fn) else 1.0
+        return {
+            "precision": precision,
+            "recall": recall,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "per_class": per_class,
+            "evaluated": len(active),
+        }
 
     @property
     def classes(self) -> set:
@@ -50,18 +88,23 @@ class CorpusBenchmark:
             } for e in self.entries},
         }
 
-    async def run(self, agent_runner=None) -> List[Dict[str, Any]]:
-        """Execute the corpus reference facts directly and verify the scoring contract.
+    async def run(self, agent_runner=None, dry_run: bool = False) -> List[Dict[str, Any]]:
+        """Execute the corpus reference facts and verify the scoring contract.
 
-        If agent_runner provided, run agent_runner(reference_exploit) and treat the
-        output as the corpus decision against each entry. Otherwise synthesize the
-        expected discoveries so the harness answers the contract deterministically.
+        - ``agent_runner`` provided: call run(reference_exploit) and treat the output
+          as the corpus decision for that entry (real benchmark mode).
+        - ``dry_run=True``: synthesize the expected discoveries so a harness can
+          answer its own contract deterministically (explicit self-echo only).
+        - Neither: refuse — a benchmark that silently self-certifies is theater.
         """
         results = []
         for entry in self.entries:
             if agent_runner is None:
-                # Corpus contracts: a well-behaved system would evaluate the reference
-                # exploit the same way as the ground truth expects.
+                if not dry_run:
+                    raise ValueError(
+                        "CorpusBenchmark.run requires findings/agent_runner for scoring; "
+                        "pass dry_run=True for explicit self-echo"
+                    )
                 matched = self._matches_expected(entry)
                 results.append({
                     "id": entry.id,

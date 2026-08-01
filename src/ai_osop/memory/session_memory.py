@@ -312,8 +312,18 @@ class SessionMemory:
 
         # PostgreSQL with retry
         async def _connect_postgres() -> None:
+            # AIOSOP-PG-PREPING-001: pool_pre_ping makes SQLAlchemy issue a cheap
+            # ping before checking a connection out of the pool, discarding stale
+            # ones. Without this, long-idle engines handed out dead conns after a
+            # Postgres restart/idle drop and every audit/report query failed with
+            # asyncpg "connection is closed" (seen in test_reporting_mcp against a
+            # live stack).
             self._pg_engine = create_async_engine(
-                settings.postgres_uri, pool_size=20, max_overflow=10, echo=False
+                settings.postgres_uri,
+                pool_size=20,
+                max_overflow=10,
+                echo=False,
+                pool_pre_ping=True,
             )
             self._async_session = _TimedPostgresSessionMaker(
                 sessionmaker(self._pg_engine, class_=AsyncSession, expire_on_commit=False)

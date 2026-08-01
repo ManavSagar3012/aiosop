@@ -1,0 +1,99 @@
+[
+  {
+    "_policy": "synthetic negatives — endpoints/classes that should NOT validate; used to compute false-positive rate",
+    "id": "syn-1",
+    "vuln_class": "idor",
+    "endpoint": "/api/v1/tenants/{uuid}",
+    "method": "GET",
+    "expected_result": "rejected",
+    "reference_exploit": {"pattern": "uuid_swap", "expected_status": 404, "notes": "UUIDs unguessable and server enforces ownership"},
+    "severity_expected": "info",
+    "confidence": 1.0,
+    "source_url": "synthetic://negatives/uuid-swap-404",
+    "withdrawn": false
+  },
+  {
+    "id": "syn-2",
+    "vuln_class": "xss_reflected",
+    "endpoint": "/search",
+    "method": "GET",
+    "expected_result": "rejected",
+    "reference_exploit": {"pattern": "escaped_reflection", "expected_status": 200, "notes": "q reflected but %3Cscript%3E stays entity-encoded"},
+    "severity_expected": "info",
+    "confidence": 1.0,
+    "source_url": "synthetic://negatives/escaped-reflection",
+    "withdrawn": false
+  },
+  {
+    "id": "syn-3",
+    "vuln_class": "ssrf",
+    "endpoint": "/api/v1/webhook",
+    "method": "POST",
+    "expected_result": "rejected",
+    "reference_exploit": {"pattern": "allowlist_blocked", "expected_status": 403, "notes": "egress allowlist blocks 169.254.169.254"},
+    "severity_expected": "info",
+    "confidence": 1.0,
+    "source_url": "synthetic://negatives/egress-allowlist",
+    "withdrawn": false
+  },
+  {
+    "id": "syn-4",
+    "vuln_class": "jwt_alg_none",
+    "endpoint": "/api/v1/me",
+    "method": "GET",
+    "expected_result": "rejected",
+    "reference_exploit": {"pattern": "alg_none", "expected_status": 401, "notes": "alg=none rejected at gateway"},
+    "severity_expected": "info",
+    "confidence": 1.0,
+    "source_url": "synthetic://negatives/alg-none-rejected",
+    "withdrawn": false
+  },
+  {
+    "id": "syn-5",
+    "vuln_class": "open_redirect",
+    "endpoint": "/r",
+    "method": "GET",
+    "expected_result": "rejected",
+    "reference_exploit": {"pattern": "redirect_param", "expected_status": 400, "notes": "url param validated against same-origin list"},
+    "severity_expected": "info",
+    "confidence": 1.0,
+    "source_url": "synthetic://negatives/same-origin-only",
+    "withdrawn": false
+  },
+  {
+    "id": "syn-6",
+    "vuln_class": "path_traversal",
+    "endpoint": "/api/v1/docs",
+    "method": "GET",
+    "expected_result": "rejected",
+    "reference_exploit": {"pattern": "dotdot", "expected_status": 400, "notes": "name rejected when it contains .."},
+    "severity_expected": "info",
+    "confidence": 1.0,
+    "source_url": "synthetic://negatives/traversal-blocked",
+    "withdrawn": false
+  },
+  {
+    "id": "syn-7",
+    "vuln_class": "mass_assignment",
+    "endpoint": "/api/v1/account",
+    "method": "PATCH",
+    "expected_result": "rejected",
+    "reference_exploit": {"pattern": "param_injection", "expected_status": 403, "notes": "role=is_admin ignored + audit logged"},
+    "severity_expected": "info",
+    "confidence": 1.0,
+    "source_url": "synthetic://negatives/mass-assign-ignored",
+    "withdrawn": false
+  },
+  {
+    "id": "syn-8",
+    "vuln_class": "sql_injection",
+    "endpoint": "/api/v1/search",
+    "method": "GET",
+    "expected_result": "rejected",
+    "reference_exploit": {"pattern": "boolean_blind", "expected_status": 400, "notes": "orm parameterizes; filter param validated"},
+    "severity_expected": "info",
+    "confidence": 1.0,
+    "source_url": "synthetic://negatives/parameterized",
+    "withdrawn": false
+  }
+]

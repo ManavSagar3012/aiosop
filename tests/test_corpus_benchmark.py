@@ -66,8 +66,8 @@ def test_corpus_contract_is_stable():
 @pytest.mark.asyncio
 async def test_corpus_run_deterministic():
     corpus = CorpusBenchmark(_make_corpus())
-    r1 = await corpus.run()
-    r2 = await corpus.run()
+    r1 = await corpus.run(dry_run=True)
+    r2 = await corpus.run(dry_run=True)
     assert r1 == r2
     assert len(r1) == 4
     assert all(f["matched"] for f in r1)
@@ -101,3 +101,73 @@ def test_corpus_requires_valid_endpoint_and_reference():
     # expected_result type is nonsensical list/None or reference_exploit is a string.
     assert len(c.entries) == 1
     assert c.entries[0].reference_exploit == {"expected_status": 403}
+
+
+def _load_corpus():
+    import json
+    import pathlib
+
+    base = pathlib.Path("benchmarks/corpus")
+    entries = []
+    for f in sorted(base.glob("*.json")):
+        for raw in json.loads(f.read_text()):
+            entries.append(
+                GroundTruthEntry(
+                    id=raw["id"],
+                    vuln_class=raw["vuln_class"],
+                    endpoint=raw["endpoint"],
+                    method=raw["method"],
+                    expected_result=raw["expected_result"],
+                    reference_exploit=raw["reference_exploit"],
+                    severity_expected=raw["severity_expected"],
+                    confidence=raw.get("confidence", 1.0),
+                )
+            )
+    return entries
+
+
+def test_corpus_files_load_and_follow_provenance_policy():
+    import json
+    import pathlib
+
+    base = pathlib.Path("benchmarks/corpus")
+    files = list(base.glob("*.json"))
+    assert len(files) >= 2, "expected h1_real + synthetic_negatives corpus files"
+    total = 0
+    for f in files:
+        for raw in json.loads(f.read_text()):
+            total += 1
+            assert raw["source_url"].startswith(
+                ("https://hackerone.com/reports/", "synthetic://")
+            ), raw["id"]
+            assert raw["expected_result"] in {"accepted", "rejected"}
+    assert total >= 20
+
+
+def test_corpus_precision_recall_gate():
+    """Deterministic fixture findings scored against the checked-in corpus must
+    maintain >=0.90 precision/recall. Fixture provenance: hand-aligned to the
+    corpus (every 'accepted' entry has a matching 'accepted' finding, every
+    'rejected' entry a matching 'rejected' one). When the pipeline changes,
+    regenerate this fixture from a real run ONCE and re-pin — do not let the
+    fixture drift to keep the test green.
+
+    Honesty note: this gate proves the scoring pipeline, report shape, and gate
+    semantics are correct. It does NOT, on its own, certify live model accuracy —
+    for that, re-run the platform against a live target and re-pin the fixture.
+    """
+    import asyncio
+
+    from ai_osop.core.corpus_benchmark import CorpusBenchmark
+
+    entries = _load_corpus()
+    findings = [
+        {"id": e.id, "outcome": "accepted"} for e in entries if e.expected_result == "accepted"
+    ] + [
+        {"id": e.id, "outcome": "rejected"} for e in entries if e.expected_result == "rejected"
+    ]
+    bench = CorpusBenchmark(entries)
+    report = asyncio.get_event_loop().run_until_complete(bench.score(findings))
+    assert report["evaluated"] == len(entries), report
+    assert report["precision"] >= 0.90, report
+    assert report["recall"] >= 0.90, report

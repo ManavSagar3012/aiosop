@@ -59,7 +59,14 @@ class ReportArtifactORM(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-engine = create_async_engine(settings.postgres_uri, echo=False)
+engine = create_async_engine(
+    settings.postgres_uri,
+    echo=False,
+    # AIOSOP-PG-PREPING-001: discard stale pooled connections before checkout so a
+    # long-idle reporting-mcp against a Postgres that restarted mid-engagement
+    # does not fail with asyncpg "connection is closed" on the audit chain.
+    pool_pre_ping=True,
+)
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 graph_memory: Optional[GraphMemory] = None
