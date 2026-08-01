@@ -115,3 +115,7 @@ pythonpath = ["src"]
 # (.github/workflows/ci.yml runs `pytest --cov=src/ai_osop --cov-fail-under=60`).
 # For a local coverage report: `pytest --cov=src/ai_osop --cov-report=term-missing`.
 addopts = "--timeout=120 --timeout-method=thread"
+markers = [
+    "integration: requires live Postgres / external services; skips when unavailable",
+]
+
