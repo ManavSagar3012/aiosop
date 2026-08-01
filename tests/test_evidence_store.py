@@ -82,3 +82,26 @@ async def test_record_chains_receipts_hmac(sa_engine, tmp_path):
     await store.record(_mk_receipt("rcpt-b"))
     r2 = await store.get("rcpt-b")
     assert r2.prev_receipt_hash == h1
+
+
+async def test_verify_chain_detects_tamper(sa_engine, tmp_path):
+    from sqlalchemy import update
+
+    from ai_osop.evidence.migrations import ensure_schema, exploit_receipts
+    from ai_osop.evidence.models import ExploitReceipt
+    from ai_osop.evidence.store import ReceiptStore
+    from ai_osop.safety.scope import AuditIntegrity
+
+    await ensure_schema(sa_engine)
+    store = ReceiptStore(sa_engine=sa_engine, integrity=AuditIntegrity(b"k-verify"), evidence_root=tmp_path)
+    for i, rid in enumerate(["ra-1", "ra-2", "ra-3"]):
+        await store.record(_mk_receipt(rid, eng="eng-t", vuln=f"v-{i}"))
+    assert await store.verify_chain("eng-t") is True
+
+    async with sa_engine.begin() as conn:
+        await conn.execute(
+            update(exploit_receipts)
+            .where(exploit_receipts.c.receipt_id == "ra-2")
+            .values(verdict="not_confirmed")
+        )
+    assert await store.verify_chain("eng-t") is False

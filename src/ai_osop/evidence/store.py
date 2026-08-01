@@ -124,3 +124,26 @@ class ReceiptStore:
         # Table column is created_at; model field is timestamp.
         data["timestamp"] = data.pop("created_at")
         return ExploitReceipt(**data)
+
+    async def verify_chain(self, engagement_id: str) -> bool:
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(exploit_receipts)
+                    .where(exploit_receipts.c.engagement_id == engagement_id)
+                    .order_by(exploit_receipts.c.created_at)
+                )
+            ).mappings().all()
+        prev = ""
+        for row in rows:
+            payload = {
+                "receipt_id": row["receipt_id"], "engagement_id": row["engagement_id"],
+                "vuln_id": row["vuln_id"], "approval_id": row["approval_id"],
+                "verdict": row["verdict"], "confidence": row["confidence"],
+                "scope_hash": row["scope_hash"], "oracle_signals": row["oracle_signals"],
+            }
+            if _sign_receipt_fields(self._integrity.signing_key, prev, payload) != row["integrity_sig"]:
+                return False
+            prev = row["integrity_sig"]
+        return True
+
