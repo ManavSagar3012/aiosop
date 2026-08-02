@@ -143,3 +143,42 @@ async def test_chain_hop_records_ledger_and_metrics():
     assert "ai_osop_a2_chain_steps_executed_total" in rendered
     assert "ai_osop_a2_chain_hop_seconds_count" in rendered
     assert "ai_osop_a2_chain_execution_seconds" in rendered
+
+
+@pytest.mark.asyncio
+async def test_executor_aborts_on_first_hop_failure():
+    from ai_osop.agents.base import AgentContext
+
+    ctx = MagicMock(spec=AgentContext)
+    ctx.agent_id = "exec-1"
+    ctx.agent_type = AgentType.ATTACK_CHAIN
+    ctx.session_id = "eng-c"
+    ctx.graph_memory = MagicMock()
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
+        "id": "chain-X",
+        "nodes": [
+            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+            {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
+            {"url": "https://c", "vuln": {"id": "v-3", "type": "rce", "payload": {}}},
+        ],
+    }])
+
+    class _Facade:
+        calls: int = 0
+        async def validate_exploit(self, endpoint, vuln_class, payload):
+            self.calls += 1
+            return {"validated": self.calls == 1}  # hop 1 ok; hop 2 fails
+
+    facade = _Facade()
+    from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
+
+    agent = ChainExecutorAgent(ctx)
+    agent._exploit = facade
+
+    task = Task(type="execute_exploit_chain", agent_type=AgentType.ATTACK_CHAIN, payload={}, engagement_id="eng-c")
+    out = await agent._execute(task)
+
+    assert facade.calls == 2                      # stopped before hop 3
+    assert len(out["chain_run"]) == 2
+    assert out["status"] == "chain_failed"
+    assert out.get("aborted_at_hop") == 1

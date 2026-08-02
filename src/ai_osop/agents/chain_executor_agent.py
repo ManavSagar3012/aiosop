@@ -87,6 +87,17 @@ class ChainExecutorAgent(BaseAgent):
                                 "result": result,
                             }
                         )
+                        # Fail-fast: a broken hop invalidates the rest of the chain
+                        # (later hops depend on the earlier foothold). Abort now and
+                        # surface where the chain broke instead of spraying payloads
+                        # at downstream endpoints under a false premise.
+                        if not bool(result.get("validated", False)):
+                            return {
+                                "status": "chain_failed",
+                                "chain_run": chain_run,
+                                "aborted_at_hop": idx,
+                                "chain_id": chain_id,
+                            }
                     except Exception as e:  # noqa: BLE001
                         if self.ledger is not None and vuln_id:
                             try:
@@ -105,11 +116,17 @@ class ChainExecutorAgent(BaseAgent):
                                 "error": str(e),
                             }
                         )
+                        return {
+                            "status": "chain_failed",
+                            "chain_run": chain_run,
+                            "aborted_at_hop": idx,
+                            "chain_id": chain_id,
+                        }
                     finally:
                         metrics_a2.chain_hop_seconds(time.time() - hop_started, chain_id, str(idx))
         if chain_run and all(entry.get("validated") for entry in chain_run if "validated" in entry):
             metrics_a2.chain_success(chain_id, len(chain_run))
-        return {"status": "success", "chain_run": chain_run}
+        return {"status": "success", "chain_run": chain_run, "chain_id": chain_id}
 
     async def _cleanup_resources(self) -> None:
         pass
