@@ -280,7 +280,6 @@ def _build_receipt_store_if_enabled(sa_engine, integrity):
 
 
 @asynccontextmanager
-@asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
     import logging
