@@ -207,7 +207,7 @@ class GraphMemory:
             return
         await _sink.enqueue_outbox(entity_type, entity_id, payload)
 
-    async def add_asset(self, asset: Asset) -> str:
+    async def add_asset(self, asset: Asset, _from_outbox: bool = False) -> str:
         """Add or update an Asset node. Post the write path through the outbox."""
         with trace_span(
             "neo4j.add_asset",
@@ -250,7 +250,11 @@ class GraphMemory:
                     record = await result.single()
                     return record["a.id"] if record else asset.id
             except Exception as neo_err:  # noqa: BLE001 - outbox durability net below
-                await self._enqueue_outbox("asset", asset.id, payload)
+                # _from_outbox guards the replay path: enqueue model_dump (round-trips
+                # into Asset(**payload) in the processor), and never re-enqueue during
+                # replay or the projector loops (AIOSOP-FINDINGS-OUTBOX).
+                if not _from_outbox:
+                    await self._enqueue_outbox("asset", asset.id, asset.model_dump(mode="json"))
                 logger.warning(
                     "asset_neo4j_write_failed_queued_for_replay id=%s error=%s",
                     asset.id,
@@ -258,7 +262,7 @@ class GraphMemory:
                 )
                 raise
 
-    async def add_endpoint(self, endpoint: Endpoint) -> str:
+    async def add_endpoint(self, endpoint: Endpoint, _from_outbox: bool = False) -> str:
         """Add or update an Endpoint node. Post the write through the outbox."""
         cypher = """
         MERGE (e:Endpoint {id: $id})
@@ -352,7 +356,13 @@ class GraphMemory:
                     await self.invalidate_graph_stats_cache(endpoint.engagement_id)
                     return record["id"] if record else endpoint.id
         except Exception as neo_err:  # noqa: BLE001 - outbox durability net below
-            await self._enqueue_outbox("endpoint", endpoint.id, payload)
+            # _from_outbox guards the replay path: enqueue model_dump (round-trips
+            # into Endpoint(**payload) in the processor), and never re-enqueue during
+            # replay or the projector loops (AIOSOP-FINDINGS-OUTBOX).
+            if not _from_outbox:
+                await self._enqueue_outbox(
+                    "endpoint", endpoint.id, endpoint.model_dump(mode="json")
+                )
             logger.warning(
                 "endpoint_neo4j_write_failed_queued_for_replay id=%s error=%s",
                 endpoint.id,

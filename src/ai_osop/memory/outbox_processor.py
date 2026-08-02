@@ -86,6 +86,32 @@ class OutboxProcessor:
                             )
                             await session.commit()
                             logger.info(f"Projected finding outbox entry {entry.id}")
+                        elif entry.entity_type == "endpoint":
+                            # AIOSOP-FINDINGS-OUTBOX: project a queued endpoint to
+                            # Neo4j. _from_outbox=True so projection can't re-enqueue.
+                            from ai_osop.core.models import Endpoint
+
+                            endpoint = Endpoint(**entry.payload)
+                            await self.graph_memory.add_endpoint(endpoint, _from_outbox=True)
+                            await session.execute(
+                                update(OutboxORM)
+                                .where(OutboxORM.id == entry.id)
+                                .values(processed=True)
+                            )
+                            await session.commit()
+                            logger.info(f"Projected endpoint outbox entry {entry.id}")
+                        elif entry.entity_type == "asset":
+                            from ai_osop.core.models import Asset
+
+                            asset = Asset(**entry.payload)
+                            await self.graph_memory.add_asset(asset, _from_outbox=True)
+                            await session.execute(
+                                update(OutboxORM)
+                                .where(OutboxORM.id == entry.id)
+                                .values(processed=True)
+                            )
+                            await session.commit()
+                            logger.info(f"Projected asset outbox entry {entry.id}")
                         else:
                             # Phase-1 issue #12: previously an unknown
                             # entity_type was silently skipped forever
