@@ -20,10 +20,11 @@ fields, parameter entities refused), so the only proof is the out-of-band hit.
 A blind SSRF that only performs an out-of-band request is likewise reported as a
 lead unless an OAST callback confirms it.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qsl, urlparse, urlencode, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
@@ -44,18 +45,37 @@ _TRAVERSAL_PAYLOADS = (
 # Signatures that only appear in the real target file — objective proof the
 # traversal resolved and the file was served back.
 _TRAVERSAL_MARKERS = (
-    "root:x:0:0",           # /etc/passwd first line
+    "root:x:0:0",  # /etc/passwd first line
     "root:x:0:0:root",
-    "daemon:x:1:1",         # /etc/passwd second line (defends against a partial
-    "[extensions]",         # win.ini
-    "[fonts]",              # win.ini
+    "daemon:x:1:1",  # /etc/passwd second line (defends against a partial
+    "[extensions]",  # win.ini
+    "[fonts]",  # win.ini
     "; for 16-bit app support",  # win.ini header comment
 )
 # Params that commonly name a file/path — used to prioritise, not restrict.
 _FILE_PARAM_HINTS = (
-    "file", "path", "page", "doc", "document", "name", "filename", "template",
-    "download", "load", "read", "dir", "folder", "url", "src", "img", "image",
-    "attachment", "report", "view", "include", "resource",
+    "file",
+    "path",
+    "page",
+    "doc",
+    "document",
+    "name",
+    "filename",
+    "template",
+    "download",
+    "load",
+    "read",
+    "dir",
+    "folder",
+    "url",
+    "src",
+    "img",
+    "image",
+    "attachment",
+    "report",
+    "view",
+    "include",
+    "resource",
 )
 
 
@@ -132,9 +152,25 @@ _REDIRECT_PAYLOADS = (
     "/\\osop-redirect-sentinel.example.net/pwn",
 )
 _REDIRECT_PARAM_HINTS = (
-    "url", "redirect", "redir", "next", "return", "returnto", "return_to",
-    "returnurl", "goto", "dest", "destination", "continue", "to", "out",
-    "target", "link", "forward", "callback", "redirect_uri",
+    "url",
+    "redirect",
+    "redir",
+    "next",
+    "return",
+    "returnto",
+    "return_to",
+    "returnurl",
+    "goto",
+    "dest",
+    "destination",
+    "continue",
+    "to",
+    "out",
+    "target",
+    "link",
+    "forward",
+    "callback",
+    "redirect_uri",
 )
 
 
@@ -172,7 +208,7 @@ async def detect_open_redirect(
     for hint in (allowlist_hints or [])[:4]:
         if not hint:
             continue
-        payloads.append(f"{_REDIRECT_SENTINEL}?x={hint}")   # sentinel host, hint as suffix
+        payloads.append(f"{_REDIRECT_SENTINEL}?x={hint}")  # sentinel host, hint as suffix
         payloads.append(f"https://{_REDIRECT_SENTINEL_HOST}/?x={hint}")
         payloads.append(f"https://{_REDIRECT_SENTINEL_HOST}/{hint}")
 
@@ -187,8 +223,12 @@ async def detect_open_redirect(
             if r.status_code not in (301, 302, 303, 307, 308):
                 continue
             loc = r.headers.get("location") or r.headers.get("Location") or ""
-            host = urlparse(loc if "://" in loc else "http:" + loc if loc.startswith("//") else loc).netloc.lower()
-            if _REDIRECT_SENTINEL_HOST in loc.lower() and _REDIRECT_SENTINEL_HOST in (host or loc.lower()):
+            host = urlparse(
+                loc if "://" in loc else "http:" + loc if loc.startswith("//") else loc
+            ).netloc.lower()
+            if _REDIRECT_SENTINEL_HOST in loc.lower() and _REDIRECT_SENTINEL_HOST in (
+                host or loc.lower()
+            ):
                 return {
                     "technique": "open_redirect",
                     "endpoint": url,
@@ -214,9 +254,31 @@ _SSRF_PROBES = (
     ("file:///c:/windows/win.ini", ("[extensions]", "[fonts]")),
 )
 _SSRF_PARAM_HINTS = (
-    "url", "uri", "link", "src", "source", "target", "dest", "fetch", "load",
-    "image", "img", "avatar", "callback", "webhook", "feed", "proxy", "path",
-    "download", "remote", "endpoint", "host", "site", "domain", "next", "data",
+    "url",
+    "uri",
+    "link",
+    "src",
+    "source",
+    "target",
+    "dest",
+    "fetch",
+    "load",
+    "image",
+    "img",
+    "avatar",
+    "callback",
+    "webhook",
+    "feed",
+    "proxy",
+    "path",
+    "download",
+    "remote",
+    "endpoint",
+    "host",
+    "site",
+    "domain",
+    "next",
+    "data",
 )
 
 
@@ -327,7 +389,9 @@ async def detect_xxe(
     for body, markers, root, field in attempts:
         try:
             r = await client.request(
-                method, url, content=body,
+                method,
+                url,
+                content=body,
                 headers={"Content-Type": "application/xml", "Accept": "application/xml, */*"},
             )
         except Exception:
@@ -420,19 +484,212 @@ async def plant_blind_xxe(
                 continue
             # Rebuild the body with the real callback URL now that we have it.
             body = next(
-                b for lb, b in _blind_xxe_bodies(probe.callback_url, root, field)
-                if lb == label
+                b for lb, b in _blind_xxe_bodies(probe.callback_url, root, field) if lb == label
             )
             try:
                 await client.request(
-                    method, url, content=body,
-                    headers={"Content-Type": "application/xml",
-                             "Accept": "application/xml, */*"},
+                    method,
+                    url,
+                    content=body,
+                    headers={"Content-Type": "application/xml", "Accept": "application/xml, */*"},
                 )
                 planted += 1
             except Exception:
                 continue
     return planted
+
+
+# ---------------------------------------------------------------------------
+# CRLF injection / HTTP response splitting (CWE-113)
+# ---------------------------------------------------------------------------
+# We smuggle a CR-LF sequence followed by a sentinel header into a reflected
+# request value (query param, or a redirect Location built from one). VALIDATED
+# only if the server splits our payload into a REAL, separate response header
+# carrying our unguessable marker — objective proof the value crossed the header
+# boundary. A value that is echoed into the body but never becomes a header is
+# not asserted (that is reflected-XSS territory, handled separately).
+_CRLF_HEADER = "x-osop-crlf"
+
+
+def _crlf_payloads(marker: str) -> Tuple[str, ...]:
+    inj = f"{_CRLF_HEADER}: {marker}"
+    return (
+        f"%0d%0a{inj}",  # standard URL-encoded CRLF
+        f"%0D%0A{inj}",  # upper-case hex
+        f"value%0d%0a{inj}",  # CRLF after a benign value prefix
+        f"%E5%98%8A%E5%98%8D{inj}",  # overlong-UTF8 CR/LF filter bypass
+        f"\r\n{inj}",  # raw (some clients/servers pass it through)
+    )
+
+
+async def detect_crlf_injection(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Inject a CRLF + sentinel-header sequence into each candidate GET param.
+    VALIDATED only if the response comes back carrying our injected header with
+    the exact unguessable marker — i.e. the value was split into the header
+    section (HTTP response splitting / header injection)."""
+    import os
+
+    q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+    candidate_params = list(params or []) or list(q)
+    if not candidate_params:
+        return None
+    marker = "osop" + os.urandom(6).hex()
+    for param in candidate_params:
+        for payload in _crlf_payloads(marker):
+            try:
+                target = _with_param(url, param, payload)
+                r = await client.get(target, follow_redirects=False)
+            except Exception:
+                continue
+            # httpx lower-cases header names; an injected header surfaces here only
+            # if the server actually emitted it (the split succeeded).
+            injected = r.headers.get(_CRLF_HEADER)
+            if injected and marker in injected:
+                return {
+                    "technique": "crlf_injection",
+                    "endpoint": url,
+                    "parameter": param,
+                    "payload": payload,
+                    "http_status": r.status_code,
+                    "injected_header": f"{_CRLF_HEADER}: {injected}"[:200],
+                    "proof": "attacker-controlled value was split into a new response header (CRLF)",
+                    "confidence": 1.0,
+                }
+    return None
+
+
+# ---------------------------------------------------------------------------
+# CORS misconfiguration (CWE-942 — permissive cross-origin resource sharing)
+# ---------------------------------------------------------------------------
+# The exploitable case is a server that REFLECTS an arbitrary Origin into
+# Access-Control-Allow-Origin *and* sets Access-Control-Allow-Credentials: true
+# (or trusts the special `null` origin with credentials). That lets any attacker
+# page read authenticated responses. A wildcard `*` WITHOUT credentials is the
+# intended public-API pattern and is NOT flagged — precision over noise.
+_CORS_SENTINEL_ORIGIN = "https://osop-cors-sentinel.example.net"
+
+
+async def detect_cors_misconfig(
+    client: httpx.AsyncClient,
+    url: str,
+    **_ignore: Any,
+) -> Optional[Dict[str, Any]]:
+    """Send an off-origin (and a `null`) Origin and confirm the server both
+    REFLECTS it into Access-Control-Allow-Origin and allows credentials — the
+    combination a browser will honour for a credentialed cross-site read."""
+    for origin in (_CORS_SENTINEL_ORIGIN, "null"):
+        try:
+            r = await client.get(url, headers={"Origin": origin})
+        except Exception:
+            continue
+        acao = (r.headers.get("access-control-allow-origin") or "").strip()
+        acac = (r.headers.get("access-control-allow-credentials") or "").strip().lower()
+        # Reflection of our exact origin (not a static wildcard) + credentials.
+        if acao == origin and acac == "true":
+            return {
+                "technique": "cors_misconfig",
+                "endpoint": url,
+                "parameter": "Origin",
+                "payload": f"Origin: {origin}",
+                "http_status": r.status_code,
+                "acao": acao,
+                "acac": acac,
+                "proof": (
+                    "server reflected an attacker-controlled Origin into "
+                    "Access-Control-Allow-Origin with Access-Control-Allow-Credentials:true"
+                ),
+                "confidence": 1.0,
+            }
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Reflected XSS (CWE-79) — in-band, unencoded-HTML-reflection class only
+# ---------------------------------------------------------------------------
+# We inject a unique tag-shaped marker and VALIDATE only when it is reflected
+# VERBATIM (angle brackets intact) inside an HTML response — i.e. the app writes
+# attacker input into the HTML stream without encoding, the precondition for
+# reflected XSS. If the marker comes back entity-encoded (&lt;osop…&gt;) or the
+# response is not HTML, nothing is asserted. DOM-only XSS (never in the HTTP body)
+# is out of scope here and is validated by the browser oracle instead.
+_XSS_PARAM_HINTS = (
+    "q",
+    "query",
+    "search",
+    "s",
+    "keyword",
+    "term",
+    "name",
+    "message",
+    "msg",
+    "comment",
+    "text",
+    "title",
+    "input",
+    "value",
+    "redirect",
+    "return",
+    "lang",
+    "callback",
+    "id",
+    "page",
+    "ref",
+    "utm_source",
+    "error",
+    "email",
+)
+
+
+async def detect_reflected_xss(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Inject a unique tag-shaped marker into each candidate GET param and confirm
+    it is reflected UNENCODED into an HTML response body (raw `<...>` preserved)."""
+    import os
+
+    q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+    candidate_params = list(params or []) or list(q)
+    if not candidate_params:
+        return None
+    # Rank hinted params first (cheaper time-to-signal), but try all.
+    candidate_params = sorted(
+        candidate_params,
+        key=lambda p: 0 if any(h == p.lower() or h in p.lower() for h in _XSS_PARAM_HINTS) else 1,
+    )
+    for param in candidate_params:
+        token = "osopxss" + os.urandom(5).hex()
+        marker = f"<{token}>"  # a tag that no framework emits
+        probe = f"\"'>{marker}"  # break out of attribute/tag first
+        try:
+            target = _with_param(url, param, probe)
+            r = await client.get(target)
+        except Exception:
+            continue
+        ctype = (r.headers.get("content-type") or "").lower()
+        if "html" not in ctype:
+            continue
+        body = r.text or ""
+        # VALIDATE only on verbatim (unencoded) reflection. If the app HTML-encoded
+        # the angle brackets, the marker will not appear and we correctly stay quiet.
+        if marker in body:
+            return {
+                "technique": "reflected_xss",
+                "endpoint": url,
+                "parameter": param,
+                "payload": probe,
+                "http_status": r.status_code,
+                "proof": "attacker-supplied HTML tag was reflected unencoded into an HTML response",
+                "confidence": 1.0,
+            }
+    return None
 
 
 if __name__ == "__main__":

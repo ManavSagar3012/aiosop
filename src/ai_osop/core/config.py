@@ -65,6 +65,8 @@ class VulnClass(str, Enum):
     RCE = "rce"
     LFI = "lfi"
     XXE = "xxe"
+    CRLF = "crlf"
+    CORS_MISCONFIG = "cors_misconfig"
     DESERIALIZATION = "deserialization"
     OAUTH2 = "oauth2"
     BROKEN_ACCESS_CONTROL = "broken_access_control"
@@ -425,24 +427,14 @@ class Settings(BaseSettings):
     session_memory_mcp_port: int = Field(
         default=8090, validation_alias="OSOP_SESSION_MEMORY_MCP_PORT"
     )
-    reporting_mcp_host: str = Field(
-        default="localhost", validation_alias="OSOP_REPORTING_MCP_HOST"
-    )
-    reporting_mcp_port: int = Field(
-        default=8092, validation_alias="OSOP_REPORTING_MCP_PORT"
-    )
+    reporting_mcp_host: str = Field(default="localhost", validation_alias="OSOP_REPORTING_MCP_HOST")
+    reporting_mcp_port: int = Field(default=8092, validation_alias="OSOP_REPORTING_MCP_PORT")
     attack_graph_mcp_host: str = Field(
         default="localhost", validation_alias="OSOP_ATTACK_GRAPH_MCP_HOST"
     )
-    attack_graph_mcp_port: int = Field(
-        default=8093, validation_alias="OSOP_ATTACK_GRAPH_MCP_PORT"
-    )
-    oast_mcp_host: str = Field(
-        default="localhost", validation_alias="OSOP_OAST_MCP_HOST"
-    )
-    oast_mcp_port: int = Field(
-        default=8099, validation_alias="OSOP_OAST_MCP_PORT"
-    )
+    attack_graph_mcp_port: int = Field(default=8093, validation_alias="OSOP_ATTACK_GRAPH_MCP_PORT")
+    oast_mcp_host: str = Field(default="localhost", validation_alias="OSOP_OAST_MCP_HOST")
+    oast_mcp_port: int = Field(default=8099, validation_alias="OSOP_OAST_MCP_PORT")
     # Recon
     recon_max_subdomains: int = 10000
     recon_nmap_top_ports: int = 1000
@@ -616,9 +608,15 @@ def assert_production_secrets() -> None:
     problems = []
     if (getattr(settings, "neo4j_password", "") or "") in _WEAK_SECRET_VALUES:
         problems.append("OSOP_NEO4J_PASSWORD is a weak/default value")
-    if not getattr(settings, "audit_secret_key", None) or getattr(settings, "audit_secret_key", "") in _WEAK_SECRET_VALUES:
+    if (
+        not getattr(settings, "audit_secret_key", None)
+        or getattr(settings, "audit_secret_key", "") in _WEAK_SECRET_VALUES
+    ):
         problems.append("OSOP_AUDIT_SECRET_KEY is missing or weak/default value")
-    if not getattr(settings, "jwt_secret", None) or getattr(settings, "jwt_secret", "") in _WEAK_SECRET_VALUES:
+    if (
+        not getattr(settings, "jwt_secret", None)
+        or getattr(settings, "jwt_secret", "") in _WEAK_SECRET_VALUES
+    ):
         problems.append("OSOP_JWT_SECRET is missing or weak/default value")
     if not problems:
         return
