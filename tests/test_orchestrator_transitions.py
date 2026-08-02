@@ -256,3 +256,131 @@ class TestResolveAutoNext:
         ]:
             result = await orch._resolve_auto_next("eng-1", phase, expected)
             assert result == expected, f"Failed for phase={phase}"
+
+
+# ── Phase-monitor manual-approval gate (Part II Task 19) ─────────────────────
+
+
+def _make_session(phase: EngagementPhase, engagement_id: str = "eng-1") -> MagicMock:
+    """Minimal SessionState stand-in for the monitor loop."""
+    session = MagicMock()
+    session.canonical_engagement_id = engagement_id
+    session.phase = phase.value
+    return session
+
+
+def _make_monitor_orch(current: EngagementPhase, next_phase: EngagementPhase, *, manual: bool):
+    """Orchestrator mock shaped for PhaseMonitor._auto_advance_phase.
+
+    The current phase's policy row auto-advances to ``next_phase`` and, when
+    ``manual`` is True, the NEXT phase row is gated (manual_approval=True).
+    Wires in the real approval coordinator so has_pending_approval /
+    approved_request_id consult the real _approval_requests store.
+    """
+    from ai_osop.orchestrator.approval_coordinator import ApprovalCoordinator
+    from ai_osop.orchestrator.phase_monitor import PhaseMonitor
+
+    orch = MagicMock()
+    orch._approval_requests = {}
+    orch.PHASE_POLICY = {
+        current: {"manual_approval": False, "auto_next": next_phase},
+        next_phase: {"manual_approval": manual, "auto_next": None},
+    }
+    orch._is_phase_complete = AsyncMock(return_value=True)
+    orch._resolve_auto_next = AsyncMock(return_value=next_phase)
+    orch._auto_transition_ready = MagicMock(return_value=True)
+    orch._auto_transition_failures = {}
+    orch.engagement_manager = MagicMock()
+    orch.engagement_manager.transition_phase = AsyncMock()
+    # No reasoning loop -> hypothesis gate skipped entirely.
+    orch.reasoning_loop = None
+
+    orch.approval_coordinator = ApprovalCoordinator(orch)
+    orch.approval_coordinator._raise_approval = AsyncMock()
+
+    monitor = PhaseMonitor(orch)
+    monitor._tick = 1
+    return orch, monitor
+
+
+class TestPhaseEntryApprovalGate:
+    """When the resolved auto-next phase is gated (manual_approval=True, e.g.
+    EXPLOITATION), the monitor must NOT call transition_phase. It must instead
+    surface an ApprovalRequest and hold the current phase until the operator
+    approves; on the tick where the approval has landed it proceeds."""
+
+    async def test_gate_raises_approval_and_does_not_transition(self):
+        from ai_osop.core.models import ApprovalRequest
+
+        orch, monitor = _make_monitor_orch(
+            EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION, manual=True
+        )
+        await monitor._auto_advance_phase(
+            _make_session(EngagementPhase.VULNERABILITY_DISCOVERY)
+        )
+
+        orch.engagement_manager.transition_phase.assert_not_called()
+        orch.approval_coordinator._raise_approval.assert_awaited_once()
+        request = orch.approval_coordinator._raise_approval.await_args.args[0]
+        assert isinstance(request, ApprovalRequest)
+        assert request.engagement_id == "eng-1"
+        assert request.action_type == "phase_transition"
+        assert EngagementPhase.EXPLOITATION.value in request.target
+
+    async def test_gate_dedupes_pending_approval_across_ticks(self):
+        """While an approval is pending, subsequent monitor ticks must not
+        raise duplicates and must still not transition."""
+        orch, monitor = _make_monitor_orch(
+            EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION, manual=True
+        )
+        session = _make_session(EngagementPhase.VULNERABILITY_DISCOVERY)
+
+        await monitor._auto_advance_phase(session)
+        first = orch.approval_coordinator._raise_approval.await_args.args[0]
+        # Operator has NOT decided yet; the request is registered as pending.
+        first.status = "pending"
+        orch._approval_requests[first.id] = first
+
+        monitor._tick += 1
+        await monitor._auto_advance_phase(session)
+
+        assert orch.approval_coordinator._raise_approval.await_count == 1  # no dupes
+        orch.engagement_manager.transition_phase.assert_not_called()
+
+    async def test_gate_proceeds_after_operator_approval(self):
+        """On the tick where the ApprovalRequest is approved, the monitor
+        transitions into EXPLOITATION and raises nothing new."""
+        orch, monitor = _make_monitor_orch(
+            EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION, manual=True
+        )
+        session = _make_session(EngagementPhase.VULNERABILITY_DISCOVERY)
+
+        await monitor._auto_advance_phase(session)
+        request = orch.approval_coordinator._raise_approval.await_args.args[0]
+        # Operator approves.
+        request.status = "approved"
+        request.operator_id = "operator-1"
+        orch._approval_requests[request.id] = request
+
+        monitor._tick += 1
+        await monitor._auto_advance_phase(session)
+
+        assert orch.approval_coordinator._raise_approval.await_count == 1
+        orch.engagement_manager.transition_phase.assert_awaited_once_with(
+            "eng-1", EngagementPhase.EXPLOITATION
+        )
+
+    async def test_ungated_next_phase_transitions_without_approval(self):
+        """manual_approval=False on the target row -> plain auto-advance,
+        no approval surfaced (existing behaviour unchanged)."""
+        orch, monitor = _make_monitor_orch(
+            EngagementPhase.RECONNAISSANCE,
+            EngagementPhase.VULNERABILITY_DISCOVERY,
+            manual=False,
+        )
+        await monitor._auto_advance_phase(_make_session(EngagementPhase.RECONNAISSANCE))
+
+        orch.approval_coordinator._raise_approval.assert_not_called()
+        orch.engagement_manager.transition_phase.assert_awaited_once_with(
+            "eng-1", EngagementPhase.VULNERABILITY_DISCOVERY
+        )
