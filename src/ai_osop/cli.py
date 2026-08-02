@@ -4,10 +4,7 @@ Command-line interface for operators to manage engagements,
 agents, and view results.
 """
 
-import asyncio
 import json
-import sys
-from typing import Optional
 
 import click
 import httpx

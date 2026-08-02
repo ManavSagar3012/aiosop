@@ -9,15 +9,11 @@ Middleware stack (applied in order, bottom = closest to request):
 
 from __future__ import annotations
 
-import time
-import uuid
 from typing import Optional
 
+import structlog
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import JSONResponse
-
-import structlog
 
 from ai_osop.core.telemetry import (
     RequestContext,
@@ -55,7 +51,8 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             operator = request.scope.get("operator", {})
             if isinstance(operator, dict):
                 user_id = operator.get("sub")
-        except Exception:
+        except Exception as e:
+            logger.warning("broad_exception_caught", error=str(e))
             pass
 
         # 3. Bind to contextvars and structlog
@@ -77,13 +74,14 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             ):
                 # 5. Process request
                 response = await call_next(request)
+
+                # 6. Attach request ID to response
+                response.headers["X-Request-ID"] = request_id
+
+            return response
         finally:
-            # 6. Attach request ID to response
-            response.headers["X-Request-ID"] = request_id
             # 7. Cleanup contextvars for this request
             RequestContext.clear()
-
-        return response
 
     @staticmethod
     def _extract_request_id(request: Request) -> str:

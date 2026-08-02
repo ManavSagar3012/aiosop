@@ -20,6 +20,17 @@ target_metadata = SessionMemoryBase.metadata
 
 config = context.config
 
+# AIOSOP-ALEMBIC-URL-001: the ini hardcoded a stale WSL host IP
+# (172.27.190.63:5432) that drifts per-boot and does not match where Postgres
+# actually listens on dev hosts (127.0.0.1:15432). Prefer the SAME runtime env
+# var the application uses so `alembic` always targets the real database; fall
+# back to the ini only when it is unset.
+import os
+
+_env_db_url = os.environ.get("OSOP_POSTGRES_URI")
+if _env_db_url:
+    config.set_main_option("sqlalchemy.url", _env_db_url)
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

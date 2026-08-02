@@ -77,6 +77,33 @@ async def test_evolve_population(engine) -> None:
     assert all(p.fitness_score >= 0.0 for p in evolved)
 
 
+@pytest.mark.parametrize(
+    "vuln_type,needle",
+    [
+        (VulnClass.LFI, "etc/passwd"),
+        (VulnClass.LFI, "php://filter"),
+        (VulnClass.XXE, "file:///etc/passwd"),
+        (VulnClass.RCE, "/etc/passwd"),
+    ],
+)
+def test_new_templates_available(engine, vuln_type, needle) -> None:
+    """Newly added exploit-class templates must be discoverable via get_payloads."""
+    payloads = engine.get_payloads(vuln_type)
+    assert payloads, f"no templates registered for {vuln_type}"
+    assert any(needle in p for p in payloads), f"{needle!r} missing from {vuln_type} templates"
+
+
+@pytest.mark.asyncio
+async def test_generate_population_for_lfi(engine) -> None:
+    context = {"target": "http://test.com", "engagement_id": "eng-1"}
+    population = await engine.generate_initial_population(
+        vuln_type=VulnClass.LFI, context=context, population_size=8
+    )
+    assert len(population) == 8
+    assert all(p.vuln_type == VulnClass.LFI for p in population)
+    assert any(p.strategy == "template" for p in population)
+
+
 @pytest.mark.asyncio
 async def test_waf_learning(engine) -> None:
     target = "http://waf-target.com"

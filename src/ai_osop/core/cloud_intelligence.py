@@ -3,7 +3,7 @@ V4.5 Cloud Intelligence Catalog
 Maps cloud resources to their potential risks and misconfigurations.
 """
 
-from typing import Any, Dict, List
+from typing import List
 
 
 class CloudRiskCatalog:

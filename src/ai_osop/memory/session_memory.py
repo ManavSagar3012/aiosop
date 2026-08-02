@@ -6,25 +6,23 @@ Manages session state, agent working memory, and checkpoints.
 
 import hashlib
 import json
-import pickle
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
+import structlog
 from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import MemoryException
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
-from ai_osop.core.telemetry import RequestContext
+from ai_osop.core.observability import record_postgres_latency, record_redis_latency
 from ai_osop.core.tracing import trace_span
 from ai_osop.reliability.retry import retry_with_backoff
-
-import structlog
 
 logger = structlog.get_logger("ai_osop.memory.session_memory")
 
@@ -64,7 +62,7 @@ class TaskORM(Base):
     scope_check = Column(Boolean, default=True)
     approval_required = Column(Boolean, default=False)
     status = Column(
-        String(16), index=True
+        String(32), index=True
     )  # pending, running, completed, failed, cancelled, awaiting_approval
     result = Column(JSON, nullable=True)
     retry_count = Column(Integer)
@@ -74,6 +72,27 @@ class TaskORM(Base):
     engagement_id = Column(String(64), index=True)
     assigned_agent_id = Column(String(64), nullable=True)
 
+
+
+class OutboxORM(Base):
+    __tablename__ = "outbox"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_type = Column(String(64), index=True)
+    entity_id = Column(String(64), index=True)
+    action = Column(String(32))
+    payload = Column(JSON)
+    processed = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    # Phase-1 issue #12: outbox had no retry counter / DLQ path, so a
+    # perpetually-failing entry re-attempted forever. attempt_count tracks
+    # how many times this entry has been processed; once it exceeds
+    # MAX_ATTEMPTS (default 10) the entry is marked dlq=True and the next
+    # processor tick emits a single dlq_full alert instead of looping.
+    # Defaults to 0 for backward compat with rows written by older code.
+    attempt_count = Column(Integer, default=0)
+    dlq = Column(Boolean, default=False, index=True)
+    last_error = Column(String(512), nullable=True)
 
 class SessionStateORM(Base):
     __tablename__ = "session_states"
@@ -105,6 +124,15 @@ class AuditLogORM(Base):
     context = Column(JSON)
     integrity_hash = Column(String(128))
     engagement_id = Column(String(64), index=True)
+    # Phase-1 issue #15: audit logs are now SOFT-deleted (archived=True) by the
+    # retention service instead of hard-deleted at a 7-day window. This keeps
+    # the row queryable for compliance audits while excluding it from active
+    # queries via the archived flag. Defaults to False for backward compat
+    # with rows written by older code; archived_at records when the soft-delete
+    # happened so an auditor can prove the log was retained past its retention
+    # window.
+    archived = Column(Boolean, default=False, index=True)
+    archived_at = Column(DateTime, nullable=True)
 
 
 class DLQEntryORM(Base):
@@ -120,21 +148,116 @@ class DLQEntryORM(Base):
     task_payload = Column(JSON)
     status = Column(String(32), index=True)  # pending_review, requeued, discarded
     operator_notes = Column(String(2048), nullable=True)
+    retry_count = Column(Integer, nullable=True)
     created_at = Column(DateTime)
-    resolved_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, nullable=True)
+
 
 class FindingCorpusORM(Base):
     __tablename__ = "finding_corpus"
 
     id = Column(String(64), primary_key=True)
-    original_finding_id = Column(String(64), index=True)
+    # UNIQUE (not merely indexed): upsert_corpus_finding relies on
+    # INSERT ... ON CONFLICT (original_finding_id), which Postgres only honors when
+    # a unique/exclusion constraint backs the conflict target. Without this the
+    # outcome-correcting re-sync (P2b) would raise at runtime or insert duplicates.
+    original_finding_id = Column(String(64), unique=True, index=True)
     category = Column(String(64), index=True)
     severity = Column(String(16))
-    outcome = Column(String(32), index=True) # accepted, duplicate, etc.
+    outcome = Column(String(32), index=True)  # accepted, duplicate, etc.
     payload = Column(JSON)
     engagement_id = Column(String(64), index=True)
     created_at = Column(DateTime)
     finalized_at = Column(DateTime)
+
+
+class _TimedPostgresSession:
+    """Wraps an async session context manager to record Postgres latency."""
+
+    def __init__(self, session, operation_name: str = "transaction"):
+        self._session = session
+        self._operation_name = operation_name
+        self._start = None
+
+    async def __aenter__(self):
+        self._start = time.perf_counter()
+        return await self._session.__aenter__()
+
+    async def __aexit__(self, *args):
+        result = await self._session.__aexit__(*args)
+        if self._start is not None:
+            record_postgres_latency(self._operation_name, time.perf_counter() - self._start)
+        return result
+
+
+class _TimedPostgresSessionMaker:
+    """Wraps sessionmaker to return timed sessions."""
+
+    def __init__(self, sessionmaker, operation_name: str = "transaction"):
+        self._sm = sessionmaker
+        self._operation_name = operation_name
+
+    def __call__(self, *args, **kwargs):
+        return _TimedPostgresSession(self._sm(*args, **kwargs), self._operation_name)
+
+
+def _wrap_redis_for_metrics(redis_client):
+    """Monkey-patch common Redis async methods to record latency metrics."""
+    import time as _time
+
+    methods = [
+        "get",
+        "set",
+        "rpush",
+        "lrange",
+        "keys",
+        "lrem",
+        "delete",
+        "ping",
+        "setnx",
+        "eval",
+        "hset",
+        "hgetall",
+        "hincrby",
+        "publish",
+        "zadd",
+        "zrange",
+        "zrem",
+        "hget",
+        "hdel",
+        "sadd",
+        "sismember",
+        "smembers",
+    ]
+    write_methods = {
+        "set",
+        "rpush",
+        "lrem",
+        "delete",
+        "setnx",
+        "hset",
+        "hincrby",
+        "publish",
+        "zadd",
+        "zrem",
+        "hdel",
+        "sadd",
+    }
+    for method_name in methods:
+        original = getattr(redis_client, method_name, None)
+        if original is None:
+            continue
+
+        async def _timed_wrapper(*args, __original=original, __name=method_name, **kwargs):
+            start = _time.perf_counter()
+            result = await __original(*args, **kwargs)
+            op_type = "write" if __name in write_methods else "read"
+            record_redis_latency(op_type, _time.perf_counter() - start)
+            return result
+
+        setattr(redis_client, method_name, _timed_wrapper)
+    return redis_client
+
 
 class SessionMemory:
     """
@@ -162,6 +285,7 @@ class SessionMemory:
             self._redis = redis.from_url(
                 settings.redis_uri, decode_responses=True, max_connections=50
             )
+            self._redis = _wrap_redis_for_metrics(self._redis)
             await self._redis.ping()
 
         await retry_with_backoff(
@@ -178,8 +302,8 @@ class SessionMemory:
             self._pg_engine = create_async_engine(
                 settings.postgres_uri, pool_size=20, max_overflow=10, echo=False
             )
-            self._async_session = sessionmaker(
-                self._pg_engine, class_=AsyncSession, expire_on_commit=False
+            self._async_session = _TimedPostgresSessionMaker(
+                sessionmaker(self._pg_engine, class_=AsyncSession, expire_on_commit=False)
             )
             # Verify connection by creating tables
             async with self._pg_engine.begin() as conn:
@@ -206,6 +330,7 @@ class SessionMemory:
             self._redis = redis.from_url(
                 settings.redis_uri, decode_responses=True, max_connections=50
             )
+            self._redis = _wrap_redis_for_metrics(self._redis)
             return self._redis
         try:
             await self._redis.ping()
@@ -215,6 +340,7 @@ class SessionMemory:
             self._redis = redis.from_url(
                 settings.redis_uri, decode_responses=True, max_connections=50
             )
+            self._redis = _wrap_redis_for_metrics(self._redis)
             return self._redis
 
     async def store_hot(self, key: str, value: Any, ttl: int = 3600) -> None:
@@ -238,11 +364,18 @@ class SessionMemory:
             r = await self._ensure_redis()
             await r.delete(key)
 
-    async def acquire_lock(self, lock_key: str, lock_value: str, ttl_seconds: int = 30) -> bool:
+    async def acquire_lock(
+        self,
+        lock_key: str,
+        lock_value: str = "locked",
+        ttl_seconds: int = 30,
+        ttl: Optional[int] = None,
+    ) -> bool:
         """Acquire a distributed Redis lock."""
+        actual_ttl = ttl if ttl is not None else ttl_seconds
         r = await self._ensure_redis()
         with trace_span("redis.acquire_lock", attributes={"ai_osop.redis.key": lock_key}):
-            result = await r.set(lock_key, lock_value, nx=True, ex=ttl_seconds)
+            result = await r.set(lock_key, lock_value, nx=True, ex=actual_ttl)
             return bool(result)
 
     async def release_lock(self, lock_key: str, lock_value: str) -> bool:
@@ -259,10 +392,39 @@ class SessionMemory:
             result = await r.eval(lua_script, 1, lock_key, lock_value)
             return bool(result)
 
+    # Redis-backed busy-agent set so the agent-claim survives process restarts and is
+    # shared across orchestrator workers (replaces the former in-memory _busy_agents).
+    _BUSY_AGENTS_KEY = "busy_agents"
+
+    async def add_busy_agent(self, agent_id: str) -> None:
+        """Mark an agent as busy (claimed)."""
+        r = await self._ensure_redis()
+        with trace_span("redis.add_busy_agent", attributes={"ai_osop.agent_id": agent_id}):
+            await r.sadd(self._BUSY_AGENTS_KEY, agent_id)
+
+    async def remove_busy_agent(self, agent_id: str) -> None:
+        """Release a busy agent claim."""
+        r = await self._ensure_redis()
+        with trace_span("redis.remove_busy_agent", attributes={"ai_osop.agent_id": agent_id}):
+            await r.srem(self._BUSY_AGENTS_KEY, agent_id)
+
+    async def is_busy_agent(self, agent_id: str) -> bool:
+        """Return whether an agent is currently claimed."""
+        r = await self._ensure_redis()
+        with trace_span("redis.is_busy_agent", attributes={"ai_osop.agent_id": agent_id}):
+            return bool(await r.sismember(self._BUSY_AGENTS_KEY, agent_id))
+
+    async def get_all_busy_agents(self) -> List[str]:
+        """Return all currently claimed agent IDs."""
+        r = await self._ensure_redis()
+        with trace_span("redis.get_all_busy_agents"):
+            members = await r.smembers(self._BUSY_AGENTS_KEY)
+            return [m.decode() if isinstance(m, bytes) else str(m) for m in members]
+
     async def store_session_state(self, state: SessionState) -> None:
         """Store active session state in Redis."""
         key = f"session:{state.session_id}"
-        await self.store_hot(key, state.model_dump(), ttl=86400)
+        await self.store_hot(key, state.model_dump(), ttl=settings.redis_session_ttl_hours * 3600)
 
     async def get_session_state(self, session_id: str) -> Optional[SessionState]:
         """Retrieve active session state from Redis."""
@@ -271,6 +433,66 @@ class SessionMemory:
             if data:
                 return SessionState(**data)
             return None
+
+    async def store_engagement_id_mapping(self, engagement_id: str, session_id: str) -> None:
+        """Store a Redis mapping from ``engagement_id`` → ``session_id``.
+
+        Agents pass ``engagement_id`` (e.g. ``juice-e2e-611e6a3d``) but the
+        session is stored under the full ``session_id``
+        (e.g. ``eng-20260716-juice-e2e-611e6a3d``). This index lets agents
+        resolve the right session without knowing the generated timestamp prefix.
+        """
+        await self.store_hot(
+            f"engagement:{engagement_id}",
+            session_id,
+            ttl=settings.redis_session_ttl_hours * 3600,
+        )
+
+    async def get_session_state_by_engagement_id(
+        self, engagement_id: str
+    ) -> Optional[SessionState]:
+        """Resolve a session state by ``engagement_id`` (scope.engagement_id).
+
+        Tries two strategies in order:
+          1. Look up ``engagement:{engagement_id}`` → ``session_id`` (the mapping
+             written by ``store_engagement_id_mapping`` at engagement creation).
+          2. If the mapping doesn't exist (e.g. the caller passed the full
+             ``session_id`` instead of the short ``scope.engagement_id``), try
+             ``get_session_state(engagement_id)`` directly as a fallback.
+
+        Returns ``None`` if both strategies fail.
+        """
+        session_id = await self.retrieve_hot(f"engagement:{engagement_id}")
+        if session_id:
+            # retrieve_hot returns deserialized JSON; for a plain string value it
+            # may return the string itself or a wrapped variant depending on Redis
+            # serializer. Normalize to str.
+            if not isinstance(session_id, str):
+                session_id = str(session_id)
+            return await self.get_session_state(session_id)
+
+        # Fallback: the caller may have passed the full session_id format
+        # (eng-YYYYMMDDHHMMSS-juice-e2e-xxxx) directly. Try it as a session key.
+        state = await self.get_session_state(engagement_id)
+        if state:
+            logger.info(
+                "session_mapping_fallback_used",
+                engagement_id=engagement_id,
+                session_id=engagement_id,
+                message="engagement→session mapping not found; "
+                "resolved by treating engagement_id as session_id directly",
+            )
+            return state
+
+        logger.warning(
+            "session_mapping_missing",
+            engagement_id=engagement_id,
+            message="No engagement→session mapping found and the engagement_id does not "
+            "match any known session. The security-bridge's scope will NOT be "
+            "initialized; targets may be incorrectly rejected as out of scope. "
+            "Ensure store_engagement_id_mapping is called at engagement creation.",
+        )
+        return None
 
     async def store_agent_state(
         self, agent_id: str, state: Dict[str, Any], ttl: int = 3600
@@ -296,10 +518,54 @@ class SessionMemory:
         return pubsub
 
     async def push_task_queue(self, queue_name: str, task: Dict[str, Any]) -> None:
-        """Push task to priority queue."""
+        """Push task to priority queue with adaptive scheduling (Sprint 9)."""
         with trace_span("redis.zadd", attributes={"ai_osop.redis.queue": queue_name}):
             r = await self._ensure_redis()
-            priority = task.get("priority", 5)
+
+            task_type = task.get("type", "")
+            # 1. Prerequisite tasks (priority 100)
+            if task_type in (
+                "map_workflow",
+                "full_recon",
+                "dns_enumeration",
+                "capture_authenticated_surface",
+                "replay_for_diff_auth",
+            ):
+                priority = 100
+            # 2. Lightweight reconnaissance / API discovery (priority 80)
+            elif task_type in (
+                "extract_har_api_inventory",
+                "api_discovery",
+                "technology_detection",
+            ):
+                priority = 80
+            # 3. Fast validation probes / lightweight scans (priority 60)
+            elif task_type in (
+                "csrf_scan",
+                "jwt_scan",
+                "saml_scan",
+                "takeover_scan",
+                "smuggling_scan",
+                "pollution_scan",
+                "websocket_scan",
+                "ssti_scan",
+                "ssrf_scan",
+                "upload_scan",
+            ):
+                priority = 60
+            # 4. Heavyweight confirmation scans / slow scans (priority 40)
+            elif task_type in (
+                "sqli_scan",
+                "xss_scan",
+                "nuclei_scan",
+                "burp_scan",
+            ):
+                priority = 40
+            else:
+                priority = task.get("priority", 5) * 10
+
+            # Update task object's priority property to reflect the adaptive scheduling
+            task["priority"] = priority
             await r.zadd(f"queue:{queue_name}", {json.dumps(task, default=str): priority})
 
     async def pop_task_queue(self, queue_name: str) -> Optional[Dict[str, Any]]:
@@ -381,11 +647,12 @@ class SessionMemory:
         ):
             import hmac
 
-            # Load the key - in production this would fetch from Vault using the path
-            # Fallback for dev/testing if not configured
-            secret_key = getattr(settings, "audit_secret_key", b"default-insecure-audit-key")
-            if isinstance(secret_key, str):
-                secret_key = secret_key.encode()
+            # SINGLE shared signing key (OSOP-P0-03): the audit chain is HMAC'd with the
+            # exact same key used for scope signatures, and it fail-closes in production
+            # when OSOP_AUDIT_SECRET_KEY is unset.
+            from ai_osop.core.config import scope_signing_key
+
+            secret_key = scope_signing_key()
 
             # Get the hash of the last event for the chain
             last_hash = None
@@ -399,10 +666,20 @@ class SessionMemory:
                 )
                 last_hash = last_event.scalar_one_or_none()
 
-            # Calculate integrity hash using HMAC with a secret key
-            # We match the chain format expected by scope.py
-            event_data = (
-                f"{event.event_id}:{event.timestamp.isoformat()}:{event.actor_id}:{event.event_type}"
+            # Calculate integrity hash using HMAC with a secret key.
+            # P1-018: Include the full canonical action and result JSON so that
+            # tampering with the event payload is detectable, not just metadata.
+            event_data = json.dumps(
+                {
+                    "event_id": event.event_id,
+                    "timestamp": event.timestamp.isoformat(),
+                    "actor_id": event.actor_id,
+                    "event_type": event.event_type,
+                    "action": event.action,
+                    "result": event.result,
+                },
+                sort_keys=True,
+                default=str,
             )
             if last_hash:
                 event_data = f"{last_hash}:{event_data}"
@@ -410,22 +687,24 @@ class SessionMemory:
             integrity_hash = hmac.new(secret_key, event_data.encode(), hashlib.sha256).hexdigest()
             event.integrity_hash = integrity_hash
 
+            # P1-018: wrap read + write in a single transaction so the chain is
+            # atomic and concurrent events for the same engagement don't race.
             async with self._async_session() as session:
-                stmt = insert(AuditLogORM).values(
-                    event_id=event.event_id,
-                    timestamp=event.timestamp,
-                    event_type=event.event_type,
-                    severity=event.severity,
-                    actor_type=event.actor_type,
-                    actor_id=event.actor_id,
-                    action=event.action,
-                    result=event.result,
-                    context=event.context,
-                    integrity_hash=integrity_hash,
-                    engagement_id=event.engagement_id,
-                )
-                await session.execute(stmt)
-                await session.commit()
+                async with session.begin():
+                    stmt = insert(AuditLogORM).values(
+                        event_id=event.event_id,
+                        timestamp=event.timestamp,
+                        event_type=event.event_type,
+                        severity=event.severity,
+                        actor_type=event.actor_type,
+                        actor_id=event.actor_id,
+                        action=event.action,
+                        result=event.result,
+                        context=event.context,
+                        integrity_hash=integrity_hash,
+                        engagement_id=event.engagement_id,
+                    )
+                    await session.execute(stmt)
 
     async def query_audit_log(
         self,
@@ -578,8 +857,11 @@ class SessionMemory:
 
     async def store_dlq_entry(self, entry: Any) -> None:
         """Persist DLQ entry to hot (Redis) + warm (Postgres) tier."""
-        from ai_osop.reliability.dlq import DLQEntry
-        with trace_span("postgres.store_dlq_entry", attributes={"ai_osop.dlq_id": entry.id, "ai_osop.engagement_id": entry.engagement_id}):
+
+        with trace_span(
+            "postgres.store_dlq_entry",
+            attributes={"ai_osop.dlq_id": entry.id, "ai_osop.engagement_id": entry.engagement_id},
+        ):
             # Hot tier (Redis cache)
             await self.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
             # Warm tier (Postgres)
@@ -597,15 +879,17 @@ class SessionMemory:
                         task_payload=entry.task_payload,
                         status=entry.status,
                         operator_notes=entry.operator_notes,
+                        retry_count=entry.retry_count,
                         created_at=entry.created_at,
-                        resolved_at=entry.resolved_at,
+                        updated_at=entry.updated_at,
                     )
                     .on_conflict_do_update(
                         index_elements=["id"],
                         set_={
                             "status": entry.status,
                             "operator_notes": entry.operator_notes,
-                            "resolved_at": entry.resolved_at,
+                            "retry_count": entry.retry_count,
+                            "updated_at": entry.updated_at,
                         },
                     )
                 )
@@ -615,6 +899,7 @@ class SessionMemory:
     async def get_dlq_entry(self, entry_id: str) -> Optional[Any]:
         """Retrieve DLQ entry from hot (Redis) falling back to warm (Postgres) tier."""
         from ai_osop.reliability.dlq import DLQEntry
+
         with trace_span("postgres.get_dlq_entry", attributes={"ai_osop.dlq_id": entry_id}):
             # 1. Hot tier check
             data = await self.retrieve_hot(f"dlq:{entry_id}")
@@ -623,7 +908,9 @@ class SessionMemory:
 
             # 2. Warm tier fallback
             async with self._async_session() as session:
-                result = await session.execute(select(DLQEntryORM).where(DLQEntryORM.id == entry_id))
+                result = await session.execute(
+                    select(DLQEntryORM).where(DLQEntryORM.id == entry_id)
+                )
                 orm = result.scalar_one_or_none()
                 if orm:
                     entry = DLQEntry(
@@ -637,8 +924,9 @@ class SessionMemory:
                         task_payload=orm.task_payload,
                         status=orm.status,
                         operator_notes=orm.operator_notes,
+                        retry_count=orm.retry_count,
                         created_at=orm.created_at,
-                        resolved_at=orm.resolved_at,
+                        updated_at=orm.updated_at,
                     )
                     # Cache back to Redis
                     await self.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
@@ -650,6 +938,7 @@ class SessionMemory:
     ) -> List[Any]:
         """List DLQ entries from warm tier (Postgres)."""
         from ai_osop.reliability.dlq import DLQEntry
+
         with trace_span("postgres.list_dlq_entries"):
             async with self._async_session() as session:
                 query = select(DLQEntryORM)
@@ -674,8 +963,9 @@ class SessionMemory:
                             task_payload=orm.task_payload,
                             status=orm.status,
                             operator_notes=orm.operator_notes,
+                            retry_count=orm.retry_count,
                             created_at=orm.created_at,
-                            resolved_at=orm.resolved_at,
+                            updated_at=orm.updated_at,
                         )
                     )
                 return entries
@@ -686,7 +976,10 @@ class SessionMemory:
             async with self._async_session() as session:
                 # Group by status to compute stats
                 from sqlalchemy import func
-                query = select(DLQEntryORM.status, func.count(DLQEntryORM.id)).group_by(DLQEntryORM.status)
+
+                query = select(DLQEntryORM.status, func.count(DLQEntryORM.id)).group_by(
+                    DLQEntryORM.status
+                )
                 result = await session.execute(query)
                 stats = {"pending": 0, "requeued": 0, "discarded": 0}
                 for status, count in result.all():
@@ -698,8 +991,17 @@ class SessionMemory:
                         stats["discarded"] = count
                 return stats
 
-    async def upsert_corpus_finding(self, finding_data: Dict[str, Any]) -> None:
-        """Upsert aggregated finding into Postgres corpus."""
+    async def upsert_corpus_finding(
+        self, finding_data: Dict[str, Any], outcome: str = "accepted"
+    ) -> None:
+        """Upsert an aggregated finding into the Postgres corpus.
+
+        ``outcome`` is the ground-truth submission result (accepted/rejected/
+        duplicate/...) that the calibration feedback loop learns from. It defaults
+        to ``"accepted"`` for the legacy accepted-only aggregator, and is updated
+        on conflict so a later outcome sync (e.g. an initial ``triaged`` that later
+        becomes ``rejected``) corrects the ground truth rather than being ignored.
+        """
         async with self._async_session() as session:
             stmt = (
                 insert(FindingCorpusORM)
@@ -708,7 +1010,7 @@ class SessionMemory:
                     original_finding_id=finding_data.get("id"),
                     category=finding_data.get("category"),
                     severity=finding_data.get("severity", "medium"),
-                    outcome="accepted",
+                    outcome=outcome,
                     payload=finding_data,
                     engagement_id=finding_data.get("engagement_id"),
                     created_at=datetime.utcnow(),
@@ -716,17 +1018,132 @@ class SessionMemory:
                 )
                 .on_conflict_do_update(
                     index_elements=["original_finding_id"],
-                    set_={"payload": finding_data, "finalized_at": datetime.utcnow()},
+                    # Update the mutable outcome signal + payload only. Deliberately
+                    # NOT category/severity: a later partial re-sync could carry a
+                    # null category and silently drop the row from every
+                    # WHERE category = ... calibration aggregate.
+                    set_={
+                        "outcome": outcome,
+                        "payload": finding_data,
+                        "finalized_at": datetime.utcnow(),
+                    },
                 )
             )
             await session.execute(stmt)
             await session.commit()
 
+    async def get_historical_success_rate(
+        self, finding_type: str, workflow_intent: Optional[str] = None
+    ) -> float:
+        """Empirical success rate for a finding type, from real submission outcomes.
+
+        This is the learning signal the confidence calibration engine consumes
+        (P2b feedback loop): it turns finalized ``finding_corpus`` outcomes into a
+        probability that a finding of ``finding_type`` is genuinely valid, so
+        confidence self-corrects as real engagements accumulate ground truth.
+
+        Outcome classification (HackerOne/Bugcrowd vocabulary):
+          - valid (numerator):   accepted, paid, triaged, duplicate
+          - invalid:             rejected, na, informative
+        A ``duplicate`` still counts as a true positive — the detection was
+        correct, someone else merely reported it first.
+
+        Returns ``0.5`` (neutral — the value the calibration engine treats as
+        "no signal") when there is no data or the warm tier is unavailable, so a
+        cold start never skews scoring and a DB hiccup never breaks calibration.
+        ``workflow_intent`` is accepted for forward-compatibility; the corpus does
+        not yet carry an intent column, so it is not used as a filter today.
+        """
+        if self._async_session is None:
+            return 0.5
+
+        _VALID = {"accepted", "paid", "triaged", "duplicate"}
+        _INVALID = {"rejected", "na", "informative"}
+
+        try:
+            with trace_span(
+                "postgres.get_historical_success_rate",
+                attributes={"ai_osop.finding_type": finding_type},
+            ):
+                async with self._async_session() as session:
+                    from sqlalchemy import func
+
+                    query = (
+                        select(FindingCorpusORM.outcome, func.count(FindingCorpusORM.id))
+                        .where(FindingCorpusORM.category == finding_type)
+                        .group_by(FindingCorpusORM.outcome)
+                    )
+                    result = await session.execute(query)
+
+                    valid = 0
+                    decided = 0
+                    for outcome, count in result.all():
+                        bucket = (outcome or "").lower()
+                        if bucket in _VALID:
+                            valid += count
+                            decided += count
+                        elif bucket in _INVALID:
+                            decided += count
+
+                    if decided == 0:
+                        return 0.5
+                    return valid / decided
+        except Exception as e:  # noqa: BLE001 - calibration signal is advisory
+            logger.warning("get_historical_success_rate failed for %s: %s", finding_type, e)
+            return 0.5
+
+    async def get_historical_outcome_counts(self, finding_type: str) -> tuple[int, int]:
+        """Return ``(n_valid, n_total)`` decided outcomes for a finding type.
+
+        The count-aware companion to :meth:`get_historical_success_rate`: the
+        calibration engine's Beta-Binomial path needs the SAMPLE SIZE, not just the
+        rate, so a class with 1 accept isn't treated like a class with 100. Same
+        HackerOne/Bugcrowd vocabulary; ``n_total`` counts only *decided* outcomes
+        (valid + invalid), ignoring undecided/unknown states. Returns ``(0, 0)`` on
+        cold start or a warm-tier hiccup so the engine falls back to its prior
+        instead of breaking.
+        """
+        if self._async_session is None:
+            return (0, 0)
+
+        _VALID = {"accepted", "paid", "triaged", "duplicate"}
+        _INVALID = {"rejected", "na", "informative"}
+        try:
+            with trace_span(
+                "postgres.get_historical_outcome_counts",
+                attributes={"ai_osop.finding_type": finding_type},
+            ):
+                async with self._async_session() as session:
+                    from sqlalchemy import func
+
+                    query = (
+                        select(FindingCorpusORM.outcome, func.count(FindingCorpusORM.id))
+                        .where(FindingCorpusORM.category == finding_type)
+                        .group_by(FindingCorpusORM.outcome)
+                    )
+                    result = await session.execute(query)
+                    valid = 0
+                    total = 0
+                    for outcome, count in result.all():
+                        bucket = (outcome or "").lower()
+                        if bucket in _VALID:
+                            valid += count
+                            total += count
+                        elif bucket in _INVALID:
+                            total += count
+                    return (valid, total)
+        except Exception as e:  # noqa: BLE001 - calibration signal is advisory
+            logger.warning("get_historical_outcome_counts failed for %s: %s", finding_type, e)
+            return (0, 0)
+
     # ============== TASKS ==============
 
     async def store_task(self, task: Task) -> None:
         """Persist task to hot + warm tier."""
-        with trace_span("postgres.store_task", attributes={"ai_osop.task_id": task.id, "ai_osop.engagement_id": task.engagement_id}):
+        with trace_span(
+            "postgres.store_task",
+            attributes={"ai_osop.task_id": task.id, "ai_osop.engagement_id": task.engagement_id},
+        ):
             # Hot tier (Redis)
             await self.store_hot(f"task:{task.id}", task.model_dump(), ttl=86400 * 7)
             # Warm tier (Postgres)
@@ -738,14 +1155,22 @@ class SessionMemory:
                         type=task.type,
                         priority=task.priority,
                         agent_type=task.agent_type.value,
-                        payload=task.payload,
+                        payload=(
+                            json.loads(json.dumps(task.payload, default=str))
+                            if task.payload
+                            else {}
+                        ),
                         dependencies=task.dependencies,
                         max_retries=task.max_retries,
                         timeout_seconds=task.timeout_seconds,
                         scope_check=task.scope_check,
                         approval_required=task.approval_required,
                         status=task.status,
-                        result=task.result,
+                        result=(
+                            json.loads(json.dumps(task.result, default=str))
+                            if task.result
+                            else None
+                        ),
                         retry_count=task.retry_count,
                         created_at=task.created_at,
                         started_at=task.started_at,
@@ -757,7 +1182,11 @@ class SessionMemory:
                         index_elements=["id"],
                         set_={
                             "status": task.status,
-                            "result": task.result,
+                            "result": (
+                                json.loads(json.dumps(task.result, default=str))
+                                if task.result
+                                else None
+                            ),
                             "retry_count": task.retry_count,
                             "started_at": task.started_at,
                             "completed_at": task.completed_at,
@@ -766,6 +1195,15 @@ class SessionMemory:
                     )
                 )
                 await session.execute(stmt)
+                # Transactional Outbox
+                outbox_entry = OutboxORM(
+                    entity_type="task",
+                    entity_id=task.id,
+                    action="upsert",
+                    payload=task.model_dump(mode="json"),
+                )
+                session.add(outbox_entry)
+
                 await session.commit()
 
     async def load_task(self, task_id: str) -> Optional[Task]:
@@ -805,9 +1243,16 @@ class SessionMemory:
         """Load all non-completed tasks from warm tier for recovery."""
         from ai_osop.core.config import AgentType
 
+        # AIOSOP-RECOVERY-AGE-001: bound resurrection to recent tasks. Without this,
+        # an abandoned engagement's non-terminal tasks are re-queued on EVERY restart
+        # and hijack the scanner-agent pool, starving live engagements.
+        cutoff = datetime.utcnow() - timedelta(hours=settings.recovery_max_age_hours)
         async with self._async_session() as session:
             result = await session.execute(
-                select(TaskORM).where(TaskORM.status.notin_(["completed", "failed", "cancelled"]))
+                select(TaskORM).where(
+                    TaskORM.status.notin_(["completed", "failed", "cancelled"]),
+                    TaskORM.created_at >= cutoff,
+                )
             )
             tasks = []
             for orm in result.scalars():
@@ -873,8 +1318,70 @@ class SessionMemory:
         await self.store_session_state(state)
         return state
 
+    async def list_all_sessions(self) -> List[str]:
+        r = await self._ensure_redis()
+        return await r.keys("session:*")
+
+    async def list_all_tasks(self) -> List[str]:
+        r = await self._ensure_redis()
+        return await r.keys("task:*")
+
     async def close(self) -> None:
         if self._redis:
             await self._redis.close()
         if self._pg_engine:
             await self._pg_engine.dispose()
+
+    async def update_agent_heartbeat(self, agent_id: str, data: Dict[str, Any]) -> None:
+        """Update agent heartbeat with ownership and state.
+
+        Phase-1 issue #13: TTL MUST match HeartbeatManager's ttl=30
+        (memory/heartbeat.py:13). The prior ttl=60 created a split-brain
+        where whichever writer ran last set the TTL, so a crashed agent's
+        heartbeat lingered between 30-60s non-deterministically and
+        ``get_all_agents`` could report it as "alive" for up to twice the
+        intended window. Single source of truth: 30s, matching the
+        HeartbeatManager default.
+        """
+        if "last_seen" not in data:
+            data["last_seen"] = datetime.utcnow().isoformat()
+        await self.store_hot(f"agent:heartbeat:{agent_id}", data, ttl=30)
+
+    async def get_agent_heartbeat(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve agent heartbeat."""
+        return await self.retrieve_hot(f"agent:heartbeat:{agent_id}")
+
+    async def get_all_agents(self) -> Dict[str, Any]:
+        r = await self._ensure_redis()
+        keys = await r.keys("agent:*")
+        agents = {}
+        for key in keys:
+            if not key.startswith("agent:heartbeat:"):
+                data = await self.retrieve_hot(key)
+                agents[key.replace("agent:", "")] = data
+        return agents
+
+    async def find_tasks_by_agent(self, agent_id: str) -> List[Any]:
+        r = await self._ensure_redis()
+        task_keys = await r.keys("task:*")
+        tasks = []
+        for key in task_keys:
+            task = await self.retrieve_hot(key)
+            if task.get("assigned_agent_id") == agent_id:
+                tasks.append(task)
+        return tasks
+
+    async def update_agent_status(self, agent_id: str, status: str) -> None:
+        """Update agent status in Redis."""
+        key = f"agent:{agent_id}"
+        data = await self.retrieve_hot(key)
+        if data:
+            data["status"] = status
+            await self.store_hot(key, data)
+        else:
+            await self.store_hot(key, {"status": status})
+
+    async def release_lock_simple(self, key: str) -> None:
+        """Release a lock without ownership check (simple delete)."""
+        r = await self._ensure_redis()
+        await r.delete(f"lock:{key}")

@@ -12,7 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from ai_osop.core.config import settings
-from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.models import SessionState
 
 # ============== Pydantic Models for API ==============
 
@@ -121,7 +121,7 @@ async def verify_token(
          <that value> (constant-time equality).
       3. Otherwise, log CRITICAL and reject the request (dev fallback removed).
     """
-    if type(credentials).__name__ == "Depends":
+    if not isinstance(credentials, HTTPAuthorizationCredentials):
         credentials = None
     if not credentials and not token:
         raise HTTPException(status_code=403, detail="Not authenticated")
@@ -129,7 +129,6 @@ async def verify_token(
 
     if settings.jwt_secret:
         from jose import ExpiredSignatureError, JWTError, jwt
-
         decode_kwargs: Dict[str, Any] = {
             "key": settings.jwt_secret,
             "algorithms": [settings.jwt_algorithm],
@@ -193,6 +192,17 @@ async def assert_engagement_access(operator: Dict[str, Any], session_id: str) ->
             session = None
 
     if not session:
+        # Fallback: the caller may have passed the user-provided engagement_id
+        # rather than the generated session_id (e.g. task scheduling uses the
+        # same engagement_id the operator specified at creation time, but the
+        # orchestrator stores sessions under a unique session_id with a timestamp
+        # prefix like ``eng-20260713165205-{engagement_id}``).
+        for s in orch._sessions.values():
+            if getattr(s.scope, "engagement_id", None) == session_id:
+                session = s
+                break
+
+    if not session:
         raise HTTPException(status_code=404, detail="Engagement not found")
 
     role = operator.get("role", "")
@@ -247,5 +257,7 @@ def require_role(*allowed_roles: str):
 
 
 def update_active_agents(count: int) -> None:
-    """Update Prometheus-style active agents metric (placeholder)."""
-    pass
+    """Update Prometheus-style active agents metric."""
+    from ai_osop.core.metrics import ACTIVE_AGENTS
+
+    ACTIVE_AGENTS.set(count)

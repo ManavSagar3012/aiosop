@@ -1,6 +1,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+
 from ai_osop.core.config import AgentType
 from ai_osop.orchestrator.orchestrator import Orchestrator
 
@@ -33,12 +35,16 @@ async def test_multi_orchestrator_agent_locking():
     mem1 = MagicMock()
     mem1.acquire_lock = AsyncMock(side_effect=shared_mem.acquire_lock)
     mem1.release_lock = AsyncMock(side_effect=shared_mem.release_lock)
+    mem1.add_busy_agent = AsyncMock()
+    mem1.remove_busy_agent = AsyncMock()
     orch1 = Orchestrator(mem1, AsyncMock(), AsyncMock(), AsyncMock())
 
     # Orchestrator 2 setup
     mem2 = MagicMock()
     mem2.acquire_lock = AsyncMock(side_effect=shared_mem.acquire_lock)
     mem2.release_lock = AsyncMock(side_effect=shared_mem.release_lock)
+    mem2.add_busy_agent = AsyncMock()
+    mem2.remove_busy_agent = AsyncMock()
     orch2 = Orchestrator(mem2, AsyncMock(), AsyncMock(), AsyncMock())
 
     # Mock agent
@@ -66,10 +72,8 @@ async def test_multi_orchestrator_agent_locking():
     # Should be rejected because the Redis lock is already held by Orch 1!
     assert claimed_agent2 is None
 
-    # 3. Orchestrator 1 releases the agent
-    orch1._release_agent(agent_id)
-    # Await yield to let the fire-and-forget create_task execute
-    await asyncio.sleep(0.01)
+    # 3. Orchestrator 1 releases the agent (now an async method)
+    await orch1._release_agent(agent_id)
 
     # Lock should be released
     assert f"lock:agent:{agent_id}" not in shared_mem.active_locks

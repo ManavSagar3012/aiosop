@@ -36,6 +36,24 @@ def test_scope_enforcer_valid_targets(dummy_scope):
     assert enforcer.validate_target("http://192.168.1.50:8080/") is True
 
 
+def test_scope_enforcer_normalizes_port_in_domain():
+    """A scope domain with a port ('localhost:3000') must match the URL host
+    ('localhost', port-stripped by urlparse) — else every in-scope browser
+    navigation is rejected. (AIOSOP-SCOPE-PORT regression: the autonomous login
+    probe failed with 'Domain localhost not in scope. Allowed: localhost:3000').
+    """
+    enforcer = ScopeEnforcer(ScopeDefinition(engagement_id="e", domains=["localhost:3000"], ips=[]))
+    assert enforcer.validate_target("http://localhost:3000/#/login") is True
+    assert enforcer.validate_target("http://localhost:3000/rest/user/login") is True
+    assert enforcer.validate_target("localhost") is True
+    assert enforcer.validate_target("localhost:3000") is True
+    assert enforcer.host_in_scope("localhost") is True
+    # scope-widening guard: a different host is still rejected
+    with pytest.raises(OutOfScopeError):
+        enforcer.validate_target("http://evil.com/")
+    assert enforcer.host_in_scope("evil.com") is False
+
+
 def test_scope_enforcer_invalid_targets(dummy_scope):
     enforcer = ScopeEnforcer(dummy_scope)
 

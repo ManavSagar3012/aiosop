@@ -3,14 +3,41 @@ AI-OSOP Shared Data Models
 Pydantic models for all cross-component communication.
 """
 
+import hashlib
+import hmac
 import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 
 from ai_osop.core.config import AgentType, Severity, VulnClass
+
+# ================= ID HELPERS =================
+
+
+def make_asset_id(engagement_id: str, value: str) -> str:
+    """
+    Return a stable, engagement-scoped asset ID that is safe against
+    cross-engagement Neo4j node collisions.
+
+    Two engagements targeting the same domain used to produce identical IDs
+    (``asset-{engagement_id}-{domain}``) because Neo4j MERGE matched on the
+    *full* id string, and engagement_id was sometimes reused in tests. This
+    function hashes both components together so the ID:
+      - Is deterministic for the same (engagement, value) pair (idempotent MERGE)
+      - Is unique across different engagements for the same value
+      - Stays human-readable with a short prefix
+
+    Format: ``asset-{eng8}-{val8}``
+      eng8 = first 8 hex chars of SHA-256(engagement_id)
+      val8 = first 8 hex chars of SHA-256(value.lower())
+    """
+    eng_hash = hashlib.sha256(engagement_id.encode()).hexdigest()[:8]
+    val_hash = hashlib.sha256(value.lower().encode()).hexdigest()[:8]
+    return f"asset-{eng_hash}-{val_hash}"
+
 
 # ================= BASE ENTITIES =================
 
@@ -64,6 +91,10 @@ class Endpoint(BaseModel):
 
     # Common
     confidence: float = Field(0.5, ge=0.0, le=1.0)
+    # Free-form enrichment (recon tags, template, first/last-seen, source hints).
+    # Previously several call sites passed metadata that pydantic silently dropped
+    # because this field did not exist; it is now retained.
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Vulnerability(BaseModel):
@@ -86,7 +117,39 @@ class Vulnerability(BaseModel):
     impact: str = "unknown"
     correlated_ids: List[str] = Field(default_factory=list)
     engagement_id: str
+    simulated: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    yield_metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    def is_simulated(self) -> bool:
+        """True if this finding is fabricated/mock rather than a real observation
+        (OSOP-P0-02). Used to keep simulated findings out of the real corpus, reports,
+        and headline metrics.
+
+        Evaluation order (exit on first True):
+          1. Explicit boolean field ``simulated`` (hardest to evade — set by
+             the producer).
+          2. tool_source heuristic: ``mock`` prefix, ``-sim`` suffix, or
+             ``simulated`` in the source name.
+          3. Title heuristic: ``(Simulated)`` marker in the title.
+          4. Evidence provenance: any evidence entry whose provenance is
+             ``simulated``.
+        """
+        # 1. Explicit boolean field — the most authoritative signal.
+        if self.simulated:
+            return True
+        # 2. String heuristic on tool_source (backward compat).
+        src = (self.tool_source or "").lower()
+        if "mock" in src or src.endswith("-sim") or "simulated" in src:
+            return True
+        # 3. Title heuristic.
+        if "(simulated)" in (self.title or "").lower():
+            return True
+        # 4. Evidence provenance heuristic.
+        for ev in self.evidence or []:
+            if isinstance(ev, dict) and str(ev.get("provenance", "")).lower() == "simulated":
+                return True
+        return False
 
 
 class Payload(BaseModel):
@@ -139,7 +202,7 @@ class AttackPath(BaseModel):
 class Task(BaseModel):
     id: str = Field(default_factory=lambda: f"task-{uuid.uuid4().hex[:12]}")
     type: str
-    priority: int = Field(5, ge=1, le=10)
+    priority: int = Field(5, ge=1, le=100)
     agent_type: AgentType
     payload: Dict[str, Any] = Field(default_factory=dict)
     dependencies: List[str] = Field(default_factory=list)
@@ -157,6 +220,7 @@ class Task(BaseModel):
     assigned_agent_id: Optional[str] = None
     # Sprint 6: trace context propagation across async boundaries
     trace_context: Dict[str, Any] = Field(default_factory=dict)
+    lease_expires: Optional[datetime] = None
 
 
 class ApprovalRequest(BaseModel):
@@ -187,6 +251,27 @@ class ScopeDefinition(BaseModel):
     testing_window_start: Optional[datetime] = None
     testing_window_end: Optional[datetime] = None
     authorization_ref: Optional[str] = None  # Path to signed ROE document
+    signature: Optional[str] = None  # Cryptographic signature for ScopeDefinition
+
+    def _signing_payload(self) -> str:
+        """Canonical representation of the scope-defining fields that are signed."""
+        return f"{self.engagement_id}:{','.join(self.domains)}:{','.join(self.ips)}"
+
+    def sign(self, secret_key: bytes) -> str:
+        """Compute and store the HMAC signature over the scope-defining fields.
+        Used at engagement creation so the manifest is tamper-evident (GAP-2-4)."""
+        self.signature = hmac.new(
+            secret_key, self._signing_payload().encode(), hashlib.sha256
+        ).hexdigest()
+        return self.signature
+
+    def verify_signature(self, secret_key: bytes) -> bool:
+        if not self.signature:
+            return False
+        expected_signature = hmac.new(
+            secret_key, self._signing_payload().encode(), hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(self.signature, expected_signature)
 
 
 class SessionState(BaseModel):
@@ -228,7 +313,7 @@ class DiffAuthFinding(BaseModel):
     evidence_diff: Dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0)
     # Sprint 7: Outcome Feedback
-    outcome: Optional[str] = None # e.g., "accepted", "duplicate", "informative", "na"
+    outcome: Optional[str] = None  # e.g., "accepted", "duplicate", "informative", "na"
     outcome_notes: Optional[str] = None
     outcome_at: Optional[datetime] = None
     engagement_id: str
@@ -319,14 +404,13 @@ class Observation(BaseModel):
 
 
 class OutcomeStatus(str, Enum):
-    PAID = "paid"
-    TRIAGED = "triaged"
-    SUBMITTED = "submitted"
-    VERIFIED = "verified"
-    # AIOSOP-AUDIT-2026-06-16: referenced by BugBountyAdapter.sync_outcomes for
-    # reports a program closes as not-applicable/duplicate/informative. Was missing,
-    # which would raise AttributeError on the live H1 sync path.
+    ACCEPTED = "accepted"
+    DUPLICATE = "duplicate"
+    INFORMATIVE = "informative"
+    NA = "na"
     REJECTED = "rejected"
+    TRIAGED = "triaged"
+    PAID = "paid"
 
 
 class OutcomeRecord(BaseModel):
@@ -357,6 +441,24 @@ class UncertaintyRecord(BaseModel):
     knowns: List[str] = Field(default_factory=list)
     unknowns: List[str] = Field(default_factory=list)
     blocked_paths: List[str] = Field(default_factory=list)
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Hypothesis(BaseModel):
+    """A testable security hypothesis inferred from observed engagement data."""
+
+    id: str = Field(default_factory=lambda: f"hyp-{uuid.uuid4().hex[:12]}")
+    title: str
+    description: str
+    category: str
+    target_id: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    supporting_entities: List[str] = Field(default_factory=list)
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    recommended_tests: List[str] = Field(default_factory=list)
+    recommended_skills: List[str] = Field(default_factory=list)
+    status: str = "open"
     engagement_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -429,6 +531,31 @@ class VerificationRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class EvidencePackage(BaseModel):
+    """A bundle of captured evidence backing a single finding.
+
+    Holds the raw artifacts (requests/responses/screenshots/workflow trace) plus an
+    optional ``replay_script`` — a self-contained command the ReplayabilityTruthEngine
+    can re-execute in a sandbox to prove the finding still reproduces. The integrity
+    hash pins the artifact set so tampering is detectable in a vault audit.
+    """
+
+    id: str = Field(default_factory=lambda: f"evp-{uuid.uuid4().hex[:12]}")
+    finding_id: str
+    engagement_id: str = ""
+    raw_requests: List[Any] = Field(default_factory=list)
+    raw_responses: List[Any] = Field(default_factory=list)
+    screenshots: List[str] = Field(default_factory=list)
+    workflow_trace: List[Any] = Field(default_factory=list)
+    # A replay command (argv list) executed verbatim in the sandbox. Kept as a
+    # concrete argv (not a shell string) so there is no shell-injection surface and
+    # the re-execution is deterministic.
+    replay_script: List[str] = Field(default_factory=list)
+    integrity_hash: str = ""
+    provenance: EvidenceProvenance = EvidenceProvenance.LIVE
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ProcessState(BaseModel):
     """A single state in a business-process state machine, used by the
     stateful-logic agent to model multi-step workflows (e.g. cart -> pay ->
@@ -465,3 +592,145 @@ class GraphQLSchema(BaseModel):
     introspection_enabled: bool
     engagement_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= PRIMITIVE LEDGER (Sprint 1.2) =================
+
+
+class PrimitiveType(str, Enum):
+    """Type taxonomy for raw signals entering the Primitive Ledger.
+
+    Every confirmed signal is stored as a typed Primitive rather than a
+    finding. The chain engine escalates from here; triager gate decides what
+    is eventually emitted as a finding.
+    """
+
+    NUCLEI_SIGNAL = "nuclei_signal"  # Nuclei template hit (unvalidated)
+    ENDPOINT_OBSERVED = "endpoint_observed"  # URL/endpoint seen in recon
+    AUTH_SIGNAL = "auth_signal"  # Auth anomaly (diff-auth engine output)
+    PORT_OPEN = "port_open"  # Open port from recon
+    DNS_RECORD = "dns_record"  # DNS/subdomain discovered
+    JS_SECRET = "js_secret"  # Potential secret extracted from JS
+    HEADER_ANOMALY = "header_anomaly"  # Suspicious response header
+    RATE_LIMIT_MISS = "rate_limit_miss"  # Endpoint has no rate limiting
+    REDIRECT_CHAIN = "redirect_chain"  # Interesting redirect sequence
+    SSRF_HINT = "ssrf_hint"  # Possible SSRF vector
+    IDOR_HINT = "idor_hint"  # Possible IDOR vector
+    GENERIC = "generic"  # Catch-all for unclassified signals
+
+
+class PrimitiveLedger(BaseModel):
+    """A single raw signal persisted as a typed Primitive node in Neo4j.
+
+    Design contract:
+      - Every tool output (Nuclei, recon, diff-auth, JS analysis) is a Primitive.
+      - Primitives are NEVER emitted as findings directly.
+      - The Escalation Engine queries the ledger to discover promotion paths.
+      - The Triager Gate decides if a chain is strong enough to emit a finding.
+      - Deduplication key = (engagement_id, primitive_type, dedup_key).
+        The dedup_key is caller-supplied and should be a stable fingerprint
+        of the signal (e.g. SHA-256 of url+template_id).
+
+    Fields:
+      raw        -- original tool output (JSON-serialisable dict)
+      confidence -- 0.0-1.0 from tool/scoring logic
+      source     -- tool that generated this (nuclei, recon_mcp, diff_auth, …)
+      tags       -- free-form enrichment tags for downstream querying
+    """
+
+    id: str = Field(default_factory=lambda: f"prim-{uuid.uuid4().hex[:12]}")
+    primitive_type: PrimitiveType
+    engagement_id: str
+    source: str  # e.g. "nuclei", "recon_mcp", "diff_auth"
+    dedup_key: str  # Stable fingerprint; drives MERGE in Neo4j
+    target: str  # URL, host, domain, port — the affected target
+    raw: Dict[str, Any] = Field(default_factory=dict)  # Original tool output
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    severity_hint: str = "info"  # "critical" | "high" | "medium" | "low" | "info"
+    tags: List[str] = Field(default_factory=list)
+    # Escalation linkage (populated by EscalationEngine)
+    escalated_from: Optional[str] = None  # parent prim-id if escalated
+    chain_id: Optional[str] = None  # chain-id if part of a chain
+    promoted_to_finding: bool = False  # True once TriagerGate emits a finding
+    finding_id: Optional[str] = None  # back-ref once promoted
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= TRIAGER GATE (Sprint 1.3) =================
+
+
+class TriageVerdict(str, Enum):
+    """Decision output from the Triager Gate."""
+
+    EMIT = "emit"  # Strong enough — emit as a finding
+    ESCALATE = "escalate"  # Signal found, needs more evidence first
+    DROP = "drop"  # Noise or duplicate — discard
+    NEEDS_POC = "needs_poc"  # Interesting but missing runnable PoC
+
+
+class TriageReport(BaseModel):
+    """Structured verdict from the Triager Gate for a single primitive chain."""
+
+    id: str = Field(default_factory=lambda: f"triage-{uuid.uuid4().hex[:12]}")
+    primitive_id: str
+    chain_id: Optional[str] = None
+    verdict: TriageVerdict
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    reasons: List[str] = Field(default_factory=list)  # human-readable rationale
+    blockers: List[str] = Field(default_factory=list)  # what prevented EMIT
+    reproducibility_score: float = Field(0.0, ge=0.0, le=1.0)
+    has_poc: bool = False
+    has_captured_evidence: bool = False
+    is_duplicate: bool = False
+    requires_manual_confirm: bool = False  # a detector flagged this as an unproven lead
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= ESCALATION (Sprint 2.1) =================
+
+
+class EscalationPath(BaseModel):
+    """One possible escalation step inferred by the Escalation Engine."""
+
+    id: str = Field(default_factory=lambda: f"esc-{uuid.uuid4().hex[:12]}")
+    source_primitive_id: str
+    suggested_technique: str  # e.g. "nuclei_verify", "burp_active_scan"
+    reason: str
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    required_skills: List[str] = Field(default_factory=list)
+    engagement_id: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ================= ATTACK CHAIN (Sprint 2.2 / 2.3) =================
+
+
+class ChainStatus(str, Enum):
+    BUILDING = "building"
+    PENDING_POC = "pending_poc"
+    VALIDATED = "validated"
+    EMITTED = "emitted"
+    DROPPED = "dropped"
+
+
+class AttackChain(BaseModel):
+    """An ordered sequence of Primitives representing a validated attack chain.
+
+    The Chain Composer assembles chains; the Auto-PoC generator populates
+    poc_script; the Triager Gate emits the finding once the chain is validated.
+    """
+
+    id: str = Field(default_factory=lambda: f"chain-{uuid.uuid4().hex[:12]}")
+    engagement_id: str
+    primitive_ids: List[str] = Field(default_factory=list)  # ordered chain
+    title: str = ""
+    description: str = ""
+    status: ChainStatus = ChainStatus.BUILDING
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    severity: str = "medium"
+    poc_script: List[str] = Field(default_factory=list)  # argv for replay
+    triage_report_id: Optional[str] = None
+    emitted_finding_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

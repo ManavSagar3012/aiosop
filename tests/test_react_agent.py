@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ai_osop.agents.base import AgentContext
-from ai_osop.agents.experimental.react_agent import ReactSpecialistAgent
+from ai_osop.agents.react_agent import ReactSpecialistAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 
@@ -95,8 +95,10 @@ async def test_react_agent_probe_components(agent) -> None:
     )
 
     result = await agent._execute(task)
-    assert result["status"] == "success"
-    assert result["msg"] == "Dynamic component probing initialized."
+    # Dynamic probing is not implemented; the agent reports this honestly
+    # instead of claiming a misleading "success" with no work performed.
+    assert result["status"] == "not_implemented"
+    assert result["findings_count"] == 0
 
 
 @pytest.mark.asyncio

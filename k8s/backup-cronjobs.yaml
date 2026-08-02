@@ -40,18 +40,9 @@ spec:
                 secretKeyRef:
                   name: ai-osop-secrets
                   key: postgres-uri
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: ai-osop-aws-credentials
-                  key: access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-osop-aws-credentials
-                  key: secret-access-key
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
+            # Sprint 6.5: IRSA replaces static AWS credentials
             resources:
               requests:
                 memory: "512Mi"
@@ -110,18 +101,9 @@ spec:
                 secretKeyRef:
                   name: ai-osop-secrets
                   key: neo4j-password
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: ai-osop-aws-credentials
-                  key: access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-osop-aws-credentials
-                  key: secret-access-key
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
+            # Sprint 6.5: IRSA replaces static AWS credentials
             resources:
               requests:
                 memory: "1Gi"
@@ -192,18 +174,9 @@ spec:
               value: "ai-osop-redis.ai-osop.svc.cluster.local"
             - name: REDIS_PORT
               value: "6379"
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: ai-osop-aws-credentials
-                  key: access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-osop-aws-credentials
-                  key: secret-access-key
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
+            # Sprint 6.5: IRSA replaces static AWS credentials
             resources:
               requests:
                 memory: "256Mi"

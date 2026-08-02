@@ -55,13 +55,14 @@ def chain_orch():
     graph_memory.task_has_spawned = AsyncMock(return_value=False)
     graph_memory.claim_auto_discovery = AsyncMock(return_value=True)
     graph_memory.upsert_task = AsyncMock()
+    graph_memory.run_write_query = AsyncMock()
 
     orch = Orchestrator(AsyncMock(), graph_memory, AsyncMock(), AsyncMock())
     orch.rate_limiter = AsyncMock()
     orch.session_store = AsyncMock()
     orch.schedule_task = AsyncMock()
     orch._audit_log = AsyncMock()
-    orch._gsession = gsession  # exposed for SPAWNED assertion
+    orch._gsession = gsession  # exposed for legacy assertions
     return orch
 
 
@@ -160,10 +161,10 @@ async def test_spawned_relationship_persisted(chain_orch):
 
     await chain_orch._chain_authenticated_surface(map_task, {"workflow_id": "wf-1"})
 
-    assert chain_orch._gsession.run.called
-    cypher = chain_orch._gsession.run.call_args.args[0]
+    assert chain_orch.graph_memory.run_write_query.called
+    cypher = chain_orch.graph_memory.run_write_query.call_args.args[0]
     assert "SPAWNED" in cypher
-    params = chain_orch._gsession.run.call_args.args[1]
+    params = chain_orch.graph_memory.run_write_query.call_args.args[1]
     assert params["parent_id"] == map_task.id
 
 

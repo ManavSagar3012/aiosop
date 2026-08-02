@@ -1,8 +1,35 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card } from '../components/shared/Card';
-import { Settings, Key, Database, Users, Shield, Cpu } from 'lucide-react';
+import { ErrorState } from '../components/shared/ErrorState';
+import { Settings, Shield, Cpu } from 'lucide-react';
+import { API_BASE, authHeaders } from '../services/api';
 
 export const Administration: React.FC = () => {
+  const [actionError, setActionError] = useState<{ message: string; retry: () => void } | null>(null);
+  const [engId, setEngId] = useState('');
+  const [phaseVal, setPhaseVal] = useState('');
+
+  const haltEngagement = () => {
+    if (!engId) return;
+    fetch(`${API_BASE}/engagements/${engId}/halt`, { method: 'POST', headers: authHeaders() })
+      .then(() => setActionError(null))
+      .catch(() => setActionError({ message: `Failed to halt engagement "${engId}".`, retry: haltEngagement }));
+  };
+
+  const transitionPhase = () => {
+    if (!engId || !phaseVal) return;
+    fetch(`${API_BASE}/engagements/${engId}/transition`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ phase: phaseVal }),
+    })
+      .then(() => setActionError(null))
+      .catch(() => setActionError({
+        message: `Failed to transition engagement "${engId}" to phase "${phaseVal}".`,
+        retry: transitionPhase,
+      }));
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-3 gap-6">
@@ -40,11 +67,11 @@ export const Administration: React.FC = () => {
         <Card title="Budget & Limits">
            <div className="space-y-4">
               <div className="flex flex-col gap-1">
-                 <span className="text-[9px] font-label-caps text-on-surface-variant">MAX ENGAGEMENT BUDGET (USD)</span>
+                 <span className="text-label-xs font-label-caps text-on-surface-variant">MAX ENGAGEMENT BUDGET (USD)</span>
                  <input type="text" defaultValue="500.00" className="bg-black border border-outline-variant text-secondary p-2 font-code-sm text-[14px]" />
               </div>
               <div className="flex flex-col gap-1">
-                 <span className="text-[9px] font-label-caps text-on-surface-variant">S2 ESCALATION THRESHOLD (EV)</span>
+                 <span className="text-label-xs font-label-caps text-on-surface-variant">S2 ESCALATION THRESHOLD (EV)</span>
                  <input type="text" defaultValue="7.5" className="bg-black border border-outline-variant text-secondary p-2 font-code-sm text-[14px]" />
               </div>
               <button className="w-full py-2 bg-primary-container text-on-primary-fixed font-label-caps text-[11px] hover:brightness-110 active:scale-95 transition-all">
@@ -91,7 +118,7 @@ export const Administration: React.FC = () => {
                   <div className="text-[10px] text-on-surface-variant italic uppercase mt-1">Target: 1,000 Events / Second</div>
                </div>
                <div className="flex gap-4">
-                  <button 
+                  <button
                     onClick={() => {
                         import('../services/load_test').then(m => m.loadTester.start(1000));
                     }}
@@ -99,7 +126,7 @@ export const Administration: React.FC = () => {
                   >
                     START STRESS TEST
                   </button>
-                  <button 
+                  <button
                     onClick={() => {
                         import('../services/load_test').then(m => m.loadTester.stop());
                     }}
@@ -124,19 +151,12 @@ export const Administration: React.FC = () => {
             </div>
             <div className="bg-black/40 p-4 border border-outline-variant border-dashed">
                <div className="text-on-surface-variant font-code-sm text-[10px] uppercase mb-2 tracking-widest">Active Knowledge Base Statistics</div>
-               <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col">
-                     <span className="text-primary text-[18px] font-code-sm">1,245</span>
-                     <span className="text-[9px] font-label-caps text-on-surface-variant">VALIDATED OUTCOMES</span>
-                  </div>
-                  <div className="flex flex-col">
-                     <span className="text-primary text-[18px] font-code-sm">842</span>
-                     <span className="text-[9px] font-label-caps text-on-surface-variant">FAILURE PATTERNS</span>
-                  </div>
-                  <div className="flex flex-col">
-                     <span className="text-primary text-[18px] font-code-sm">52</span>
-                     <span className="text-[9px] font-label-caps text-on-surface-variant">FINGERPRINTED STACKS</span>
-                  </div>
+               {/* Removed hardcoded placeholder KPIs (VALIDATED OUTCOMES=1,245,
+                   FAILURE PATTERNS=842, FINGERPRINTED STACKS=52) — they were fabricated
+                   constants with no backend source. Show an honest empty state until a
+                   live KB-stats endpoint is wired. */}
+               <div className="text-on-surface-variant font-code-sm text-[10px] opacity-60">
+                  No live knowledge-base metrics available yet.
                </div>
             </div>
          </div>
@@ -149,17 +169,27 @@ export const Administration: React.FC = () => {
         </Card>
         <Card title="Engagement Control Panel">
            <div className="flex flex-col gap-3">
-               <input type="text" placeholder="Engagement ID" className="w-full p-2 bg-black/40 border border-outline" id="eng-id-input" />
-               <button className="w-full py-2 border border-red-500 text-red-500 hover:bg-red-500/10 transition-all" onClick={() => {
-                   const id = (document.getElementById('eng-id-input') as HTMLInputElement).value;
-                   fetch(`${API_BASE}/engagements/${id}/halt`, { method: 'POST', headers: { 'Authorization': 'Bearer dev-token' }});
-               }}>HALT ENGAGEMENT</button>
-               <input type="text" placeholder="Phase (e.g., exploitation)" className="w-full p-2 bg-black/40 border border-outline" id="phase-input" />
-               <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all" onClick={() => {
-                   const id = (document.getElementById('eng-id-input') as HTMLInputElement).value;
-                   const phase = (document.getElementById('phase-input') as HTMLInputElement).value;
-                   fetch(`${API_BASE}/engagements/${id}/transition`, { method: 'POST', headers: { 'Authorization': 'Bearer dev-token' }, body: JSON.stringify({ phase })});
-               }}>TRANSITION PHASE</button>
+               {actionError && (
+                 <ErrorState message={actionError.message} onRetry={actionError.retry} />
+               )}
+               <input 
+                 type="text" 
+                 placeholder="Engagement ID" 
+                 className="w-full p-2 bg-black/40 border border-outline" 
+                 id="eng-id-input" 
+                 value={engId} 
+                 onChange={(e) => setEngId(e.target.value)} 
+               />
+               <button className="w-full py-2 border border-red-500 text-red-500 hover:bg-red-500/10 transition-all" onClick={haltEngagement}>HALT ENGAGEMENT</button>
+               <input 
+                 type="text" 
+                 placeholder="Phase (e.g., exploitation)" 
+                 className="w-full p-2 bg-black/40 border border-outline" 
+                 id="phase-input" 
+                 value={phaseVal} 
+                 onChange={(e) => setPhaseVal(e.target.value)} 
+               />
+               <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all" onClick={transitionPhase}>TRANSITION PHASE</button>
            </div>
         </Card>
       </div>

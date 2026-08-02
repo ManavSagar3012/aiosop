@@ -6,9 +6,7 @@
 import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { SwarmEvent } from './types';
-
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8081";
-const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://127.0.0.1:8081";
+import { API_BASE, WS_BASE, AUTH_TOKEN, authHeaders } from './api';
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error';
 
@@ -16,13 +14,15 @@ export class NetworkService {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
-  private reconnectDelay = 1000; // Start with 1s
+  private reconnectDelay = 1000;
   private status: ConnectionStatus = 'disconnected';
   private onStatusChange: (status: ConnectionStatus) => void;
-  private eventCount = 0;
+  private lastEventId: number = 0;
+  private eventBuffer: SwarmEvent[] = [];
   private lastLatency = 0;
   private eventThroughput = 0;
-  private throughputTimer: NodeJS.Timeout | null = null;
+  private eventCount = 0;
+  private throughputTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(onStatusChange: (status: ConnectionStatus) => void) {
     this.onStatusChange = onStatusChange;
@@ -33,9 +33,8 @@ export class NetworkService {
    * Initial Data Hydration from REST API
    */
   async hydrate(sessionId: string) {
-    console.log(`[Network] Hydrating session: ${sessionId}`);
     useIntelligenceStore.getState().setSessionId(sessionId);
-    const headers = { "Authorization": "Bearer dev-token" };
+    const headers = authHeaders();
     try {
       // 1. Session Info
       const sessionRes = await fetch(`${API_BASE}/engagements/${sessionId}`, { headers });
@@ -82,13 +81,11 @@ export class NetworkService {
    */
   connect(sessionId: string) {
     this.updateStatus('reconnecting');
-    console.log(`[Network] Connecting to WS: ${WS_BASE}/ws/engagements/${sessionId}`);
     
     try {
-      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}?token=dev-token`);
+      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}?token=${AUTH_TOKEN}`);
 
       this.ws.onopen = () => {
-        console.log("[Network] WS Connected");
         this.updateStatus('connected');
         this.reconnectAttempts = 0;
         this.reconnectDelay = 1000;
@@ -105,13 +102,11 @@ export class NetworkService {
       };
 
       this.ws.onclose = () => {
-        console.warn("[Network] WS Closed");
         this.updateStatus('disconnected');
         this.attemptReconnect(sessionId);
       };
 
-      this.ws.onerror = (e) => {
-        console.error("[Network] WS Error", e);
+      this.ws.onerror = () => {
         this.updateStatus('error');
       };
 
@@ -122,10 +117,13 @@ export class NetworkService {
   }
 
   private handleEvent(event: SwarmEvent) {
+    this.lastEventId = event.id || this.lastEventId;
+    this.eventBuffer.push(event);
+    if (this.eventBuffer.length > 100) this.eventBuffer.shift();
     const swarm = useSwarmStore.getState();
     const intel = useIntelligenceStore.getState();
 
-    // V5: Append everything to audit log for live timeline (excluding heartbeats for noise reduction)
+    // Append to audit log for live timeline (excluding heartbeats for noise reduction)
     if (event.event_type !== 'heartbeat') {
        const normalizedEntry = {
           id: `ws-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -143,7 +141,7 @@ export class NetworkService {
         swarm.setBudget(event.data);
         break;
       case 'finding_update':
-        intel.appendFinding(event.data);
+        intel.appendFinding(event.data as any);
         break;
       case 'mission_update':
         if (event.data.objective) swarm.setObjective(event.data.objective);
@@ -153,19 +151,22 @@ export class NetworkService {
         swarm.setPhase(event.data.new_phase || event.data.phase);
         break;
       case 'graph_update':
-        // Re-fetch graph data on update signal
         fetch(`${API_BASE}/engagements/${event.engagement_id}/graph`, {
-            headers: { "Authorization": "Bearer dev-token" }
+            headers: authHeaders()
         })
         .then(res => res.json())
         .then(data => intel.setGraphData(data))
         .catch(e => console.error("Failed to sync graph on update", e));
         break;
       case 'agent_observation':
-        // Update specific stores based on observation type
+        break;
+      case 'verification_update':
+        intel.appendVerification(event.data as any);
+        break;
+      case 'learning_update':
         break;
       case 'heartbeat':
-        this.lastLatency = event.data.latency_ms;
+        this.lastLatency = (event as any).data?.latency_ms || 0;
         break;
     }
   }
@@ -177,10 +178,9 @@ export class NetworkService {
     }
 
     this.reconnectAttempts++;
-    console.log(`[Network] Reconnecting in ${this.reconnectDelay}ms (Attempt ${this.reconnectAttempts})`);
     
     setTimeout(() => {
-      this.reconnectDelay *= 2; // Exponential backoff
+      this.reconnectDelay *= 2;
       this.connect(sessionId);
     }, this.reconnectDelay);
   }

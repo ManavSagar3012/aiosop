@@ -1,0 +1,7 @@
+{
+  "endpoint": "/health/metrics",
+  "code": 500,
+  "data": {
+    "error": "{\"detail\":\"Internal server error processing GET /health/metrics\",\"error_type\":\"AttributeError\"}"
+  }
+}

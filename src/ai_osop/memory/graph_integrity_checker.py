@@ -1,219 +1,186 @@
+"""Graph integrity checker — schema-drift and orphan-node detection.
+
+Two entry points:
+
+1. ``run_integrity_check(gm)`` — returns a structured ``IntegrityReport``
+   describing every orphan / ghost class. Used both by the CLI ``__main__``
+   block (pretty-prints the report) and by the orchestrator's background
+   integrity sweep (records metrics, never blocks startup).
+2. ``cleanup_orphan_vulnerabilities(gm)`` — archives (soft-deletes) orphan
+   Vulnerability and ghost Workflow nodes. Never hard-deletes.
+
+The orchestrator wires (1) into a periodic background task at startup so
+schema drift is detected at runtime, not only by a manual CLI run. The
+report is intentionally a typed dict (``IntegrityReport``) so callers can
+assert on it in tests without parsing stdout.
+"""
 import asyncio
-import sys
+import logging
+from typing import Any, Dict, List, Optional, TypedDict
 
 from ai_osop.memory.graph_memory import GraphMemory
 
+logger = logging.getLogger("ai_osop.memory.graph_integrity")
 
-async def run_integrity_check(gm: GraphMemory = None):
+
+class IntegrityReport(TypedDict):
+    """Structured result of ``run_integrity_check``.
+
+    Each field is the count of orphan / ghost nodes of that class. A clean
+    graph has every field == 0. The orchestrator's periodic sweep exports
+    these as Prometheus gauges (see orchestrator wiring).
+    """
+
+    ghost_workflows: int
+    orphan_steps: int
+    orphan_evidence: int
+    orphan_vulnerabilities: int
+    orphan_diff_auth_findings: int
+    orphan_exploits: int
+    orphan_replay_results: int
+    orphan_authorization_tests: int
+    orphan_workflow_bound_api_endpoints: int
+    archived_node_groups: int
+    total_issues: int
+
+
+# Each (label, predicate) pair: a Cypher fragment that identifies orphan nodes
+# of that label. Centralised so a new label is one row, not a copy-pasted
+# 10-line query block. The `archived IS NULL OR archived = false` guard means
+# soft-deleted nodes are NOT flagged (they are intentionally detached).
+_ORPHAN_QUERIES: Dict[str, str] = {
+    "ghost_workflows": """
+    MATCH (w:Workflow)
+    WHERE NOT (w)-[:HAS_STEP]->() AND NOT (w)-[:CALLED]->()
+      AND (w.archived IS NULL OR w.archived = false)
+    RETURN count(w) AS c
+    """,
+    "orphan_steps": """
+    MATCH (s:Step)
+    WHERE NOT ()-[:HAS_STEP]->(s) AND (s.archived IS NULL OR s.archived = false)
+    RETURN count(s) AS c
+    """,
+    "orphan_evidence": """
+    MATCH (e:Evidence)
+    WHERE NOT ()-[:HAS_EVIDENCE]->(e) AND (e.archived IS NULL OR e.archived = false)
+    RETURN count(e) AS c
+    """,
+    "orphan_vulnerabilities": """
+    MATCH (v:Vulnerability)
+    WHERE NOT ()-[:HAS_VULNERABILITY]->(v) AND (v.archived IS NULL OR v.archived = false)
+    RETURN count(v) AS c
+    """,
+    # PATCH (AIOSOP-AUDIT-2026-06-16): the previous REL-011 patch checked only
+    # `HAS_FINDING`, but live data shows DiffAuthFindings are linked via
+    # `PRODUCED` (AuthorizationTest->finding, 26/27) and `HAS_DIFF_AUTH_FINDING`
+    # (26/27); only 1/27 used `HAS_FINDING`. A finding is non-orphan if it
+    # has ANY of the three canonical inbound links. NOTE: HAS_FINDING has no
+    # producer in src/; kept in the filter to avoid breaking legacy paths.
+    "orphan_diff_auth_findings": """
+    MATCH (d:DiffAuthFinding)
+    WHERE NOT ()-[:PRODUCED]->(d)
+      AND NOT ()-[:HAS_DIFF_AUTH_FINDING]->(d)
+      AND NOT ()-[:HAS_FINDING]->(d)
+      AND (d.archived IS NULL OR d.archived = false)
+    RETURN count(d) AS c
+    """,
+    "orphan_exploits": """
+    MATCH (x:Exploit)
+    WHERE NOT ()-[:EXPLOITED_BY]->(x) AND (x.archived IS NULL OR x.archived = false)
+    RETURN count(x) AS c
+    """,
+    "orphan_replay_results": """
+    MATCH (rr:ReplayResult)
+    WHERE NOT ()-[:HAS_REPLAY]->(rr) AND (rr.archived IS NULL OR rr.archived = false)
+    RETURN count(rr) AS c
+    """,
+    "orphan_authorization_tests": """
+    MATCH (t:AuthorizationTest)
+    WHERE NOT ()-[:HAS_AUTH_TEST]->(t) AND (t.archived IS NULL OR t.archived = false)
+    RETURN count(t) AS c
+    """,
+    "orphan_workflow_bound_api_endpoints": """
+    MATCH (a:Endpoint {type: "api"})
+    WHERE a.workflow_id IS NOT NULL AND a.workflow_id <> ''
+      AND NOT ()-[:CALLED]->(a)
+      AND (a.archived IS NULL OR a.archived = false)
+    RETURN count(a) AS c
+    """,
+}
+
+
+async def run_integrity_check(
+    gm: Optional[GraphMemory] = None,
+    *,
+    emit_prints: bool = False,
+) -> IntegrityReport:
+    """Run every orphan-class query against the graph and return a structured
+    report.
+
+    ``emit_prints=True`` preserves the legacy CLI behaviour (pretty-prints the
+    report to stdout). The orchestrator's background sweep passes
+    ``emit_prints=False`` and consumes the typed dict instead — no stdout
+    parsing, no log noise on a healthy graph.
+
+    Safe to call against a graph with zero nodes: every query is a COUNT, so
+    a cold DB returns 0 for every field without raising.
+    """
     close_gm = False
     if gm is None:
         gm = GraphMemory()
         await gm.connect()
         close_gm = True
 
-    print("=== AI-OSOP Graph Integrity Report ===")
+    if emit_prints:
+        print("=== AI-OSOP Graph Integrity Report ===")
 
-    async with gm._driver.session() as session:
-        # 1. Ghost Workflows
-        # A Workflow is a ghost only if it has NEITHER a HAS_STEP (mapping) NOR a
-        # CALLED (API-inventory) edge. Checking HAS_STEP alone false-positives on
-        # inventory-only workflows that legitimately have only CALLED->APIEndpoint.
-        ghost_wf_query = """
-        MATCH (w:Workflow)
-        WHERE NOT (w)-[:HAS_STEP]->() AND NOT (w)-[:CALLED]->()
-          AND (w.archived IS NULL OR w.archived = false)
-        RETURN w.id as id, w.name as name, w.engagement_id as engagement_id
-        """
-        res = await session.run(ghost_wf_query)
-        ghost_wfs = [dict(r) async for r in res]
-        print(f"\n[!] Ghost Workflows (No Steps, Non-Archived): {len(ghost_wfs)}")
-        for w in ghost_wfs[:10]:
-            print(f"    - ID: {w['id']} | Name: {w['name']} | Engagement: {w['engagement_id']}")
-        if len(ghost_wfs) > 10:
-            print(f"    ... and {len(ghost_wfs) - 10} more")
+    report: Dict[str, Any] = {}
+    for key, q in _ORPHAN_QUERIES.items():
+        try:
+            rows = await gm.run_read_query(q)
+            count = int(rows[0]["c"]) if rows else 0
+        except Exception as e:
+            # A query failure (e.g. label missing on a fresh DB) must not sink
+            # the whole check — record -1 so the metric is visibly anomalous
+            # rather than silently zero.
+            logger.warning("graph_integrity_query_failed key=%s err=%s", key, e)
+            count = -1
+        report[key] = count
+        if emit_prints:
+            print(f"\n[!] {key}: {count}")
 
-        # 2. Orphan Steps
-        orphan_step_query = """
-        MATCH (s:Step)
-        WHERE NOT ()-[:HAS_STEP]->(s) AND (s.archived IS NULL OR s.archived = false)
-        RETURN s.id as id, s.engagement_id as engagement_id
-        """
-        res = await session.run(orphan_step_query)
-        orphan_steps = [dict(r) async for r in res]
-        print(f"\n[!] Orphan Steps (No parent Workflow, Non-Archived): {len(orphan_steps)}")
-        for s in orphan_steps[:10]:
-            print(f"    - ID: {s['id']} | Engagement: {s['engagement_id']}")
-        if len(orphan_steps) > 10:
-            print(f"    ... and {len(orphan_steps) - 10} more")
-
-        # 3. Orphan Evidence
-        orphan_ev_query = """
-        MATCH (e:Evidence)
-        WHERE NOT ()-[:HAS_EVIDENCE]->(e) AND (e.archived IS NULL OR e.archived = false)
-        RETURN e.id as id, e.type as type, e.path as path
-        """
-        res = await session.run(orphan_ev_query)
-        orphan_evs = [dict(r) async for r in res]
-        print(f"\n[!] Orphan Evidence (No parent Step, Non-Archived): {len(orphan_evs)}")
-        for e in orphan_evs[:10]:
-            print(f"    - ID: {e['id']} | Type: {e['type']} | Path: {e['path']}")
-        if len(orphan_evs) > 10:
-            print(f"    ... and {len(orphan_evs) - 10} more")
-
-        # 4. Orphan Vulnerabilities
-        orphan_vuln_query = """
-        MATCH (v:Vulnerability)
-        WHERE NOT ()-[:HAS_VULNERABILITY]->(v) AND (v.archived IS NULL OR v.archived = false)
-        RETURN v.id as id, v.title as title, v.engagement_id as engagement_id
-        """
-        res = await session.run(orphan_vuln_query)
-        orphan_vulns = [dict(r) async for r in res]
-        print(f"\n[!] Orphan Vulnerabilities (No Endpoint link, Non-Archived): {len(orphan_vulns)}")
-        for v in orphan_vulns[:10]:
-            print(f"    - ID: {v['id']} | Title: {v['title']} | Engagement: {v['engagement_id']}")
-        if len(orphan_vulns) > 10:
-            print(f"    ... and {len(orphan_vulns) - 10} more")
-
-        # 5. Orphan DiffAuthFindings
-        # PATCH (AIOSOP-AUDIT-2026-06-16): the previous REL-011 patch checked only
-        # `HAS_FINDING`, but live data shows DiffAuthFindings are linked via
-        # `PRODUCED` (AuthorizationTest->finding, 26/27) and `HAS_DIFF_AUTH_FINDING`
-        # (26/27); only 1/27 used `HAS_FINDING`. Checking HAS_FINDING alone produced
-        # 26 FALSE-POSITIVE orphans (runtime-verified). A finding is non-orphan if it
-        # has ANY of the three canonical inbound links.
-        # NOTE: HAS_FINDING has no producer in src/ (no persist method creates it);
-        # it is currently producer-less. Kept in the filter rather than removed to
-        # avoid breaking any out-of-tree/legacy path that may still emit it.
-        orphan_diff_query = """
-        MATCH (d:DiffAuthFinding)
-        WHERE NOT ()-[:PRODUCED]->(d)
-          AND NOT ()-[:HAS_DIFF_AUTH_FINDING]->(d)
-          AND NOT ()-[:HAS_FINDING]->(d)
-          AND (d.archived IS NULL OR d.archived = false)
-        RETURN d.id as id, d.category as category, d.engagement_id as engagement_id
-        """
-        res = await session.run(orphan_diff_query)
-        orphan_diffs = [dict(r) async for r in res]
-        print(
-            f"\n[!] Orphan DiffAuthFindings (No Endpoint/Resource link, Non-Archived): {len(orphan_diffs)}"
+    # Archived-node groups (informational; not an orphan count).
+    try:
+        archived_rows = await gm.run_read_query(
+            """
+            MATCH (n) WHERE n.archived = true
+            RETURN labels(n) AS labels, count(n) AS c
+            """
         )
-        for d in orphan_diffs[:10]:
-            print(
-                f"    - ID: {d['id']} | Category: {d['category']} | Engagement: {d['engagement_id']}"
-            )
-        if len(orphan_diffs) > 10:
-            print(f"    ... and {len(orphan_diffs) - 10} more")
+        archived_groups = sum(int(r["c"]) for r in archived_rows) if archived_rows else 0
+    except Exception:
+        archived_groups = 0
+    report["archived_node_groups"] = archived_groups
 
-        # 5b. Orphan Exploits (no inbound EXPLOITED_BY from a Vulnerability)
-        orphan_exploit_query = """
-        MATCH (x:Exploit)
-        WHERE NOT ()-[:EXPLOITED_BY]->(x) AND (x.archived IS NULL OR x.archived = false)
-        RETURN x.id as id, x.type as type, x.engagement_id as engagement_id
-        """
-        res = await session.run(orphan_exploit_query)
-        orphan_exploits = [dict(r) async for r in res]
-        print(
-            f"\n[!] Orphan Exploits (No Vulnerability link, Non-Archived): {len(orphan_exploits)}"
-        )
-        for x in orphan_exploits[:10]:
-            print(f"    - ID: {x['id']} | Type: {x['type']} | Engagement: {x['engagement_id']}")
-        if len(orphan_exploits) > 10:
-            print(f"    ... and {len(orphan_exploits) - 10} more")
+    # Sum only non-negative counts so a -1 (query failure) does not subtract
+    # from the total — it surfaces in its own field instead.
+    total = sum(v for k, v in report.items() if k != "archived_node_groups" and isinstance(v, int) and v > 0)
+    report["total_issues"] = total
 
-        # 5c. Orphan ReplayResults (no inbound HAS_REPLAY from an APIEndpoint)
-        orphan_replay_query = """
-        MATCH (rr:ReplayResult)
-        WHERE NOT ()-[:HAS_REPLAY]->(rr) AND (rr.archived IS NULL OR rr.archived = false)
-        RETURN rr.id as id, rr.endpoint_id as endpoint_id, rr.engagement_id as engagement_id
-        """
-        res = await session.run(orphan_replay_query)
-        orphan_replays = [dict(r) async for r in res]
-        print(
-            f"\n[!] Orphan ReplayResults (No APIEndpoint link, Non-Archived): {len(orphan_replays)}"
-        )
-        for rr in orphan_replays[:10]:
-            print(
-                f"    - ID: {rr['id']} | Endpoint: {rr['endpoint_id']} | Engagement: {rr['engagement_id']}"
-            )
-        if len(orphan_replays) > 10:
-            print(f"    ... and {len(orphan_replays) - 10} more")
-
-        # 5d. Orphan AuthorizationTests (no inbound HAS_AUTH_TEST from an APIEndpoint)
-        orphan_authtest_query = """
-        MATCH (t:AuthorizationTest)
-        WHERE NOT ()-[:HAS_AUTH_TEST]->(t) AND (t.archived IS NULL OR t.archived = false)
-        RETURN t.id as id, t.endpoint_id as endpoint_id, t.engagement_id as engagement_id
-        """
-        res = await session.run(orphan_authtest_query)
-        orphan_authtests = [dict(r) async for r in res]
-        print(
-            f"\n[!] Orphan AuthorizationTests (No APIEndpoint link, Non-Archived): {len(orphan_authtests)}"
-        )
-        for t in orphan_authtests[:10]:
-            print(
-                f"    - ID: {t['id']} | Endpoint: {t['endpoint_id']} | Engagement: {t['engagement_id']}"
-            )
-        if len(orphan_authtests) > 10:
-            print(f"    ... and {len(orphan_authtests) - 10} more")
-
-        # 5e. Workflow-bound APIEndpoints missing their CALLED edge.
-        # Only flag endpoints that claim a workflow (non-empty workflow_id) yet have
-        # no inbound CALLED — these lost their edge (parent Workflow absent at persist
-        # time). Inventory-only APIEndpoints (engagement_id set, no workflow_id) are
-        # legitimate and intentionally NOT flagged.
-        orphan_api_query = """
-        MATCH (a:Endpoint {type: "api"})
-        WHERE a.workflow_id IS NOT NULL AND a.workflow_id <> ''
-          AND NOT ()-[:CALLED]->(a)
-          AND (a.archived IS NULL OR a.archived = false)
-        RETURN a.id as id, a.workflow_id as workflow_id, a.engagement_id as engagement_id
-        """
-        res = await session.run(orphan_api_query)
-        orphan_apis = [dict(r) async for r in res]
-        print(
-            f"\n[!] Workflow-bound API Endpoints missing CALLED (Non-Archived): {len(orphan_apis)}"
-        )
-        for a in orphan_apis[:10]:
-            print(
-                f"    - ID: {a['id']} | Workflow: {a['workflow_id']} | Engagement: {a['engagement_id']}"
-            )
-        if len(orphan_apis) > 10:
-            print(f"    ... and {len(orphan_apis) - 10} more")
-
-        # 6. Archived count
-        archived_query = """
-        MATCH (n)
-        WHERE n.archived = true
-        RETURN labels(n) as labels, count(n) as count
-        """
-        res = await session.run(archived_query)
-        archived_nodes = [dict(r) async for r in res]
-        print(f"\n[+] Archived Nodes Count:")
-        for a in archived_nodes:
-            print(f"    - Labels: {a['labels']} | Count: {a['count']}")
+    if emit_prints:
+        print(f"\n=======================================")
+        print(f"Total graph integrity issues: {total}")
 
     if close_gm:
         await gm.close()
 
-    total_issues = (
-        len(ghost_wfs)
-        + len(orphan_steps)
-        + len(orphan_evs)
-        + len(orphan_vulns)
-        + len(orphan_diffs)
-        + len(orphan_exploits)
-        + len(orphan_replays)
-        + len(orphan_authtests)
-        + len(orphan_apis)
-    )
-    print(f"\n=======================================")
-    print(f"Total graph integrity issues: {total_issues}")
-    return total_issues
+    return report  # type: ignore[return-value]
 
 
-async def cleanup_orphan_vulnerabilities(gm: GraphMemory = None):
+async def cleanup_orphan_vulnerabilities(gm: Optional[GraphMemory] = None):
     """Archive orphans: vulnerabilities AND ghost workflows. Never deletes."""
-    print("=== Archiving Orphan Vulnerabilities + Ghost Workflows ===")
+    if emit_prints := True:  # legacy callers expect prints
+        print("=== Archiving Orphan Vulnerabilities + Ghost Workflows ===")
     close_gm = False
     if gm is None:
         gm = GraphMemory()
@@ -223,41 +190,46 @@ async def cleanup_orphan_vulnerabilities(gm: GraphMemory = None):
     cleaned_vulns = 0
     cleaned_workflows = 0
     try:
-        async with gm._driver.session() as session:
-            res = await session.run(
-                """
-                MATCH (v:Vulnerability)
-                WHERE NOT ()-[:HAS_VULNERABILITY]->(v) AND (v.archived IS NULL OR v.archived = false)
-                SET v.archived = true,
-                    v.cleanup_reason = 'orphan_vulnerability_no_endpoint_link',
-                    v.cleanup_timestamp = datetime()
-                RETURN count(v) as cleaned_count
-                """
-            )
-            record = await res.single()
-            cleaned_vulns = record["cleaned_count"] if record else 0
+        res = await gm.run_write_query(
+            """
+            MATCH (v:Vulnerability)
+            WHERE NOT ()-[:HAS_VULNERABILITY]->(v) AND (v.archived IS NULL OR v.archived = false)
+            SET v.archived = true,
+                v.cleanup_reason = 'orphan_vulnerability_no_endpoint_link',
+                v.cleanup_timestamp = datetime()
+            RETURN count(v) as cleaned_count
+            """
+        )
+        cleaned_vulns = res[0]["cleaned_count"] if res else 0
+        if emit_prints:
             print(f"[+] Archived {cleaned_vulns} orphan vulnerabilities.")
 
-            res = await session.run(
-                """
-                MATCH (w:Workflow)
-                WHERE NOT (w)-[:HAS_STEP]->() AND NOT (w)-[:CALLED]->()
-                  AND (w.archived IS NULL OR w.archived = false)
-                SET w.archived = true,
-                    w.cleanup_reason = 'ghost_workflow_no_steps_no_called',
-                    w.cleanup_timestamp = datetime()
-                RETURN count(w) as cleaned_count
-                """
-            )
-            record = await res.single()
-            cleaned_workflows = record["cleaned_count"] if record else 0
+        res = await gm.run_write_query(
+            """
+            MATCH (w:Workflow)
+            WHERE NOT (w)-[:HAS_STEP]->() AND NOT (w)-[:CALLED]->()
+              AND (w.archived IS NULL OR w.archived = false)
+            SET w.archived = true,
+                w.cleanup_reason = 'ghost_workflow_no_steps_or_called_edges',
+                w.cleanup_timestamp = datetime()
+            RETURN count(w) as cleaned_count
+            """
+        )
+        cleaned_workflows = res[0]["cleaned_count"] if res else 0
+        if emit_prints:
             print(f"[+] Archived {cleaned_workflows} ghost workflows.")
+    except Exception as e:
+        if emit_prints:
+            print(f"[!] Error during cleanup: {e}")
+        raise
 
-        return {"vulnerabilities": cleaned_vulns, "workflows": cleaned_workflows}
-    finally:
-        if close_gm:
-            await gm.close()
+    if close_gm:
+        await gm.close()
+
+    if emit_prints:
+        print("=== Cleanup Complete ===")
+    return cleaned_vulns, cleaned_workflows
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(run_integrity_check()))
+    asyncio.run(run_integrity_check(emit_prints=True))

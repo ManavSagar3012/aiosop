@@ -6,20 +6,28 @@ Scope enforcement, sandbox management, approval gates, and audit integrity.
 import hashlib
 import hmac
 import ipaddress
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
-from ai_osop.core.config import settings
-from ai_osop.core.exceptions import (
-    ApprovalDeniedError,
-    OutOfScopeError,
-    SandboxException,
-    ScopeValidationError,
-)
-from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition
 import structlog
 
+from ai_osop.core.config import settings
+from ai_osop.core.exceptions import OutOfScopeError, SandboxException, ScopeValidationError
+from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition
+
 logger = structlog.get_logger()
+
+# Strip a trailing ":<port>" from a host. Scope domains are host-based; a URL's
+# parsed hostname never carries the port, so an allowed domain stored WITH a port
+# (e.g. "localhost:3000") could never match the extracted host "localhost",
+# silently rejecting every in-scope browser navigation. Mirror the Go bridge's
+# SplitHostPort normalisation (cb19e3e) on the Python side. (AIOSOP-SCOPE-PORT)
+_PORT_SUFFIX = re.compile(r":\d+$")
+
+
+def _strip_port(host: str) -> str:
+    return _PORT_SUFFIX.sub("", host or "")
 
 
 class ScopeEnforcer:
@@ -34,7 +42,7 @@ class ScopeEnforcer:
 
     def __init__(self, scope: ScopeDefinition):
         self.scope = scope
-        self._allowed_domains: Set[str] = set(d.lower() for d in scope.domains)
+        self._allowed_domains: Set[str] = set(_strip_port(d.lower().strip()) for d in scope.domains)
         self._allowed_ips: List[ipaddress.ip_network] = [
             ipaddress.ip_network(ip) for ip in scope.ips
         ]
@@ -58,9 +66,10 @@ class ScopeEnforcer:
         if target in self._blocked_targets:
             raise OutOfScopeError(f"Target {target} is explicitly excluded from scope")
 
-        # Check if any exclusion is a substring
+        # Check exclusions first — exact match OR suffix match (e.g. *.evil.com blocks
+        # sub.evil.com but not notevil.com). Never use plain substring.
         for exclusion in self._blocked_targets:
-            if exclusion in target:
+            if target == exclusion or target.endswith(f".{exclusion}"):
                 raise OutOfScopeError(f"Target {target} matches excluded pattern: {exclusion}")
 
         # URL validation
@@ -81,16 +90,62 @@ class ScopeEnforcer:
         raise ScopeValidationError(f"Cannot determine target type for: {target}")
 
     def _is_domain(self, target: str) -> bool:
-        """Check if target is a domain name."""
-        return "." in target and not target.replace(".", "").isdigit()
+        """Check if target is a domain/hostname.
+
+        Accepts dotted FQDNs (example.com) *and* single-label hosts such as
+        "localhost" or internal service names. Bare IPv4/IPv6 literals are NOT
+        domains — the IP-validation path handles those. Previously single-label
+        hosts fell through to a ScopeValidationError even when explicitly in
+        scope, which broke localhost/internal-hostname engagements.
+        """
+        if not target:
+            return False
+        try:
+            ipaddress.ip_address(target)
+            return False  # bare IP literal -> handled by _validate_ip
+        except ValueError:
+            pass
+        return not target.replace(".", "").replace(":", "").isdigit()
 
     def _validate_domain(self, domain: str) -> bool:
         """Validate domain against scope."""
+        domain = _strip_port(domain)
         for allowed in self._allowed_domains:
             if domain == allowed or domain.endswith(f".{allowed}"):
                 return True
 
         raise OutOfScopeError(f"Domain {domain} not in scope. Allowed: {self._allowed_domains}")
+
+    def host_in_scope(self, host: str) -> bool:
+        """Non-recursive, non-raising in-scope check for a bare host or IP.
+
+        validate_target(url) recurses url -> host -> validate_target, which adds
+        stack frames on every call. In a deep async crawl loop that tipped the
+        recursion limit and silently dropped every in-scope endpoint. Callers in
+        hot loops should parse the host once and use this flat check instead.
+
+        Supports both domain-scoped and IP-range-scoped engagements.
+        """
+        h = (host or "").lower().strip()
+        if not h:
+            return False
+        for exclusion in self._blocked_targets:
+            if h == exclusion or h.endswith(f".{exclusion}"):
+                return False
+        # IP-based scope check (e.g. 10.0.0.0/24)
+        try:
+            ip = ipaddress.ip_address(h)
+            for network in self._allowed_ips:
+                if ip in network:
+                    return True
+            return False  # IP not in any allowed network
+        except ValueError:
+            pass  # not an IP, fall through to domain check
+        h = _strip_port(h)
+        for allowed in self._allowed_domains:
+            if h == allowed or h.endswith(f".{allowed}"):
+                return True
+        return False
 
     def _validate_ip(self, ip: ipaddress.ip_address) -> bool:
         """Validate IP against scope."""
@@ -200,7 +255,9 @@ class ApprovalGate:
 
         # Store in hot memory
         await self.session_memory.store_hot(
-            f"approval:{request.id}", request.model_dump(), ttl=settings.approval_timeout_seconds + 300
+            f"approval:{request.id}",
+            request.model_dump(),
+            ttl=settings.approval_timeout_seconds + 300,
         )
 
         return request
@@ -316,7 +373,8 @@ class SandboxManager:
         except Exception as e:
             try:
                 network.remove()
-            except Exception:
+            except Exception as e:
+                logger.warning("broad_exception_caught", error=str(e))
                 pass
             raise SandboxException(f"Failed to create sandbox container: {e}")
 
@@ -341,16 +399,19 @@ class SandboxManager:
                 # Cleanup on network setup failure
                 try:
                     del self._active_sandboxes[sandbox_id]
-                except Exception:
+                except Exception as e:
+                    logger.warning("broad_exception_caught", error=str(e))
                     pass
                 try:
                     container.stop(timeout=5)
                     container.remove(force=True)
-                except Exception:
+                except Exception as e:
+                    logger.warning("broad_exception_caught", error=str(e))
                     pass
                 try:
                     network.remove()
-                except Exception:
+                except Exception as e:
+                    logger.warning("broad_exception_caught", error=str(e))
                     pass
                 raise SandboxException(f"Failed to setup sandbox network filtering: {e}")
 
@@ -389,7 +450,7 @@ class SandboxManager:
             raise SandboxException(f"Sandbox network not found for container {container.id}")
 
         # Get bridge interface name from network ID
-        network_id = sandbox_network.get("NetworkID", "")
+        sandbox_network.get("NetworkID", "")
         bridge_name = f"br-{sandbox_id[:12]}"
 
         # 1. Resolve allowed domains to IPs
@@ -542,7 +603,8 @@ class SandboxManager:
             container = client.containers.get(sandbox["container_id"])
             container.stop(timeout=10)
             container.remove(force=True)
-        except Exception:
+        except Exception as e:
+            logger.warning("broad_exception_caught", error=str(e))
             pass
 
         # 3. Remove Docker network
@@ -551,7 +613,8 @@ class SandboxManager:
             try:
                 network = client.networks.get(network_id)
                 network.remove()
-            except Exception:
+            except Exception as e:
+                logger.warning("broad_exception_caught", error=str(e))
                 pass
 
 

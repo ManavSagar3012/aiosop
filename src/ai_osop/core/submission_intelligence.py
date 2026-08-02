@@ -1,9 +1,12 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
+
 import structlog
-from ai_osop.memory.graph_memory import GraphMemory
+
 from ai_osop.core.models import DiffAuthFinding
+from ai_osop.memory.graph_memory import GraphMemory
 
 logger = structlog.get_logger("ai_osop.submission_intelligence")
+
 
 class SubmissionIntelligenceEngine:
     """
@@ -21,14 +24,13 @@ class SubmissionIntelligenceEngine:
         MATCH (d:DiffAuthFinding {category: $category})
         RETURN d.outcome as outcome, count(d) as count
         """
-        async with self.graph_memory._driver.session() as session:
-            result = await session.run(cypher, {"category": category})
-            stats = {"accepted": 0, "duplicate": 0, "informative": 0, "na": 0}
-            async for record in result:
-                outcome = record["outcome"]
-                if outcome in stats:
-                    stats[outcome] = record["count"]
-            return stats
+        records = await self.graph_memory.run_read_query(cypher, {"category": category})
+        stats = {"accepted": 0, "duplicate": 0, "informative": 0, "na": 0}
+        for record in records:
+            outcome = record.get("outcome")
+            if outcome in stats:
+                stats[outcome] = record.get("count", 0)
+        return stats
 
     async def calculate_acceptance_probability(self, finding: DiffAuthFinding) -> float:
         """Calculate acceptance probability based on historical category performance."""
@@ -36,25 +38,25 @@ class SubmissionIntelligenceEngine:
         total = sum(stats.values())
         if total == 0:
             return 0.5  # Neutral baseline
-        
+
         # Bayesian-inspired simple probability
         acceptance_prob = stats.get("accepted", 0) / total
-        
+
         # Adjust by confidence
         return acceptance_prob * finding.confidence
 
     async def recommend_submission(self, finding: DiffAuthFinding) -> Dict[str, Any]:
         """Generate a submission recommendation for an operator."""
         prob = await self.calculate_acceptance_probability(finding)
-        
+
         recommendation = "monitor"
         if prob > 0.7:
             recommendation = "submit"
         elif prob > 0.4:
             recommendation = "verify_manually"
-        
+
         return {
             "acceptance_probability": round(prob, 2),
             "recommendation": recommendation,
-            "priority": "high" if prob > 0.7 else "medium"
+            "priority": "high" if prob > 0.7 else "medium",
         }

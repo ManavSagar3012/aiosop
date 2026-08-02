@@ -15,12 +15,29 @@ Returns exit code 0 if all pass, 1 if any fail.
 
 import asyncio
 import sys
+from datetime import datetime, timedelta
 
 import httpx
 
-API_BASE = "http://localhost:8200"
-TOKEN_A = "dev-token-a"
-TOKEN_B = "dev-token-b"
+# Add src to path
+sys.path.insert(0, "src")
+
+from jose import jwt  # noqa: E402
+from ai_osop.core.config import settings  # noqa: E402
+
+API_BASE = "http://127.0.0.1:8200"
+
+secret = settings.jwt_secret or "dev-jwt-secret"
+TOKEN_A = jwt.encode(
+    {"sub": "user-a", "role": "operator", "exp": datetime.utcnow() + timedelta(hours=1)},
+    secret,
+    algorithm="HS256",
+)
+TOKEN_B = jwt.encode(
+    {"sub": "user-b", "role": "operator", "exp": datetime.utcnow() + timedelta(hours=1)},
+    secret,
+    algorithm="HS256",
+)
 HEADERS_A = {"Authorization": f"Bearer {TOKEN_A}"}
 HEADERS_B = {"Authorization": f"Bearer {TOKEN_B}"}
 
@@ -55,7 +72,7 @@ async def test_cross_user_engagement_isolation() -> bool:
 
 
 async def test_cross_user_task_isolation() -> bool:
-    """User A cannot list User B's tasks."""
+    """User A cannot access User B's tasks."""
     session_b = await create_engagement(HEADERS_B, "b-tasks")
     if not session_b:
         print("  SKIP: Could not create engagement B")
@@ -63,7 +80,7 @@ async def test_cross_user_task_isolation() -> bool:
 
     # Create a task for B
     async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(
+        r = await client.post(
             f"{API_BASE}/tasks",
             json={
                 "task_type": "full_recon",
@@ -74,18 +91,20 @@ async def test_cross_user_task_isolation() -> bool:
             },
             headers=HEADERS_B,
         )
-
-        # User A tries to list tasks
-        r = await client.get(f"{API_BASE}/tasks", headers=HEADERS_A)
-        if r.status_code == 200:
-            tasks = r.json()
-            cross_tasks = [t for t in tasks if t.get("engagement_id") == session_b]
-            if not cross_tasks:
-                print("  PASS: User A cannot see User B's tasks")
-                return True
-            print(f"  FAIL: User A found {len(cross_tasks)} tasks from User B")
+        if r.status_code != 200:
+            print(f"  SKIP: Could not create task B (status {r.status_code})")
             return False
-        print(f"  FAIL: Unexpected status {r.status_code}")
+        task_id = r.json().get("id", "")
+        if not task_id:
+            print("  SKIP: Task B has no ID")
+            return False
+
+        # User A tries to get User B's task
+        r = await client.get(f"{API_BASE}/tasks/{task_id}", headers=HEADERS_A)
+        if r.status_code in (403, 404):
+            print("  PASS: User A cannot see User B's tasks")
+            return True
+        print(f"  FAIL: Expected 403/404, got {r.status_code}")
         return False
 
 

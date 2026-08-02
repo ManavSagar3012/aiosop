@@ -1,0 +1,33 @@
+{
+  "session_id": "eng-20260712032745-e2e-gj-20260712-032745",
+  "target": "ginandjuice.shop",
+  "timestamp": "2026-07-12T03:45:32Z",
+  "source": "clean_after_20260712-085744.log",
+  "tasks": {
+    "scheduled": 0,
+    "completed": 2,
+    "failed": 5,
+    "pending_stalled": 0
+  },
+  "completed_tasks": [
+    {"id": "task-bb5a6b5ad2f2", "type": "full_recon", "status": "completed"},
+    {"id": "task-37d86af18e39", "type": "burp_scan", "status": "completed"}
+  ],
+  "failed_tasks": [
+    {"type": "nuclei_scan", "count": 5, "reason": "Tool scan not available on server nuclei-mcp"}
+  ],
+  "findings": {
+    "total": 0,
+    "ground_truth_expected": {
+      "sqli_productId": "not found",
+      "xss_searchTerm": "not found"
+    }
+  },
+  "baseline_comparison": {
+    "previous_completed": 2,
+    "previous_findings": 0,
+    "delta_completed": 0,
+    "delta_findings": 0
+  },
+  "notes": "Clean benchmark run from restart. Nuclei-MCP unavailable (tool scan not available). Findings still 0 vs ground-truth manifest. Scheduler crashed mid-tick when engagement created (dict mutation)."
+}

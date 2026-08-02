@@ -18,16 +18,15 @@ def engine(mock_graph_memory):
 
 
 @pytest.mark.asyncio
-async def test_analyze_mission_gaps(engine) -> None:
-    engagement_id = "eng-1"
+async def test_analyze_mission_gaps_returns_no_fabricated_data(engine) -> None:
+    """De-fabricated (Sprint 0): the blocked-path / unknown-tech detectors are
+    honest-empty stubs until graph-backed, so analyze_mission_gaps must NOT
+    surface any invented findings (previously it fabricated ``/admin/billing``
+    and an ``MFA-Gateway``)."""
+    records = await engine.analyze_mission_gaps("eng-1")
 
-    # Act
-    records = await engine.analyze_mission_gaps(engagement_id)
-
-    # Assert
-    assert len(records) > 0
-    assert any(r.target_id == "/admin/billing" for r in records)
-    assert any("MFA-Gateway" in u for r in records for u in r.unknowns)
+    assert records == []
+    assert not any(r.target_id == "/admin/billing" for r in records)
 
 
 def test_record_task_uncertainty(engine) -> None:

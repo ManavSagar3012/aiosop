@@ -9,10 +9,11 @@ from datetime import timedelta
 from typing import Any, Dict, Optional
 
 try:
-    from temporalio import workflow
+    from temporalio import activity, workflow
     from temporalio.client import Client
     from temporalio.worker import Worker
 except ModuleNotFoundError:  # pragma: no cover - exercised through availability checks
+    activity = None
     workflow = None
     Client = None
     Worker = None
@@ -45,7 +46,7 @@ if workflow is not None:
             )
             return result
 
-    @workflow.activity.defn
+    @activity.defn
     async def execute_task_activity(task_data: dict) -> dict:
         return {"status": "queued", "task_id": task_data.get("id"), "durable": True}
 
@@ -116,7 +117,7 @@ class TaskActivities:
 
 if workflow is not None:
     # Decorate TaskActivities.execute_task_activity as a Temporal activity
-    TaskActivities.execute_task_activity = workflow.activity.defn(name="execute_task_activity")(
+    TaskActivities.execute_task_activity = activity.defn(name="execute_task_activity")(
         TaskActivities.execute_task_activity
     )
 

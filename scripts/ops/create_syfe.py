@@ -4,7 +4,7 @@ import asyncio
 async def create_syfe_engagement():
     url = "http://127.0.0.1:8200/engagements"
     headers = {
-        "Authorization": "Bearer dev-token",
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcGVyYXRvci0xIiwicm9sZSI6InNlbmlvcl9vcGVyYXRvciIsImV4cCI6MTgxNTU1NjI5MX0.Syl25gEu9qZkuH9rIy7nqJVuG2MZcJxb8xEeKMXHIBE",
         "Content-Type": "application/json"
     }
     payload = {

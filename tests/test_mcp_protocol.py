@@ -16,8 +16,9 @@ from ai_osop.mcp.protocol import (
 def mock_aiohttp_session():
     with patch("aiohttp.ClientSession") as mock_session_class:
         session_instance = MagicMock()
+        session_instance.closed = False
+        session_instance.close = AsyncMock()
         mock_session_class.return_value = session_instance
-
         # Mock get as a method that returns an async context manager
         mock_get_ctx = MagicMock()
         session_instance.get.return_value = mock_get_ctx

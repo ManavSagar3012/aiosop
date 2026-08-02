@@ -1,0 +1,20 @@
+{
+  "benchmark_id": "ginandjuice-m3-real-sqlmap",
+  "scope": "Single authorized PortSwigger Gin and Juice SQL injection validation; not a broad capability-recall claim.",
+  "expected_findings": [
+    {
+      "id": "M4-SQLI-001",
+      "vuln_class": "sqli",
+      "path": "/catalog",
+      "method": "GET",
+      "parameter": "category",
+      "scanner": "sqlmap",
+      "expected_db": "H2",
+      "expected_technique": "boolean-based blind",
+      "minimum_confidence": 50,
+      "requires_replay": false,
+      "requires_attack_chain": false,
+      "description": "Documented SQL injection in the catalog category filter"
+    }
+  ]
+}

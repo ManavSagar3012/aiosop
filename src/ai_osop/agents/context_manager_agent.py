@@ -7,11 +7,12 @@ graph, and semantic memory into reusable snapshots.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
+from ai_osop.core.hypothesis_engine import HypothesisEngine
 from ai_osop.core.models import Task
 
 
@@ -23,7 +24,12 @@ class ContextManagerAgent(BaseAgent):
         return AgentType.CONTEXT_MANAGER
 
     def supports_task_type(self, task_type: str) -> bool:
-        return task_type in ["summarize_context", "retrieve_context", "store_context_snapshot"]
+        return task_type in [
+            "summarize_context",
+            "retrieve_context",
+            "store_context_snapshot",
+            "generate_hypotheses",
+        ]
 
     async def _setup_resources(self) -> None:
         self.context_snapshots: Dict[str, Dict[str, Any]] = {}
@@ -35,6 +41,8 @@ class ContextManagerAgent(BaseAgent):
             return await self._retrieve_context(task.payload)
         if task.type == "store_context_snapshot":
             return await self._store_context_snapshot(task.payload)
+        if task.type == "generate_hypotheses":
+            return await self._generate_hypotheses(task.payload)
         raise AgentException(f"Unknown context manager task type: {task.type}")
 
     async def _summarize_context(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -43,7 +51,7 @@ class ContextManagerAgent(BaseAgent):
 
         recent_state = {}
         try:
-            recent_state = await self.ctx.session_memory.get_session_state(engagement_id)
+            recent_state = await self.ctx.session_memory.get_session_state_by_engagement_id(engagement_id)
         except Exception:
             recent_state = {}
 
@@ -101,6 +109,34 @@ class ContextManagerAgent(BaseAgent):
         await self._persist_snapshot(engagement_id, snapshot)
 
         return {"status": "success", "context_snapshot": snapshot}
+
+    async def _generate_hypotheses(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        engagement_id = payload.get("engagement_id", self.ctx.session_id)
+        focus = payload.get("focus", "")
+        limit = int(payload.get("limit", 8))
+
+        engine = HypothesisEngine(
+            self.ctx.graph_memory,
+            getattr(self.ctx, "skill_engine", None),
+            session_memory=getattr(self.ctx, "session_memory", None),
+        )
+        hypotheses = await engine.generate_and_persist(engagement_id, focus=focus, limit=limit)
+
+        snapshot = {
+            "engagement_id": engagement_id,
+            "focus": focus,
+            "created_at": datetime.utcnow().isoformat(),
+            "hypotheses": [h.model_dump() for h in hypotheses],
+        }
+        await self._persist_snapshot(engagement_id, snapshot)
+
+        return {
+            "status": "success",
+            "engagement_id": engagement_id,
+            "focus": focus,
+            "hypotheses_count": len(hypotheses),
+            "hypotheses": [h.model_dump() for h in hypotheses],
+        }
 
     async def _persist_snapshot(self, engagement_id: str, snapshot: Dict[str, Any]) -> None:
         key = f"context:{engagement_id}"

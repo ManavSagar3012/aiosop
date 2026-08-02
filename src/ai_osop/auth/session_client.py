@@ -33,7 +33,7 @@ CSRF injection:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, Optional
 
 import httpx
 
@@ -47,6 +47,17 @@ logger = logging.getLogger(__name__)
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 CSRF_HEADER_NAMES = ("X-CSRF-Token", "X-CSRFToken", "X-XSRF-TOKEN", "csrf-token")
 
+# Max auth-refresh retries before giving up on a 401 response.
+_MAX_TOKEN_REFRESH_RETRIES = 2
+
+# Type alias: async callback that receives the current UserSession (as dict) and
+# returns updated credentials: {"bearer_token": str, "cookies": list}.
+# Implementations typically call the IdP's refresh endpoint using the session's
+# refresh_token, then return the new access token + any rotated cookies.
+TokenRefreshCallback = Callable[
+    [Dict[str, Any]], Coroutine[Any, Any, Dict[str, Any]]
+]
+
 
 class SessionClient:
     """Auth-aware httpx wrapper.
@@ -54,6 +65,13 @@ class SessionClient:
     The session is held by reference — when this client receives Set-Cookie
     headers it mutates session.cookies in place and flips cookies_dirty=True
     so SessionStore.as_user can persist them on context exit.
+
+    Token refresh:
+        If a ``token_refresh_callback`` is provided, a 401/403 response triggers
+        an async call to refresh the bearer_token and retry the request once.
+        This keeps long-running scans alive when the original token expires.
+        The callback receives the current session dict and returns updated
+        credentials {"bearer_token": "...", "cookies": [...]}.
     """
 
     def __init__(
@@ -65,10 +83,13 @@ class SessionClient:
         timeout: float = 30.0,
         verify: bool = True,
         follow_redirects: bool = True,
+        token_refresh_callback: "Optional[TokenRefreshCallback]" = None,
     ):
         self.session = session
         self.store = store
         self.cookies_dirty = False
+        self.token_refresh_callback = token_refresh_callback
+        self._refresh_retries: Dict[str, int] = {}  # url -> retry count
 
         # Build httpx cookie jar from the session's cookies list
         cookies = httpx.Cookies()
@@ -112,7 +133,12 @@ class SessionClient:
     async def __aenter__(self) -> "SessionClient":
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type],
+        exc: Optional[BaseException],
+        tb: Optional[Any],
+    ) -> None:
         await self.aclose()
 
     # -- public verb methods ---------------------------------------------------
@@ -144,7 +170,6 @@ class SessionClient:
     # -- internals -------------------------------------------------------------
 
     async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        # CSRF: ensure tokens flow on unsafe methods even if caller passed headers=
         if method in UNSAFE_METHODS and self.session.csrf_token:
             extra = kwargs.pop("headers", None) or {}
             for h in CSRF_HEADER_NAMES:
@@ -153,7 +178,92 @@ class SessionClient:
 
         response = await self._client.request(method, url, **kwargs)
         self._absorb_set_cookies(response)
+
+        # Token refresh on 401/403: if a callback is configured and we haven't
+        # exhausted retries for this URL, attempt to refresh the credential and
+        # replay the request once. This keeps long-running authenticated scans
+        # alive when the original token expires mid-scan.
+        if response.status_code in (401, 403) and self.token_refresh_callback is not None:
+            retries = self._refresh_retries.get(url, 0)
+            if retries < _MAX_TOKEN_REFRESH_RETRIES:
+                self._refresh_retries[url] = retries + 1
+                logger.info(
+                    "session_token_refresh_attempt url=%s status=%s attempt=%d",
+                    url, response.status_code, retries + 1,
+                )
+                try:
+                    updated = await self.token_refresh_callback(self.session.to_dict())
+                    if updated and isinstance(updated, dict):
+                        self._apply_refreshed_credentials(updated)
+                        # Strip any stale auth headers from kwargs so the
+                        # refreshed client-level credential is used on retry
+                        # rather than being overridden by the stale token.
+                        # Strip stale auth headers from kwargs in place so the
+                        # refreshed client-level credential is used on retry.
+                        _stale_headers = kwargs.get("headers")
+                        if _stale_headers is not None:
+                            kwargs["headers"] = _without_auth_headers(_stale_headers)
+                        response = await self._client.request(method, url, **kwargs)
+                        self._absorb_set_cookies(response)
+                        logger.info(
+                            "session_token_refresh_success url=%s new_status=%d",
+                            url, response.status_code,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "session_token_refresh_failed url=%s error=%s",
+                        url, e,
+                    )
+
         return response
+
+    def _apply_refreshed_credentials(self, updated: Dict[str, Any]) -> None:
+        """Apply refreshed credentials to the in-memory session and httpx client.
+
+        Called after a successful token refresh callback. Mutates the session
+        and rebuilds the httpx client's auth headers so subsequent requests
+        carry the fresh credential.
+        """
+        bearer = updated.get("bearer_token")
+        new_cookies = updated.get("cookies")
+
+        if bearer:
+            self.session.bearer_token = bearer
+            self.cookies_dirty = True
+
+        if new_cookies:
+            self.session.cookies = list(new_cookies)
+            self.cookies_dirty = True
+
+        # Rebuild the httpx client's default headers so the fresh credential
+        # is used on subsequent requests.  Clear and update in place rather
+        # than reassigning — httpx.AsyncClient.headers may be read-only on
+        # some versions.
+        headers: Dict[str, str] = {}
+        if self.session.user_agent:
+            headers["User-Agent"] = self.session.user_agent
+        if self.session.bearer_token:
+            headers["Authorization"] = f"Bearer {self.session.bearer_token}"
+        if self.session.csrf_token:
+            for h in CSRF_HEADER_NAMES:
+                headers[h] = self.session.csrf_token
+        headers.update(self.session.extra_headers or {})
+        self._client.headers.clear()
+        self._client.headers.update(headers)
+
+        # Rebuild cookies from the updated list
+        new_jar = httpx.Cookies()
+        for c in self.session.cookies:
+            try:
+                new_jar.set(
+                    name=c["name"],
+                    value=c["value"],
+                    domain=c.get("domain") or "",
+                    path=c.get("path") or "/",
+                )
+            except (KeyError, TypeError) as e:
+                logger.debug("session.cookie_rebuild_skip err=%s cookie=%r", e, c)
+        self._client.cookies = new_jar
 
     def _absorb_set_cookies(self, response: httpx.Response) -> None:
         """Mirror any Set-Cookie back into the UserSession's cookie list."""
@@ -180,6 +290,21 @@ class SessionClient:
                 return
         existing.append(new_cookie)
         self.cookies_dirty = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _without_auth_headers(headers: Any) -> Dict[str, Any]:
+    """Return a copy of *headers* with ``Authorization`` (and similar)
+    entries removed so a retry request uses the fresh client-level
+    credential instead of the stale per-request override."""
+    if not headers:
+        return {}
+    _AUTH_KEYS = {"authorization", "x-api-key", "api-key"}
+    return {k: v for k, v in dict(headers).items() if k.lower() not in _AUTH_KEYS}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

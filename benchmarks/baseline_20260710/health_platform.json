@@ -1,0 +1,19 @@
+{
+  "endpoint": "/health/platform",
+  "code": 200,
+  "data": {
+    "redis": {
+      "status": "healthy",
+      "latency_ms": 0.0
+    },
+    "postgres": {
+      "status": "healthy",
+      "latency_ms": 0.0
+    },
+    "neo4j": {
+      "status": "healthy",
+      "latency_ms": 16.0
+    },
+    "timestamp": "2026-07-10T16:48:19.312895"
+  }
+}

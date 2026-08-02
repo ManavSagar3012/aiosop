@@ -26,10 +26,11 @@ from jose import jwt
 # Add src to path
 sys.path.insert(0, "src")
 
+from fastapi import HTTPException
+
 from ai_osop.api.deps import assert_engagement_access, require_role, verify_token
 from ai_osop.core.config import settings
 from ai_osop.core.models import ScopeDefinition, SessionState
-from fastapi import HTTPException
 
 
 class SecurityQualification:
@@ -41,12 +42,14 @@ class SecurityQualification:
         self.failed = 0
 
     def _record(self, name: str, passed: bool, detail: str = "") -> None:
-        self.results.append({
-            "test": name,
-            "passed": passed,
-            "detail": detail,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
+        self.results.append(
+            {
+                "test": name,
+                "passed": passed,
+                "detail": detail,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
         if passed:
             self.passed += 1
         else:
@@ -57,7 +60,11 @@ class SecurityQualification:
     def test_jwt_valid_token(self) -> None:
         """A valid JWT with correct claims should authenticate."""
         secret = settings.jwt_secret or "test-jwt-secret"
-        payload = {"sub": "operator-1", "role": "senior_operator", "exp": datetime.utcnow() + timedelta(hours=1)}
+        payload = {
+            "sub": "operator-1",
+            "role": "senior_operator",
+            "exp": datetime.utcnow() + timedelta(hours=1),
+        }
         token = jwt.encode(payload, secret, algorithm="HS256")
         decoded = jwt.decode(token, secret, algorithms=["HS256"])
         assert decoded["sub"] == "operator-1"
@@ -67,7 +74,11 @@ class SecurityQualification:
     def test_jwt_expired_token(self) -> None:
         """An expired JWT must be rejected."""
         secret = settings.jwt_secret or "test-jwt-secret"
-        payload = {"sub": "operator-1", "role": "senior_operator", "exp": datetime.utcnow() - timedelta(hours=1)}
+        payload = {
+            "sub": "operator-1",
+            "role": "senior_operator",
+            "exp": datetime.utcnow() - timedelta(hours=1),
+        }
         token = jwt.encode(payload, secret, algorithm="HS256")
         try:
             jwt.decode(token, secret, algorithms=["HS256"])
@@ -78,10 +89,16 @@ class SecurityQualification:
     def test_jwt_algorithm_none(self) -> None:
         """alg=none must be rejected."""
         import base64
+
         header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
-        payload = base64.urlsafe_b64encode(b'{"sub":"attacker","role":"senior_operator"}').rstrip(b"=").decode()
+        payload = (
+            base64.urlsafe_b64encode(b'{"sub":"attacker","role":"senior_operator"}')
+            .rstrip(b"=")
+            .decode()
+        )
         token = header + "." + payload + "."
         from jose import jwt as jose_jwt
+
         try:
             unverified_header = jose_jwt.get_unverified_header(token)
             if unverified_header.get("alg", "").lower() == "none":
@@ -94,7 +111,11 @@ class SecurityQualification:
     def test_jwt_wrong_secret(self) -> None:
         """JWT signed with wrong secret must be rejected."""
         secret = settings.jwt_secret or "test-jwt-secret"
-        payload = {"sub": "operator-1", "role": "senior_operator", "exp": datetime.utcnow() + timedelta(hours=1)}
+        payload = {
+            "sub": "operator-1",
+            "role": "senior_operator",
+            "exp": datetime.utcnow() + timedelta(hours=1),
+        }
         token = jwt.encode(payload, "wrong-secret", algorithm="HS256")
         try:
             jwt.decode(token, secret, algorithms=["HS256"])
@@ -111,12 +132,18 @@ class SecurityQualification:
         operator = {"sub": "op-1", "role": "operator"}
         try:
             await guard(operator)
-            self._record("rbac_require_role_rejects", False, "operator passed senior_operator guard")
+            self._record(
+                "rbac_require_role_rejects", False, "operator passed senior_operator guard"
+            )
         except HTTPException as e:
             if e.status_code == 403:
-                self._record("rbac_require_role_rejects", True, f"operator correctly rejected with 403")
+                self._record(
+                    "rbac_require_role_rejects", True, f"operator correctly rejected with 403"
+                )
             else:
-                self._record("rbac_require_role_rejects", False, f"Unexpected status: {e.status_code}")
+                self._record(
+                    "rbac_require_role_rejects", False, f"Unexpected status: {e.status_code}"
+                )
 
     async def test_rbac_senior_allowed(self) -> None:
         """require_role must allow matching roles."""
@@ -129,7 +156,11 @@ class SecurityQualification:
             else:
                 self._record("rbac_require_role_allows", False, "Unexpected result")
         except HTTPException as e:
-            self._record("rbac_require_role_allows", False, f"senior_operator incorrectly rejected: {e.status_code}")
+            self._record(
+                "rbac_require_role_allows",
+                False,
+                f"senior_operator incorrectly rejected: {e.status_code}",
+            )
 
     # -------------------- Ownership Tests --------------------
 
@@ -150,6 +181,7 @@ class SecurityQualification:
 
         # We need to patch the state dict used by assert_engagement_access
         import ai_osop.api.deps as deps_module
+
         original_state = deps_module.state.get("orchestrator")
         deps_module.state["orchestrator"] = mock_orch
 
@@ -161,7 +193,9 @@ class SecurityQualification:
             else:
                 self._record("ownership_operator_own", False, "wrong session returned")
         except HTTPException as e:
-            self._record("ownership_operator_own", False, f"Unexpected rejection: {e.status_code} {e.detail}")
+            self._record(
+                "ownership_operator_own", False, f"Unexpected rejection: {e.status_code} {e.detail}"
+            )
         finally:
             deps_module.state["orchestrator"] = original_state
 
@@ -180,18 +214,25 @@ class SecurityQualification:
         mock_orch.session_memory.load_session_state = AsyncMock(return_value=None)
 
         import ai_osop.api.deps as deps_module
+
         original_state = deps_module.state.get("orchestrator")
         deps_module.state["orchestrator"] = mock_orch
 
         try:
             operator = {"sub": "operator-1", "role": "operator"}
             await assert_engagement_access(operator, "eng-002")
-            self._record("ownership_operator_other", False, "operator-1 accessed operator-2's engagement (IDOR!)")
+            self._record(
+                "ownership_operator_other",
+                False,
+                "operator-1 accessed operator-2's engagement (IDOR!)",
+            )
         except HTTPException as e:
             if e.status_code == 403:
                 self._record("ownership_operator_other", True, "operator-1 correctly denied 403")
             else:
-                self._record("ownership_operator_other", False, f"Unexpected status: {e.status_code}")
+                self._record(
+                    "ownership_operator_other", False, f"Unexpected status: {e.status_code}"
+                )
         finally:
             deps_module.state["orchestrator"] = original_state
 
@@ -210,6 +251,7 @@ class SecurityQualification:
         mock_orch.session_memory.load_session_state = AsyncMock(return_value=None)
 
         import ai_osop.api.deps as deps_module
+
         original_state = deps_module.state.get("orchestrator")
         deps_module.state["orchestrator"] = mock_orch
 
@@ -217,11 +259,17 @@ class SecurityQualification:
             operator = {"sub": "senior-1", "role": "senior_operator"}
             result = await assert_engagement_access(operator, "eng-003")
             if result.session_id == "eng-003":
-                self._record("ownership_senior_global", True, "senior_operator accessed any engagement")
+                self._record(
+                    "ownership_senior_global", True, "senior_operator accessed any engagement"
+                )
             else:
                 self._record("ownership_senior_global", False, "wrong session")
         except HTTPException as e:
-            self._record("ownership_senior_global", False, f"senior_operator incorrectly rejected: {e.status_code}")
+            self._record(
+                "ownership_senior_global",
+                False,
+                f"senior_operator incorrectly rejected: {e.status_code}",
+            )
         finally:
             deps_module.state["orchestrator"] = original_state
 
@@ -230,14 +278,23 @@ class SecurityQualification:
     def test_session_encryption_required_in_prod(self) -> None:
         """In production, missing encryption key must raise RuntimeError."""
         from ai_osop.auth.session_store import SessionEncryption
+
         # Patch environment to production
         with patch("ai_osop.auth.session_store.settings.environment", "production"):
             with patch("ai_osop.auth.session_store.settings.session_encryption_key", None):
                 try:
                     SessionEncryption()
-                    self._record("session_encryption_prod", False, "No error raised in production without key")
+                    self._record(
+                        "session_encryption_prod",
+                        False,
+                        "No error raised in production without key",
+                    )
                 except RuntimeError as e:
-                    self._record("session_encryption_prod", True, f"Correctly raised RuntimeError: {str(e)[:50]}")
+                    self._record(
+                        "session_encryption_prod",
+                        True,
+                        f"Correctly raised RuntimeError: {str(e)[:50]}",
+                    )
 
     # -------------------- Orchestrator --------------------
 

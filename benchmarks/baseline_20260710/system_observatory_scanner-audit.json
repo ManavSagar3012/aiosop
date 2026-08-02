@@ -1,0 +1,20 @@
+{
+  "endpoint": "/system/observatory/scanner-audit",
+  "code": 200,
+  "data": {
+    "scanner_count": 1,
+    "scanners": [
+      {
+        "task_type": "generate_report",
+        "agent_type": "AgentType.REPORTING",
+        "scheduled": 1,
+        "running": 0,
+        "completed": 0,
+        "failed": 0,
+        "pending": 1,
+        "avg_duration_ms": 0.0,
+        "failure_categories": {}
+      }
+    ]
+  }
+}

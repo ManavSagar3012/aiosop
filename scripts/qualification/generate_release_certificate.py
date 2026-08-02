@@ -54,8 +54,9 @@ def get_pytest_coverage() -> str:
 
 
 def get_black_check() -> str:
+    import sys
     result = subprocess.run(
-        ["python", "-m", "black", "--check", "src", "tests"],
+        [sys.executable, "-m", "black", "--check", "src", "tests"],
         capture_output=True,
         text=True,
     )
@@ -63,8 +64,9 @@ def get_black_check() -> str:
 
 
 def get_flake8_check() -> str:
+    import sys
     result = subprocess.run(
-        ["python", "-m", "flake8", "src"],
+        [sys.executable, "-m", "flake8", "src"],
         capture_output=True,
         text=True,
     )
@@ -72,13 +74,13 @@ def get_flake8_check() -> str:
 
 
 def get_mypy_check() -> str:
+    import sys
     result = subprocess.run(
-        ["python", "-m", "mypy", "src"],
+        [sys.executable, "-m", "mypy", "src"],
         capture_output=True,
         text=True,
     )
     return "PASS" if result.returncode == 0 else "FAIL"
-
 
 def read_qualification_report() -> str:
     report_path = Path("PRODUCTION_READINESS_REPORT.md")

@@ -4,10 +4,9 @@ Identifies knowledge gaps, blocked execution paths, and latent boundaries in the
 """
 
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from ai_osop.core.models import Observation, Task, UncertaintyRecord
+from ai_osop.core.models import Task, UncertaintyRecord
 from ai_osop.memory.graph_memory import GraphMemory
 
 logger = logging.getLogger(__name__)
@@ -63,17 +62,32 @@ class UncertaintyEngine:
         return records
 
     async def _identify_blocked_paths(self, engagement_id: str) -> Dict[str, int]:
-        """Query graph for paths with high failure rates."""
-        # Simulated query result
-        # In production, this runs a Cypher query for nodes with high error-to-success ratio
-        return {"/admin/billing": 5, "/api/v1/internal/debug": 3}
+        """Return paths with repeated auth/access failures for this engagement.
+
+        De-fabricated (Sprint 0): previously returned invented paths
+        (``/admin/billing`` etc.). It now returns an honest-empty result so no
+        caller can ever surface fabricated findings. Real implementation is
+        tracked future work — a graph query for nodes with a high
+        error-to-success ratio. Returning {} is correct-but-incomplete, never
+        misleading.
+        """
+        logger.debug(
+            "identify_blocked_paths: graph-backed detector not yet implemented (engagement=%s)",
+            engagement_id,
+        )
+        return {}
 
     async def _identify_unknown_tech(self, engagement_id: str) -> List[Dict[str, str]]:
-        """Query graph for nodes with 'unknown' tech properties."""
-        return [
-            {"target": "10.0.1.50:8080", "name": "Custom-Binary-Protocol"},
-            {"target": "billing.target.com", "name": "MFA-Gateway"},
-        ]
+        """Return targets whose tech stack is unknown in the graph.
+
+        De-fabricated (Sprint 0): honest-empty until backed by a real graph
+        query for nodes with ``unknown`` tech properties.
+        """
+        logger.debug(
+            "identify_unknown_tech: graph-backed detector not yet implemented (engagement=%s)",
+            engagement_id,
+        )
+        return []
 
     def record_task_uncertainty(self, task: Task, error: str) -> Optional[UncertaintyRecord]:
         """Generate a record if a task fails due to lack of knowledge."""

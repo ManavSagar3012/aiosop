@@ -86,6 +86,30 @@ jobs:
         OSOP_API_TOKEN: test-token-for-ci-only
       run: poetry run pytest --no-cov -q
 
+    # Detection-regression tripwire. Re-scores the committed baseline findings
+    # export against the ground-truth manifest and fails the build if recall
+    # drops below the known-good floor or any negative control is tripped. The
+    # scorer's *attribution* and *evidence-parsing* correctness is locked by the
+    # unit tests above (tests/test_score_engagement.py); this step is the
+    # integration tripwire on the real findings shape so a pipeline change that
+    # silently changes the export can't pass unnoticed.
+    - name: Detection regression gate (scorecard)
+      run: >
+        poetry run python benchmarks/score_engagement.py
+        --findings benchmarks/results/juice-e2e-63844f55-findings.json
+        --manifest benchmarks/ground_truth/juice_shop.yaml
+        --out scorecard-ci.json
+        --min-recall 0.4
+        --max-fp 0
+
+    - name: Upload scorecard
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: detection-scorecard
+        path: scorecard-ci.json
+        if-no-files-found: warn
+
     - name: Build Docker image
       run: docker build -t ai-osop:test .
 

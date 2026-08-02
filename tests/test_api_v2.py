@@ -36,6 +36,18 @@ def client():
         patch("ai_osop.api.main.register_optional_mcp_servers", new_callable=AsyncMock),
         patch("ai_osop.api.main.Orchestrator") as mock_orch,
         patch("ai_osop.api.deps.settings.api_token", "dev-test-token"),
+        patch("ai_osop.api.deps.settings.jwt_secret", None),
+        # Hermetic startup: the lifespan's run_startup_self_test does real
+        # dependency probes. With backends mocked those probes are meaningless,
+        # and when live services happen to be up they add ~15-20s of latency and
+        # make the suite hang. Stub it to a healthy result so this unit-level API
+        # test never depends on live-service state (integration probes live in
+        # the /health/* endpoint tests, not here).
+        patch(
+            "ai_osop.api.main.run_startup_self_test",
+            new_callable=AsyncMock,
+            return_value={"status": "healthy", "checks": {}, "summary": {"passed": 0, "failed": 0}},
+        ),
     ):
 
         # --- SessionMemory: Redis ping + Postgres session-recovery query ---
@@ -107,8 +119,12 @@ def test_api_startup_registers_agents(client):
     # main.py lifespan registers 11 agents: attack_chain, recon, vuln,
     # human_oversight, exploit, payload, reporting, context_manager,
     # concurrency, stack_profiler, playwright (AIOSOP-AUDIT-2026-06-16).
-    # Update: Now registers 9 experimental agents (total 20).
-    assert client.orch.register_agent.call_count == 20
+    # main.py lifespan registers 11 core agents + 10 specialist agents + new vulnerability scanner agents (total 32).
+    # Note: the "experimental" designation was removed post-migration.
+    # AIOSOP-CONCURRENCY-002 (2026-07-11): pool of 70 agents
+    # (2 attack-chain + 4 recon + 10 vuln + 3 exploit + 16 specialized + 33
+    # scanner) + 2 from the WORKFLOW playwright pool bump 1->3 (commit 3ee99fb).
+    assert client.orch.register_agent.call_count == 70
 
 
 def test_root_not_found(client):
@@ -128,10 +144,25 @@ def test_websocket_endpoint(client):
     )
     with client.websocket_connect("/ws/engagements/test-session?token=dev-test-token") as websocket:
         websocket.send_json({"action": "ping"})
-        data = websocket.receive_json()
+
+        # Drain any background heartbeat/observation/phase_transition messages
+        data = None
+        for _ in range(10):
+            msg = websocket.receive_json()
+            if "type" in msg:
+                data = msg
+                break
+
         assert data == {"type": "pong"}
 
         websocket.send_json({"action": "status"})
-        data = websocket.receive_json()
+        data = None
+        for _ in range(10):
+            msg = websocket.receive_json()
+            if "type" in msg:
+                data = msg
+                break
+
+        assert data is not None
         assert data["type"] == "status"
         assert data["session_id"] == "test-session"

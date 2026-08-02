@@ -3,32 +3,41 @@
 @config "../tailwind.config.js";
 
 :root {
-  /* Surface Colors */
+  /* Surfaces (unchanged — the dark ramp is the identity) */
   --surface-container-lowest: #050506;
   --surface-container-low: #0a0a0b;
   --surface-container: #131314;
   --surface-container-high: #1a1a1d;
   --surface-container-highest: #2a2a2d;
-  
-  /* Text Colors */
+  --surface-variant: #1a1a1a;
+  --background: #050505;
+
+  /* Text */
   --on-surface: #e5e2e3;
-  --on-surface-variant: #baccb0;
-  
-  /* Accent Colors */
-  --primary-fixed: #39ff14; /* Neon Green */
+  --on-surface-variant: #9db3a6; /* contrast-tuned neutral (was #baccb0) */
+
+  /* Accents — GREEN LEADS */
+  --primary: #39ff14;            /* brand / operational / success */
+  --primary-fixed: #39ff14;      /* alias kept for existing consumers */
   --primary-container: #107100;
   --on-primary-container: #efffe3;
-  
-  --secondary: #00f1fd; /* Cyan */
+  --on-primary: #00220a;
+
+  --secondary: #00f1fd;          /* interactive / active / live */
   --secondary-container: #004f53;
   --on-secondary-container: #dcfdff;
 
-  --tertiary: #ff3131; /* Alert Red */
-  --tertiary-container: #93000c;
-
-  --outline-variant: #2a2a2d;
+  --critical: #ff3131;           /* critical / alert */
+  --tertiary: #ff3131;           /* alias kept for existing consumers */
+  --error: #ff3131;
   --error-container: #93000a;
   --on-error-container: #ffdad6;
+
+  --warning: #ffb020;            /* NEW — warning / medium severity */
+  --warning-container: #5c3d00;
+
+  --outline: #333333;
+  --outline-variant: #2a2a2d;
 }
 
 /* Base Styles */
@@ -70,94 +79,6 @@ h1, h2, h3, h4 { font-family: 'Space Grotesk', sans-serif; margin: 0; letter-spa
 .animate-pulse-neon { animation: pulse-neon 2s infinite; }
 .cursor-blink { display: inline-block; width: 8px; height: 15px; background-color: var(--primary-fixed); animation: blink 1s step-end infinite; vertical-align: middle; margin-left: 4px; }
 
-/* Layout Helpers */
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.flex-1 { flex: 1 1 0%; }
-.items-center { align-items: center; }
-.justify-between { justify-content: space-between; }
-.justify-center { justify-content: center; }
-.gap-1 { gap: 0.25rem; }
-.gap-2 { gap: 0.5rem; }
-.gap-3 { gap: 0.75rem; }
-.gap-4 { gap: 1rem; }
-.gap-6 { gap: 1.5rem; }
-
-.grid { display: grid; }
-.grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
-.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-
-.h-screen { height: 100vh; }
-.h-full { height: 100%; }
-.min-h-screen { min-height: 100vh; }
-.w-full { width: 100%; }
-.w-52 { width: 13rem; }
-.w-80 { width: 20rem; }
-
-.p-2 { padding: 0.5rem; }
-.p-3 { padding: 0.75rem; }
-.p-4 { padding: 1rem; }
-.px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
-.px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
-.px-4 { padding-left: 1rem; padding-right: 1rem; }
-.py-0\.5 { padding-top: 0.125rem; padding-bottom: 0.125rem; }
-.py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
-.py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
-
-.border { border-width: 1px; border-style: solid; }
-.border-b { border-bottom-width: 1px; border-bottom-style: solid; }
-.border-r { border-right-width: 1px; border-right-style: solid; }
-.border-t { border-top-width: 1px; border-top-style: solid; }
-.border-l-2 { border-left-width: 2px; border-left-style: solid; }
-.border-l-4 { border-left-width: 4px; border-left-style: solid; }
-.border-r-2 { border-right-width: 2px; border-right-style: solid; }
-
-.bg-black { background-color: #000; }
-.bg-white\/5 { background-color: rgba(255, 255, 255, 0.05); }
-.bg-black\/40 { background-color: rgba(0, 0, 0, 0.4); }
-.bg-black\/60 { background-color: rgba(0, 0, 0, 0.6); }
-.bg-black\/80 { background-color: rgba(0, 0, 0, 0.8); }
-.bg-black\/90 { background-color: rgba(0, 0, 0, 0.9); }
-.bg-primary-fixed\/5 { background-color: rgba(57, 255, 20, 0.05); }
-.bg-primary-fixed\/10 { background-color: rgba(57, 255, 20, 0.1); }
-.bg-secondary\/20 { background-color: rgba(0, 241, 253, 0.2); }
-.bg-tertiary { background-color: var(--tertiary); }
-.bg-tertiary\/5 { background-color: rgba(255, 49, 49, 0.05); }
-.bg-surface-container { background-color: var(--surface-container); }
-.bg-surface-container-low { background-color: var(--surface-container-low); }
-
-.text-primary-fixed { color: var(--primary-fixed); }
-.text-secondary { color: var(--secondary); }
-.text-tertiary { color: var(--tertiary); }
-.text-on-surface { color: var(--on-surface); }
-.text-on-surface-variant { color: var(--on-surface-variant); }
-.text-black { color: #000; }
-.text-white { color: #fff; }
-
-.border-outline-variant { border-color: var(--outline-variant); }
-.border-primary-fixed { border-color: var(--primary-fixed); }
-.border-primary-fixed\/20 { border-color: rgba(57, 255, 20, 0.2); }
-.border-primary-fixed\/40 { border-color: rgba(57, 255, 20, 0.4); }
-.border-secondary\/20 { border-color: rgba(0, 241, 253, 0.2); }
-.border-tertiary { border-color: var(--tertiary); }
-.border-tertiary\/30 { border-color: rgba(255, 49, 49, 0.3); }
-
-.rounded-full { border-radius: 9999px; }
-.rounded-none { border-radius: 0; }
-.overflow-hidden { overflow: hidden; }
-.overflow-y-auto { overflow-y: auto; }
-.z-30 { z-index: 30; }
-.relative { position: relative; }
-.absolute { position: absolute; }
-.inset-0 { top: 0; right: 0; bottom: 0; left: 0; }
-
-.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.font-bold { font-weight: 700; }
-.uppercase { text-transform: uppercase; }
-.italic { font-style: italic; }
-.tracking-widest { letter-spacing: 0.1em; }
-
 /* Custom Component Styles */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); backdrop-filter: blur(10px); z-index: 100; display: flex; align-items: center; justify-content: center; }
 .briefing-room { width: 500px; background: #0a0a0b; border: 1px solid var(--primary-fixed); padding: 40px; box-shadow: 0 0 30px rgba(57, 255, 20, 0.2); }
@@ -167,7 +88,7 @@ h1, h2, h3, h4 { font-family: 'Space Grotesk', sans-serif; margin: 0; letter-spa
 .tab-content { flex: 1; position: relative; overflow: hidden; }
 .pane-container { position: relative; overflow: hidden; display: flex; flex-direction: column; }
 .glow-primary { box-shadow: 0 0 15px rgba(57, 255, 20, 0.2); }
-.glow-danger { box-shadow: 0 0 15px rgba(255, 49, 49, 0.3); }
+.glow-danger  { box-shadow: 0 0 15px rgba(255, 49, 49, 0.3); }
 .scanline { width: 100%; height: 100px; z-index: 10; background: linear-gradient(0deg, rgba(0,0,0,0) 0%, rgba(57,255,20,0.05) 50%, rgba(0,0,0,0) 100%); opacity: 0.1; position: absolute; bottom: 100%; animation: scanline 10s linear infinite; pointer-events: none; }
 
 /* Tactical Graph V3.2 */
@@ -187,9 +108,9 @@ h1, h2, h3, h4 { font-family: 'Space Grotesk', sans-serif; margin: 0; letter-spa
 
 /* Glow accents — ported from the former index.html inline <style> (used across
    DifferentialAuth / FindingsVerification, not previously in this file). */
-.glow-cyan { box-shadow: 0 0 10px rgba(0, 255, 204, 0.3); }
-.glow-red { box-shadow: 0 0 10px rgba(255, 0, 60, 0.3); }
-.glow-green { box-shadow: 0 0 10px rgba(0, 255, 102, 0.3); }
+.glow-cyan    { box-shadow: 0 0 10px rgba(0, 241, 253, 0.3); }
+.glow-red     { box-shadow: 0 0 10px rgba(255, 49, 49, 0.3); }
+.glow-green   { box-shadow: 0 0 10px rgba(57, 255, 20, 0.3); }
 
 /* ── Command-core craft layer (Overview) ─────────────────────────────────── */
 /* Staggered page-load reveal: one orchestrated entrance beats scattered fx. */
@@ -215,3 +136,16 @@ h1, h2, h3, h4 { font-family: 'Space Grotesk', sans-serif; margin: 0; letter-spa
 /* Live status dot. */
 @keyframes ping-soft { 0% { box-shadow: 0 0 0 0 rgba(57,255,20,0.4);} 70%,100% { box-shadow: 0 0 0 6px rgba(57,255,20,0);} }
 .live-dot { animation: ping-soft 2s infinite; }
+
+/* Respect reduced-motion preference: halt decorative/looping animations. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal-up, .sweep-line, .live-dot, .animate-pulse-neon, .animate-spin, .scanline {
+    animation: none !important;
+  }
+}
+
+/* Visible keyboard focus on all interactive controls. */
+:where(a, button, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+}

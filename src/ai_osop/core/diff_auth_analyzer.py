@@ -15,13 +15,28 @@ replaying POST/PUT/PATCH/DELETE as another identity could mutate/destroy the tar
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import httpx
 
-from ai_osop.core.models import DiffAuthFinding
+from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.models import DiffAuthFinding, Vulnerability
+
+# Confidence at/above which a differential-authorization finding is treated as a
+# demonstrated (validated) cross-identity access — i.e. CONFIRMED / reportable.
+# The engine actively replayed the request as a different identity and observed
+# unauthorized access to the same resource, which is a real PoC.
+DIFF_AUTH_CONFIRM_THRESHOLD = 0.7
+
+# Map diff-auth categories to the platform's vulnerability taxonomy.
+_CATEGORY_TO_VULN_CLASS = {
+    "horizontal_pe": VulnClass.IDOR,
+    "tenant_escape": VulnClass.BOLA,
+    "broken_access_control": VulnClass.BROKEN_ACCESS_CONTROL,
+    "vertical_pe": VulnClass.PRIVILEGE_ESCALATION,
+    "workflow_bypass": VulnClass.BROKEN_ACCESS_CONTROL,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +110,88 @@ class DiffAuthAnalyzer:
         self.session_store = session_store
         self.graph_memory = graph_memory
 
+    async def _bridge_to_vulnerability(
+        self,
+        cmp: Dict[str, Any],
+        identity: str,
+        test_r: Dict[str, Any],
+        base_r: Dict[str, Any],
+        ep: Dict[str, Any],
+        url: str,
+        method: str,
+        endpoint_id: str,
+        engagement_id: str,
+    ) -> Optional[str]:
+        """Create a Vulnerability node for a differential-authorization finding so
+        it surfaces in classification + reporting.
+
+        High-confidence findings (>= DIFF_AUTH_CONFIRM_THRESHOLD) are marked
+        ``validated=True`` — the engine actively replayed the request as a
+        different identity and observed unauthorized access to the same resource,
+        which is a demonstrated proof of concept (classified CONFIRMED). Lower
+        confidence is left unvalidated (a candidate needing manual confirmation).
+        """
+        category = cmp["category"]
+        confidence = cmp["confidence"]
+        vuln_class = _CATEGORY_TO_VULN_CLASS.get(category, VulnClass.BROKEN_ACCESS_CONTROL)
+        validated = confidence >= DIFF_AUTH_CONFIRM_THRESHOLD
+        sensitive = test_r.get("sensitive_fields") or []
+        path = ep.get("path") or url
+
+        if identity == "anonymous":
+            actor = "an unauthenticated (anonymous) request"
+        else:
+            actor = f"a different authenticated identity ('{identity}')"
+
+        severity = Severity.HIGH if validated else Severity.MEDIUM
+        if vuln_class in (VulnClass.PRIVILEGE_ESCALATION,) and validated:
+            severity = Severity.CRITICAL
+
+        vuln = Vulnerability(
+            title=f"{vuln_class.value.upper()} — unauthorized access to {path}",
+            description=(
+                f"Differential authorization testing showed that {actor} received the "
+                f"same protected resource as the owning identity at {method} {url}. "
+                f"The owner (user_a baseline) and the test "
+                f"identity both received a 2xx response with matching schema"
+                + (f" and sensitive fields ({', '.join(sensitive[:5])})" if sensitive else "")
+                + ". Expected the test identity to be denied (401/403)."
+            ),
+            severity=severity,
+            vuln_type=vuln_class,
+            confidence=confidence,
+            tool_source="diff_auth",
+            engagement_id=engagement_id,
+            endpoint_id=endpoint_id,
+            validated=validated,
+            exploitability="high",
+            evidence=[
+                {
+                    "type": "differential_authorization",
+                    "provenance": "live",
+                    "category": category,
+                    "method": method,
+                    "url": url,
+                    "test_identity": identity,
+                    "owner_status": base_r.get("status_code"),
+                    "test_identity_status": test_r.get("status_code"),
+                    "owner_size": base_r.get("response_size"),
+                    "test_identity_size": test_r.get("response_size"),
+                    "schema_match": cmp["signals"].get("json_schema_match"),
+                    "sensitive_fields": sensitive,
+                    "expected": "401/403 (denied)",
+                    "observed": f"{test_r.get('status_code')} with matching resource body",
+                }
+            ],
+        )
+        try:
+            return await self.graph_memory.add_vulnerability(vuln)
+        except Exception as e:  # noqa: BLE001 - persistence failure shouldn't abort analysis
+            logging.getLogger("ai_osop.diff_auth").warning(
+                "diff_auth_vuln_bridge_failed: %s", str(e)[:160]
+            )
+            return None
+
     async def _load_endpoints(self, engagement_id: str, workflow_id: str) -> List[Dict[str, Any]]:
         if workflow_id:
             cypher = (
@@ -109,10 +206,9 @@ class DiffAuthAnalyzer:
             )
             params = {"eid": engagement_id}
         out: List[Dict[str, Any]] = []
-        async with self.graph_memory._driver.session() as s:
-            res = await s.run(cypher, params)
-            async for rec in res:
-                out.append(dict(rec))
+        records = await self.graph_memory.run_read_query(cypher, params)
+        for rec in records:
+            out.append(dict(rec))
         return out
 
     async def _replay_user(
@@ -211,6 +307,19 @@ class DiffAuthAnalyzer:
             "signals": signals,
         }
 
+    def _equivalent(self, r1: Dict[str, Any], r2: Dict[str, Any]) -> bool:
+        """Two replay responses represent the same (public/open) content: both
+        2xx, similar size, and ~identical JSON key sets. Used to suppress
+        access-control findings on resources every client can already read.
+        """
+        s1 = int(r1.get("status_code") or 0)
+        s2 = int(r2.get("status_code") or 0)
+        if not (200 <= s1 < 300 and 200 <= s2 < 300):
+            return False
+        if not _size_similar(r1.get("response_size", 0), r2.get("response_size", 0)):
+            return False
+        return _jaccard(r1.get("json_keys", []), r2.get("json_keys", [])) >= 0.9
+
     async def analyze(
         self,
         engagement_id: str,
@@ -258,6 +367,20 @@ class DiffAuthAnalyzer:
             cmp_b = self._compare(r_a, r_b, "user_b")
             cmp_anon = self._compare(r_a, r_anon, "anonymous")
 
+            # Public-resource suppression (AIOSOP-DIFFAUTH-PUBLIC-SUPPRESS-001): an
+            # access-control flaw exists only if the test identity sees something an
+            # ANONYMOUS client does NOT. If user_a's response equals the anonymous
+            # one, the endpoint is simply public (kills broken_access_control FPs);
+            # if user_b's response equals the anonymous one, user_b saw nothing
+            # privileged (kills the horizontal_pe FPs that a real second identity
+            # would otherwise mass-produce on every same-shaped public/own object).
+            # A genuine IDOR (anon gets 401 on /rest/basket/{id}) is never
+            # "equivalent" to anon, so it survives.
+            if cmp_anon["category"] and self._equivalent(r_a, r_anon):
+                cmp_anon = {"category": "", "confidence": 0.0, "signals": cmp_anon["signals"]}
+            if cmp_b["category"] and self._equivalent(r_b, r_anon):
+                cmp_b = {"category": "", "confidence": 0.0, "signals": cmp_b["signals"]}
+
             # Dominant signal: anonymous access subsumes user_b "IDOR" (it's just open).
             primary = cmp_anon if cmp_anon["category"] else cmp_b
             verdict = (
@@ -297,6 +420,13 @@ class DiffAuthAnalyzer:
                     )
                     await self.graph_memory.add_diff_auth_finding_for_endpoint(
                         finding, eid_node, at_id
+                    )
+                    # Bridge into the Vulnerability graph so the finding flows into
+                    # classification + reporting. A high-confidence cross-identity
+                    # access is a demonstrated PoC (validated -> CONFIRMED); lower
+                    # confidence is persisted as a candidate needing validation.
+                    await self._bridge_to_vulnerability(
+                        cmp, identity, test_r, r_a, ep, url, method, eid_node, engagement_id
                     )
                     findings.append(
                         {

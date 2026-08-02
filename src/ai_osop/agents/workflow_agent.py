@@ -3,19 +3,21 @@ Playwright Intelligence Agent
 Orchestrates real browser journeys, handles authentication, and maps workflows.
 """
 
-import hashlib
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.adapters.browser_mcp import BrowserMCPAdapter
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.auth.api_inventory import HARExtractor, persist_endpoints
 from ai_osop.auth.session_store import SessionStore
-from ai_osop.core.config import AgentType, settings
+from ai_osop.core.config import AgentType
 from ai_osop.core.diff_auth_analyzer import DiffAuthAnalyzer
 from ai_osop.core.diff_auth_engine import DifferentialAuthEngine
-from ai_osop.core.models import Observation, Task, Workflow, WorkflowStep, WorkflowTransition
+from ai_osop.core.models import Task, Workflow, WorkflowStep, WorkflowTransition
+
+logger = logging.getLogger(__name__)
 
 
 class PlaywrightAgent(BaseAgent):
@@ -36,15 +38,15 @@ class PlaywrightAgent(BaseAgent):
 
     async def _setup_resources(self) -> None:
         """Initialize browser adapter and local state."""
-        print(f"DEBUG: Setting up resources for {self.ctx.agent_id}")
-        print(f"DEBUG: Agent registry ID: {id(self.ctx.mcp_registry)}")
+        logger.debug(f"DEBUG: Setting up resources for {self.ctx.agent_id}")
+        logger.debug(f"DEBUG: Agent registry ID: {id(self.ctx.mcp_registry)}")
         self.browser_adapter = BrowserMCPAdapter(self.ctx.mcp_registry)
-        print(f"DEBUG: Browser adapter initialized for {self.ctx.agent_id}")
+        logger.debug(f"DEBUG: Browser adapter initialized for {self.ctx.agent_id}")
         self.diff_auth_engine = DifferentialAuthEngine(self.ctx.session_memory)
-        print(f"DEBUG: Diff auth engine initialized for {self.ctx.agent_id}")
+        logger.debug(f"DEBUG: Diff auth engine initialized for {self.ctx.agent_id}")
         # Phase 1 Bug Bounty Upgrade: authenticated user-session store (Postgres+Redis)
         # so navigation/capture can run as an imported user (User A vs User B).
-        self.session_store = SessionStore(self.ctx.session_memory)
+        self.session_store = SessionStore(self.ctx.session_memory, self.ctx.graph_memory)
         # Phase 2: HTTP differential-authorization analyzer (User A vs B vs anon).
         self.diff_auth_analyzer = DiffAuthAnalyzer(self.session_store, self.ctx.graph_memory)
         self.current_workflow_id: Optional[str] = None
@@ -59,18 +61,18 @@ class PlaywrightAgent(BaseAgent):
         try:
             sess = await self.session_store.get_session_or_none(self.ctx.session_id, user_label)
         except Exception as e:  # store/DB hiccup must never abort a workflow
-            print(f"DEBUG: session lookup failed for {user_label}: {e}")
+            logger.debug(f"DEBUG: session lookup failed for {user_label}: {e}")
             return None
         if sess is None:
             return None
         if sess.is_expired():
-            print(f"DEBUG: session for {user_label} is expired; navigating unauthenticated")
+            logger.debug(f"DEBUG: session for {user_label} is expired; navigating unauthenticated")
             return None
         return sess.to_playwright_storage_state()
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute browser intelligence tasks."""
-        print(f"DEBUG: Agent {self.ctx.agent_id} entering _execute for task {task.id}")
+        logger.debug(f"DEBUG: Agent {self.ctx.agent_id} entering _execute for task {task.id}")
         if self.ctx.scope:
             await self.browser_adapter.initialize(self.ctx.scope.model_dump(), self.ctx.session_id)
 
@@ -82,6 +84,8 @@ class PlaywrightAgent(BaseAgent):
                 result = await self._execute_navigation(payload)
             elif task_type == "authenticate":
                 result = await self._execute_authentication(payload)
+            elif task_type == "register":
+                result = await self._execute_registration(payload)
             elif task_type == "map_workflow":
                 result = await self._execute_workflow_mapping(payload)
             elif task_type == "replay_for_diff_auth":
@@ -100,12 +104,14 @@ class PlaywrightAgent(BaseAgent):
                 result = await self._execute_business_logic_mapping(payload)
             else:
                 result = {"status": "failed", "error": f"Unknown task type: {task_type}"}
-            print(f"DEBUG: Agent {self.ctx.agent_id} _execute successful for task {task.id}")
+            logger.debug(f"DEBUG: Agent {self.ctx.agent_id} _execute successful for task {task.id}")
             return result
         except Exception as e:
             import traceback
 
-            print(f"DEBUG: Agent {self.ctx.agent_id} _execute exception for task {task.id}: {e}")
+            logger.debug(
+                f"DEBUG: Agent {self.ctx.agent_id} _execute exception for task {task.id}: {e}"
+            )
             traceback.print_exc()
             raise e
 
@@ -177,6 +183,22 @@ class PlaywrightAgent(BaseAgent):
         nav = await self._execute_navigation(
             {"url": url, "user_label": user_label, "workflow_id": workflow_id}
         )
+
+        # 1b. Deep authenticated navigation. Object-scoped APIs (basket, orders,
+        #     wallet, addresses) only fire when their page loads, so a single home
+        #     navigation never surfaces them — leaving IDOR/BOLA testing blind to
+        #     endpoints like /rest/basket/{id}. Visit a few common per-user routes
+        #     in the SAME (already-authenticated) context so the HAR captures
+        #     those object-scoped endpoints. Best-effort; a route that 404s is
+        #     harmless. (AIOSOP-AUTHSURFACE-DEEPNAV-001)
+        base = str(url).rstrip("/")
+        for route in ("/#/basket", "/#/order-history", "/#/wallet", "/#/saved-addresses"):
+            try:
+                await self.browser_adapter.navigate(
+                    base + route, user_label, engagement_id=self.ctx.session_id
+                )
+            except Exception:  # noqa: BLE001 - deep nav is best-effort
+                pass
 
         # 2. Flush the HAR Playwright has been recording for this identity.
         har = await self.browser_adapter.flush_har(
@@ -342,9 +364,7 @@ class PlaywrightAgent(BaseAgent):
         semantics = []
 
         if payload.get("capture_semantics"):
-            sem_result = await self._execute_semantic_extraction(
-                {"url": url, "user_label": user_label}
-            )
+            await self._execute_semantic_extraction({"url": url, "user_label": user_label})
             semantics = ["button:delete", "link:settings"]
 
         if payload.get("capture_body"):
@@ -383,28 +403,796 @@ class PlaywrightAgent(BaseAgent):
         }
 
     async def _execute_authentication(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Perform login workflow and establish session."""
+        """Perform login workflow and establish session.
+
+        Implements a real multi-step auth flow:
+        1. Navigate to the login URL.
+        2. Use SemanticExtractor to locate username/password fields dynamically
+           (no hardcoded selectors — works across frameworks).
+        3. Fill credentials and submit.
+        4. Detect post-login redirect to confirm success vs failure.
+        5. Capture full session state for downstream diff-auth replays.
+        """
         login_url = payload["login_url"]
         credentials = payload["credentials"]
         user_label = payload.get("user_label", "user_a")
+        engagement_id = self.ctx.session_id
 
-        # Placeholder for complex multi-step auth
-        # 1. Navigate to login
-        await self.browser_adapter.navigate(
-            login_url, user_label, engagement_id=self.ctx.session_id
+        # Step 1: Navigate
+        await self.browser_adapter.navigate(login_url, user_label, engagement_id=engagement_id)
+
+        # Step 2: Locate form fields via JS introspection (dynamic, no hardcoded selectors)
+        js_find_form = """
+        () => {
+            const inputs = Array.from(document.querySelectorAll('input'));
+            const user_field = inputs.find(i =>
+                /user|email|login|username|identifier/i.test(i.name + i.id + i.placeholder + i.autocomplete)
+            );
+            const pass_field = inputs.find(i =>
+                /pass|password|secret|pwd/i.test(i.name + i.id + i.placeholder + i.autocomplete) || i.type === 'password'
+            );
+            const submit_btn = document.querySelector(
+                'button[type=submit], input[type=submit], button:not([type])'
+            );
+            return {
+                user_selector: user_field ? (user_field.id ? '#' + user_field.id : '[name=' + user_field.name + ']') : null,
+                pass_selector: pass_field ? (pass_field.id ? '#' + pass_field.id : '[name=' + pass_field.name + ']') : null,
+                submit_selector: submit_btn ? (submit_btn.id ? '#' + submit_btn.id : submit_btn.tagName.toLowerCase() + '[type=submit]') : null,
+            };
+        }
+        """
+        form_result = await self.browser_adapter.execute_action(
+            action="eval",
+            params={"expression": js_find_form},
+            user_label=user_label,
+            engagement_id=engagement_id,
         )
+        selectors = form_result.get("result", {}) or {}
 
-        # 2. Fill and submit (assuming simple selectors for now)
-        # Note: In Step 5, we'll use the Semantic Extractor to find these dynamically.
-        # await self.browser_adapter.execute_action("fill", {"selector": "#user", "value": credentials["user"]})
-        # await self.browser_adapter.execute_action("click", {"selector": "#submit"})
+        user_sel = selectors.get("user_selector") or "input[type=email], input[type=text]"
+        pass_sel = selectors.get("pass_selector") or "input[type=password]"
+        submit_sel = selectors.get("submit_selector") or "button[type=submit]"
 
-        # 3. Capture State
+        # Step 3: Fill and submit — ONLY when a real login form is present (a
+        # detected password field). This stops the guest recon probe from
+        # filling+submitting an unrelated form (search/newsletter) on a non-login
+        # landing page when the login route doesn't resolve. (review-finding-2)
+        login_form_present = bool(selectors.get("pass_selector"))
+        if login_form_present:
+            try:
+                await self.browser_adapter.execute_action(
+                    action="fill",
+                    params={
+                        "selector": user_sel,
+                        "value": credentials.get("username", credentials.get("email", "")),
+                    },
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                await self.browser_adapter.execute_action(
+                    action="fill",
+                    params={"selector": pass_sel, "value": credentials.get("password", "")},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                # Robust submit (AIOSOP-AUTH-JSSUBMIT): a Playwright click on an
+                # Angular-Material submit button frequently times out on
+                # actionability even when the button exists and is enabled. A
+                # programmatic JS click reliably fires the framework's submit
+                # handler and the resulting XHR (e.g. POST /rest/user/login) —
+                # verified against Juice Shop. This is what makes an auth-gated
+                # POST endpoint observable in the HAR.
+                submit_js = (
+                    "() => { const b = document.querySelector(%s); "
+                    "if (b) { b.click(); return true; } return false; }" % json.dumps(submit_sel)
+                )
+                await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": submit_js},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                # Poll for JWT token in localStorage or URL redirect after login.
+                # Blind timeout is unreliable: SPA frameworks take variable time
+                # to complete the XHR, store the JWT, and redirect. We poll up
+                # to 10s (every 500ms) so the captured session carries a valid
+                # bearer_token for downstream jwt_scan and diff-auth engines.
+                # (AIOSOP-JWT-POLL-001)
+                poll_js = (
+                    "() => new Promise(resolve => {"
+                    "  const start = Date.now();"
+                    "  const maxWait = 10000;"
+                    "  const poll = () => {"
+                    "    const token = (localStorage || {}).getItem('token');"
+                    "    const url = window.location.href;"
+                    "    const urlChanged = " + json.dumps(login_url) + " !== url;"
+                    "    if (token || urlChanged || (Date.now() - start) >= maxWait) {"
+                    "      resolve({token: token || null, url: url, elapsed: Date.now() - start});"
+                    "    } else {"
+                    "      setTimeout(poll, 500);"
+                    "    }"
+                    "  };"
+                    "  poll();"
+                    "})"
+                )
+                await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": poll_js},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+            except Exception as fill_err:
+                logger.warning(f"Auth form fill failed for {user_label}: {fill_err}")
+        else:
+            logger.info(f"auth_no_login_form_detected user_label={user_label} url={login_url}")
+
+        # Step 4 + 5: Capture post-login state
         session_state = await self.browser_adapter.capture_state(
-            user_label, engagement_id=self.ctx.session_id
+            user_label, engagement_id=engagement_id
         )
 
-        return {"status": "authenticated", "user_label": user_label, "session_state": session_state}
+        # AIOSOP-JWT-CAPTURE-001: read the JWT straight from localStorage after
+        # login. Juice Shop (and most SPA apps) store the bearer in
+        # localStorage['token'], NOT a cookie, and capture_state does not reliably
+        # serialize localStorage across the browser-MCP boundary — so the session
+        # was persisted with an EMPTY bearer_token, leaving jwt_scan and the
+        # diff-auth engine with no identity to use (JS-004/JS-003 dead).
+        polled_token = ""
+        try:
+            tok_res = await self.browser_adapter.execute_action(
+                action="eval",
+                params={
+                    "expression": (
+                        "() => { try { return localStorage.getItem('token')"
+                        " || localStorage.getItem('access_token') || null; }"
+                        " catch (e) { return null; } }"
+                    )
+                },
+                user_label=user_label,
+                engagement_id=engagement_id,
+            )
+            polled_token = str((tok_res or {}).get("result") or "")
+        except Exception as tok_err:  # noqa: BLE001
+            logger.info(f"jwt localStorage grab skipped: {tok_err}")
+
+        # Detect auth success: URL changed away from login page, or session cookies
+        # set. capture_state's state dict carries the URL under "url" (not
+        # "current_url"), so read that first. (review-finding-4)
+        current_url = session_state.get("url") or session_state.get("current_url") or login_url
+        login_succeeded = (login_url not in current_url) or bool(session_state.get("cookies"))
+
+        # Discovery: flush the HAR (which now contains the login POST fired by the
+        # submit above, plus any XHR the journey triggered) and extract + persist
+        # the API endpoints. This turns an auth-gated POST endpoint — with its
+        # body params — into a discovered, scannable Endpoint{type:'api'} node,
+        # which the GET link crawler could never observe. Best-effort: a discovery
+        # hiccup must never change the auth verdict. (AIOSOP-AUTH-XHR-DISCOVERY)
+        api_inventory: Dict[str, Any] = {}
+        try:
+            har = await self.browser_adapter.flush_har(
+                user_label=user_label,
+                engagement_id=engagement_id,
+                workflow_id=payload.get("workflow_id", ""),
+            )
+            har_path = har.get("path", "")
+            if har_path and har.get("exists"):
+                api_inventory = await self._extract_and_persist_har(
+                    har_path=har_path,
+                    user_label=user_label,
+                    workflow_id=payload.get("workflow_id", ""),
+                    scope_hosts=payload.get("scope_hosts"),
+                )
+        except Exception as e:  # noqa: BLE001 - discovery is best-effort
+            logger.warning(f"auth HAR api-inventory extraction failed: {e}")
+
+        # AIOSOP-SESSION-PERSIST-001: persist the captured session so downstream
+        # scanners (jwt_scan, diff-auth analysis) can consume it. Without this,
+        # session_store.list_sessions() returns empty and the jwt_scan dispatch
+        # in the vuln discovery phase is dead code. Best-effort: a persistence
+        # failure must never change the auth verdict.
+        if login_succeeded:
+            try:
+                cookies = session_state.get("cookies") or []
+                local_storage = session_state.get("localStorage") or {}
+                session_storage = session_state.get("sessionStorage") or {}
+                # Bearer token: prefer the value grabbed straight from
+                # localStorage after login (AIOSOP-JWT-CAPTURE-001), then fall
+                # back to a matching cookie or the captured storage dict.
+                bearer_token = polled_token
+                if not bearer_token:
+                    for c in cookies:
+                        if c.get("name", "").lower() in ("token", "jwt", "access_token"):
+                            bearer_token = c.get("value", "")
+                            break
+                if not bearer_token and local_storage:
+                    for k, v in local_storage.items():
+                        if "token" in k.lower() or "jwt" in k.lower():
+                            bearer_token = str(v)
+                            break
+                # Seed the JWT into the persisted localStorage so the diff-auth
+                # replay reconstructs an authenticated browser storage_state.
+                if bearer_token and "token" not in local_storage:
+                    local_storage = {**local_storage, "token": bearer_token}
+                await self.session_store.save_session(
+                    engagement_id=engagement_id,
+                    user_label=user_label,
+                    cookies=cookies,
+                    bearer_token=bearer_token,
+                    local_storage=local_storage,
+                    session_storage=session_storage,
+                    metadata_blob={
+                        "source": "authenticate_task",
+                        "origin": current_url,
+                        "user_agent": "AI-OSOP Playwright",
+                    },
+                )
+                logger.info(
+                    "auth_session_persisted",
+                    user_label=user_label,
+                    cookies=len(cookies),
+                    has_bearer=bool(bearer_token),
+                )
+            except Exception as persist_err:
+                logger.warning(f"auth session persist failed for {user_label}: {persist_err}")
+
+        return {
+            "status": "authenticated" if login_succeeded else "auth_failed",
+            "user_label": user_label,
+            "session_state": session_state,
+            "post_login_url": current_url,
+            "selectors_used": {"user": user_sel, "pass": pass_sel, "submit": submit_sel},
+            **api_inventory,
+        }
+
+    async def _execute_registration(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Register a new user account and return credentials.
+
+        Navigates to the registration page, finds email/password/security fields,
+        fills them, submits, and returns the created credentials for downstream
+        authenticated scans (JWT, IDOR, basket access).
+
+        Payload:
+            register_url   URL of the registration page
+            credentials    dict with desired email+password
+            user_label     identity label for the browser context
+            scope_hosts    optional list[hostname] for HAR extraction
+        """
+        register_url = payload.get("register_url")
+        if not register_url:
+            return {"status": "failed", "error": "register_url is required"}
+        credentials = dict(payload.get("credentials", {}))
+        if not credentials.get("email"):
+            import uuid
+
+            credentials["email"] = f"osop-auto-{uuid.uuid4().hex[:8]}@test.invalid"
+        if not credentials.get("password"):
+            credentials["password"] = "AutoRegPass1!"
+        user_label = payload.get("user_label", "registered_user")
+        engagement_id = self.ctx.session_id
+        scope_hosts = payload.get("scope_hosts")
+
+        # Step 1: Navigate to registration page
+        await self.browser_adapter.navigate(register_url, user_label, engagement_id=engagement_id)
+
+        # Step 2: Find registration form fields via JS
+        js_find_form = """
+        () => {
+            const inputs = Array.from(document.querySelectorAll('input'));
+            const selects = Array.from(document.querySelectorAll('select'));
+            const email_field = inputs.find(i =>
+                /email|e-mail|mail/i.test(i.name + i.id + i.placeholder + i.autocomplete)
+            );
+            const pass_field = inputs.find(i =>
+                /password|pass|pwd/i.test(i.name + i.id + i.placeholder + i.autocomplete) || i.type === 'password'
+            );
+            const pass_repeat = inputs.find(i =>
+                /pass.*(repeat|confirm|again|2|verify)|repeat.*pass/i.test(i.name + i.id + i.placeholder) ||
+                (i.type === 'password' && i !== pass_field)
+            );
+            // Also search <select> elements for security question dropdowns
+            const question_field = inputs.find(i =>
+                /question|security|secret/i.test(i.name + i.id + i.placeholder)
+            ) || selects.find(s =>
+                /question|security|secret/i.test(s.name + s.id)
+            );
+            const answer_field = inputs.find(i =>
+                /answer|response/i.test(i.name + i.id + i.placeholder)
+            );
+            const submit_btn = document.querySelector(
+                'button[type=submit], input[type=submit], button:not([type])'
+            );
+            return {
+                email_selector: email_field ? (email_field.id ? '#' + email_field.id : '[name=' + email_field.name + ']') : null,
+                pass_selector: pass_field ? (pass_field.id ? '#' + pass_field.id : '[name=' + pass_field.name + ']') : null,
+                pass_repeat_selector: pass_repeat ? (pass_repeat.id ? '#' + pass_repeat.id : '[name=' + pass_repeat.name + ']') : null,
+                question_selector: question_field ? (question_field.id ? '#' + question_field.id : '[name=' + question_field.name + ']') : null,
+                answer_selector: answer_field ? (answer_field.id ? '#' + answer_field.id : '[name=' + answer_field.name + ']') : null,
+                submit_selector: submit_btn ? (submit_btn.id ? '#' + submit_btn.id : submit_btn.tagName.toLowerCase() + '[type=submit]') : null,
+            };
+        }
+        """
+        # The main JS query below already handles <select> elements for
+        # security question dropdowns. No separate fallback needed.
+        form_result = await self.browser_adapter.execute_action(
+            action="eval",
+            params={"expression": js_find_form},
+            user_label=user_label,
+            engagement_id=engagement_id,
+        )
+        selectors = form_result.get("result", {}) or {}
+
+        email_sel = selectors.get("email_selector") or "input[type=email], input[name*=email]"
+        pass_sel = selectors.get("pass_selector") or "input[type=password]"
+        pass_repeat_sel = selectors.get("pass_repeat_selector") or pass_sel
+        # question_selector is intentionally not read: the security question is
+        # handled directly below (mat-select overlay + native <select> fallback),
+        # not via a pre-detected selector. (AIOSOP-REG-MATSELECT-001)
+        answer_sel = selectors.get("answer_selector")
+        submit_sel = selectors.get("submit_selector") or "button[type=submit]"
+
+        # Step 3: Fill fields — ONLY when a password field is detected (confirms a
+        # real registration form, not a search/login page).
+        reg_form_present = bool(selectors.get("pass_selector"))
+        if reg_form_present:
+            try:
+                await self.browser_adapter.execute_action(
+                    action="fill",
+                    params={"selector": email_sel, "value": credentials["email"]},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                await self.browser_adapter.execute_action(
+                    action="fill",
+                    params={"selector": pass_sel, "value": credentials["password"]},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                if pass_repeat_sel != pass_sel:
+                    await self.browser_adapter.execute_action(
+                        action="fill",
+                        params={"selector": pass_repeat_sel, "value": credentials["password"]},
+                        user_label=user_label,
+                        engagement_id=engagement_id,
+                    )
+                # Security question — Juice Shop (and most Angular apps) render
+                # this as an Angular Material <mat-select> overlay, NOT a native
+                # <select>, so setting .value does nothing and the old
+                # question_sel detection (inputs/selects only) never even found
+                # it. Drive it like a user: click the trigger, wait for the cdk
+                # overlay to render <mat-option>s, then click the first real
+                # option. Falls back to a native <select> for non-Material apps.
+                # (AIOSOP-REG-MATSELECT-001)
+                select_q_js = (
+                    "() => new Promise(resolve => {"
+                    "  const m = document.querySelector('mat-select');"
+                    "  if (m) {"
+                    "    m.click();"
+                    "    setTimeout(() => {"
+                    "      const opts = Array.from("
+                    "        document.querySelectorAll('mat-option, [role=option]'));"
+                    "      const pick = opts.find(o => (o.textContent || '').trim())"
+                    "        || opts[0];"
+                    "      if (pick) { pick.click();"
+                    "        setTimeout(() => resolve("
+                    "          {kind: 'mat', ok: true, n: opts.length}), 250); }"
+                    "      else { resolve({kind: 'mat', ok: false, n: 0}); }"
+                    "    }, 700);"
+                    "    return;"
+                    "  }"
+                    "  const s = document.querySelector('select');"
+                    "  if (s && s.options && s.options.length) {"
+                    "    const o = Array.from(s.options)"
+                    "      .find(x => x.value && !x.disabled) || s.options[0];"
+                    "    if (o) { s.value = o.value;"
+                    "      s.dispatchEvent(new Event('change', {bubbles: true}));"
+                    "      resolve({kind: 'select', ok: true}); return; }"
+                    "  }"
+                    "  resolve({kind: 'none', ok: false});"
+                    "})"
+                )
+                try:
+                    q_result = await self.browser_adapter.execute_action(
+                        action="eval",
+                        params={"expression": select_q_js},
+                        user_label=user_label,
+                        engagement_id=engagement_id,
+                    )
+                    logger.info(
+                        "reg_security_question",
+                        user_label=user_label,
+                        outcome=(q_result or {}).get("result"),
+                    )
+                except Exception as q_err:  # noqa: BLE001
+                    logger.info(f"reg_question_select_skipped: {q_err}")
+                # Answer field: detected selector, else a robust fallback covering
+                # Juice Shop (#securityAnswerControl) and generic forms. Not gated
+                # on detection — the account won't create without it.
+                answer_target = answer_sel or (
+                    "#securityAnswerControl, input[name*=securityAnswer], "
+                    "input[placeholder*=Answer], input[placeholder*=answer]"
+                )
+                try:
+                    await self.browser_adapter.execute_action(
+                        action="fill",
+                        params={
+                            "selector": answer_target,
+                            "value": credentials.get("security_answer", "auto_reg_answer"),
+                        },
+                        user_label=user_label,
+                        engagement_id=engagement_id,
+                    )
+                except Exception as ans_err:  # noqa: BLE001
+                    logger.info(f"reg_answer_fill_skipped: {ans_err}")
+                # Submit via JS click (same rationale as authenticate — framework
+                # buttons frequently time out on Playwright actionability)
+                submit_js = (
+                    "() => { const b = document.querySelector(%s); "
+                    "if (b) { b.click(); return true; } return false; }" % json.dumps(submit_sel)
+                )
+                await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": submit_js},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                # Let the XHR fire and land in the HAR before flush
+                await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": "() => new Promise(r => setTimeout(r, 3000))"},
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+            except Exception as fill_err:
+                logger.warning(f"Registration form fill failed for {user_label}: {fill_err}")
+        else:
+            logger.info(f"reg_no_form_detected user_label={user_label} url={register_url}")
+
+        # Step 4: Capture state + flush HAR for API endpoint discovery
+        session_state = await self.browser_adapter.capture_state(
+            user_label, engagement_id=engagement_id
+        )
+        current_url = session_state.get("url") or session_state.get("current_url") or register_url
+
+        # Step 5: Flush HAR and extract discovered API endpoints (especially POST
+        # /api/Users which is the mass-assignment target).
+        api_inventory: Dict[str, Any] = {}
+        try:
+            har = await self.browser_adapter.flush_har(
+                user_label=user_label,
+                engagement_id=engagement_id,
+                workflow_id=payload.get("workflow_id", ""),
+            )
+            har_path = har.get("path", "")
+            if har_path and har.get("exists"):
+                api_inventory = await self._extract_and_persist_har(
+                    har_path=har_path,
+                    user_label=user_label,
+                    workflow_id=payload.get("workflow_id", ""),
+                    scope_hosts=scope_hosts,
+                )
+        except Exception as e:  # noqa: BLE001 - discovery best-effort
+            logger.warning(f"reg HAR api-inventory extraction failed: {e}")
+
+        # Registration success check: DOM-based instead of URL-based because
+        # SPA frameworks (e.g. Juice Shop) show a success overlay without
+        # navigating away from /#/register. Also checks cookies as fallback.
+        reg_succeeded = bool(session_state.get("cookies"))
+        if not reg_succeeded:
+            try:
+                dom_check = await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={
+                        "expression": (
+                            "() => {"
+                            "  const t = document.body.innerText;"
+                            "  return /success|completed|confirmation|thank you|registration/i.test(t)"
+                            "    ? 'success' : null;"
+                            "}"
+                        )
+                    },
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                reg_succeeded = bool(dom_check.get("result"))
+            except Exception:
+                pass
+
+        return {
+            "status": "registered" if reg_succeeded else "reg_failed",
+            "user_label": user_label,
+            "credentials": credentials,
+            "post_reg_url": current_url,
+            "selectors_used": {
+                "email": email_sel,
+                "pass": pass_sel,
+                "submit": submit_sel,
+            },
+            **api_inventory,
+        }
+
+    async def _probe_workflow_abuse(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Multi-step business-logic abuse engine.
+
+        Runs four abuse probe classes against a mapped workflow:
+          1. Payment/price manipulation — submit altered amounts
+          2. Coupon/promo reuse — apply same code twice or as another user
+          3. Invitation abuse — reuse single-use invite tokens across accounts
+          4. Race condition on critical transitions — concurrent state mutation
+
+        Each probe captures evidence and returns a structured finding dict.
+        Only real observations are returned — no fabrication.
+        """
+        abuse_type = payload.get("abuse_type", "all")
+        target_url = payload.get("target_url", "")
+        user_label_a = payload.get("user_label_a", "user_a")
+        user_label_b = payload.get("user_label_b", "user_b")
+        engagement_id = self.ctx.session_id
+
+        findings: List[Dict[str, Any]] = []
+
+        if abuse_type in ("payment", "all"):
+            findings.extend(
+                await self._probe_payment_manipulation(target_url, user_label_a, engagement_id)
+            )
+
+        if abuse_type in ("coupon", "all"):
+            coupon_code = payload.get("coupon_code", "")
+            findings.extend(
+                await self._probe_coupon_reuse(
+                    target_url, coupon_code, user_label_a, user_label_b, engagement_id
+                )
+            )
+
+        if abuse_type in ("invitation", "all"):
+            invite_token = payload.get("invite_token", "")
+            findings.extend(
+                await self._probe_invitation_abuse(
+                    target_url, invite_token, user_label_a, user_label_b, engagement_id
+                )
+            )
+
+        if abuse_type in ("race", "all"):
+            race_endpoint = payload.get("race_endpoint", target_url)
+            findings.extend(
+                await self._probe_race_condition(race_endpoint, user_label_a, engagement_id)
+            )
+
+        return {
+            "status": "success",
+            "abuse_type": abuse_type,
+            "target_url": target_url,
+            "findings_count": len(findings),
+            "findings": findings,
+        }
+
+    async def _probe_payment_manipulation(
+        self, target_url: str, user_label: str, engagement_id: str
+    ) -> List[Dict[str, Any]]:
+        """Probe price/amount fields for manipulation — submit 0, negative, or 1-cent amounts."""
+        findings = []
+        if not target_url:
+            return findings
+
+        test_payloads = [
+            {"amount": "0", "label": "zero_amount"},
+            {"amount": "-1", "label": "negative_amount"},
+            {"amount": "0.01", "label": "minimal_amount"},
+            {"amount": "9999999", "label": "overflow_amount"},
+        ]
+
+        for test in test_payloads:
+            try:
+                result = await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={
+                        "expression": f"""
+                        () => {{
+                            const amtField = document.querySelector(
+                                'input[name*=amount], input[name*=price], input[name*=total], input[id*=amount]'
+                            );
+                            if (!amtField) return {{found: false}};
+                            const orig = amtField.value;
+                            amtField.value = '{test["amount"]}';
+                            return {{found: true, original: orig, injected: '{test["amount"]}', selector: amtField.name || amtField.id}};
+                        }}
+                        """
+                    },
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                r = result.get("result", {}) or {}
+                if r.get("found"):
+                    findings.append(
+                        {
+                            "type": "payment_manipulation",
+                            "label": test["label"],
+                            "amount_injected": test["amount"],
+                            "original_amount": r.get("original"),
+                            "selector": r.get("selector"),
+                            "target_url": target_url,
+                            "confidence": 0.6,
+                            "note": "Amount field found and manipulated — verify server-side enforcement",
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"Payment probe {test['label']} error: {e}")
+
+        return findings
+
+    async def _probe_coupon_reuse(
+        self,
+        target_url: str,
+        coupon_code: str,
+        user_label_a: str,
+        user_label_b: str,
+        engagement_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Apply same coupon code twice (same user) or for a second user (cross-account reuse)."""
+        findings = []
+        if not coupon_code:
+            return findings
+
+        js_apply_coupon = f"""
+        async () => {{
+            const couponField = document.querySelector(
+                'input[name*=coupon], input[name*=promo], input[name*=discount], input[placeholder*=coupon]'
+            );
+            if (!couponField) return {{found: false}};
+            couponField.value = '{coupon_code}';
+            const applyBtn = document.querySelector('button[data-coupon], button[class*=coupon], button[id*=coupon]');
+            if (applyBtn) applyBtn.click();
+            await new Promise(r => setTimeout(r, 800));
+            const msg = document.body.innerText;
+            return {{found: true, applied: true, page_text_snippet: msg.slice(0, 300)}};
+        }}
+        """
+
+        for attempt, label_used in [(1, user_label_a), (2, user_label_a), (3, user_label_b)]:
+            try:
+                await self.browser_adapter.navigate(
+                    target_url, label_used, engagement_id=engagement_id
+                )
+                result = await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={"expression": js_apply_coupon},
+                    user_label=label_used,
+                    engagement_id=engagement_id,
+                )
+                r = result.get("result", {}) or {}
+                if r.get("found") and r.get("applied"):
+                    snippet = (r.get("page_text_snippet") or "").lower()
+                    success_words = ["applied", "discount", "saved", "success", "accepted"]
+                    error_words = ["already used", "invalid", "expired", "used once", "one time"]
+                    accepted = any(w in snippet for w in success_words)
+                    rejected = any(w in snippet for w in error_words)
+                    if attempt > 1 and accepted and not rejected:
+                        findings.append(
+                            {
+                                "type": "coupon_reuse",
+                                "attempt": attempt,
+                                "user": label_used,
+                                "coupon_code": coupon_code,
+                                "target_url": target_url,
+                                "confidence": 0.75,
+                                "evidence_snippet": r.get("page_text_snippet", "")[:200],
+                                "note": "Coupon accepted on repeat use — no server-side use tracking",
+                            }
+                        )
+            except Exception as e:
+                logger.debug(f"Coupon probe attempt {attempt} error: {e}")
+
+        return findings
+
+    async def _probe_invitation_abuse(
+        self,
+        target_url: str,
+        invite_token: str,
+        user_label_a: str,
+        user_label_b: str,
+        engagement_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Try using an invite token twice — once normally, once as a second user."""
+        findings = []
+        if not invite_token:
+            return findings
+
+        invite_url = (
+            f"{target_url}?invite={invite_token}"
+            if "?" not in target_url
+            else f"{target_url}&invite={invite_token}"
+        )
+
+        for attempt, user in [(1, user_label_a), (2, user_label_b)]:
+            try:
+                await self.browser_adapter.navigate(invite_url, user, engagement_id=engagement_id)
+                state = await self.browser_adapter.capture_state(user, engagement_id=engagement_id)
+                body = (state.get("body") or "").lower()
+                success_words = [
+                    "welcome",
+                    "account created",
+                    "registered",
+                    "invite accepted",
+                    "join",
+                ]
+                error_words = ["invalid", "expired", "already used", "token used"]
+                accepted = any(w in body for w in success_words)
+                rejected = any(w in body for w in error_words)
+
+                if attempt == 2 and accepted and not rejected:
+                    findings.append(
+                        {
+                            "type": "invitation_token_reuse",
+                            "attempt": attempt,
+                            "user": user,
+                            "invite_token": invite_token,
+                            "target_url": invite_url,
+                            "confidence": 0.80,
+                            "note": "Single-use invite token accepted for a second account",
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"Invitation probe attempt {attempt} error: {e}")
+
+        return findings
+
+    async def _probe_race_condition(
+        self, target_url: str, user_label: str, engagement_id: str
+    ) -> List[Dict[str, Any]]:
+        """Fire concurrent requests to a state-mutating endpoint to probe for TOCTOU.
+
+        Uses asyncio.gather to fire 5 simultaneous requests and watches for
+        inconsistent state (multiple successes, inconsistent totals, etc.).
+        """
+        import asyncio as _asyncio
+
+        findings = []
+        if not target_url:
+            return findings
+
+        async def _single_request(idx: int) -> Dict[str, Any]:
+            try:
+                result = await self.browser_adapter.execute_action(
+                    action="eval",
+                    params={
+                        "expression": f"""
+                        async () => {{
+                            const resp = await fetch('{target_url}', {{
+                                method: 'POST',
+                                credentials: 'include',
+                                headers: {{'Content-Type': 'application/json', 'X-Race-Probe': '{idx}'}},
+                                body: JSON.stringify({{race_probe: true}})
+                            }});
+                            return {{status: resp.status, ok: resp.ok, idx: {idx}}};
+                        }}
+                        """
+                    },
+                    user_label=user_label,
+                    engagement_id=engagement_id,
+                )
+                return result.get("result", {"status": 0, "ok": False, "idx": idx}) or {}
+            except Exception as e:
+                return {"status": 0, "ok": False, "idx": idx, "error": str(e)}
+
+        # Fire 5 concurrent requests
+        try:
+            results = await _asyncio.gather(*[_single_request(i) for i in range(5)])
+            successes = [r for r in results if r.get("ok") or r.get("status") == 200]
+            if len(successes) > 1:
+                findings.append(
+                    {
+                        "type": "race_condition",
+                        "target_url": target_url,
+                        "concurrent_successes": len(successes),
+                        "total_requests": 5,
+                        "confidence": 0.70,
+                        "note": f"{len(successes)}/5 concurrent requests succeeded — TOCTOU likely",
+                        "raw_results": results,
+                    }
+                )
+        except Exception as e:
+            logger.debug(f"Race condition probe error: {e}")
+
+        return findings
 
     async def _execute_workflow_mapping(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Record a sequence of actions OR auto-discover workflows from a URL."""
@@ -447,29 +1235,30 @@ class PlaywrightAgent(BaseAgent):
 
             # Resolve or create endpoint
             cypher_search = "MATCH (e:Endpoint {url: $url, engagement_id: $sid}) RETURN e.id as id"
-            async with self.ctx.graph_memory._driver.session() as session:
-                result = await session.run(cypher_search, {"url": url, "sid": self.ctx.session_id})
-                record = await result.single()
-                if record:
-                    endpoint_id = record["id"]
-                else:
-                    asset_query = "MATCH (a:Asset {engagement_id: $sid, type: 'domain'}) RETURN a.id as id LIMIT 1"
-                    asset_res = await session.run(asset_query, {"sid": self.ctx.session_id})
-                    asset_rec = await asset_res.single()
-                    primary_asset_id = (
-                        asset_rec["id"] if asset_rec else f"asset-{self.ctx.session_id}"
-                    )
+            records = await self.ctx.graph_memory.run_read_query(
+                cypher_search, {"url": url, "sid": self.ctx.session_id}
+            )
+            if records:
+                endpoint_id = records[0].get("id")
+            else:
+                asset_records = await self.ctx.graph_memory.run_read_query(
+                    "MATCH (a:Asset {engagement_id: $sid, type: 'domain'}) RETURN a.id as id LIMIT 1",
+                    {"sid": self.ctx.session_id},
+                )
+                primary_asset_id = (
+                    asset_records[0].get("id") if asset_records else f"asset-{self.ctx.session_id}"
+                )
 
-                    from ai_osop.core.models import Endpoint
+                from ai_osop.core.models import Endpoint
 
-                    new_ep = Endpoint(
-                        url=url,
-                        asset_id=primary_asset_id,
-                        source="playwright_discovery",
-                        confidence=0.8,
-                        engagement_id=self.ctx.session_id,
-                    )
-                    endpoint_id = await self.ctx.graph_memory.add_endpoint(new_ep)
+                new_ep = Endpoint(
+                    url=url,
+                    asset_id=primary_asset_id,
+                    source="playwright_discovery",
+                    confidence=0.8,
+                    engagement_id=self.ctx.session_id,
+                )
+                endpoint_id = await self.ctx.graph_memory.add_endpoint(new_ep)
 
             step = WorkflowStep(
                 workflow_id=workflow.id,
@@ -542,22 +1331,21 @@ class PlaywrightAgent(BaseAgent):
         # Verify via Neo4j that the workflow node exists with at least one Step
         # and at least one Evidence reachable from those steps. If not, raise so
         # the base agent marks this task failed (Issue: ghost workflows).
-        async with self.ctx.graph_memory._driver.session() as inv_sess:
-            res = await inv_sess.run(
-                """
-                MATCH (w:Workflow {id: $wid})
-                OPTIONAL MATCH (w)-[:HAS_STEP]->(s:Step)
-                OPTIONAL MATCH (s)-[:HAS_EVIDENCE]->(e:Evidence)
-                RETURN count(DISTINCT w) AS w_count,
-                       count(DISTINCT s) AS step_count,
-                       count(DISTINCT e) AS evidence_count
-                """,
-                {"wid": workflow.id},
-            )
-            rec = await res.single()
-            w_count = rec["w_count"] if rec else 0
-            step_count = rec["step_count"] if rec else 0
-            evidence_count = rec["evidence_count"] if rec else 0
+        records = await self.ctx.graph_memory.run_read_query(
+            """
+            MATCH (w:Workflow {id: $wid})
+            OPTIONAL MATCH (w)-[:HAS_STEP]->(s:Step)
+            OPTIONAL MATCH (s)-[:HAS_EVIDENCE]->(e:Evidence)
+            RETURN count(DISTINCT w) AS w_count,
+                   count(DISTINCT s) AS step_count,
+                   count(DISTINCT e) AS evidence_count
+            """,
+            {"wid": workflow.id},
+        )
+        rec = records[0] if records else {}
+        w_count = rec.get("w_count", 0)
+        step_count = rec.get("step_count", 0)
+        evidence_count = rec.get("evidence_count", 0)
 
         if w_count == 0 or step_count == 0 or evidence_count == 0:
             from ai_osop.core.exceptions import AgentException
@@ -655,13 +1443,12 @@ class PlaywrightAgent(BaseAgent):
             )
             step_id = await self.ctx.graph_memory.add_workflow_step(step)
 
-            # Assign business state to step via raw Cypher, as model doesn't have it natively
+            # Assign business state to step via GraphMemory write abstraction
             state_label = step_data.get("state", f"STATE_{i}")
-            async with self.ctx.graph_memory._driver.session() as session:
-                await session.run(
-                    "MATCH (s:Step {id: $step_id}) SET s.business_state = $state_label",
-                    {"step_id": step_id, "state_label": state_label},
-                )
+            await self.ctx.graph_memory.run_write_query(
+                "MATCH (s:Step {id: $step_id}) SET s.business_state = $state_label",
+                {"step_id": step_id, "state_label": state_label},
+            )
 
             # Link transition
             if prev_step_id:
@@ -766,7 +1553,9 @@ class PlaywrightAgent(BaseAgent):
             extracted.append(element)
 
             # Emit as observation for AttackChainAgent
-            await self.observe(target_id=page_url, obs_type="ui_semantics", data=element.model_dump())
+            await self.observe(
+                target_id=page_url, obs_type="ui_semantics", data=element.model_dump()
+            )
 
         return {"status": "success", "elements_found": len(extracted), "url": page_url}
 

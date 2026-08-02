@@ -5,7 +5,7 @@ export interface Finding {
   title: string
   category: string
   severity: 'low' | 'medium' | 'high' | 'critical'
-  status: 'hypothesis' | 'validated' | 'verified' | 'report_ready'
+  status: 'hypothesis' | 'validated' | 'verified' | 'report_ready' | 'rejected'
   evScore: number
   confidence: number
   historicalConfidence: number
@@ -14,7 +14,11 @@ export interface Finding {
   engagement_id?: string
   provenance?: string
   replayabilityScore?: number
+  [key: string]: any
 }
+
+export const FINDING_STATUSES = ['hypothesis', 'validated', 'verified', 'report_ready', 'rejected'] as const
+export type FindingStatus = typeof FINDING_STATUSES[number]
 
 export interface VerificationRequest {
   id: string
@@ -23,6 +27,7 @@ export interface VerificationRequest {
   evidenceSources: string[]
   agreedAgents: string[]
   requiredSources: number
+  [key: string]: any
 }
 
 export interface Uncertainty {
@@ -65,16 +70,35 @@ export interface DiffAuthFinding {
   confidence: number
 }
 
+export interface AuditLogEntry {
+  id: string
+  timestamp: string
+  event_type: string
+  actor_id: string
+  severity: string
+  action: any
+  details?: any
+  result?: any
+  [key: string]: any
+}
+
+interface GraphData {
+  nodes: any[]
+  edges: any[]
+}
+
 interface IntelligenceState {
   sessionId: string | null
+  hasCheckedSession: boolean
   findings: Finding[]
   verifications: VerificationRequest[]
   uncertainties: Uncertainty[]
   diffAuthFindings: DiffAuthFinding[]
   skillStats: SkillStats | null
-  auditLog: any[]
-  graphData: { nodes: any[], edges: any[] }
+  auditLog: AuditLogEntry[]
+  graphData: GraphData
   setSessionId: (id: string) => void
+  setHasCheckedSession: (checked: boolean) => void
   appendFinding: (finding: Finding) => void
   updateFinding: (id: string, updates: Partial<Finding>) => void
   setFindings: (findings: Finding[]) => void
@@ -85,13 +109,14 @@ interface IntelligenceState {
   setUncertainties: (uncertainties: Uncertainty[]) => void
   setDiffAuthFindings: (findings: DiffAuthFinding[]) => void
   setSkillStats: (stats: SkillStats) => void
-  setAuditLog: (log: any[]) => void
-  appendAuditEntry: (event: any) => void
-  setGraphData: (data: { nodes: any[], edges: any[] }) => void
+  setAuditLog: (log: AuditLogEntry[]) => void
+  appendAuditEntry: (event: AuditLogEntry) => void
+  setGraphData: (data: GraphData) => void
 }
 
 export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   sessionId: null,
+  hasCheckedSession: false,
   findings: [],
   verifications: [],
   uncertainties: [],
@@ -99,7 +124,16 @@ export const useIntelligenceStore = create<IntelligenceState>((set) => ({
   skillStats: null,
   auditLog: [],
   graphData: { nodes: [], edges: [] },
-  setSessionId: (sessionId) => set({ sessionId }),
+  setSessionId: (sessionId) => set({ 
+    sessionId, 
+    findings: [], 
+    verifications: [], 
+    uncertainties: [], 
+    diffAuthFindings: [], 
+    auditLog: [], 
+    graphData: { nodes: [], edges: [] } 
+  }),
+  setHasCheckedSession: (hasCheckedSession) => set({ hasCheckedSession }),
   appendFinding: (finding) => set((state) => ({ 
     findings: [...state.findings.filter(f => f.id !== finding.id), finding] 
   })),

@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.models import Task
 from ai_osop.core.config import AgentType
-from ai_osop.reliability.dlq import DLQEntry, DeadLetterQueue
+from ai_osop.core.models import Task
+from ai_osop.reliability.dlq import DeadLetterQueue, DLQEntry
 
 
 class TestDeadLetterQueue:
@@ -44,7 +44,9 @@ class TestDeadLetterQueue:
 
     async def test_enqueue_creates_entry(self, dlq, mock_session_memory, sample_task):
         """enqueue should create a DLQ entry and store it in Redis."""
-        entry_id = await dlq.enqueue(sample_task, reason="retry_budget_exhausted", final_error="timeout")
+        entry_id = await dlq.enqueue(
+            sample_task, reason="retry_budget_exhausted", final_error="timeout"
+        )
         assert entry_id.startswith("dlq-")
         mock_session_memory.store_hot.assert_called_once()
         mock_session_memory._redis.rpush.assert_called_once()
@@ -111,7 +113,7 @@ class TestDeadLetterQueue:
         call_args = mock_session_memory.store_hot.call_args[0][1]
         assert call_args["status"] == "discarded"
         assert call_args["operator_notes"] == "operator_decided_to_skip"
-        assert call_args["resolved_at"] is not None
+        assert call_args["updated_at"] is not None
 
     async def test_get_stats_empty(self, dlq, mock_session_memory):
         """get_stats should return zeros for empty DLQ."""

@@ -5,34 +5,43 @@ Verifies JSAnalyzer, CodeQLAgent routing, Multi-role simulation, and Replay trig
 
 import asyncio
 import uuid
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from ai_osop.core.models import (
-    Observation, Workflow, WorkflowStep, 
-    VerificationRecord, OutcomeRecord, BusinessInvariant, EvidenceProvenance,
-    VerificationStage, Task
-)
-from ai_osop.core.governance import SwarmGovernor, BusinessLogicEngine
 from ai_osop.core.config import AgentType
+from ai_osop.core.governance import BusinessLogicEngine, SwarmGovernor
+from ai_osop.core.models import (
+    BusinessInvariant,
+    EvidenceProvenance,
+    Observation,
+    OutcomeRecord,
+    Task,
+    VerificationRecord,
+    VerificationStage,
+    Workflow,
+    WorkflowStep,
+)
+
 
 class EliteReadinessSimulator:
     def __init__(self, engagement_id: str):
         self.engagement_id = engagement_id
         self.governor = SwarmGovernor(initial_budget=500.0, engagement_id=engagement_id)
         self.logic_engine = BusinessLogicEngine()
-        
+
         self.metrics = {
             "js_analysis_runs": 0,
             "sast_mappings": 0,
             "multi_role_sessions": 0,
             "replay_triggered": 0,
             "verified_findings": 0,
-            "cost": 0.0
+            "cost": 0.0,
         }
 
     async def run_elite_simulation(self):
-        print(f"--- [Elite Board] Starting Elite Readiness Simulation for: {self.engagement_id} ---")
-        
+        print(
+            f"--- [Elite Board] Starting Elite Readiness Simulation for: {self.engagement_id} ---"
+        )
+
         # 1. Simulate JS Analysis (The missing link for Airbnb/Shopify)
         print("[1] Simulating JSAnalyzerAgent Execution...")
         # Mocking task execution
@@ -40,7 +49,7 @@ class EliteReadinessSimulator:
             type="analyze_js",
             agent_type=AgentType.VULN_ANALYSIS,
             payload={"url": "https://target.com/main.js"},
-            engagement_id=self.engagement_id
+            engagement_id=self.engagement_id,
         )
         print(f"  Task Assigned: {js_task.type} -> JSAnalyzer (Persona: js_analyzer)")
         self.metrics["js_analysis_runs"] += 1
@@ -80,17 +89,17 @@ class EliteReadinessSimulator:
             agreed_agents=["js-analyzer", "codeql-agent", "exploit-agent"],
             engagement_id=self.engagement_id,
             provenance=EvidenceProvenance.LIVE,
-            replayable=True
+            replayable=True,
         )
-        
+
         ver_record.stages = [
             VerificationStage(name="Reproduction", status="passed"),
             VerificationStage(name="Exploitation", status="passed"),
             VerificationStage(name="Integrity Impact", status="passed"),
             VerificationStage(name="Authorization Bypass", status="passed"),
-            VerificationStage(name="Confidentiality Impact", status="passed")
+            VerificationStage(name="Confidentiality Impact", status="passed"),
         ]
-        
+
         is_verified = self.governor.verifier.verify_finding(ver_record)
         if is_verified:
             print(f"  VERIFICATION SUCCESS: Confidence {ver_record.overall_confidence:.2f}")
@@ -112,10 +121,12 @@ class EliteReadinessSimulator:
         print(f"Total Simulation Cost:   ${self.metrics['cost']:.2f}")
         print("-------------------------------")
 
+
 async def main():
     sim = EliteReadinessSimulator(f"elite-qual-{uuid.uuid4().hex[:6]}")
     await sim.run_elite_simulation()
     sim.print_metrics()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

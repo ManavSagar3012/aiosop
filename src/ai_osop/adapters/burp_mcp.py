@@ -4,14 +4,13 @@ Production-grade adapter for Burp Suite MCP with request/response normalization,
 scanner issue correlation, and proxy history management.
 """
 
-import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.core.config import Severity, VulnClass
 from ai_osop.core.exceptions import MCPException
-from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, Vulnerability
-from ai_osop.mcp.protocol import MCPExecuteRequest, MCPExecuteResponse, MCPRegistry
+from ai_osop.core.models import Endpoint, ScopeDefinition, Vulnerability
+from ai_osop.mcp.protocol import MCPExecuteResponse, MCPRegistry
 
 
 class BurpMCPAdapter:
@@ -33,11 +32,58 @@ class BurpMCPAdapter:
         self._proxy_history_buffer: List[Dict[str, Any]] = []
         self._max_history_size = 10000
 
+    @staticmethod
+    def _extract_error(response: MCPExecuteResponse) -> str:
+        """Surface the *real* server-side error.
+
+        AIOSOP-BURP-ERR-001 (2026-07-03): the Burp Montoya MCP returns its actual
+        failure inside ``result`` (e.g. ``result.error`` — a Java exception string
+        such as ``Scanner.startAudit(...) is null``), while the protocol's top-level
+        ``error`` field stays empty. Reading only ``response.error`` therefore
+        collapsed every real Burp failure to the useless string ``"unknown error"``,
+        masking the root cause (runtime-proven on scan_target vs the Syfe target).
+        Prefer the top-level error, then common nested keys, before giving up.
+        """
+        if response.error:
+            return response.error
+        
+        # Burp Montoya MCP can return null result on failure
+        result = response.result
+        if result is None:
+            return "Burp Montoya MCP returned null result"
+            
+        if isinstance(result, dict):
+            for key in ("error", "error_message", "message", "detail", "reason"):
+                val = result.get(key)
+                if val:
+                    return str(val)
+        return "unknown error"
+
+    def _check_response(self, response: MCPExecuteResponse, operation: str) -> None:
+        """Raise typed exceptions for non-success MCP responses so callers can
+        distinguish 'no data' from 'operation failed' (FINDING-011 / FINDING-012)."""
+        if response.status == "success":
+            return
+        from ai_osop.core.exceptions import MCPTimeoutError
+
+        if response.status == "timeout":
+            raise MCPTimeoutError(f"Burp MCP operation '{operation}' timed out")
+        if response.status == "circuit_open":
+            raise MCPException(
+                f"Burp MCP operation '{operation}' rejected: circuit breaker is open"
+            )
+        raise MCPException(
+            f"Burp MCP operation '{operation}' failed: {self._extract_error(response)}"
+        )
+
     async def initialize(self, scope: ScopeDefinition, session_id: str) -> None:
         """Initialize Burp MCP with scope and auth."""
-        credentials = {}
+        credentials: Dict[str, Any] = {}
         await self.registry.initialize_server(
-            self.SERVER_ID, scope=scope.model_dump(), credentials=credentials, session_id=session_id
+            self.SERVER_ID,
+            scope=scope.model_dump(),
+            credentials=credentials,
+            session_id=session_id,
         )
 
     async def scan_target(
@@ -54,19 +100,19 @@ class BurpMCPAdapter:
                 "max_depth": 10,
             },
         }
-        return await self.registry.execute_tool(
+        response = await self.registry.execute_tool(
             self.SERVER_ID, "scan_target", params, timeout_override=3600
         )
+        self._check_response(response, "scan_target")
+        return response
 
-    async def get_proxy_history(
-        self, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+    async def get_proxy_history(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Retrieve captured proxy traffic with optional filtering."""
         params = {"filters": filters or {}, "limit": 1000, "offset": 0}
         response = await self.registry.execute_tool(self.SERVER_ID, "get_proxy_history", params)
 
         if response.status == "success" and response.result:
-            entries = response.result.get("entries", [])
+            entries: List[Dict[str, Any]] = response.result.get("entries", [])
             self._update_history_buffer(entries)
             return entries
         return []
@@ -76,7 +122,10 @@ class BurpMCPAdapter:
         params = {"target": target} if target else {}
         response = await self.registry.execute_tool(self.SERVER_ID, "get_scan_issues", params)
 
-        if response.status != "success" or not response.result:
+        if response.status != "success":
+            self._check_response(response, "get_scan_issues")
+            return []
+        if not response.result:
             return []
 
         raw_issues = response.result.get("issues", [])
@@ -97,7 +146,9 @@ class BurpMCPAdapter:
             "request": request,
             "tab_name": tab_name or f"auto-{datetime.utcnow().timestamp()}",
         }
-        return await self.registry.execute_tool(self.SERVER_ID, "send_to_repeater", params)
+        response = await self.registry.execute_tool(self.SERVER_ID, "send_to_repeater", params)
+        self._check_response(response, "send_to_repeater")
+        return response
 
     async def intruder_attack(
         self,
@@ -113,18 +164,26 @@ class BurpMCPAdapter:
             "payload_set": payload_set,
             "config": config or {"attack_type": "sniper", "thread_count": 10, "delay_ms": 100},
         }
-        return await self.registry.execute_tool(
+        response = await self.registry.execute_tool(
             self.SERVER_ID, "intruder_attack", params, timeout_override=1800
         )
+        self._check_response(response, "intruder_attack")
+        return response
 
     async def extension_call(
         self, extension_name: str, method: str, params: Dict[str, Any]
     ) -> MCPExecuteResponse:
         """Invoke a Burp extension method. Requires approval."""
-        request_params = {"extension_name": extension_name, "method": method, "params": params}
-        return await self.registry.execute_tool(
+        request_params = {
+            "extension_name": extension_name,
+            "method": method,
+            "params": params,
+        }
+        response = await self.registry.execute_tool(
             self.SERVER_ID, "extension_call", request_params, timeout_override=300
         )
+        self._check_response(response, "extension_call")
+        return response
 
     async def get_sitemap(self, url_prefix: Optional[str] = None) -> List[Endpoint]:
         """Extract site map as normalized endpoints."""
@@ -189,6 +248,7 @@ class BurpMCPAdapter:
             requires_auth=issue.get("requires_auth", False),
             exploitability="high" if burp_severity == "High" else "medium",
             engagement_id=issue.get("engagement_id", ""),
+            cvss_score=None
         )
 
     def _map_burp_issue_type(self, issue_type: str) -> VulnClass:
@@ -219,10 +279,10 @@ class BurpMCPAdapter:
         elif "idor" in issue_type.lower() or "direct" in issue_type.lower():
             return VulnClass.IDOR
 
-        return VulnClass.RCE  # Default to most restrictive handling
+        return VulnClass.UNKNOWN
 
     def _map_burp_to_cwe(self, issue_type: str) -> Optional[str]:
-        """Map Burp issue to CWE identifier."""
+        """Map Burp issue to CWE identifier using substring matching."""
         cwe_map = {
             "SQL injection": "CWE-89",
             "Cross-site scripting": "CWE-79",
@@ -232,7 +292,10 @@ class BurpMCPAdapter:
             "File path traversal": "CWE-22",
             "Insecure deserialization": "CWE-502",
         }
-        return cwe_map.get(issue_type)
+        for key, value in cwe_map.items():
+            if key.lower() in issue_type.lower():
+                return value
+        return None
 
     def _update_history_buffer(self, entries: List[Dict[str, Any]]) -> None:
         """Maintain circular buffer of proxy history."""

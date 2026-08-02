@@ -1,0 +1,524 @@
+{
+  "endpoint": "/system/skills/stats",
+  "code": 200,
+  "data": {
+    "loaded_skills": 794,
+    "activated_skills": 57,
+    "top_skills": [
+      {
+        "id": "analyzing-browser-forensics-with-hindsight",
+        "name": "analyzing-browser-forensics-with-hindsight",
+        "usage": 22,
+        "reputation": 0.0,
+        "revenue_roi": 0.0,
+        "acceptance_rate": 0,
+        "total_payout": 0.0
+      }
+    ],
+    "total_revenue": 0.0,
+    "revenue_roi": 0.0,
+    "findings_contributed": 0,
+    "recent_executions": [
+      {
+        "timestamp": "2026-07-10T16:33:53.123235",
+        "skill_id": "osint_recon",
+        "agent_id": "recon-agent-002",
+        "reason": "selected for task full_recon",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T16:33:53.091707",
+        "skill_id": "subdomain_enum",
+        "agent_id": "recon-agent-002",
+        "reason": "selected for task full_recon",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T16:33:53.059157",
+        "skill_id": "recon",
+        "agent_id": "recon-agent-002",
+        "reason": "selected for task full_recon",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T16:33:50.246885",
+        "skill_id": "osint_recon",
+        "agent_id": "recon-agent-001",
+        "reason": "selected for task full_recon",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T16:33:50.209228",
+        "skill_id": "subdomain_enum",
+        "agent_id": "recon-agent-001",
+        "reason": "selected for task full_recon",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T16:33:50.175820",
+        "skill_id": "recon",
+        "agent_id": "recon-agent-001",
+        "reason": "selected for task full_recon",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.982969",
+        "skill_id": "analyzing-typosquatting-domains-with-dnstwist",
+        "agent_id": "race-agent-002",
+        "reason": "selected for task race_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.953190",
+        "skill_id": "hunting-for-domain-fronting-c2-traffic",
+        "agent_id": "race-agent-002",
+        "reason": "selected for task race_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.921823",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "race-agent-002",
+        "reason": "selected for task race_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.574816",
+        "skill_id": "testing-websocket-api-security",
+        "agent_id": "websocket-agent-002",
+        "reason": "selected for task websocket_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.544489",
+        "skill_id": "hunting-for-webshell-activity",
+        "agent_id": "websocket-agent-002",
+        "reason": "selected for task websocket_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.517676",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "websocket-agent-002",
+        "reason": "selected for task websocket_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.202718",
+        "skill_id": "testing-jwt-token-security",
+        "agent_id": "jwt-agent-002",
+        "reason": "selected for task jwt_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.170901",
+        "skill_id": "analyzing-typosquatting-domains-with-dnstwist",
+        "agent_id": "jwt-agent-002",
+        "reason": "selected for task jwt_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:43.138777",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "jwt-agent-002",
+        "reason": "selected for task jwt_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.853149",
+        "skill_id": "performing-blind-ssrf-exploitation",
+        "agent_id": "ssrf-agent-002",
+        "reason": "selected for task ssrf_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.818474",
+        "skill_id": "performing-ssrf-vulnerability-exploitation",
+        "agent_id": "ssrf-agent-002",
+        "reason": "selected for task ssrf_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.789614",
+        "skill_id": "exploiting-server-side-request-forgery",
+        "agent_id": "ssrf-agent-002",
+        "reason": "selected for task ssrf_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.478940",
+        "skill_id": "performing-http-parameter-pollution-attack",
+        "agent_id": "pollution-agent-002",
+        "reason": "selected for task pollution_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.444633",
+        "skill_id": "hunting-for-domain-fronting-c2-traffic",
+        "agent_id": "pollution-agent-002",
+        "reason": "selected for task pollution_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.414066",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "pollution-agent-002",
+        "reason": "selected for task pollution_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.108154",
+        "skill_id": "performing-authenticated-scan-with-openvas",
+        "agent_id": "upload-agent-002",
+        "reason": "selected for task upload_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.072445",
+        "skill_id": "scanning-container-images-with-grype",
+        "agent_id": "upload-agent-002",
+        "reason": "selected for task upload_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:42.050350",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "upload-agent-002",
+        "reason": "selected for task upload_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:41.342248",
+        "skill_id": "hunting-for-domain-fronting-c2-traffic",
+        "agent_id": "smuggling-agent-002",
+        "reason": "selected for task smuggling_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:41.183321",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "smuggling-agent-002",
+        "reason": "selected for task smuggling_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:41.086236",
+        "skill_id": "exploiting-http-request-smuggling",
+        "agent_id": "smuggling-agent-002",
+        "reason": "selected for task smuggling_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.859598",
+        "skill_id": "testing-websocket-api-security",
+        "agent_id": "websocket-agent-001",
+        "reason": "selected for task websocket_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.831224",
+        "skill_id": "hunting-for-webshell-activity",
+        "agent_id": "websocket-agent-001",
+        "reason": "selected for task websocket_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.796461",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "websocket-agent-001",
+        "reason": "selected for task websocket_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.498070",
+        "skill_id": "performing-authenticated-scan-with-openvas",
+        "agent_id": "upload-agent-001",
+        "reason": "selected for task upload_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.464641",
+        "skill_id": "scanning-container-images-with-grype",
+        "agent_id": "upload-agent-001",
+        "reason": "selected for task upload_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.433520",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "upload-agent-001",
+        "reason": "selected for task upload_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.167002",
+        "skill_id": "analyzing-typosquatting-domains-with-dnstwist",
+        "agent_id": "race-agent-001",
+        "reason": "selected for task race_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.136429",
+        "skill_id": "hunting-for-domain-fronting-c2-traffic",
+        "agent_id": "race-agent-001",
+        "reason": "selected for task race_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:36.105821",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "race-agent-001",
+        "reason": "selected for task race_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.819921",
+        "skill_id": "performing-soap-web-service-security-testing",
+        "agent_id": "saml-agent-001",
+        "reason": "selected for task saml_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.790926",
+        "skill_id": "scanning-container-images-with-grype",
+        "agent_id": "saml-agent-001",
+        "reason": "selected for task saml_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.771307",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "saml-agent-001",
+        "reason": "selected for task saml_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.515512",
+        "skill_id": "hunting-for-domain-fronting-c2-traffic",
+        "agent_id": "csrf-agent-001",
+        "reason": "selected for task csrf_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.486110",
+        "skill_id": "analyzing-typosquatting-domains-with-dnstwist",
+        "agent_id": "csrf-agent-001",
+        "reason": "selected for task csrf_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.461666",
+        "skill_id": "performing-csrf-attack-simulation",
+        "agent_id": "csrf-agent-001",
+        "reason": "selected for task csrf_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.173131",
+        "skill_id": "exploiting-broken-link-hijacking",
+        "agent_id": "takeover-agent-001",
+        "reason": "selected for task takeover_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.139209",
+        "skill_id": "analyzing-typosquatting-domains-with-dnstwist",
+        "agent_id": "takeover-agent-001",
+        "reason": "selected for task takeover_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:35.108487",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "takeover-agent-001",
+        "reason": "selected for task takeover_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:34.817255",
+        "skill_id": "performing-http-parameter-pollution-attack",
+        "agent_id": "pollution-agent-001",
+        "reason": "selected for task pollution_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:34.772479",
+        "skill_id": "hunting-for-domain-fronting-c2-traffic",
+        "agent_id": "pollution-agent-001",
+        "reason": "selected for task pollution_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:34.748182",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "pollution-agent-001",
+        "reason": "selected for task pollution_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:34.416275",
+        "skill_id": "hunting-for-domain-fronting-c2-traffic",
+        "agent_id": "smuggling-agent-001",
+        "reason": "selected for task smuggling_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      },
+      {
+        "timestamp": "2026-07-10T11:16:34.388238",
+        "skill_id": "analyzing-malicious-url-with-urlscan",
+        "agent_id": "smuggling-agent-001",
+        "reason": "selected for task smuggling_scan",
+        "stage": "execution",
+        "finding_id": null,
+        "payout": 0.0,
+        "accepted": false
+      }
+    ]
+  }
+}

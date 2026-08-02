@@ -59,7 +59,12 @@ class RateLimiter:
         target_capacity: int = 20,
         tool_rate: float = 5.0,
         tool_capacity: int = 10,
-        acquire_timeout_seconds: Optional[float] = None,
+        # P0-012: Hard timeout so agent.execute_task can NEVER block forever on the
+        # rate limiter. Previously None (no timeout) meant an empty token bucket could
+        # strand an agent in "running" indefinitely — the root cause of permanently
+        # stuck agents that never release their execution slot. 60s is generous:
+        # at the default 5 req/s tool_rate, 10 backlogged agents clear in ~2s.
+        acquire_timeout_seconds: Optional[float] = 60.0,
     ):
         self.global_bucket = TokenBucket(global_capacity, global_rate)
         self.target_buckets: Dict[str, TokenBucket] = {}
@@ -123,16 +128,24 @@ class RateLimiter:
         if time.monotonic() - started_at > 0.001:
             self.metrics["rate_limited_total"] += 1
 
-    def record_backpressure(self, target: str, response_time: float) -> None:
+    def record_backpressure(self, target: str, status_code: Optional[int] = None, response_time: float = 0.0) -> None:
         """
-        Queue-based backpressure: slow down when targets respond slowly.
+        Queue-based backpressure: slow down when targets respond slowly or return 429/403.
         """
-        if response_time > 2.0 and target in self.target_buckets:
+        if target not in self.target_buckets:
+            return
+
+        bucket = self.target_buckets[target]
+
+        # Aggressive throttle on 429/403
+        if status_code in (429, 403):
             self.metrics["backpressure_events"] += 1
-            bucket = self.target_buckets[target]
-            # Reduce fill rate dynamically (throttle down to 1 request/sec max)
+            bucket.fill_rate = max(0.1, bucket.fill_rate * 0.5)
+            return
+
+        # Adaptive throttle on slow response
+        if response_time > 2.0:
+            self.metrics["backpressure_events"] += 1
             bucket.fill_rate = max(1.0, bucket.fill_rate * 0.8)
-        elif response_time < 0.5 and target in self.target_buckets:
-            bucket = self.target_buckets[target]
-            # Recover fill rate gradually
+        elif response_time < 0.5:
             bucket.fill_rate = min(self.default_target_rate, bucket.fill_rate * 1.1)

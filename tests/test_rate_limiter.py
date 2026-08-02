@@ -14,9 +14,12 @@ async def test_token_bucket_consume():
     await bucket.consume(1)
     assert bucket.tokens <= 4.0
 
-    # Drain the bucket
+    # Drain the bucket. The bucket refills continuously (fill_rate=10/s), so by
+    # the time this assertion runs a sliver of a token has already regenerated
+    # from elapsed wall-clock time — asserting exactly <= 0.0 is inherently flaky.
+    # The invariant that matters is that the bucket is drained below a full token.
     await bucket.consume(4)
-    assert bucket.tokens <= 0.0
+    assert bucket.tokens < 1.0
 
     # Next consume should wait briefly
     start = time.monotonic()
@@ -45,14 +48,14 @@ def test_rate_limiter_backpressure():
     initial_fill_rate = limiter.target_buckets["slow.com"].fill_rate
 
     # Simulate slow response
-    limiter.record_backpressure("slow.com", 3.0)
+    limiter.record_backpressure("slow.com", response_time=3.0)
 
     assert limiter.metrics["backpressure_events"] == 1
     new_fill_rate = limiter.target_buckets["slow.com"].fill_rate
     assert new_fill_rate < initial_fill_rate
 
     # Simulate fast response (recovery)
-    limiter.record_backpressure("slow.com", 0.1)
+    limiter.record_backpressure("slow.com", response_time=0.1)
     recovered_fill_rate = limiter.target_buckets["slow.com"].fill_rate
     assert recovered_fill_rate > new_fill_rate
 

@@ -34,6 +34,7 @@ ENGAGEMENT_ID_CTX_VAR = contextvars.ContextVar("engagement_id", default="")
 TASK_ID_CTX_VAR = contextvars.ContextVar("task_id", default="")
 USER_ID_CTX_VAR = contextvars.ContextVar("user_id", default="")
 TRACE_ID_CTX_VAR = contextvars.ContextVar("trace_id", default="")
+MCP_LATENCY_CTX_VAR = contextvars.ContextVar("mcp_latency", default=0.0)
 
 
 def _get_current_trace_id() -> str:
@@ -43,6 +44,29 @@ def _get_current_trace_id() -> str:
     if span_context.is_valid:
         return format(span_context.trace_id, "032x")
     return ""
+
+
+def configure_log_level(level_name=None) -> None:
+    """Apply OSOP_LOG_LEVEL to structlog so DEBUG logs are actually suppressible.
+
+    AIOSOP-LOGCFG-001 (2026-07-03): the app relied on structlog's *unconfigured*
+    defaults, which do NO level filtering — so settings.log_level (OSOP_LOG_LEVEL) was
+    dead config and every logger.debug() emitted at full volume. We install a filtering
+    bound logger at the configured level and leave structlog's default processors
+    (timestamp + level + ConsoleRenderer) untouched, so the log FORMAT is unchanged and
+    only the level threshold is applied. Safe to call late — structlog's lazy loggers
+    re-bind on next use.
+    """
+    import logging as _logging
+
+    from ai_osop.core.config import settings
+
+    raw = level_name if level_name is not None else getattr(settings, "log_level", "INFO")
+    name = str(getattr(raw, "value", raw)).upper()  # handle LogLevel enum or plain str
+    level = getattr(_logging, name, _logging.INFO)
+    if not isinstance(level, int):
+        level = _logging.INFO
+    structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(level))
 
 
 class RequestContext:
@@ -185,3 +209,19 @@ def extract_trace_id_from_traceparent(traceparent: Optional[str]) -> Optional[st
     except Exception:
         pass
     return None
+
+
+def reset_mcp_latency() -> None:
+    """Reset the cumulative MCP latency in the current context."""
+    MCP_LATENCY_CTX_VAR.set(0.0)
+
+
+def add_mcp_latency(duration_ms: float) -> None:
+    """Add duration in milliseconds to the cumulative MCP latency."""
+    current = MCP_LATENCY_CTX_VAR.get()
+    MCP_LATENCY_CTX_VAR.set(current + duration_ms)
+
+
+def get_mcp_latency() -> float:
+    """Return the cumulative MCP latency in the current context."""
+    return MCP_LATENCY_CTX_VAR.get()
