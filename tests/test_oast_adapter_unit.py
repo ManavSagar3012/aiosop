@@ -1,6 +1,10 @@
 import asyncio
+from unittest.mock import MagicMock
+
+import pytest
 
 from ai_osop.adapters.oast_mcp import OASTAdapter
+from ai_osop.core.exceptions import ScopeValidationError
 
 
 class _Resp:
@@ -37,10 +41,18 @@ class _Registry:
         )
 
 
+_CTX_SSRF = {
+    "engagement_id": "e1",
+    "vuln_class": "ssrf",
+    "injection_point": "param:url",
+    "payload_hash": "0" * 64,
+}
+
+
 def test_register_returns_token_and_url():
     reg = _Registry()
     a = OASTAdapter(reg)
-    token, url = asyncio.run(a.register("ssrf:test"))
+    token, url = asyncio.run(a.register("ssrf:test", context=dict(_CTX_SSRF)))
     assert token == "abc123" and url.endswith("/abc123")
 
 
@@ -54,18 +66,57 @@ def test_poll_returns_interactions():
 def test_register_forwards_context():
     reg = _Registry()
     a = OASTAdapter(reg)
-    asyncio.run(a.register("ssrf:x", context={"engagement_id": "e1", "vuln_class": "ssrf"}))
+    asyncio.run(a.register("ssrf:x", context=dict(_CTX_SSRF)))
     tool, params = reg.calls[0]
     assert tool == "oast_register"
-    assert params["context"] == {"engagement_id": "e1", "vuln_class": "ssrf"}
+    assert params["context"]["engagement_id"] == "e1"
+    assert params["context"]["vuln_class"] == "ssrf"
+    assert params["context"]["injection_point"] == "param:url"
+    assert len(params["context"]["payload_hash"]) == 64
 
 
 def test_register_omits_empty_context():
+    # Backward compat: when no context is supplied we forward nothing. The
+    # caller-side schema is enforced *when* a context is provided.
     reg = _Registry()
     a = OASTAdapter(reg)
     asyncio.run(a.register("ssrf:x"))
     _, params = reg.calls[0]
     assert "context" not in params
+
+
+def test_register_rejects_missing_context_keys():
+    a = OASTAdapter(registry=MagicMock())
+    with pytest.raises(ScopeValidationError):
+        asyncio.run(
+            a.register(label="t", context={"engagement_id": "e-1"})  # missing required keys
+        )
+
+
+def test_register_rejects_unknown_context_key():
+    a = OASTAdapter(registry=MagicMock())
+    ctx = dict(_CTX_SSRF)
+    ctx["extra_secret"] = "should-not-be-here"
+    with pytest.raises(ScopeValidationError):
+        asyncio.run(a.register(label="t", context=ctx))
+
+
+def test_register_rejects_disallowed_vuln_class():
+    a = OASTAdapter(registry=MagicMock())
+    ctx = dict(_CTX_SSRF)
+    ctx["vuln_class"] = "stored_xss"  # not in the blind-oracle class allowlist
+    with pytest.raises(ScopeValidationError):
+        asyncio.run(a.register(label="t", context=ctx))
+
+
+def test_register_accepts_all_blind_or_ssrf_classes():
+    for cls in ("blind_xss", "blind_sqli", "blind_ssti", "ssrf", "rce"):
+        reg = _Registry()
+        a = OASTAdapter(reg)
+        ctx = dict(_CTX_SSRF)
+        ctx["vuln_class"] = cls
+        token, _ = asyncio.run(a.register(f"{cls}:p", context=ctx))
+        assert token
 
 
 def test_drain_returns_cursor_and_interactions():

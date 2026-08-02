@@ -6,8 +6,47 @@ captured out-of-band callbacks through the standard MCPRegistry.
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from ai_osop.core.exceptions import MCPException
+from ai_osop.core.exceptions import MCPException, ScopeValidationError
 from ai_osop.mcp.protocol import MCPRegistry
+
+# Caller-side OAST context schema (Piece 3, Task 20). The OAST server itself
+# does not care what keys are stored — enforcement happens here at the adapter
+# boundary so a blind finding can always be attributed to the exact probe.
+REQUIRED_OAST_CONTEXT_KEYS: Tuple[str, ...] = (
+    "engagement_id",
+    "vuln_class",
+    "injection_point",
+    "payload_hash",
+)
+ALLOWED_OAST_VULN_CLASSES = frozenset({"blind_xss", "blind_sqli", "blind_ssti", "ssrf", "rce"})
+
+
+def _validate_oast_context(context: Dict[str, Any]) -> None:
+    """Enforce the caller-side OAST context schema.
+
+    Raises ScopeValidationError on missing/unknown keys or a vuln_class outside
+    the blind-oracle allowlist. Callers that omit `context` entirely bypass
+    validation (legacy / internal labels); once a caller opts into typed
+    provenance they must opt in fully.
+    """
+    missing = [k for k in REQUIRED_OAST_CONTEXT_KEYS if k not in context]
+    if missing:
+        raise ScopeValidationError(
+            f"OAST context missing required keys: {sorted(missing)} "
+            f"(required: {sorted(REQUIRED_OAST_CONTEXT_KEYS)})"
+        )
+    unknown = sorted(set(context) - set(REQUIRED_OAST_CONTEXT_KEYS))
+    if unknown:
+        raise ScopeValidationError(
+            f"OAST context has unexpected keys: {unknown}. "
+            f"Allowed keys are exactly {sorted(REQUIRED_OAST_CONTEXT_KEYS)}."
+        )
+    vclass = str(context.get("vuln_class", "")).strip().lower()
+    if vclass not in ALLOWED_OAST_VULN_CLASSES:
+        raise ScopeValidationError(
+            f"OAST vuln_class '{context.get('vuln_class')}' not in the blind-oracle allowlist "
+            f"{sorted(ALLOWED_OAST_VULN_CLASSES)}"
+        )
 
 
 class OASTAdapter:
@@ -25,12 +64,16 @@ class OASTAdapter:
         """Mint a token; returns (token, callback_url).
 
         `context` carries probe provenance (engagement_id, vuln_class, injection
-        point, payload, ...). The OAST server stores it against the token and
-        echoes it back on poll/drain, so a captured callback can be attributed to
-        the exact probe that caused it even after the injecting scan has returned.
+        point, payload_hash, ...). The OAST server stores it against the token
+        and echoes it back on poll/drain, so a captured callback can be attributed
+        to the exact probe that caused it even after the injecting scan has
+        returned. When provided, `context` is validated against the caller-side
+        OAST schema (REQUIRED_OAST_CONTEXT_KEYS / ALLOWED_OAST_VULN_CLASSES) and
+        raises ScopeValidationError on any violation.
         """
         params: Dict[str, Any] = {"label": label}
         if context:
+            _validate_oast_context(context)
             params["context"] = context
         resp = await self.registry.execute_tool(self.SERVER_ID, "oast_register", params)
         if resp.status != "success":
