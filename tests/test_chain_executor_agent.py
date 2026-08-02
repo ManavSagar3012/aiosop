@@ -182,3 +182,49 @@ async def test_executor_aborts_on_first_hop_failure():
     assert len(out["chain_run"]) == 2
     assert out["status"] == "chain_failed"
     assert out.get("aborted_at_hop") == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_records_receipt_per_attempted_hop(tmp_path):
+    from ai_osop.agents.base import AgentContext
+
+    ctx = MagicMock(spec=AgentContext)
+    ctx.agent_id = "exec-2"
+    ctx.agent_type = AgentType.ATTACK_CHAIN
+    ctx.session_id = "eng-r"
+    ctx.graph_memory = MagicMock()
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
+        "id": "chain-R", "nodes": [
+            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+            {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
+        ],
+    }])
+
+    class _Facade:
+        async def validate_exploit(self, endpoint, vuln_class, payload):
+            return {"validated": True, "receipt_id": f"rcpt-underlying"}
+
+    store = MagicMock(); store.record = AsyncMock(return_value="sig-hop")
+    from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
+
+    agent = ChainExecutorAgent(ctx)
+    agent._exploit = _Facade()
+    agent.receipt_store = store
+
+    task = Task(type="execute_exploit_chain", agent_type=AgentType.ATTACK_CHAIN, payload={}, engagement_id="eng-r")
+    # DEVIATION from plan: the plan's exact test omits enabling the evidence flag,
+    # but the impl gates emission on settings.evidence_receipts_enabled (per plan
+    # step 3 and the Part I precedent in tests/test_exploit_agent.py). Enable it
+    # here (and restore) so the receipt path actually runs.
+    from ai_osop.core.config import settings
+    settings.evidence_receipts_enabled = True
+    try:
+        await agent._execute(task)
+    finally:
+        settings.evidence_receipts_enabled = False
+
+    assert store.record.await_count == 2
+    hop0 = store.record.await_args_list[0].args[0]
+    assert hop0.chain_id == "chain-R"
+    assert hop0.hop_idx == 0
+    assert hop0.vuln_id == "v-1"
