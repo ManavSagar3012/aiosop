@@ -692,6 +692,191 @@ async def detect_reflected_xss(
     return None
 
 
+# ---------------------------------------------------------------------------
+# Server-Side Template Injection (CWE-1336 / CWE-94) — arithmetic-eval oracle
+# ---------------------------------------------------------------------------
+# We inject a template expression whose value is a large, distinctive product.
+# VALIDATED only when the server returns the COMPUTED product AND does not merely
+# echo the literal expression — objective proof the input reached a template
+# engine and was evaluated. The operands are chosen so their product is a number
+# that will not appear by chance in a normal page, and we additionally require
+# the raw `A*B` expression to be absent (an app that just reflects the payload,
+# XSS-style, prints `7331*1223`, not `8965813`, so it never fires here).
+_SSTI_A = 7331
+_SSTI_B = 1223
+_SSTI_PRODUCT = str(_SSTI_A * _SSTI_B)  # 8965813 — distinctive, unlikely by chance
+_SSTI_EXPR = f"{_SSTI_A}*{_SSTI_B}"
+
+
+def _ssti_payloads() -> Tuple[str, ...]:
+    e = _SSTI_EXPR
+    # Cover the mainstream engines: Jinja2/Twig ({{}}), Freemarker/JSP-EL (${}),
+    # Ruby ERB (<%= %>), Thymeleaf/Spring-EL (#{}, *{}), Angular/Handlebars ({{}}).
+    return (
+        f"{{{{{e}}}}}",  # {{7331*1223}}
+        f"${{{e}}}",  # ${7331*1223}
+        f"#{{{e}}}",  # #{7331*1223}
+        f"*{{{e}}}",  # *{7331*1223}
+        f"<%= {e} %>",  # ERB
+        f"{{{e}}}",  # {7331*1223}
+        f"@({e})",  # Razor
+    )
+
+
+async def detect_ssti(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Inject a template arithmetic expression into each candidate GET param.
+    VALIDATED only when the response contains the evaluated product and not the
+    raw expression — proving server-side template evaluation, not mere reflection."""
+    q = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+    candidate_params = list(params or []) or list(q)
+    if not candidate_params:
+        return None
+    for param in candidate_params:
+        for payload in _ssti_payloads():
+            try:
+                target = _with_param(url, param, payload)
+                r = await client.get(target)
+            except Exception:
+                continue
+            body = r.text or ""
+            # The engine evaluated it only if the PRODUCT is present and the raw
+            # expression is NOT (a plain reflector echoes `7331*1223`, never the
+            # product). Guards against both "no template" and "reflected verbatim".
+            if _SSTI_PRODUCT in body and _SSTI_EXPR not in body:
+                return {
+                    "technique": "ssti",
+                    "endpoint": url,
+                    "parameter": param,
+                    "payload": payload,
+                    "http_status": r.status_code,
+                    "proof": (
+                        f"template expression evaluated server-side "
+                        f"({_SSTI_EXPR} rendered as {_SSTI_PRODUCT})"
+                    ),
+                    "confidence": 1.0,
+                }
+    return None
+
+
+# ---------------------------------------------------------------------------
+# NoSQL injection (CWE-943) — authentication-bypass class (framework-agnostic)
+# ---------------------------------------------------------------------------
+# Mongo-style operator injection: replacing a credential value with an operator
+# object (`{"$ne": null}`, `{"$gt": ""}`) makes an unsanitised query match the
+# first user. VALIDATED objectively by a JWT-shaped session token that appears in
+# the OPERATOR response but NOT in a benign-credentials control response — so an
+# app that rejects operator objects (or issues no token) never fires.
+_JWT_RE = None
+
+
+def _jwt_in(text: str) -> bool:
+    import re
+
+    global _JWT_RE
+    if _JWT_RE is None:
+        _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}")
+    return bool(_JWT_RE.search(text or ""))
+
+
+_NOSQL_LOGIN_FIELDS = (("email", "password"), ("username", "password"), ("user", "pass"))
+_NOSQL_OPERATORS = ({"$ne": None}, {"$gt": ""}, {"$ne": ""})
+
+
+async def detect_nosql_auth_bypass(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    login_fields: Optional[Tuple[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """POST operator-injection objects to a login-like JSON endpoint. VALIDATED
+    only when the operator payload yields a JWT the benign control did not — an
+    objective authentication bypass, not a status-code guess."""
+    field_sets = [login_fields] if login_fields else list(_NOSQL_LOGIN_FIELDS)
+    for user_f, pass_f in field_sets:
+        # Control: a bogus, well-formed credential pair must NOT authenticate.
+        control = {user_f: "osop_nouser@example.invalid", pass_f: "osop-not-a-real-pw"}
+        try:
+            rc = await client.post(url, json=control)
+        except Exception:
+            continue
+        if _jwt_in(rc.text or ""):
+            # Endpoint hands a token to anyone — not a NoSQLi signal, bail (no FP).
+            continue
+        for op in _NOSQL_OPERATORS:
+            payload = {user_f: op, pass_f: op}
+            try:
+                r = await client.post(url, json=payload)
+            except Exception:
+                continue
+            if r.status_code == 200 and _jwt_in(r.text or ""):
+                return {
+                    "technique": "nosql_auth_bypass",
+                    "endpoint": url,
+                    "parameter": f"{user_f}/{pass_f}",
+                    "payload": f'{{"{user_f}": {op}, "{pass_f}": {op}}}',
+                    "http_status": r.status_code,
+                    "proof": (
+                        "operator-injection object authenticated (session token issued) "
+                        "where valid-shaped credentials were rejected"
+                    ),
+                    "confidence": 1.0,
+                }
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Host header / X-Forwarded-Host injection (CWE-644)
+# ---------------------------------------------------------------------------
+# An app that trusts the Host (or X-Forwarded-Host) header when building absolute
+# URLs — password-reset links, redirects, canonical tags — lets an attacker point
+# those URLs at their own host (poisoned reset links, cache poisoning). VALIDATED
+# only when our sentinel host is reflected into a URL context (a 3xx Location or
+# an absolute `scheme://sentinel` URL in the body), never on a bare echo.
+_HHI_SENTINEL = "osop-hhi-sentinel.example.net"
+
+
+async def detect_host_header_injection(
+    client: httpx.AsyncClient,
+    url: str,
+    **_ignore: Any,
+) -> Optional[Dict[str, Any]]:
+    """Send a spoofed Host (then X-Forwarded-Host) and confirm the sentinel host
+    is reflected into a URL the app emits — a Location redirect or an absolute URL
+    in the body. A server that pins its own domain never fires."""
+    for header in ("Host", "X-Forwarded-Host"):
+        try:
+            r = await client.get(url, headers={header: _HHI_SENTINEL}, follow_redirects=False)
+        except Exception:
+            continue
+        loc = (r.headers.get("location") or "").lower()
+        body = (r.text or "")[:8000].lower()
+        in_location = _HHI_SENTINEL in loc
+        # In the body it must be part of a URL (scheme:// or //host), not a bare
+        # word — so a page that merely prints the header value is not flagged.
+        in_body_url = f"//{_HHI_SENTINEL}" in body or f"://{_HHI_SENTINEL}" in body
+        if in_location or in_body_url:
+            return {
+                "technique": "host_header_injection",
+                "endpoint": url,
+                "parameter": header,
+                "payload": f"{header}: {_HHI_SENTINEL}",
+                "http_status": r.status_code,
+                "location": (r.headers.get("location") or "")[:300],
+                "reflected_in": "location" if in_location else "body_url",
+                "proof": (
+                    f"attacker-controlled {header} header was reflected into an "
+                    "absolute URL the application emitted"
+                ),
+                "confidence": 1.0,
+            }
+    return None
+
+
 if __name__ == "__main__":
     # Self-check against a local target. These oracles do NOT assert a finding on
     # juice-shop (it is not path-traversal/open-redirect/SSRF/XXE vulnerable on the

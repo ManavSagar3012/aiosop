@@ -257,6 +257,189 @@ async def test_reflected_xss_no_fp_on_json_reflection():
     assert ev is None
 
 
+# --- SSTI (CWE-1336) — arithmetic-evaluation oracle --------------------------
+
+from ai_osop.core.injection_oracles import (  # noqa: E402
+    _HHI_SENTINEL,
+    _SSTI_EXPR,
+    _SSTI_PRODUCT,
+    detect_host_header_injection,
+    detect_nosql_auth_bypass,
+    detect_ssti,
+)
+
+
+async def _ssti_eval_app(scope, receive, send):
+    """Evaluates the `name` param as a template expression (renders the product)."""
+    from urllib.parse import unquote
+
+    raw = unquote((_qs(scope).get("name") or [""])[0])
+    # Emulate a template engine: if the payload wraps our arithmetic expression in
+    # any of the common delimiters, render the computed product.
+    rendered = raw
+    if _SSTI_EXPR in raw and any(d in raw for d in ("{{", "${", "#{", "*{", "<%", "@(", "{")):
+        rendered = raw
+        for a, b in (
+            ("{{", "}}"),
+            ("${", "}"),
+            ("#{", "}"),
+            ("*{", "}"),
+            ("<%=", "%>"),
+            ("@(", ")"),
+            ("{", "}"),
+        ):
+            rendered = rendered.replace(f"{a}{_SSTI_EXPR}{b}", _SSTI_PRODUCT)
+        rendered = rendered.replace(_SSTI_EXPR, _SSTI_PRODUCT) if rendered == raw else rendered
+    body = f"<html><body>Hello {rendered}</body></html>".encode()
+    await send(
+        {"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/html")]}
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _ssti_reflect_app(scope, receive, send):
+    """Reflects the param verbatim (no template engine) — prints `7331*1223`,
+    never the product, so SSTI must NOT fire (guards against XSS-style reflectors)."""
+    from urllib.parse import unquote
+
+    raw = unquote((_qs(scope).get("name") or [""])[0])
+    body = f"<html><body>Hello {raw}</body></html>".encode()
+    await send(
+        {"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/html")]}
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+@pytest.mark.asyncio
+async def test_ssti_fires_on_template_evaluation():
+    async with _client(_ssti_eval_app, "http://vuln.test") as c:
+        ev = await detect_ssti(c, "http://vuln.test/hi?name=x", params=["name"])
+    assert ev is not None
+    assert ev["technique"] == "ssti"
+    assert _SSTI_PRODUCT in ev["proof"]
+
+
+@pytest.mark.asyncio
+async def test_ssti_no_fp_on_plain_reflection():
+    async with _client(_ssti_reflect_app, "http://safe.test") as c:
+        ev = await detect_ssti(c, "http://safe.test/hi?name=x", params=["name"])
+    assert ev is None
+
+
+# --- NoSQL injection auth-bypass (CWE-943) -----------------------------------
+
+
+async def _read_json(receive):
+    import json
+
+    raw = await _read_body(receive)
+    try:
+        return json.loads(raw or b"{}")
+    except Exception:
+        return {}
+
+
+async def _nosql_vuln_app(scope, receive, send):
+    """Unsanitised query: an operator object for email+password 'matches' and a
+    token is issued; valid-shaped bogus creds are rejected."""
+    data = await _read_json(receive)
+    email, pw = data.get("email"), data.get("password")
+    ok = isinstance(email, dict) or isinstance(pw, dict)  # operator injection
+    if ok:
+        token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abcDEF123_-"
+        resp, status = f'{{"authentication":{{"token":"{token}"}}}}'.encode(), 200
+    else:
+        resp, status = b'{"error":"invalid credentials"}', 401
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send({"type": "http.response.body", "body": resp})
+
+
+async def _nosql_safe_app(scope, receive, send):
+    """Rejects operator objects (parameterised query) — must NOT fire."""
+    data = await _read_json(receive)
+    email, pw = data.get("email"), data.get("password")
+    # Only a real string/string match would pass; operator objects never do.
+    ok = email == "admin@x" and pw == "correct-horse"
+    if ok:
+        resp, status = b'{"authentication":{"token":"eyJa.b.c"}}', 200
+    else:
+        resp, status = b'{"error":"invalid credentials"}', 401
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send({"type": "http.response.body", "body": resp})
+
+
+@pytest.mark.asyncio
+async def test_nosql_auth_bypass_fires_on_operator_injection():
+    async with _client(_nosql_vuln_app, "http://vuln.test") as c:
+        ev = await detect_nosql_auth_bypass(
+            c, "http://vuln.test/rest/user/login", login_fields=("email", "password")
+        )
+    assert ev is not None
+    assert ev["technique"] == "nosql_auth_bypass"
+
+
+@pytest.mark.asyncio
+async def test_nosql_auth_bypass_no_fp_on_parameterised_login():
+    async with _client(_nosql_safe_app, "http://safe.test") as c:
+        ev = await detect_nosql_auth_bypass(
+            c, "http://safe.test/rest/user/login", login_fields=("email", "password")
+        )
+    assert ev is None
+
+
+# --- Host header / X-Forwarded-Host injection (CWE-644) ----------------------
+
+
+async def _hhi_vuln_app(scope, receive, send):
+    """Builds an absolute reset URL from the incoming Host header (trusts it)."""
+    host = b"self.test"
+    for k, v in scope.get("headers", []):
+        if k in (b"host", b"x-forwarded-host"):
+            host = v
+    body = b'<a href="https://' + host + b'/reset?token=abc">reset</a>'
+    await send(
+        {"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/html")]}
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _hhi_safe_app(scope, receive, send):
+    """Pins its own canonical domain — ignores the attacker Host. Must NOT fire."""
+    body = b'<a href="https://self.test/reset?token=abc">reset</a>'
+    await send(
+        {"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/html")]}
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+@pytest.mark.asyncio
+async def test_host_header_injection_fires_on_reflected_host():
+    async with _client(_hhi_vuln_app, "http://vuln.test") as c:
+        ev = await detect_host_header_injection(c, "http://vuln.test/account/reset")
+    assert ev is not None
+    assert ev["technique"] == "host_header_injection"
+    assert _HHI_SENTINEL in ev["payload"]
+
+
+@pytest.mark.asyncio
+async def test_host_header_injection_no_fp_on_pinned_domain():
+    async with _client(_hhi_safe_app, "http://safe.test") as c:
+        ev = await detect_host_header_injection(c, "http://safe.test/account/reset")
+    assert ev is None
+
+
 # --- End-to-end wiring: run_generalized_injection surfaces the new findings ---
 #
 # Prove the new oracles are actually reached by the generalized scan and their
@@ -373,3 +556,78 @@ async def test_generalized_injection_mints_crlf_cors_xss(monkeypatch):
     assert VulnClass.CORS_MISCONFIG in by_class
     cwes = {v.cwe for v in persisted}
     assert {"CWE-113", "CWE-79", "CWE-942"} <= cwes
+
+
+@_pytest.mark.asyncio
+async def test_generalized_injection_mints_ssti_nosql_hostheader(monkeypatch):
+    # Silence the other oracles; exercise SSTI (GET param), NoSQL (login POST),
+    # and Host-header (per-endpoint) end-to-end through the generalized scan.
+    for name in (
+        "detect_path_traversal",
+        "detect_open_redirect",
+        "detect_ssrf_reflected",
+        "detect_xxe",
+        "detect_crlf_injection",
+        "detect_reflected_xss",
+        "detect_cors_misconfig",
+    ):
+        monkeypatch.setattr(io, name, _none)
+
+    async def ssti(c, url, *, params=None):
+        return {
+            "technique": "ssti",
+            "endpoint": url,
+            "parameter": "name",
+            "payload": "{{7331*1223}}",
+            "proof": "8965813",
+            "confidence": 1.0,
+        }
+
+    async def hhi(c, url, **k):
+        return {
+            "technique": "host_header_injection",
+            "endpoint": url,
+            "parameter": "Host",
+            "payload": "Host: sentinel",
+            "proof": "p",
+            "confidence": 1.0,
+        }
+
+    async def nosql(c, url, *, login_fields=None):
+        return {
+            "technique": "nosql_auth_bypass",
+            "endpoint": url,
+            "parameter": "email/password",
+            "payload": "op",
+            "proof": "p",
+            "confidence": 1.0,
+        }
+
+    monkeypatch.setattr(io, "detect_ssti", ssti)
+    monkeypatch.setattr(io, "detect_host_header_injection", hhi)
+    monkeypatch.setattr(io, "detect_nosql_auth_bypass", nosql)
+
+    async def _no_redir(c, base):
+        return []
+
+    monkeypatch.setattr(ds, "_harvest_redirectors", _no_redir)
+
+    eps = [
+        {"url": "http://t/search", "method": "GET", "path": "/search", "query_keys": ["name"]},
+        {
+            "url": "http://t/rest/user/login",
+            "method": "POST",
+            "path": "/rest/user/login",
+            "body_schema_keys": ["email", "password"],
+        },
+    ]
+    gm = _graph(eps)
+
+    persisted, _ = await ds.run_generalized_injection("eng2", gm, per_check_timeout=5.0)
+
+    by_class = {v.vuln_type for v in persisted}
+    assert VulnClass.SSTI in by_class
+    assert VulnClass.NOSQLI in by_class
+    assert VulnClass.HOST_HEADER_INJECTION in by_class
+    cwes = {v.cwe for v in persisted}
+    assert {"CWE-1336", "CWE-943", "CWE-644"} <= cwes

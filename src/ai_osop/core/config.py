@@ -67,6 +67,8 @@ class VulnClass(str, Enum):
     XXE = "xxe"
     CRLF = "crlf"
     CORS_MISCONFIG = "cors_misconfig"
+    NOSQLI = "nosqli"
+    HOST_HEADER_INJECTION = "host_header_injection"
     DESERIALIZATION = "deserialization"
     OAUTH2 = "oauth2"
     BROKEN_ACCESS_CONTROL = "broken_access_control"

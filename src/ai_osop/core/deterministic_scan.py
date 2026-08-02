@@ -696,14 +696,17 @@ async def run_generalized_injection(
     per_check_timeout: float = 20.0,
     oast_registry: Any = None,
 ) -> Tuple[List[Vulnerability], int]:
-    """Drive the deterministic injection/redirection oracles (path traversal,
-    open redirect, reflected SSRF, XXE, CRLF/header-injection, reflected XSS, and
-    permissive-CORS) off recon-discovered endpoints. Every finding here is
+    """Drive the deterministic injection/redirection oracles off recon-discovered
+    endpoints: path traversal, open redirect, reflected SSRF, XXE, CRLF/header
+    injection, reflected XSS, permissive CORS, SSTI (arithmetic-eval), NoSQL
+    auth-bypass, and Host/X-Forwarded-Host injection. Every finding here is
     asserted validated ONLY on an objective in-band signal (a system-file
     signature, an off-origin 3xx Location, an injected response header, an
-    unencoded HTML reflection, a credentialed cross-origin ACAO reflection) —
-    same honesty bar as the SQLi oracle. Endpoints with no confirmable signal
-    produce nothing, not a speculative lead. Returns (persisted, endpoints_examined).
+    unencoded HTML reflection, a credentialed cross-origin ACAO reflection, an
+    evaluated template product, an operator-injection session token, a
+    sentinel-host URL) — same honesty bar as the SQLi oracle. Endpoints with no
+    confirmable signal produce nothing, not a speculative lead. Returns
+    (persisted, endpoints_examined).
 
     When ``oast_registry`` is supplied, XML endpoints ALSO get blind-XXE probes
     planted (external entity fetching a provenance-carrying callback URL). Those
@@ -715,10 +718,13 @@ async def run_generalized_injection(
     from ai_osop.core.injection_oracles import (
         detect_cors_misconfig,
         detect_crlf_injection,
+        detect_host_header_injection,
+        detect_nosql_auth_bypass,
         detect_open_redirect,
         detect_path_traversal,
         detect_reflected_xss,
         detect_ssrf_reflected,
+        detect_ssti,
         detect_xxe,
         plant_blind_xxe,
     )
@@ -731,6 +737,7 @@ async def run_generalized_injection(
     shapes: set = set()
     get_candidates: list = []  # (url, params)  -> traversal / open-redirect / ssrf
     xml_candidates: list = []  # (url, method, sample_xml)  -> xxe
+    login_candidates: list = []  # (url, (user_f, pass_f)|None) -> nosql auth bypass
     for ep in eps:
         url = ep.get("url")
         if not url:
@@ -745,6 +752,21 @@ async def run_generalized_injection(
         shapes.add(shape)
         if method == "GET":
             get_candidates.append((url, params))
+        # NoSQL auth-bypass: login-like JSON endpoints (POST/PUT whose path names an
+        # auth action, or whose body carries a credential-shaped field pair). We pin
+        # the discovered field names when we have them so the operator object lands
+        # in the right keys; otherwise the oracle falls back to common pairs.
+        if method in ("POST", "PUT") and (
+            any(k in path for k in ("login", "signin", "authenticate", "session", "auth"))
+            or ("password" in [str(k).lower() for k in body_keys])
+        ):
+            lk = [str(k).lower() for k in body_keys]
+            fields = None
+            for user_f in ("email", "username", "user"):
+                if user_f in lk and "password" in lk:
+                    fields = (user_f, "password")
+                    break
+            login_candidates.append((url, fields))
         # XXE only where the endpoint plausibly parses XML: a body-carrying
         # method whose path/keys hint at import/upload/xml/parse, whose content
         # type is XML, or whose path looks like a stock/status check (the common
@@ -783,6 +805,9 @@ async def run_generalized_injection(
         "crlf_injection": ("CWE-113", VulnClass.CRLF, Severity.MEDIUM),
         "reflected_xss": ("CWE-79", VulnClass.XSS, Severity.HIGH),
         "cors_misconfig": ("CWE-942", VulnClass.CORS_MISCONFIG, Severity.MEDIUM),
+        "ssti": ("CWE-1336", VulnClass.SSTI, Severity.CRITICAL),
+        "nosql_auth_bypass": ("CWE-943", VulnClass.NOSQLI, Severity.CRITICAL),
+        "host_header_injection": ("CWE-644", VulnClass.HOST_HEADER_INJECTION, Severity.MEDIUM),
     }
 
     async def _persist(ev: dict):
@@ -819,6 +844,7 @@ async def run_generalized_injection(
                 detect_ssrf_reflected,
                 detect_crlf_injection,
                 detect_reflected_xss,
+                detect_ssti,
             ):
                 try:
                     ev = await asyncio.wait_for(
@@ -828,16 +854,15 @@ async def run_generalized_injection(
                     continue
                 if ev:
                     await _persist(ev)
-            # CORS is an endpoint-level property (no param needed): probe once per
-            # discovered GET endpoint. Cheap, objective, no false positives.
-            try:
-                ev = await asyncio.wait_for(
-                    detect_cors_misconfig(c, url), timeout=per_check_timeout
-                )
-            except Exception:
-                ev = None
-            if ev:
-                await _persist(ev)
+            # Endpoint-level probes (no param needed): permissive CORS and
+            # Host/X-Forwarded-Host reflection. Cheap, objective, no false positives.
+            for oracle in (detect_cors_misconfig, detect_host_header_injection):
+                try:
+                    ev = await asyncio.wait_for(oracle(c, url), timeout=per_check_timeout)
+                except Exception:
+                    ev = None
+                if ev:
+                    await _persist(ev)
         for url, method, sample_xml in xml_candidates:
             try:
                 ev = await asyncio.wait_for(
@@ -866,6 +891,20 @@ async def run_generalized_injection(
                     )
                 except Exception:
                     pass
+
+        # NoSQL auth-bypass pass over login-like JSON endpoints. Fires only on a
+        # session token issued to an operator-injection object that valid-shaped
+        # credentials were denied — an objective auth bypass, no status-code guess.
+        for lurl, fields in login_candidates:
+            try:
+                ev = await asyncio.wait_for(
+                    detect_nosql_auth_bypass(c, lurl, login_fields=fields),
+                    timeout=per_check_timeout,
+                )
+            except Exception:
+                continue
+            if ev:
+                await _persist(ev)
 
         # Dedicated open-redirect pass: redirectors often live outside /rest,/api
         # (so they never enter get_candidates) and are guarded by substring
@@ -907,9 +946,10 @@ async def run_generalized_scan(
 ) -> Tuple[List[Vulnerability], int]:
     """Combined generalized pass over recon-discovered endpoints: SQLi + mass
     assignment + JWT forgery + IDOR + injection/redirection (path traversal, open
-    redirect, reflected SSRF, XXE, CRLF/header injection, reflected XSS, and
-    permissive CORS) — driven off the discovered surface with deterministic/engine
-    oracles (no LLM, no agent lifecycle).
+    redirect, reflected SSRF, XXE, CRLF/header injection, reflected XSS, permissive
+    CORS, SSTI, NoSQL auth-bypass, Host-header injection) — driven off the
+    discovered surface with deterministic/engine oracles (no LLM, no agent
+    lifecycle).
 
     ``oast_registry``, when supplied, is threaded to the injection pass so blind
     XXE probes are planted; their confirmation is the caller's out-of-band
