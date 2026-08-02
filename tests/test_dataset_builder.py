@@ -62,6 +62,10 @@ def test_build_rows_from_traces_groups_by_engagement(tmp_path):
 
 def test_build_rows_skips_malformed_lines(tmp_path):
     f = tmp_path / "eng-x.jsonl"
-    f.write_text(json.dumps(_mk_trace().to_dict()) + "\nnot-json\n" + json.dumps(_mk_trace(step_idx=1).to_dict()))
+    f.write_text(
+        json.dumps(_mk_trace().to_dict())
+        + "\nnot-json\n"
+        + json.dumps(_mk_trace(step_idx=1).to_dict())
+    )
     rows = list(build_rows_from_traces(tmp_path))
     assert len(rows) == 2  # malformed line skipped
