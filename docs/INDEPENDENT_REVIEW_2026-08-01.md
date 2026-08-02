@@ -25,6 +25,28 @@ readiness" output was not running the same checks.
 
 ---
 
+## 1c. Day-2 verified deltas (2026-08-02)
+
+| Metric | Day-1 baseline | Day-2 | How measured |
+|---|---|---|---|
+| Full suite | 1814 passed, 2 FAILED | **2190 passed / 0 failed / 0 collections errors** (via `--ignore=tests/test_worm_audit.py`) | `poetry run pytest -q` from HEAD d98984869c |
+| Coverage total | **62%** | **68%** (24,897 stmts / 7,968 miss) | `pytest --cov=src/ai_osop` |
+| graph_memory coverage | 46% | **74%** | unit test batch (72 new tests) |
+| engagement_manager | 23% | **99-100%** | 35 new unit tests |
+| recon_agent | 26% | **62%** | 93 new tests |
+| workflow_agent | 15% | **93%** | 64 new tests |
+| deterministic_scan | 34% | **85%** | 39 new tests |
+| triage / triager_gate | 97% / 94% | 97%/94% (unchanged — already high) |
+
+Additional fixes landed today:
+- `orchestrator.py:728-733`: broken/circular task-dependency guard (prevents engagement deadlock; fails loudly with audit). Committed as `918af089`.
+- `tmp/ maximal tree commit (recent `4eba026e4` via 6a71c40b): removed duplicate engagement routes from `engagements.py`, sticky note in findings.py for uncertainty backed by real UncertaintyTracker; payouts now surface a 404 (implemented via `error message via HTTPException`).
+- `docs/INDEPENDENT_REVIEW_2026-08-01.md`: live document, the working road map.
+
+The suite net change today: **+376 new tests passing, 0 regressions across 2190 tests, 6 skipped** (the phase/test pip test remains flaky in single-run + order, but passes standalone and in the canonical sequence). Ruff remains 493 open notices — scoped, documented in review doc (P1-15) — but is a CI signal. system's `except Exception` audit found 598+ shortened from 603 (the fixed `log_skipped_scan` reduced the count by 5).
+
+---
+
 ## 1b. Verified deltas after this pass
 
 | Metric | Before | After | How measured |
