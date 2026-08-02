@@ -6,7 +6,7 @@ payloads), recording each validated link into the graph.
 """
 
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Set
 from uuid import uuid4
 
 import structlog
@@ -35,6 +35,12 @@ class ChainExecutorAgent(BaseAgent):
     # is on, each attempted hop emits a best-effort ExploitReceipt carrying the
     # chain_id / hop_idx linkage plus the underlying facade receipt_id.
     receipt_store: Any = None
+
+    def __init__(self, ctx: Any) -> None:
+        super().__init__(ctx)
+        # Operator kill-switch: chain_ids in this set stop at the next hop
+        # boundary. Populated by the "abort_chain" task type.
+        self._abort_flags: Set[str] = set()
 
     async def _record_hop_receipt(
         self,
@@ -76,13 +82,20 @@ class ChainExecutorAgent(BaseAgent):
         return AgentType.ATTACK_CHAIN
 
     def supports_task_type(self, task_type: str) -> bool:
-        return task_type in {"execute_exploit_chain", "execute_chain_hop"}
+        return task_type in {"execute_exploit_chain", "execute_chain_hop", "abort_chain"}
 
     async def _setup_resources(self) -> None:
         # Expect _exploit to be assigned externally.
         pass
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
+        if task.type == "abort_chain":
+            chain_id = str(task.payload.get("chain_id") or "")
+            if chain_id:
+                self._abort_flags.add(chain_id)
+                logger.info("chain.abort_registered", chain_id=chain_id)
+            return {"status": "abort_registered", "chain_id": chain_id}
+
         engagement_id = task.engagement_id
         chains = await self.ctx.graph_memory.find_vulnerability_chains(engagement_id)
         if not chains:
@@ -94,6 +107,15 @@ class ChainExecutorAgent(BaseAgent):
             for chain in chains:
                 hops = chain.get("nodes", [])
                 for idx, hop in enumerate(hops):
+                    if chain_id in self._abort_flags:
+                        logger.info("chain.aborted_by_operator", chain_id=chain_id, hop=idx)
+                        return {
+                            "status": "chain_failed",
+                            "note": "aborted by operator",
+                            "chain_run": chain_run,
+                            "aborted_at_hop": idx,
+                            "chain_id": chain_id,
+                        }
                     url = hop.get("url")
                     vuln = hop.get("vuln") or {}
                     vuln_id = vuln.get("id")

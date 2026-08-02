@@ -228,3 +228,70 @@ async def test_executor_records_receipt_per_attempted_hop(tmp_path):
     assert hop0.chain_id == "chain-R"
     assert hop0.hop_idx == 0
     assert hop0.vuln_id == "v-1"
+
+
+@pytest.mark.asyncio
+async def test_abort_chain_marks_hops_and_stops():
+    from ai_osop.agents.base import AgentContext
+
+    ctx = MagicMock(spec=AgentContext)
+    ctx.agent_id = "exec-3"
+    ctx.agent_type = AgentType.ATTACK_CHAIN
+    ctx.session_id = "eng-c"
+    ctx.graph_memory = MagicMock()
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
+        "id": "chain-X", "nodes": [
+            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+            {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
+        ],
+    }])
+
+    class _Facade:
+        def __init__(self):
+            self.calls = 0
+
+        async def validate_exploit(self, endpoint, vuln_class, payload):
+            self.calls += 1
+            return {"validated": True}
+
+    from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
+
+    agent = ChainExecutorAgent(ctx)
+    agent._exploit = _Facade()
+    agent._abort_flags.add("chain-X")
+
+    task = Task(
+        type="execute_exploit_chain",
+        agent_type=AgentType.ATTACK_CHAIN,
+        payload={"chain_id": "chain-X"},
+        engagement_id="eng-c",
+    )
+    out = await agent._execute(task)
+    assert out["status"] == "chain_failed"
+    assert "aborted" in (out.get("note") or "")
+    assert agent._exploit.calls == 0  # stopped before the first hop
+
+
+@pytest.mark.asyncio
+async def test_abort_chain_task_type_registers_flag_and_returns():
+    from ai_osop.agents.base import AgentContext
+
+    ctx = MagicMock(spec=AgentContext)
+    ctx.agent_id = "exec-4"
+    ctx.agent_type = AgentType.ATTACK_CHAIN
+    ctx.session_id = "eng-c"
+
+    from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
+
+    agent = ChainExecutorAgent(ctx)
+    assert agent.supports_task_type("abort_chain")
+
+    task = Task(
+        type="abort_chain",
+        agent_type=AgentType.ATTACK_CHAIN,
+        payload={"chain_id": "chain-Z"},
+        engagement_id="eng-c",
+    )
+    out = await agent._execute(task)
+    assert "chain-Z" in agent._abort_flags
+    assert out["status"] == "abort_registered"
