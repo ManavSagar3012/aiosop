@@ -22,6 +22,9 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlparse
 
 import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # Auth-bypass payloads: classic tautologies that break out of a string-built
 # WHERE clause so the row matches without a valid password.
@@ -598,8 +601,13 @@ if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:3000"
     res = asyncio.run(scan_sqli(target))
     for f in res:
-        print(f"[VALIDATED] {f['technique']:12s} {f['endpoint']}  payload={f['payload']!r}")
+        logger.info(
+            "sqli_validated",
+            technique=f["technique"],
+            endpoint=f["endpoint"],
+            payload=f["payload"],
+        )
     techs = {f["technique"] for f in res}
     assert "auth_bypass" in techs, f"expected auth_bypass SQLi on {target}, got {techs}"
     assert "error_based" in techs, f"expected error_based SQLi on {target}, got {techs}"
-    print(f"OK: {len(res)} validated SQLi on {target}")
+    logger.info("sqli_oracles_self_check_passed", finding_count=len(res), target=target)

@@ -57,7 +57,6 @@ async def list_tasks(
 
 
 from ai_osop.core.models import Task
-from ai_osop.core.enums import AgentType
 
 # AIOSOP-APPROVAL-FORCE-001: REMOVED. A duplicate hardcoded string set here would
 # drift from TaskScheduler.DANGEROUS_TASK_MARKERS (substring-match on type +

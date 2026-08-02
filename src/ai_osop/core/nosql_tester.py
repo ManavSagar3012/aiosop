@@ -82,7 +82,6 @@ class NoSQLTester:
             else:
                 base_resp = await client.get(target_url)
             base_status = base_resp.status_code
-            base_len = len(base_resp.text)
         except Exception:
             return []
 

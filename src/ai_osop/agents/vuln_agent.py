@@ -1158,7 +1158,6 @@ class VulnAnalysisAgent(BaseAgent):
 
         # Step 1: Navigate to the target and enumerate DOM sinks.
         token = f"OSOPDOM{uuid.uuid4().hex[:10]}"
-        findings: List[Dict[str, Any]] = []
 
         try:
             await self.browser_adapter.navigate(

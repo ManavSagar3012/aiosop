@@ -60,7 +60,10 @@ class CloudSpecialistAgent(BaseAgent):
         result = await adapter.analyze_iam_trust_policies(
             payload.get("account_id"),
         )
-        privesc = await adapter.discover_privilege_escalation(
+        # Await for completion/side effects but discard the stub result —
+        # the privesc report is not currently plumbed through to the response.
+        # AIOSOP-LINT-F841.
+        await adapter.discover_privilege_escalation(
             payload.get("principal_arn"),
         )
         return {

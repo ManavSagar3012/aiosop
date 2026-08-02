@@ -301,6 +301,6 @@ if __name__ == "__main__":
             # limiter not consulted for the blocked request
             assert limiter.calls == [("in.example.com", "scan")], limiter.calls
 
-        print("governed_client self-check passed")
+        logger.info("governed_client_self_check_passed")
 
     asyncio.run(_main())

@@ -12,7 +12,11 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, TypedDict
 
+import structlog
+
 from ai_osop.core.vuln_taxonomy import taxon_for
+
+logger = structlog.get_logger(__name__)
 
 
 class FindingView(TypedDict, total=False):
@@ -238,7 +242,7 @@ if __name__ == "__main__":
     assert view4["url"] == "http://obj/target", view4["url"]
     assert view4["category"] == "ssrf", view4["category"]
 
-    print("all asserts passed")
-    print("view1:", view1)
-    print("view2:", view2)
-    print("view3:", view3)
+    logger.info("finding_view_self_test_passed")
+    logger.info("finding_view_self_test_view1", view=view1)
+    logger.info("finding_view_self_test_view2", view=view2)
+    logger.info("finding_view_self_test_view3", view=view3)

@@ -40,7 +40,6 @@ class CachePoisoningTester:
     async def scan_cache_poisoning(self, target_url: str) -> List[CacheFinding]:
         """Test for unkeyed header cache poisoning."""
         findings: List[CacheFinding] = []
-        parsed = urlparse(target_url)
 
         async with httpx.AsyncClient(
             timeout=self.timeout_seconds, follow_redirects=False

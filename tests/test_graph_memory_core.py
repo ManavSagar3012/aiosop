@@ -338,7 +338,10 @@ async def test_add_exploit_falls_back_to_model_id_and_links_vuln_and_payload():
 
 async def test_validate_vulnerability_sets_validated_and_confidence_one():
     gm, session = make_gm(FakeResult(record={"id": "v-1", "vuln_type": "sqli", "engagement_id": "eng-1"}))
-    await gm.validate_vulnerability("v-1"); cy, params = session.run.await_args.args
+    await gm.validate_vulnerability("v-1")
+    # The validate path calls session.run twice (validate + evidence check); assert
+    # the FIRST call is the validated=true / confidence=1.0 write.
+    cy, params = session.run.await_args_list[0].args
     assert "v.validated = true" in cy and "v.confidence = 1.0" in cy and params["vid"] == "v-1"
 
 

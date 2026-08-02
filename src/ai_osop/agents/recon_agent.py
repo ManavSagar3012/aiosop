@@ -974,8 +974,6 @@ class ReconAgent(BaseAgent):
             f"Active crawler initialized with {len(identities)} identities: {[i['label'] for i in identities]}. Known paths: {len(known_paths)}"
         )
 
-        # Regex patterns for API routes and parameters in JS
-        param_pattern = re.compile(r"[?&]([a-zA-Z0-9_\-]+)=")
         # Routes embedded in JS bundles (root-relative paths, optional query).
         # Previously referenced below but never defined -> NameError silently
         # killed all JS-bundle route extraction (AIOSOP-RECON-JSROUTE-FIX).
@@ -1500,10 +1498,8 @@ class ReconAgent(BaseAgent):
             else:
                 return {"status": "failed", "error": "url or domain parameter is required"}
 
-        engagement_id = payload.get("engagement_id") or (
-            self.ctx.current_task.engagement_id if self.ctx.current_task else ""
-        )
-
+        # AIOSOP-LINT-F841: engagement_id from payload/ctx is not threaded through
+        # to this endpoint (the WAF probe is host-scoped; we never persist).
         waf_detected = None
         waf_signals: list = []
 

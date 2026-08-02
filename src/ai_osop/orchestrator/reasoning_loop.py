@@ -444,7 +444,9 @@ class ReasoningLoop:
                 findings,
             )
             if new_uncerts:
-                unc_hyps = self._uncertainty_tracker.get_uncertainty_hypotheses(engagement_id)
+                # AIOSOP-LINT-F841: hypothesis retrieval is informational only;
+                # we log the count but do not currently branch on the result.
+                self._uncertainty_tracker.get_uncertainty_hypotheses(engagement_id)
                 logger.info(
                     "reasoning_uncertainties_detected",
                     engagement_id=engagement_id,

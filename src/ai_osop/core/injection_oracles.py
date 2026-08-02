@@ -27,6 +27,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Path traversal (CWE-22 / LFI)
@@ -526,7 +529,7 @@ if __name__ == "__main__":
                     ev = await asyncio.wait_for(coro, timeout=30)
                 except Exception as e:
                     ev = f"error:{e}"
-                print(f"{name:16s} -> {ev}")
+                logger.info("injection_oracle_self_check", oracle=name, evidence=str(ev))
 
     asyncio.run(_main())
-    print("OK: injection oracles ran clean")
+    logger.info("injection_oracles_self_check_passed")

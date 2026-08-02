@@ -353,7 +353,6 @@ async def active_parameter_mine(
     """
     from urllib.parse import urlparse, urlunparse
 
-    mined: List[str] = []
     parsed = urlparse(url)
     # Drop existing query parameters to isolate new ones
     base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))

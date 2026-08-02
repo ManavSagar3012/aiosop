@@ -178,7 +178,7 @@ async def bounty_report(session_id: str, operator: Dict[str, Any] = Depends(veri
     generator is the operator-requested path: it compiles findings on demand against
     the live graph state and returns the artifact content directly.
     """
-    session = await assert_engagement_access(operator, session_id)
+    await assert_engagement_access(operator, session_id)
     orch = state.get("orchestrator")
     if orch is None or orch.mcp_registry is None:
         raise HTTPException(status_code=503, detail="No orchestrator/MCP registry available")
@@ -497,7 +497,7 @@ async def submit_finding_to_bounty(
     operator: Dict[str, Any] = Depends(require_role("senior_operator")),
 ):
     """Submit a verified finding to an external bug bounty platform (HackerOne)."""
-    session = await assert_engagement_access(operator, session_id)
+    await assert_engagement_access(operator, session_id)
     gm = state["orchestrator"].graph_memory
 
     # Retrieve the raw finding details from Neo4j

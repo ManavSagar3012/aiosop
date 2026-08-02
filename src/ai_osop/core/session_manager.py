@@ -6,8 +6,12 @@ Manages multi-user sessions, token rotation, and drift detection.
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
+import structlog
+
 from ai_osop.core.models import BrowserSession
 from ai_osop.memory.session_memory import SessionMemory
+
+logger = structlog.get_logger(__name__)
 
 
 class SessionManager:
@@ -44,7 +48,12 @@ class SessionManager:
         try:
             await self.session_memory.store_hot(f"session:{session.id}", session.model_dump())
         except Exception as e:
-            print(f"DEBUG: Session store_hot failed (likely mock/test environment): {e}")
+            logger.debug(
+                "session_store_hot_failed",
+                session_id=session.id,
+                error=str(e),
+                hint="likely mock/test environment",
+            )
 
         self._active_sessions[session.id] = session
 

@@ -426,19 +426,25 @@ async def _cli_main(args: argparse.Namespace) -> None:
         include_analytics=args.include_analytics,
     )
     endpoints = extractor.parse_file(args.har_path)
-    print(f"parsed: {len(endpoints)} unique endpoints")
-    print(f"skipped: {extractor.skipped}")
+    logger.info("har_parse_complete", endpoint_count=len(endpoints))
+    logger.info("har_skipped", skipped=extractor.skipped)
     for ep in endpoints[:50]:
-        print(
-            f"  {ep.method:6s} {ep.host:40s} {ep.path:60s} auth={ep.auth_class:9s} "
-            f"obs={ep.observations} codes={sorted(ep.status_codes_seen)} qkeys={sorted(ep.query_keys)[:5]}"
+        logger.info(
+            "har_endpoint",
+            method=ep.method,
+            host=ep.host,
+            path=ep.path,
+            auth_class=ep.auth_class,
+            observations=ep.observations,
+            status_codes=sorted(ep.status_codes_seen),
+            query_keys=sorted(ep.query_keys)[:5],
         )
     if not args.no_persist:
         gm = GraphMemory()
         await gm.connect()
         try:
             written = await persist_endpoints(gm, endpoints)
-            print(f"persisted: {written} APIEndpoint nodes")
+            logger.info("har_persist_complete", written=written)
         finally:
             await gm.close()
 

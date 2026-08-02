@@ -6,6 +6,10 @@ Handles semantic payload storage and retrieval using PostgreSQL with pgvector.
 import json
 from typing import Any, Dict, List, Optional
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 class VectorMemory:
     """
@@ -71,7 +75,7 @@ class VectorMemory:
                 """
                 )
             except Exception as e:
-                print(f"WARN: Could not initialize pgvector: {e}")
+                logger.warning("pgvector_init_failed", error=str(e))
                 self._mock_mode = True
                 self._mock_store = []
                 self._mock_findings = []

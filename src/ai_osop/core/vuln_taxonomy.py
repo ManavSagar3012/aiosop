@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from typing import Dict, NamedTuple, Optional
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 class VulnTaxon(NamedTuple):
     cwe: str
@@ -102,4 +106,4 @@ if __name__ == "__main__":
     assert taxon_for("csrf").cvss_vector.startswith("CVSS:3.1/")
     assert taxon_for("unknown") is None  # unmapped -> no fabrication
     assert taxon_for(None) is None
-    print("vuln_taxonomy asserts passed")
+    logger.info("vuln_taxonomy_self_test_passed")
