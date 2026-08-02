@@ -318,6 +318,14 @@ class PhaseMonitor:
         """Trigger automatic tasks when entering a phase."""
         if phase == EngagementPhase.RECONNAISSANCE:
             for domain in session.scope.domains:
+                try:
+                    target_url = self._orch.engagement_manager._domain_to_url(domain)
+                except Exception as e:  # noqa: BLE001 - URL derivation is best-effort
+                    # AIOSOP-RECON-HARDEN-001: a single bad domain must not kill the
+                    # entire recon entry. The downstream schedule calls know how to
+                    # handle a None/invalid URL by skipping the URL-dependent fan-out.
+                    logger.warning("recon_domain_url_derivation_failed", domain=domain, error=str(e))
+                    target_url = None
                 task = Task(
                     type="full_recon",
                     priority=5,
@@ -328,11 +336,14 @@ class PhaseMonitor:
                 await self._orch.task_scheduler.schedule_task(task)
 
                 # Auto-schedule OpenAPI/Swagger ingestion to discover spec-defined routes
+                openapi_payload: Dict[str, Any] = {"domain": domain}
+                if target_url:
+                    openapi_payload["url"] = target_url
                 openapi_task = Task(
                     type="openapi_ingest",
                     priority=4,
                     agent_type=AgentType.RECON,
-                    payload={"url": self._orch.engagement_manager._domain_to_url(domain)},
+                    payload=openapi_payload,
                     engagement_id=session.canonical_engagement_id,
                 )
                 await self._orch.task_scheduler.schedule_task(openapi_task)
@@ -346,10 +357,7 @@ class PhaseMonitor:
                 # authenticated-surface capture in vuln discovery) so unauthenticated
                 # engagements still get an API surface. Best-effort: a browser-MCP
                 # outage must never block reconnaissance.
-                try:
-                    surface_url = self._orch.engagement_manager._domain_to_url(domain)
-                except Exception:  # noqa: BLE001 - URL derivation is best-effort
-                    surface_url = None
+                surface_url = target_url
                 if surface_url:
                     # In-scope hostnames so HAR extraction persists ONLY in-scope
                     # endpoints. Without this the extractor's scope guard is disabled
@@ -487,11 +495,19 @@ class PhaseMonitor:
                         timeout_seconds=180,
                     )
                     await self._orch.task_scheduler.schedule_task(harvest_task)
-            url_hint = (
-                self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
-                if session.scope.domains
-                else None
-            )
+            try:
+                url_hint = (
+                    self._orch.engagement_manager._domain_to_url(session.scope.domains[0])
+                    if session.scope.domains
+                    else None
+                )
+            except Exception as e:  # noqa: BLE001 - URL derivation best-effort
+                logger.warning(
+                    "url_hint_derivation_failed",
+                    domain=session.scope.domains[0] if session.scope.domains else None,
+                    error=str(e),
+                )
+                url_hint = None
             await self._orch.engagement_manager.ensure_authenticated_discovery(
                 session.canonical_engagement_id, url_hint=url_hint
             )
