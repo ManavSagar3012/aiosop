@@ -1,0 +1,31 @@
+Connecting Postgres...
+Total tasks in DB for eng-20260714135632-syfe-live-v3: 15
+Task task-838b3107b54c: type=full_recon status=completed agent=recon-agent-002
+  Result: {'status': 'success', 'target': 'uat-bugbounty.nonprod.syfe.com', 'subdomains_found': 0, 'endpoints_found': 255, 'parameter_intelligence': {'total_urls': 140, 'unique_endpoints': ['cdn.prod.website-fi
+Task task-267c64833a89: type=nuclei_scan status=running agent=vuln-agent-005
+Task task-7ad924794c96: type=csrf_scan status=completed agent=csrf-agent-002
+  Result: {'status': 'success', 'confirmed': False, 'reason': 'Read-only HTTP method (GET); CSRF is not applicable.', 'findings_count': 0, 'telemetry': {'queue_wait_time_s': 0.657756, 'worker_assignment_latency
+Task task-3ee1cd4a24a3: type=csrf_scan status=completed agent=csrf-agent-001
+  Result: {'status': 'success', 'confirmed': False, 'reason': 'Read-only HTTP method (GET); CSRF is not applicable.', 'findings_count': 0, 'telemetry': {'queue_wait_time_s': 102.563365, 'worker_assignment_laten
+Task task-df4e5cedf2a6: type=sqli_scan status=completed agent=vuln-agent-001
+  Result: {'status': 'success', 'tool': 'sqlmap', 'target': 'https://uat-bugbounty.nonprod.syfe.com/post?domain=test&usredir=test&subject=test&utm_campaign=test&n=test&itemSlug=test&collectionId=test&utm_source
+Task task-e8776dd1881d: type=jwt_scan status=completed agent=jwt-agent-002
+  Result: {'status': 'success', 'message': 'skipped: no JWT token in scope', 'findings_count': 0, 'telemetry': {'queue_wait_time_s': 0.645835, 'worker_assignment_latency_s': 0.645835, 'execution_time_s': 0.2546
+Task task-f975620b86b6: type=burp_scan status=completed agent=vuln-agent-006
+  Result: {'status': 'success', 'tool': 'burp_scanner', 'target': 'https://uat-bugbounty.nonprod.syfe.com/', 'findings_count': 0, 'endpoints_count': 0, 'reasoning': '[VERIFIED_V0.1.2] ', 'burp_error': 'Burp MCP
+Task task-8deed774cb76: type=jwt_scan status=completed agent=jwt-agent-001
+  Result: {'status': 'success', 'message': 'skipped: no JWT token in scope', 'findings_count': 0, 'telemetry': {'queue_wait_time_s': 91.156054, 'worker_assignment_latency_s': 91.156054, 'execution_time_s': 0.44
+Task task-cd656c6170b3: type=jwt_scan status=completed agent=jwt-agent-001
+  Result: {'status': 'success', 'message': 'skipped: no JWT token in scope', 'findings_count': 0, 'telemetry': {'queue_wait_time_s': 92.844301, 'worker_assignment_latency_s': 92.844301, 'execution_time_s': 0.27
+Task task-93dab31e666a: type=xss_scan status=completed agent=vuln-agent-003
+  Result: {'status': 'success', 'tool': 'xss_scan', 'target': 'https://uat-bugbounty.nonprod.syfe.com/log-in?domain=test&usredir=test&subject=test&utm_campaign=test&n=test&itemSlug=test&collectionId=test&utm_so
+Task task-879cc66707ef: type=sqli_scan status=completed agent=vuln-agent-003
+  Result: {'status': 'success', 'tool': 'sqlmap', 'target': 'https://uat-bugbounty.nonprod.syfe.com/log-in?domain=test&usredir=test&subject=test&utm_campaign=test&n=test&itemSlug=test&collectionId=test&utm_sour
+Task task-462cce4676a4: type=sqli_scan status=completed agent=vuln-agent-004
+  Result: {'status': 'success', 'tool': 'sqlmap', 'target': 'https://uat-bugbounty.nonprod.syfe.com/post-json?domain=test&usredir=test&subject=test&utm_campaign=test&n=test&itemSlug=test&collectionId=test&utm_s
+Task task-a40fd5444c45: type=csrf_scan status=completed agent=csrf-agent-001
+  Result: {'status': 'success', 'confirmed': False, 'reason': 'Read-only HTTP method (GET); CSRF is not applicable.', 'findings_count': 0, 'telemetry': {'queue_wait_time_s': 88.867421, 'worker_assignment_latenc
+Task task-0214f481d4fd: type=xss_scan status=completed agent=vuln-agent-006
+  Result: {'status': 'success', 'tool': 'xss_scan', 'target': 'https://uat-bugbounty.nonprod.syfe.com/post-json?domain=test&usredir=test&subject=test&utm_campaign=test&n=test&itemSlug=test&collectionId=test&utm
+Task task-d39d01a996cf: type=xss_scan status=completed agent=vuln-agent-002
+  Result: {'status': 'success', 'tool': 'xss_scan', 'target': 'https://uat-bugbounty.nonprod.syfe.com/post?domain=test&usredir=test&subject=test&utm_campaign=test&n=test&itemSlug=test&collectionId=test&utm_sour

@@ -110,6 +110,7 @@ async def get_session(headers: dict, session_id: str) -> int:
 async def websocket_connect(headers: dict, session_id: str) -> Tuple[str, int]:
     """Try WebSocket connection. Returns (status, close_code)."""
     import websockets
+
     token = headers.get("Authorization", "").replace("Bearer ", "")
     try:
         await websockets.connect(

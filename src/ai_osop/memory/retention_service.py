@@ -110,28 +110,36 @@ class RetentionService:
         RETURN count(DISTINCT e) as engagements, count(DISTINCT n) as nodes
         """
 
-        async with self.graph_memory._driver.session() as session:
-            result = await session.run(cypher, {"cutoff": cutoff_iso})
-            record = await result.single()
-            if record:
-                return {
-                    "archived_engagements": record["engagements"],
-                    "archived_nodes": record["nodes"],
-                    "cutoff": cutoff_iso,
-                }
+        records = await self.graph_memory.run_read_query(cypher, {"cutoff": cutoff_iso})
+        if records:
+            record = records[0]
+            return {
+                "archived_engagements": record.get("engagements", 0),
+                "archived_nodes": record.get("nodes", 0),
+                "cutoff": cutoff_iso,
+            }
         return {"archived_engagements": 0, "archived_nodes": 0}
 
     async def _cleanup_postgres(self) -> dict:
-        """Delete old Postgres rows from warm tier."""
-        from sqlalchemy import delete
+        """Delete old Postgres rows from warm tier.
 
+        Phase-1 issue #15: audit logs were hard-deleted at a hardcoded 7-day
+        cutoff, ignoring the configurable ``settings.audit_log_retention_days``
+        (default 7 years). That was a compliance and forensics risk — audit
+        logs are typically retention-protected. Audit logs are now SOFT-deleted
+        (set ``archived=True`` + ``archived_at``) so the row remains queryable
+        for compliance audits, and the cutoff reads from settings (7 years by
+        default) instead of the hardcoded 7-day window.
+        """
+        from sqlalchemy import delete, update
+
+        from ai_osop.auth.session_store import UserSessionORM
         from ai_osop.memory.session_memory import (
             ApprovalRequestORM,
             AuditLogORM,
             SessionStateORM,
             TaskORM,
         )
-        from ai_osop.auth.session_store import UserSessionORM
 
         results = {}
 
@@ -164,14 +172,29 @@ class RetentionService:
         result = await session.execute(stmt)
         results["approvals_deleted"] = result.rowcount
 
-        # Old audit logs (keep longer, but still cleanup)
+        # Old audit logs — SOFT DELETE (Phase-1 issue #15).
+        # Previously hard-deleted at a hardcoded 7-day window, ignoring the
+        # configurable settings.audit_log_retention_days (default 7 years).
+        # Audit logs are retention-protected for compliance; soft-delete keeps
+        # the row queryable while excluding it from active queries via the
+        # archived flag.
         audit_cutoff = datetime.utcnow() - timedelta(days=settings.audit_log_retention_days)
-        stmt = delete(AuditLogORM).where(AuditLogORM.timestamp < audit_cutoff)
+        stmt = (
+            update(AuditLogORM)
+            .where(
+                AuditLogORM.timestamp < audit_cutoff,
+                AuditLogORM.archived == False,  # noqa: E712
+            )
+            .values(archived=True, archived_at=datetime.utcnow())
+        )
         result = await session.execute(stmt)
-        results["audit_logs_deleted"] = result.rowcount
+        results["audit_logs_archived"] = result.rowcount
 
-        # Old session states (hot tier recovery checkpoints)
-        state_cutoff = datetime.utcnow() - timedelta(days=7)
+        # Old session states (hot tier recovery checkpoints). Phase-1 issue #15:
+        # the cutoff was hardcoded to 7 days while every other cutoff reads
+        # from settings.*_retention_days. Read from settings so the retention
+        # window is operator-tunable.
+        state_cutoff = datetime.utcnow() - timedelta(days=settings.session_state_retention_days)
         stmt = delete(SessionStateORM).where(SessionStateORM.last_accessed < state_cutoff)
         result = await session.execute(stmt)
         results["session_states_deleted"] = result.rowcount

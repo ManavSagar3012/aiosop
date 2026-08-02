@@ -66,6 +66,42 @@ async def test_shutdown_cancels_background_tasks():
     assert agent._running is False
 
 
+@pytest.mark.asyncio
+async def test_execute_task_restores_worker_session_after_completion():
+    """A shared worker must not retain the engagement it just completed."""
+    ctx = _ctx()
+    ctx.session_id = "api-bootstrap"
+    ctx.status = "idle"
+    ctx.current_task = None
+    ctx.agent_type = AgentType.RECON
+    ctx.task_history = []
+    ctx.working_memory = {}
+    ctx.rate_limiter = MagicMock()
+    ctx.rate_limiter.acquire = AsyncMock()
+    ctx.graph_memory.upsert_task = AsyncMock()
+    ctx.mcp_registry._servers = {}
+
+    agent = _DummyAgent(ctx)
+    agent._validate_task = AsyncMock()
+    agent._get_relevant_skills = AsyncMock()
+    agent._validate_output = AsyncMock(return_value={"status": "success"})
+    agent._update_working_memory = AsyncMock()
+    agent._log_task_completion = AsyncMock()
+    agent._inject_telemetry = lambda task, result, start_cpu, proc: result
+
+    task = Task(
+        type="full_recon",
+        agent_type=AgentType.RECON,
+        engagement_id="eng-completed-task",
+        payload={"domain": "example.test"},
+    )
+
+    await agent.execute_task(task)
+
+    assert task.status == "completed"
+    assert agent.ctx.session_id == "api-bootstrap"
+
+
 # ---- AIOSOP-AUDIT-2026-06-16: skill activation coverage is idempotent per task ----
 
 

@@ -19,19 +19,20 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 
 from ai_osop.core.models import AgentType, Task
-from ai_osop.reliability.dlq import DLQEntry, DeadLetterQueue
+from ai_osop.reliability.dlq import DeadLetterQueue, DLQEntry
 from ai_osop.reliability.retry import retry_with_backoff, with_retry
-
 
 # =============================================================================
 # retry_with_backoff tests
 # =============================================================================
+
 
 class TestRetryWithBackoff:
     """Test the shared retry utility."""
 
     async def test_succeeds_on_first_attempt(self):
         """Should return immediately when the callable succeeds."""
+
         async def fn():
             return "success"
 
@@ -49,24 +50,22 @@ class TestRetryWithBackoff:
                 raise ConnectionError("fail")
             return "success"
 
-        result = await retry_with_backoff(
-            fn, max_retries=5, base_delay=0.01, retry_name="test"
-        )
+        result = await retry_with_backoff(fn, max_retries=5, base_delay=0.01, retry_name="test")
         assert result == "success"
         assert call_count == 3
 
     async def test_raises_after_exhausting_retries(self):
         """Should raise the last exception when all retries are exhausted."""
+
         async def fn():
             raise ConnectionError("always fails")
 
         with pytest.raises(ConnectionError, match="always fails"):
-            await retry_with_backoff(
-                fn, max_retries=2, base_delay=0.01, retry_name="test"
-            )
+            await retry_with_backoff(fn, max_retries=2, base_delay=0.01, retry_name="test")
 
     async def test_respects_exception_filter(self):
         """Should not retry on exceptions not in the filter."""
+
         async def fn():
             raise ValueError("not in filter")
 
@@ -124,6 +123,7 @@ class TestWithRetryDecorator:
 # =============================================================================
 # Dead Letter Queue tests
 # =============================================================================
+
 
 class TestDeadLetterQueue:
     """Test DLQ enqueue, list, requeue, discard."""
@@ -228,7 +228,7 @@ class TestDeadLetterQueue:
         data = store[f"dlq:{entry_id}"]
         assert data["status"] == "discarded"
         assert data["operator_notes"] == "False positive"
-        assert data["resolved_at"] is not None
+        assert data["updated_at"] is not None
 
     async def test_get_stats(self, mock_session_memory, sample_task):
         mem, store, _ = mock_session_memory
@@ -258,6 +258,7 @@ class TestDeadLetterQueue:
 # =============================================================================
 # Agent shutdown sentinel tests
 # =============================================================================
+
 
 class TestAgentShutdown:
     """Test agent task worker shutdown with sentinel pattern."""
@@ -387,6 +388,7 @@ class TestAgentShutdown:
 # GraphMemory connect retry (structural test)
 # =============================================================================
 
+
 class TestGraphMemoryRetry:
     """Verify GraphMemory.connect uses retry_with_backoff."""
 
@@ -404,6 +406,7 @@ class TestGraphMemoryRetry:
 # =============================================================================
 # SessionMemory connect retry (structural test)
 # =============================================================================
+
 
 class TestSessionMemoryRetry:
     """Verify SessionMemory.connect uses retry_with_backoff."""
@@ -423,6 +426,7 @@ class TestSessionMemoryRetry:
 # =============================================================================
 # System router MCP health endpoint (structural test)
 # =============================================================================
+
 
 class TestSystemRouter:
     """Verify system router has Sprint 7 endpoints."""

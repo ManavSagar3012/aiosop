@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "generalization_minimums": {
+    "independent_benchmarks": 2,
+    "expected_findings": 10
+  },
+  "benchmarks": [
+    {
+      "benchmark_id": "ginandjuice-m3-real-sqlmap",
+      "status": "active",
+      "manifest": "benchmarks/manifests/ginandjuice_m3.json",
+      "target_class": "authorized_external_demo",
+      "notes": "One real SQLi case; scoped M3/M4 evidence only."
+    },
+    {
+      "benchmark_id": "owasp-juiceshop-core-v1",
+      "status": "active",
+      "harness": "benchmarks/juiceshop/bench.py",
+      "target_class": "local_intentionally_vulnerable",
+      "notes": "Four positive controls and two negative controls; the harness records stability separately."
+    },
+    {
+      "benchmark_id": "dvwa-core-v1",
+      "status": "not_provisioned",
+      "target_class": "local_intentionally_vulnerable",
+      "notes": "No manifest or result is counted until a reproducible local harness exists."
+    },
+    {
+      "benchmark_id": "webgoat-workflow-v1",
+      "status": "not_provisioned",
+      "target_class": "local_intentionally_vulnerable",
+      "notes": "Reserved for stateful M6 scenarios; no result is counted until evidence is recorded."
+    }
+  ]
+}

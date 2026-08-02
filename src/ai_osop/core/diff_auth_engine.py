@@ -3,12 +3,10 @@ V4.2A Differential Authorization Engine
 Compares evidence across different identities to detect IDOR and privilege escalation.
 """
 
-import asyncio
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from ai_osop.core.models import BrowserSession, DiffAuthFinding, PermissionMatrix, Resource, Task
+from ai_osop.core.models import DiffAuthFinding, Resource, Task
 from ai_osop.memory.session_memory import SessionMemory
 
 
@@ -68,7 +66,6 @@ class DifferentialAuthEngine:
                 anonymous_evidence.get("body", {}),
             )
 
-        finding = None
         category = "unknown"
         confidence = 0.0
         needs_manual = False
@@ -192,23 +189,86 @@ class DifferentialAuthEngine:
         body_str = str(body_b).lower()
 
         # 1. The object identifier A owns is reflected in B's response.
-        val = getattr(resource, "value", "") or ""
-        if val and val.lower() in body_str:
+        #    PRECISION GUARD (benchmark 2026-07-04): a raw substring match on
+        #    short/common values (a numeric id like "1", a path like "/") appears
+        #    incidentally in almost any response, producing 0.9-confidence phantom
+        #    IDORs — the #1 triage-rejection shape. Only treat a substring hit as
+        #    ownership proof when the value is DISTINCTIVE enough that incidental
+        #    collision is implausible; genuine numeric-id ownership is still caught
+        #    structurally by signal 3 (equal id-like fields in both responses).
+        val = str(getattr(resource, "value", "") or "")
+        if val and self._is_distinctive(val) and val.lower() in body_str:
             return True
 
         # 2. A's owner identity id is reflected (ignore the generic 'admin' marker).
-        oid = getattr(resource, "owner_identity_id", "") or ""
-        if oid and oid != "admin" and oid.lower() in body_str:
+        oid = str(getattr(resource, "owner_identity_id", "") or "")
+        if oid and oid != "admin" and self._is_distinctive(oid) and oid.lower() in body_str:
             return True
 
-        # 3. Owner-private fields present AND equal in both A's and B's responses
-        #    (B is seeing the same owned record A sees).
-        body_a = identity_a_evidence.get("body", {})
-        if isinstance(body_a, dict) and isinstance(body_b, dict):
-            for k in ("id", "email", "account_id", "user_id", "owner", "ref", "uuid"):
-                if k in body_a and k in body_b and body_a[k] and body_a[k] == body_b[k]:
-                    return True
+        # 3. Owner-private fields present AND equal in both A's and B's responses,
+        #    at ANY nesting depth. Real APIs wrap the object under data/result/etc
+        #    (Juice Shop basket => {"data": {"id": .., "UserId": ..}}); a top-level-
+        #    only check under-scored genuine IDORs to 0.5 (benchmark 2026-07-04).
+        a_ids = self._collect_id_fields(identity_a_evidence.get("body", {}))
+        b_ids = self._collect_id_fields(body_b)
+        for k, v in a_ids.items():
+            if v not in (None, "", 0) and b_ids.get(k) == v:
+                return True
         return False
+
+    _ID_KEYS = frozenset(
+        {
+            "id",
+            "email",
+            "account_id",
+            "user_id",
+            "userid",
+            "owner",
+            "owner_id",
+            "ownerid",
+            "ref",
+            "uuid",
+            "bid",
+            "basketid",
+            "orderid",
+            "order_id",
+        }
+    )
+
+    @classmethod
+    def _collect_id_fields(cls, body: Any, _depth: int = 0) -> Dict[str, Any]:
+        """Collect owner-identifying id-like fields from a response body at any
+        depth. Used as a structural ownership signal that survives API wrappers."""
+        out: Dict[str, Any] = {}
+        if _depth > 6:
+            return out
+        if isinstance(body, dict):
+            for k, v in body.items():
+                if isinstance(v, (dict, list)):
+                    for kk, vv in cls._collect_id_fields(v, _depth + 1).items():
+                        out.setdefault(kk, vv)
+                elif str(k).lower() in cls._ID_KEYS and v not in (None, "", 0):
+                    out.setdefault(str(k).lower(), v)
+        elif isinstance(body, list):
+            for item in body[:20]:
+                for kk, vv in cls._collect_id_fields(item, _depth + 1).items():
+                    out.setdefault(kk, vv)
+        return out
+
+    @staticmethod
+    def _is_distinctive(value: str) -> bool:
+        """A value whose incidental appearance in an unrelated body is implausible.
+
+        Distinctive => long enough AND not a bare number (emails, UUIDs, opaque
+        tokens qualify; ids like "1"/"42" and paths like "/" do not — those must be
+        confirmed structurally via matching id-like fields, not raw substring).
+        """
+        v = value.strip()
+        if len(v) < 8:
+            return False
+        if v.isdigit():
+            return False
+        return any(c.isalpha() for c in v)
 
     @staticmethod
     def _canonical(body: Any) -> str:
@@ -312,15 +372,14 @@ class DifferentialAuthEngine:
         RETURN s ORDER BY s.order ASC
         """
         baseline_steps = []
-        async with self.session_memory._pg_engine.connect() as conn:  # Error: Cypher is for Neo4j
+        async with self.session_memory._pg_engine.connect():  # Error: Cypher is for Neo4j
             # Correcting: need graph_memory for Cypher
             pass
 
         # Real Logic: Using the orchestrator's graph memory
-        async with orchestrator.graph_memory._driver.session() as session:
-            result = await session.run(cypher, {"wid": workflow_id})
-            async for record in result:
-                baseline_steps.append(dict(record["s"]))
+        records = await orchestrator.graph_memory.run_read_query(cypher, {"wid": workflow_id})
+        for record in records:
+            baseline_steps.append(dict(record.get("s", {})))
 
         if not baseline_steps:
             return []
@@ -359,7 +418,6 @@ class DifferentialAuthEngine:
         # 2. For each test identity (e.g., 'user_b', 'guest')
         for identity in test_identities:
             # Identity-specific journey state
-            identity_journey_evidence = []
 
             for step in baseline_steps:
                 # Read-only safety (AIOSOP-AUDIT-2026-06-16): never replay a

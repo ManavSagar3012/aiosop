@@ -35,6 +35,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from sqlalchemy import JSON, Column, DateTime, String, Text
 from sqlalchemy import delete as sa_delete
@@ -45,7 +46,7 @@ from ai_osop.core.config import settings
 from ai_osop.memory.session_memory import Base, SessionMemory
 
 if TYPE_CHECKING:  # avoid circular import at runtime
-    from ai_osop.auth.session_client import SessionClient
+    from ai_osop.memory.graph_memory import GraphMemory
 
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,8 @@ class SessionEncryption:
     so development environments continue to work without a key.
     """
 
+    _warned_missing_key = False
+
     SENSITIVE_FIELDS = {
         "cookies",
         "bearer_token",
@@ -73,6 +76,7 @@ class SessionEncryption:
     }
 
     def __init__(self, key: Optional[str] = None):
+
         self._fernet = None
         raw = key or settings.session_encryption_key
         if raw:
@@ -94,7 +98,9 @@ class SessionEncryption:
                     "OSOP_SESSION_ENCRYPTION_KEY is required in production. "
                     "Set it in your environment or .env file."
                 )
-            logger.warning("session_encryption_key_missing: plaintext storage in dev mode")
+            if not SessionEncryption._warned_missing_key:
+                logger.warning("session_encryption_key_missing: plaintext storage in dev mode")
+                SessionEncryption._warned_missing_key = True
 
     def encrypt(self, plaintext: str) -> str:
         if self._fernet is None:
@@ -176,12 +182,18 @@ class UserSession:
 
     Used by agents and the SessionClient. Serializes to/from JSON for Redis
     and to/from ORM for Postgres.
+
+    ``refresh_token`` is an opaque credential that the ``token_refresh_callback``
+    (see :class:`SessionClient`) can exchange for a new ``bearer_token`` when the
+    original token expires mid-scan. Populated by the caller at capture time;
+    consumed by the callback registered in ``SessionStore.as_user``.
     """
 
     engagement_id: str
     user_label: str
     cookies: List[Dict[str, Any]] = field(default_factory=list)
     bearer_token: str = ""
+    refresh_token: str = ""  # opaque IdP refresh token for credential rotation
     local_storage: Dict[str, Any] = field(default_factory=dict)
     session_storage: Dict[str, Any] = field(default_factory=dict)
     csrf_token: str = ""
@@ -209,6 +221,7 @@ class UserSession:
             user_label=d["user_label"],
             cookies=d.get("cookies") or [],
             bearer_token=d.get("bearer_token") or "",
+            refresh_token=d.get("refresh_token") or "",
             local_storage=d.get("local_storage") or {},
             session_storage=d.get("session_storage") or {},
             csrf_token=d.get("csrf_token") or "",
@@ -235,7 +248,16 @@ class UserSession:
         if self.local_storage:
             # Playwright wants per-origin breakdown; if caller only gave us a flat
             # dict, place it under a synthetic origin so import still works.
-            origin = self.metadata_blob.get("origin") or "https://localhost"
+            raw_origin = self.metadata_blob.get("origin") or "https://localhost"
+            # Playwright applies localStorage PER ORIGIN, matched on the bare
+            # scheme://host[:port]. A full URL with a path/fragment (e.g. the SPA's
+            # post-login "http://localhost:3000/#/search") never matches the page
+            # origin, so the JWT is silently NOT seeded and the replayed context
+            # stays anonymous — the real cause of "storage_state doesn't apply
+            # localStorage" and why authenticated IDOR replay only ever saw public
+            # data. Normalise to the bare origin. (AIOSOP-STORAGE-ORIGIN-001)
+            _p = urlparse(raw_origin)
+            origin = f"{_p.scheme}://{_p.netloc}" if _p.scheme and _p.netloc else raw_origin
             origins.append(
                 {
                     "origin": origin,
@@ -284,8 +306,13 @@ class SessionStore:
 
     REDIS_PREFIX = "usersession"
 
-    def __init__(self, session_memory: SessionMemory):
+    def __init__(
+        self,
+        session_memory: SessionMemory,
+        graph_memory: Optional[GraphMemory] = None,
+    ):
         self.sm = session_memory
+        self.gm = graph_memory
         self._encryption = SessionEncryption()
 
     # -- key helpers -----------------------------------------------------------
@@ -369,6 +396,12 @@ class SessionStore:
         # 2. hot cache
         await self._cache_set(sess)
 
+        if self.gm:
+            try:
+                await self.gm.sync_user_session(sess)
+            except Exception as e:
+                logger.error("Failed to sync session to GraphMemory: %s", e)
+
         logger.info(
             "session.saved engagement=%s user=%s cookies=%d has_bearer=%s expires_at=%s",
             engagement_id,
@@ -434,6 +467,11 @@ class SessionStore:
             )
             await db.commit()
         await self.sm._redis.delete(self._redis_key(engagement_id, user_label))
+        if self.gm:
+            try:
+                await self.gm.delete_user_session_node(engagement_id, user_label)
+            except Exception as e:
+                logger.error("Failed to delete session in GraphMemory: %s", e)
         return result.rowcount > 0
 
     # -- as_user context manager ----------------------------------------------
@@ -447,15 +485,45 @@ class SessionStore:
                 r = await client.get("https://api.target.com/me")
 
         Auto-persists any new cookies the response Set-Cookie-d back to us.
+        If the captured session includes a ``refresh_token``, the client will
+        automatically attempt a credential refresh on 401/403 responses.
         """
         from ai_osop.auth.session_client import SessionClient  # lazy to break cycle
 
         sess = await self.get_session(engagement_id, user_label)
-        client = SessionClient(session=sess, base_url=base_url, store=self)
+
+        # Build a token refresh callback that exchanges the refresh_token
+        # for a new bearer_token. Agents can override this by setting an
+        # explicit refresh_callback on the session metadata.
+        async def _default_refresh(session_dict: Dict[str, Any]) -> Dict[str, Any]:
+            """Default token refresh: re-fetch from store and return fresh creds.
+
+            In the common case the session is still valid and we just need to
+            re-apply it. Operators with a custom IdP can hook a real refresh
+            endpoint here via session.extra_headers['refresh_callback'].
+            """
+            try:
+                refreshed = await self.get_session(engagement_id, user_label)
+                return {
+                    "bearer_token": refreshed.bearer_token,
+                    "cookies": refreshed.cookies,
+                }
+            except Exception:
+                return {"bearer_token": sess.bearer_token, "cookies": sess.cookies}
+
+        # Allow operators to provide a custom refresh implementation via metadata
+        custom_refresh = getattr(sess, "metadata_blob", {}).get("refresh_callback")
+        callback = custom_refresh if callable(custom_refresh) else _default_refresh
+
+        client = SessionClient(
+            session=sess,
+            base_url=base_url,
+            store=self,
+            token_refresh_callback=callback if sess.refresh_token else None,
+        )
         try:
             yield client
         finally:
-            # Persist any cookie updates the client recorded mid-flight.
             if client.cookies_dirty:
                 await self.save_session(
                     engagement_id,

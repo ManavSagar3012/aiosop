@@ -7,17 +7,22 @@ import asyncio
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+import logging
+
+logging.getLogger("neo4j").setLevel(logging.ERROR)
+
+
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from neo4j.graph import Node, Path, Relationship
 from neo4j.exceptions import ServiceUnavailable
 
 from ai_osop.core.config import settings
-from ai_osop.core.exceptions import GraphQueryError, MemoryException
 from ai_osop.core.models import (
     Asset,
     AttackPath,
@@ -25,7 +30,7 @@ from ai_osop.core.models import (
     DiffAuthFinding,
     Endpoint,
     Exploit,
-    Payload,
+    Hypothesis,
     Vulnerability,
     Workflow,
     WorkflowStep,
@@ -53,6 +58,19 @@ class GraphMemory:
     def __init__(self):
         self._driver: Optional[AsyncDriver] = None
         self._initialized = False
+        # Optional P2 learning-brain hook. When wired (app lifespan), every real
+        # persisted vulnerability is also recorded into semantic findings memory,
+        # so past engagements inform future ones. Left None in minimal setups/tests
+        # so GraphMemory stays decoupled from embeddings/LLM.
+        self.findings_knowledge: Optional[Any] = None
+        # Optional chain-first hook. When wired (app lifespan), every confirmed
+        # finding is also recorded as a typed primitive so the escalation/chain
+        # engine can chain co-located signals. Left None so GraphMemory stays
+        # decoupled from the ledger in minimal setups/tests.
+        self.primitive_ledger: Optional[Any] = None
+        # Optional P2b calibration engine. When wired, validate_vulnerability()
+        # records accepted findings into the Beta-Binomial feedback loop.
+        self.calibration_engine: Optional[Any] = None
 
     async def connect(self) -> None:
         """Initialize Neo4j connection with exponential backoff retry.
@@ -89,11 +107,17 @@ class GraphMemory:
             "CREATE CONSTRAINT payload_id IF NOT EXISTS FOR (p:Payload) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT diff_auth_id IF NOT EXISTS FOR (d:DiffAuthFinding) REQUIRE d.id IS UNIQUE",
             "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (ev:Evidence) REQUIRE ev.id IS UNIQUE",
+            "CREATE CONSTRAINT hypothesis_id IF NOT EXISTS FOR (h:Hypothesis) REQUIRE h.id IS UNIQUE",
             "CREATE CONSTRAINT workflow_id IF NOT EXISTS FOR (w:Workflow) REQUIRE w.id IS UNIQUE",
             "CREATE CONSTRAINT step_id IF NOT EXISTS FOR (s:Step) REQUIRE s.id IS UNIQUE",
             "CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
             "CREATE CONSTRAINT engagement_id IF NOT EXISTS FOR (e:Engagement) REQUIRE e.engagement_id IS UNIQUE",
             "CREATE CONSTRAINT auto_discovery_claim_eid IF NOT EXISTS FOR (c:AutoDiscoveryClaim) REQUIRE c.engagement_id IS UNIQUE",
+            "CREATE CONSTRAINT taxonomy_node_id IF NOT EXISTS FOR (t:TaxonomyNode) REQUIRE t.id IS UNIQUE",
+            "CREATE CONSTRAINT identity_id IF NOT EXISTS FOR (i:Identity) REQUIRE i.id IS UNIQUE",
+            "CREATE CONSTRAINT credential_id IF NOT EXISTS FOR (c:Credential) REQUIRE c.id IS UNIQUE",
+            "CREATE CONSTRAINT session_id IF NOT EXISTS FOR (s:Session) REQUIRE s.id IS UNIQUE",
+            "CREATE CONSTRAINT role_id IF NOT EXISTS FOR (r:Role) REQUIRE r.id IS UNIQUE",
         ]
 
         indexes = [
@@ -113,6 +137,8 @@ class GraphMemory:
             "CREATE INDEX vuln_type_confidence IF NOT EXISTS FOR (v:Vulnerability) ON (v.vuln_type, v.confidence)",
             "CREATE INDEX exploit_timestamp IF NOT EXISTS FOR (x:Exploit) ON (x.timestamp)",
             "CREATE INDEX diff_auth_category IF NOT EXISTS FOR (d:DiffAuthFinding) ON (d.category, d.engagement_id)",
+            "CREATE INDEX hypothesis_category IF NOT EXISTS FOR (h:Hypothesis) ON (h.category, h.engagement_id)",
+            "CREATE INDEX hypothesis_confidence IF NOT EXISTS FOR (h:Hypothesis) ON (h.confidence, h.engagement_id)",
         ]
 
         async with self._driver.session() as session:
@@ -263,8 +289,43 @@ class GraphMemory:
 
     async def add_vulnerability(self, vuln: Vulnerability) -> str:
         """Add a Vulnerability and link to its Endpoint."""
+        # OSOP-P0-02: refuse to persist simulated/mock findings into the real graph unless
+        # explicitly allowed. Without this, fabricated findings flow into the corpus,
+        # reports, and dashboard counts as if they were real observations.
+        from ai_osop.core.config import settings as _settings
+
+        if vuln.is_simulated() and not getattr(_settings, "allow_simulated_findings", False):
+            logger.warning(
+                "rejected_simulated_vulnerability id=%s tool_source=%s title=%s engagement=%s",
+                vuln.id,
+                vuln.tool_source,
+                vuln.title,
+                vuln.engagement_id,
+            )
+            return vuln.id
+
+        # Defense in depth for Nuclei normalization: an HTTP-status-only match on
+        # a Next.js/SPA response is a discovery signal, not exploit evidence.  The
+        # agent flags it before calling us; repeat the downgrade at the persistence
+        # boundary so an alternate producer cannot bypass that validation.
+        self._apply_nuclei_spa_persistence_guard(vuln)
+        dedup_key = self._vulnerability_dedup_key(vuln)
+
         cypher = """
-        MERGE (v:Vulnerability {id: $id})
+        // Identity guard (AIOSOP-UPSERT-IDEMPOTENT): a caller-supplied id (e.g. the
+        // upsert_verified_finding MCP tool, restart-recovery, re-import) may already
+        // exist on a node with a DIFFERENT dedup_key. Setting v.id = $id on the CREATE
+        // branch would then violate the unique-id constraint and abort the whole
+        // upsert. Detect the clash up front and mint a fresh id instead, so a genuinely
+        // new finding is still persisted rather than crashing. Dedup identity remains
+        // the content-based dedup_key; the external id is non-authoritative on clash.
+        OPTIONAL MATCH (idclash:Vulnerability {id: $id})
+        WITH idclash
+        MERGE (v:Vulnerability {dedup_key: $dedup_key})
+        ON CREATE SET v.id = CASE WHEN idclash IS NULL THEN $id ELSE $fresh_id END,
+            v.created_at = $created_at,
+            v.duplicate_count = 0
+        ON MATCH SET v.duplicate_count = coalesce(v.duplicate_count, 0) + 1
         SET v.cwe = $cwe,
             v.vuln_type = $vuln_type,
             v.severity = $severity,
@@ -281,14 +342,50 @@ class GraphMemory:
             v.impact = $impact,
             v.endpoint_id = $endpoint_id,
             v.engagement_id = $engagement_id,
-            v.created_at = $created_at
+            v.last_seen = $created_at
         WITH v
         OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
+        // AIOSOP-GRAPHLINK-001 (2026-07-03): fall back to HOST-based linking when
+        // endpoint_id is absent/unmatched. nuclei findings carry no endpoint_id, so
+        // every Vulnerability was created with endpoint_id=None -> 0 HAS_VULNERABILITY
+        // edges platform-wide (898/898 orphaned), leaving the "attack graph" a set of
+        // disconnected nodes. Link the vuln to an endpoint of the SAME engagement whose
+        // host matches the vuln's evidence host, so the graph is actually connected and
+        // attack-path/impact analysis has edges to traverse.
+        OPTIONAL MATCH (eh:Endpoint {engagement_id: $engagement_id})
+            WHERE e IS NULL AND $host <> '' AND (eh.host = $host OR eh.url CONTAINS $host)
+        WITH v, e, collect(eh)[0] AS ehost
         FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
             MERGE (e)-[:HAS_VULNERABILITY]->(v)
         )
-        RETURN v.id
+        FOREACH (x IN CASE WHEN e IS NULL AND ehost IS NOT NULL THEN [ehost] ELSE [] END |
+            MERGE (ehost)-[:HAS_VULNERABILITY]->(v)
+        )
+        // 'created' derives from duplicate_count (0 on ON CREATE, >=1 after ON MATCH),
+        // NOT from v.id = $id — the id may be a freshly-minted clash-avoidance id on
+        // create, and on match it is the original id, so an id comparison misreports.
+        RETURN v.id AS id, v.duplicate_count = 0 AS created
         """
+
+        # AIOSOP-GRAPHLINK-001: derive a host from the vuln's evidence (nuclei/burp put
+        # the matched URL there) so the Cypher above can link by host when endpoint_id
+        # is unset. Best-effort — a parse failure just means we fall back to no link.
+        vuln_host = ""
+        try:
+            from urllib.parse import urlsplit
+
+            for ev in vuln.evidence or []:
+                if not isinstance(ev, dict):
+                    continue
+                candidate = ev.get("matched_at") or ev.get("url") or ev.get("host")
+                if candidate:
+                    raw = str(candidate)
+                    netloc = urlsplit(raw if "://" in raw else "http://" + raw).netloc
+                    if netloc:
+                        vuln_host = netloc.split("@")[-1].split(":")[0].lower()
+                        break
+        except Exception:  # noqa: BLE001 - host derivation is best-effort
+            vuln_host = ""
 
         async with self._driver.session() as session:
             with trace_span(
@@ -303,6 +400,9 @@ class GraphMemory:
                     cypher,
                     {
                         "id": vuln.id,
+                        "fresh_id": f"vuln-{uuid.uuid4().hex[:12]}",
+                        "dedup_key": dedup_key,
+                        "host": vuln_host,
                         "cwe": vuln.cwe,
                         "vuln_type": vuln.vuln_type.value,
                         "severity": vuln.severity.value,
@@ -323,19 +423,331 @@ class GraphMemory:
                     },
                 )
                 record = await result.single()
-                return record["v.id"]
+
+        # Compatibility for persisted records returned by older query mocks or a
+        # rolling deployment before every worker has the new RETURN aliases.
+        created = record.get("created", True)
+        persisted_id = record.get("id") or record["v.id"]
+
+        # P2 learning brain: auto-record this real finding into semantic memory.
+        # Best-effort — a KB failure must never break graph persistence, and the
+        # finding is already confirmed non-simulated by the guard above.
+        if created and self.findings_knowledge is not None:
+            try:
+                await self.findings_knowledge.record_finding(vuln)
+            except Exception as e:  # noqa: BLE001 - knowledge recording is best-effort
+                logger.warning("findings_knowledge_record_failed id=%s error=%s", vuln.id, e)
+
+        # Chain-first loop: record this confirmed finding as a typed primitive so the
+        # escalation/chain engine can chain it with co-located signals. Best-effort;
+        # a ledger failure must never break graph persistence.
+        if created and self.primitive_ledger is not None:
+            try:
+                from ai_osop.core.chain_analysis import vuln_to_primitive
+
+                await self.primitive_ledger.upsert_primitive(vuln_to_primitive(vuln))
+            except Exception as e:  # noqa: BLE001 - primitive recording is best-effort
+                logger.warning("primitive_ledger_record_failed id=%s error=%s", vuln.id, e)
+
+        if not created:
+            logger.info(
+                "deduplicated_vulnerability incoming_id=%s existing_id=%s dedup_key=%s",
+                vuln.id,
+                persisted_id,
+                dedup_key,
+            )
+        return persisted_id
+
+    @staticmethod
+    def _vulnerability_dedup_key(vuln: Vulnerability) -> str:
+        """Return a stable key for one concrete scanner signal in one engagement."""
+        template = ""
+        location = ""
+        for evidence in vuln.evidence or []:
+            if not isinstance(evidence, dict):
+                continue
+            template = str(evidence.get("template") or template)
+            location = str(
+                evidence.get("matched_at")
+                or evidence.get("url")
+                or evidence.get("host")
+                or location
+            )
+            if template and location:
+                break
+        identity = {
+            "engagement_id": vuln.engagement_id,
+            "tool_source": vuln.tool_source,
+            "template": template or vuln.title.strip().lower(),
+            "location": location or vuln.endpoint_id or vuln.entry_point or "unknown",
+        }
+        canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _apply_nuclei_spa_persistence_guard(vuln: Vulnerability) -> None:
+        """Keep status-only SPA Nuclei signals out of high-confidence finding flows."""
+        if vuln.tool_source != "nuclei":
+            return
+        for evidence in vuln.evidence or []:
+            if not isinstance(evidence, dict):
+                continue
+            signal = evidence.get("false_positive_signal") or {}
+            if not (signal.get("status_only_match") and signal.get("spa_response")):
+                continue
+            vuln.confidence = min(vuln.confidence, 0.1)
+            vuln.validated = False
+            vuln.exploitability = "low"
+            logger.warning(
+                "nuclei_spa_status_only_persistence_guard vuln_id=%s engagement_id=%s",
+                vuln.id,
+                vuln.engagement_id,
+            )
+            return
+
+    async def add_endpoints_batch(self, endpoints: List[Endpoint]) -> List[str]:
+        """Persist a list of Endpoints in one UNWIND Cypher transaction (N endpoints = 1
+        round-trip, not N). Mirrors add_endpoint semantics exactly. Returns list of
+        persisted IDs in input order."""
+        if not endpoints:
+            return []
+
+        rows = [
+            {
+                "id": ep.id,
+                "url": ep.url,
+                "method": ep.method,
+                "type": ep.type,
+                "status_code": ep.status_code,
+                "title": ep.title,
+                "technologies": ep.technologies,
+                "parameters": ep.parameters,
+                "auth_required": ep.auth_required,
+                "source": ep.source,
+                "confidence": ep.confidence,
+                "engagement_id": ep.engagement_id,
+                "screenshot_path": ep.screenshot_path,
+                "host": ep.host,
+                "path": ep.path,
+                "query_keys": ep.query_keys,
+                "has_body": ep.has_body,
+                "content_type": ep.content_type,
+                "body_schema_keys": ep.body_schema_keys,
+                "auth_class": ep.auth_class,
+                "request_headers_sample": json.dumps(ep.request_headers_sample),
+                "status_codes_seen": ep.status_codes_seen,
+                "response_size_avg": ep.response_size_avg,
+                "response_content_type": ep.response_content_type,
+                "user_label": ep.user_label,
+                "workflow_id": ep.workflow_id,
+                "first_seen": ep.first_seen.isoformat(),
+                "last_seen": ep.last_seen.isoformat(),
+                "observations": ep.observations,
+                "asset_id": ep.asset_id,
+            }
+            for ep in endpoints
+        ]
+
+        cypher = """
+        UNWIND $rows AS ep
+        MERGE (e:Endpoint {id: ep.id})
+        SET e.url = ep.url, e.method = ep.method, e.type = ep.type,
+            e.status_code = ep.status_code, e.title = ep.title,
+            e.technologies = ep.technologies, e.parameters = ep.parameters,
+            e.auth_required = ep.auth_required, e.source = ep.source,
+            e.confidence = ep.confidence, e.engagement_id = ep.engagement_id,
+            e.screenshot_path = ep.screenshot_path, e.host = ep.host,
+            e.path = ep.path, e.query_keys = ep.query_keys,
+            e.has_body = ep.has_body, e.content_type = ep.content_type,
+            e.body_schema_keys = ep.body_schema_keys, e.auth_class = ep.auth_class,
+            e.request_headers_sample = ep.request_headers_sample,
+            e.status_codes_seen = ep.status_codes_seen,
+            e.response_size_avg = ep.response_size_avg,
+            e.response_content_type = ep.response_content_type,
+            e.user_label = ep.user_label, e.workflow_id = ep.workflow_id,
+            e.first_seen = CASE WHEN e.first_seen IS NULL THEN ep.first_seen ELSE e.first_seen END,
+            e.last_seen = ep.last_seen, e.observations = ep.observations
+        WITH e, ep
+        OPTIONAL MATCH (a:Asset {id: ep.asset_id})
+        FOREACH (x IN CASE WHEN a IS NOT NULL THEN [a] ELSE [] END |
+            MERGE (a)-[:HAS_ENDPOINT]->(e)
+        )
+        RETURN e.id AS id
+        """
+
+        async with self._driver.session() as session:
+            result = await session.run(cypher, {"rows": rows})
+            ids = [rec["id"] async for rec in result]
+            return ids
+
+    async def add_vulnerabilities_batch(self, vulns: List[Vulnerability]) -> List[str]:
+        """Persist a list of Vulnerabilities in one UNWIND Cypher transaction. Skips
+        simulated findings using the same guard as add_vulnerability. Returns list of
+        persisted IDs for accepted (non-simulated) entries."""
+        from ai_osop.core.config import settings as _settings
+
+        real_vulns = [
+            v
+            for v in vulns
+            if not v.is_simulated() or getattr(_settings, "allow_simulated_findings", False)
+        ]
+
+        for v in vulns:
+            if v not in real_vulns:
+                logger.warning(
+                    "rejected_simulated_vulnerability id=%s tool_source=%s title=%s engagement=%s",
+                    v.id,
+                    v.tool_source,
+                    v.title,
+                    v.engagement_id,
+                )
+
+        if not real_vulns:
+            return []
+
+        # Do not submit duplicate rows from one MCP response.  Cypher still uses
+        # the same key as a cross-task/retry safety net.
+        unique_vulns: Dict[str, Vulnerability] = {}
+        for vuln in real_vulns:
+            self._apply_nuclei_spa_persistence_guard(vuln)
+            dedup_key = self._vulnerability_dedup_key(vuln)
+            if dedup_key in unique_vulns:
+                logger.info("deduplicated_batch_vulnerability id=%s", vuln.id)
+                continue
+            unique_vulns[dedup_key] = vuln
+
+        from urllib.parse import urlsplit
+
+        rows = []
+        for dedup_key, vuln in unique_vulns.items():
+            vuln_host = ""
+            try:
+                for ev in vuln.evidence or []:
+                    if not isinstance(ev, dict):
+                        continue
+                    candidate = ev.get("matched_at") or ev.get("url") or ev.get("host")
+                    if candidate:
+                        raw = str(candidate)
+                        netloc = urlsplit(raw if "://" in raw else "http://" + raw).netloc
+                        if netloc:
+                            vuln_host = netloc.split("@")[-1].split(":")[0].lower()
+                            break
+            except Exception:  # noqa: BLE001
+                vuln_host = ""
+
+            rows.append(
+                {
+                    "id": vuln.id,
+                    "dedup_key": dedup_key,
+                    "host": vuln_host,
+                    "cwe": vuln.cwe,
+                    "vuln_type": vuln.vuln_type.value,
+                    "severity": vuln.severity.value,
+                    "cvss_score": vuln.cvss_score,
+                    "title": vuln.title,
+                    "description": vuln.description,
+                    "evidence": json.dumps(vuln.evidence, default=str),
+                    "tool_source": vuln.tool_source,
+                    "confidence": vuln.confidence,
+                    "entry_point": vuln.entry_point,
+                    "requires_auth": vuln.requires_auth,
+                    "validated": vuln.validated,
+                    "exploitability": vuln.exploitability,
+                    "impact": vuln.impact,
+                    "engagement_id": vuln.engagement_id,
+                    "created_at": vuln.created_at.isoformat(),
+                    "endpoint_id": vuln.endpoint_id,
+                }
+            )
+
+        cypher = """
+        UNWIND $rows AS v
+        MERGE (vn:Vulnerability {dedup_key: v.dedup_key})
+        ON CREATE SET vn.id = v.id, vn.created_at = v.created_at,
+            vn.duplicate_count = 0
+        ON MATCH SET vn.duplicate_count = coalesce(vn.duplicate_count, 0) + 1
+        SET vn.cwe = v.cwe, vn.vuln_type = v.vuln_type, vn.severity = v.severity,
+            vn.cvss_score = v.cvss_score, vn.title = v.title,
+            vn.description = v.description, vn.evidence = v.evidence,
+            vn.tool_source = v.tool_source, vn.confidence = v.confidence,
+            vn.entry_point = v.entry_point, vn.requires_auth = v.requires_auth,
+            vn.validated = v.validated, vn.exploitability = v.exploitability,
+            vn.impact = v.impact, vn.engagement_id = v.engagement_id,
+            vn.last_seen = v.created_at
+        WITH vn, v
+        OPTIONAL MATCH (e:Endpoint {id: v.endpoint_id})
+        OPTIONAL MATCH (eh:Endpoint {engagement_id: v.engagement_id})
+            WHERE e IS NULL AND v.host <> '' AND (eh.host = v.host OR eh.url CONTAINS v.host)
+        WITH vn, v, e, collect(eh)[0] AS ehost
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (e)-[:HAS_VULNERABILITY]->(vn)
+        )
+        FOREACH (x IN CASE WHEN e IS NULL AND ehost IS NOT NULL THEN [ehost] ELSE [] END |
+            MERGE (ehost)-[:HAS_VULNERABILITY]->(vn)
+        )
+        RETURN vn.id AS id, v.dedup_key AS dedup_key, vn.id = v.id AS created
+        """
+
+        async with self._driver.session() as session:
+            result = await session.run(cypher, {"rows": rows})
+            records = [rec async for rec in result]
+            ids = [rec["id"] for rec in records]
+            created_keys = {rec["dedup_key"] for rec in records if rec["created"]}
+
+        for dedup_key, vuln in unique_vulns.items():
+            if dedup_key not in created_keys:
+                continue
+            if self.findings_knowledge is not None:
+                try:
+                    await self.findings_knowledge.record_finding(vuln)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("findings_knowledge_record_failed id=%s error=%s", vuln.id, e)
+            if self.primitive_ledger is not None:
+                try:
+                    from ai_osop.core.chain_analysis import vuln_to_primitive
+
+                    await self.primitive_ledger.upsert_primitive(vuln_to_primitive(vuln))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("primitive_ledger_record_failed id=%s error=%s", vuln.id, e)
+
+        return ids
 
     async def validate_vulnerability(self, vuln_id: str) -> None:
-        """Mark a vulnerability as validated in the graph."""
+        """Mark a vulnerability as validated in the graph.
+
+        Also feeds the confirmed finding into the calibration brain so future
+        engagements benefit from the real accept signal (P2b feedback loop).
+        Wire ``graph_memory.calibration_engine`` at startup (same pattern as
+        ``findings_knowledge``) to enable cross-engagement learning.
+        """
         cypher = """
         MATCH (v:Vulnerability {id: $vid})
         SET v.validated = true,
             v.last_validated = $ts,
             v.confidence = 1.0
-        RETURN v.id
+        RETURN v.id, v.vuln_type AS vuln_type, v.engagement_id AS engagement_id
         """
         async with self._driver.session() as session:
-            await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
+            result = await session.run(
+                cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()}
+            )
+            record = await result.single()
+
+        # P2b calibration feedback: record this validated finding as a real
+        # accept-outcome so the Beta-Binomial shrinkage engine learns from it.
+        # Best-effort -- never breaks the validation itself.
+        if record is not None and self.calibration_engine is not None:
+            try:
+                await self.calibration_engine.record_outcome(
+                    finding_data={
+                        "id": vuln_id,
+                        "category": record.get("vuln_type", "unknown"),
+                        "engagement_id": record.get("engagement_id"),
+                    },
+                    outcome="accepted",
+                )
+            except Exception as _e:  # noqa: BLE001 - calibration is advisory
+                logger.debug("calibration_record_skipped vuln_id=%s reason=%s", vuln_id, _e)
 
     async def add_exploit(self, exploit: Exploit) -> str:
         """Add an Exploit and link to Vulnerability and Payload."""
@@ -424,6 +836,7 @@ class GraphMemory:
         goal_types: List[str],
         max_depth: int = 5,
         min_confidence: float = 0.5,
+        engagement_id: Optional[str] = None,
     ) -> List[AttackPath]:
         """
         Find attack paths from entry node to high-value targets.
@@ -450,41 +863,48 @@ class GraphMemory:
         LIMIT 10
         """
 
-        async with self._driver.session() as session:
-            result = await session.run(
-                cypher,
-                {
-                    "entry_id": entry_node_id,
-                    "goal_types": goal_types,
-                    "min_conf": min_confidence,
-                    "max_depth": max_depth,
-                },
-            )
-
-            paths = []
-            async for record in result:
-                # Ensure no NaN
-                conf = (
-                    record["confidence"]
-                    if not isinstance(record["confidence"], float)
-                    or not (record["confidence"] != record["confidence"])
-                    else 0.5
+        attrs = {}
+        if engagement_id:
+            attrs["engagement_id"] = engagement_id
+        with trace_span(
+            "graph_memory.find_attack_paths",
+            attributes=attrs,
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(
+                    cypher,
+                    {
+                        "entry_id": entry_node_id,
+                        "goal_types": goal_types,
+                        "min_conf": min_confidence,
+                        "max_depth": max_depth,
+                    },
                 )
 
-                path = AttackPath(
-                    node_ids=record["node_ids"],
-                    edge_ids=[f"{e['type']}-{i}" for i, e in enumerate(record["edges"])],
-                    confidence=min(max(conf, 0.0), 1.0),
-                    risk_score=min(max(conf * 10, 0.0), 10.0),
-                    total_time_estimate=record["total_time"],
-                    detection_risk=0.5,  # Default for now
-                    entry_node_id=record["entry_id"],
-                    goal_node_id=record["goal_id"],
-                    engagement_id="",
-                )
-                paths.append(path)
+                paths = []
+                async for record in result:
+                    # Ensure no NaN
+                    conf = (
+                        record["confidence"]
+                        if not isinstance(record["confidence"], float)
+                        or not (record["confidence"] != record["confidence"])
+                        else 0.5
+                    )
 
-            return paths
+                    path = AttackPath(
+                        node_ids=record["node_ids"],
+                        edge_ids=[f"{e['type']}-{i}" for i, e in enumerate(record["edges"])],
+                        confidence=min(max(conf, 0.0), 1.0),
+                        risk_score=min(max(conf * 10, 0.0), 10.0),
+                        total_time_estimate=record["total_time"],
+                        detection_risk=0.5,  # Default for now
+                        entry_node_id=record["entry_id"],
+                        goal_node_id=record["goal_id"],
+                        engagement_id="",
+                    )
+                    paths.append(path)
+
+                return paths
 
     async def get_attack_surface(self, node_id: str) -> List[Dict[str, Any]]:
         """Get all reachable nodes from a given position."""
@@ -501,7 +921,11 @@ class GraphMemory:
             nodes = []
             async for record in result:
                 nodes.append(
-                    {"id": record["id"], "type": record["type"], "confidence": record["confidence"]}
+                    {
+                        "id": record["id"],
+                        "type": record["type"],
+                        "confidence": record["confidence"],
+                    }
                 )
             return nodes
 
@@ -540,16 +964,42 @@ class GraphMemory:
             return None
 
     async def get_endpoint_url_for_vulnerability(self, vuln_id: str) -> Optional[str]:
-        """Retrieve the URL of the endpoint associated with a vulnerability."""
+        """Resolve the URL to target when validating a vulnerability.
+
+        Primary: the linked Endpoint node's URL.
+        Fallback: the location the scanner actually recorded in the finding's
+        evidence. nuclei findings store ``matched_at`` / ``url`` in evidence but
+        are not linked to an Endpoint node, so without this fallback the
+        exploit-validation task (and its dashboard approval) gets ``target=None``
+        and fires at a null URL. (AIOSOP-EXPLOIT-TARGET-2026-06-30)
+        """
         cypher = """
-        MATCH (v:Vulnerability {id: $vuln_id})-[:HAS_VULNERABILITY]-(e:Endpoint)
-        RETURN e.url as url
+        MATCH (v:Vulnerability {id: $vuln_id})
+        OPTIONAL MATCH (v)-[:HAS_VULNERABILITY]-(e:Endpoint)
+        RETURN e.url AS url, v.evidence AS evidence
         """
         async with self._driver.session() as session:
             result = await session.run(cypher, {"vuln_id": vuln_id})
             record = await result.single()
-            if record:
+            if not record:
+                return None
+            if record["url"]:
                 return record["url"]
+            # Fallback: pull matched_at / url out of the finding's evidence blob.
+            import json as _json
+
+            ev_raw = record["evidence"]
+            try:
+                ev = _json.loads(ev_raw) if isinstance(ev_raw, str) else (ev_raw or [])
+            except (ValueError, TypeError):
+                ev = []
+            if isinstance(ev, dict):
+                ev = [ev]
+            for item in ev if isinstance(ev, list) else []:
+                if isinstance(item, dict):
+                    loc = item.get("matched_at") or item.get("url")
+                    if loc:
+                        return loc
             return None
 
     async def get_graph_stats(self, engagement_id: str) -> Dict[str, Any]:
@@ -565,10 +1015,157 @@ class GraphMemory:
             count(DISTINCT CASE WHEN n:Exploit THEN n END) as exploits
         """
 
-        async with self._driver.session() as session:
-            result = await session.run(cypher, {"engagement_id": engagement_id})
-            record = await result.single()
-            return dict(record) if record else {}
+        with trace_span(
+            "graph_memory.get_graph_stats",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                record = await result.single()
+                return dict(record) if record else {}
+
+    async def get_vulnerabilities_by_engagement(
+        self, engagement_id: str, *aliases: str
+    ) -> List[Dict[str, Any]]:
+        """Fetch all Vulnerability nodes for a given engagement.
+
+        AIOSOP-FINDINGS-KEY-2026-07-20: an engagement is addressable by two id forms
+        — the SHORT operator-supplied ``engagement_id`` (juice-e2e-xxx) and the FULL
+        generated ``session_id`` (eng-{timestamp}-juice-e2e-xxx). Different writers
+        persist Vulnerability.engagement_id under different forms (deterministic scan
+        uses scope.engagement_id; some agents use ctx.session_id), so a reader that
+        matches only ONE form silently returns 0 findings even though they exist.
+        Match ANY provided id form so retrieval is robust regardless of which key the
+        writer used. This mirrors the dual-key match already used by the phase monitor
+        (orchestrator.is_phase_complete).
+        """
+        ids = [i for i in (engagement_id, *aliases) if i]
+        # de-dupe while preserving order
+        ids = list(dict.fromkeys(ids))
+        cypher = """
+        MATCH (v:Vulnerability)
+        WHERE v.engagement_id IN $ids
+        RETURN v
+        """
+        with trace_span(
+            "graph_memory.get_vulnerabilities_by_engagement",
+            attributes={"engagement_id": engagement_id, "id_forms": len(ids)},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"ids": ids})
+                records = await result.data()
+                return [record["v"] for record in records]
+
+    async def export_findings_json(
+        self, engagement_id: str, path: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Export an engagement's persisted Vulnerability findings as scorer-ready JSON.
+
+        This is the seam between a real engagement and benchmarks/score_engagement.py.
+        The Vulnerability nodes are persisted (see add_vulnerability) with exactly the
+        keys the scorer duck-types on — vuln_type, endpoint_id, confidence, evidence,
+        tool_source, severity, title, id — so the raw node dicts are already the right
+        shape; we only sort for stable output and optionally write to disk.
+
+        Args:
+            engagement_id: engagement whose findings to export.
+            path: if given, the JSON array is written here (UTF-8). The list is
+                always returned regardless.
+
+        Returns:
+            A JSON-serialisable list of finding dicts, ready to pass to
+            score_engagement.score_findings(...) or the CLI's --findings flag.
+        """
+        findings = await self.get_vulnerabilities_by_engagement(engagement_id)
+        # Stable ordering: highest confidence first, then id, so diffs between runs
+        # are meaningful and not reshuffled by Neo4j's return order.
+        findings = sorted(
+            findings,
+            key=lambda f: (-float(f.get("confidence") or 0.0), str(f.get("id") or "")),
+        )
+        if path:
+            with trace_span(
+                "graph_memory.export_findings_json",
+                attributes={"engagement_id": engagement_id, "count": len(findings)},
+            ):
+                Path(path).write_text(json.dumps(findings, indent=2, default=str), encoding="utf-8")
+            logger.info(
+                "exported %d findings for engagement=%s -> %s",
+                len(findings),
+                engagement_id,
+                path,
+            )
+        return findings
+
+    async def get_all_nodes_for_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Fetch all nodes for a given engagement (for attack graph viz).
+
+        AIOSOP-GRAPHVIZ-001: also return properties so the dashboard graph can render
+        node names/values/urls (KnowledgeGraphs.tsx reads properties.name/value/url).
+        Additive — existing callers read id/labels and ignore the extra key.
+        """
+        cypher = """
+        MATCH (n)
+        WHERE n.engagement_id = $engagement_id
+        RETURN n.id AS id, labels(n) AS labels, properties(n) AS properties
+        """
+        with trace_span(
+            "graph_memory.get_all_nodes_for_engagement",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                return await result.data()
+
+    async def get_all_edges_for_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Fetch all relationships for a given engagement (for attack graph viz)."""
+        cypher = """
+        MATCH (n)-[r]->(m)
+        WHERE n.engagement_id = $engagement_id AND m.engagement_id = $engagement_id
+        RETURN n.id AS source, m.id AS target, type(r) AS type
+        """
+        with trace_span(
+            "graph_memory.get_all_edges_for_engagement",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                return await result.data()
+
+    async def run_read_query(
+        self, cypher: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Execute a parameterized read-only Cypher query and return records.
+
+        This is the escape hatch for complex queries that don't have a dedicated
+        method yet. All callers should prefer typed methods over raw Cypher.
+        """
+        params = params or {}
+        with trace_span(
+            "graph_memory.run_read_query",
+            attributes={"cypher_preview": cypher[:100]},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, params)
+                return await result.data()
+
+    async def run_write_query(
+        self, cypher: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Execute a parameterized write Cypher query and return records if any.
+
+        This is the escape hatch for writes that don't have a dedicated method yet.
+        All callers should prefer typed methods over raw Cypher. If the query has
+        a RETURN clause the records are returned; otherwise an empty list.
+        """
+        params = params or {}
+        with trace_span(
+            "graph_memory.run_write_query",
+            attributes={"cypher_preview": cypher[:100]},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, params)
+                return await result.data()
 
     async def add_workflow(self, workflow: Workflow) -> str:
         """Persist a Workflow node."""
@@ -822,7 +1419,118 @@ class GraphMemory:
             rec = await res.single()
             return rec["id"]
 
+    async def add_hypothesis(self, hypothesis: Hypothesis) -> str:
+        """Persist a hypothesis and link it to the target node when possible."""
+        cypher = """
+        MERGE (h:Hypothesis {id: $id})
+        SET h.title = $title,
+            h.description = $description,
+            h.category = $category,
+            h.target_id = $target_id,
+            h.confidence = $confidence,
+            h.supporting_entities = $supporting_entities,
+            h.evidence = $evidence,
+            h.recommended_tests = $recommended_tests,
+            h.recommended_skills = $recommended_skills,
+            h.status = $status,
+            h.engagement_id = $engagement_id,
+            h.created_at = $created_at
+        WITH h
+        OPTIONAL MATCH (e:Endpoint {id: $target_id})
+        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
+            MERGE (e)-[:SUGGESTS]->(h)
+        )
+        WITH h
+        OPTIONAL MATCH (a:Asset {id: $target_id})
+        FOREACH (x IN CASE WHEN a IS NOT NULL THEN [a] ELSE [] END |
+            MERGE (a)-[:SUGGESTS]->(h)
+        )
+        WITH h
+        OPTIONAL MATCH (w:Workflow {id: $target_id})
+        FOREACH (x IN CASE WHEN w IS NOT NULL THEN [w] ELSE [] END |
+            MERGE (w)-[:SUGGESTS]->(h)
+        )
+        RETURN h.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": hypothesis.id,
+                    "title": hypothesis.title,
+                    "description": hypothesis.description,
+                    "category": hypothesis.category,
+                    "target_id": hypothesis.target_id,
+                    "confidence": hypothesis.confidence,
+                    "supporting_entities": hypothesis.supporting_entities,
+                    "evidence": hypothesis.evidence,
+                    "recommended_tests": hypothesis.recommended_tests,
+                    "recommended_skills": hypothesis.recommended_skills,
+                    "status": hypothesis.status,
+                    "engagement_id": hypothesis.engagement_id,
+                    "created_at": hypothesis.created_at.isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"] if record else hypothesis.id
+
+    async def get_hypotheses_by_engagement(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Fetch hypotheses for an engagement sorted by confidence."""
+        cypher = """
+        MATCH (h:Hypothesis)
+        WHERE h.engagement_id = $engagement_id
+        RETURN h
+        ORDER BY h.confidence DESC, h.created_at DESC
+        """
+        with trace_span(
+            "graph_memory.get_hypotheses_by_engagement",
+            attributes={"engagement_id": engagement_id},
+        ):
+            async with self._driver.session() as session:
+                result = await session.run(cypher, {"engagement_id": engagement_id})
+                records = await result.data()
+                return [
+                    dict(record["h"]) if hasattr(record["h"], "items") else record["h"]
+                    for record in records
+                ]
+
     # ---- Reliability sprint: durable task lifecycle + dedupe + recovery ----
+
+    async def log_skipped_scan(
+        self,
+        task_id: str,
+        vuln_class: str,
+        endpoint_url: str,
+        reason: str,
+        confidence: float,
+        evidence: list[str],
+        engagement_id: str,
+    ) -> bool:
+        """Log a skipped scan as a persistent graph node for capability audit trail."""
+        cypher = """
+        MERGE (s:SkippedScan {id: $id})
+        SET s.vuln_class=$vuln_class, s.endpoint_url=$endpoint_url,
+            s.reason=$reason, s.confidence=$confidence, s.evidence=$evidence,
+            s.engagement_id=$engagement_id, s.timestamp=$timestamp
+        RETURN s.id AS id
+        """
+        params = {
+            "id": f"skip-{task_id}",
+            "vuln_class": vuln_class,
+            "endpoint_url": endpoint_url,
+            "reason": reason,
+            "confidence": confidence,
+            "evidence": evidence,
+            "engagement_id": engagement_id,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        try:
+            async with self._driver.session() as s:
+                await (await s.run(cypher, params)).consume()
+            return True
+        except Exception as e:
+            logger.error("log_skipped_scan_failed", task_id=task_id, error=str(e))
+            return False
 
     async def upsert_task(self, task: Any, result_summary: Optional[Dict[str, Any]] = None) -> bool:
         """Persist a Task's lifecycle state to Neo4j. Ground truth for the stuck-task
@@ -837,6 +1545,7 @@ class GraphMemory:
             t.agent_type=$agent_type, t.retry_count=$retry_count, t.max_retries=$max_retries,
             t.timeout_seconds=$timeout_seconds, t.created_at=$created_at, t.started_at=$started_at,
             t.completed_at=$completed_at, t.updated_at=$updated_at, t.result_summary=$result_summary,
+            t.result=$result, t.error=$error,
             t.payload=$payload, t.priority=$priority,
             t.recovery_attempts=coalesce(t.recovery_attempts, 0)
         RETURN t.id AS id
@@ -863,6 +1572,20 @@ class GraphMemory:
             "result_summary": json.dumps(result_summary or {}, default=str),
             "payload": json.dumps(getattr(task, "payload", {}) or {}, default=str),
             "priority": getattr(task, "priority", 5),
+            # ROOT-CAUSE FIX (2026-07-05): task.result is frequently a DICT (agent
+            # output on completion). Neo4j properties may only be primitives/arrays,
+            # so a raw dict here makes the write fail — and because the result of
+            # s.run() was never consumed (see below), that failure surfaced only at
+            # session close, AFTER this function had already returned True. Net effect:
+            # the assignment-time write (result=None) persisted 'running', but the
+            # completion write (result=dict) silently vanished, pinning EVERY task at
+            # 'running' in the graph forever. Serialize result like result_summary.
+            "result": (
+                json.dumps(_r, default=str)
+                if (_r := getattr(task, "result", None)) is not None
+                else None
+            ),
+            "error": (str(_e) if (_e := getattr(task, "error", None)) is not None else None),
         }
         # Bounded retry so a brief Neo4j blip doesn't silently drop a lifecycle
         # transition (would make Neo4j diverge from in-memory -> zombie tasks).
@@ -879,7 +1602,11 @@ class GraphMemory:
                             "engagement_id": task.engagement_id,
                         },
                     ):
-                        await s.run(cypher, params)
+                        # Consume the result so the write actually completes and any
+                        # server-side error (e.g. bad property type) is raised HERE —
+                        # inside the try/except for retry+logging — instead of being
+                        # swallowed at session close after we've returned success.
+                        await (await s.run(cypher, params)).consume()
                 return True
             except Exception as e:
                 if attempt < len(backoffs):
@@ -896,7 +1623,8 @@ class GraphMemory:
         try:
             async with self._driver.session() as s:
                 res = await s.run(
-                    "MATCH (t:Task {id:$id})-[:SPAWNED]->() RETURN count(*) AS c", {"id": task_id}
+                    "MATCH (t:Task {id:$id})-[:SPAWNED]->() RETURN count(*) AS c",
+                    {"id": task_id},
                 )
                 rec = await res.single()
                 return bool(rec and rec["c"] > 0)
@@ -957,7 +1685,11 @@ class GraphMemory:
             async with self._driver.session() as s:
                 await s.run(
                     "MATCH (t:Task {id:$id}) SET t.status=$status, t.updated_at=$ts",
-                    {"id": task_id, "status": status, "ts": datetime.utcnow().isoformat()},
+                    {
+                        "id": task_id,
+                        "status": status,
+                        "ts": datetime.utcnow().isoformat(),
+                    },
                 )
         except Exception as e:
             logger.debug("mark_task_status_failed", error=str(e))
@@ -1031,7 +1763,10 @@ class GraphMemory:
             return record["id"]
 
     async def add_business_invariant(
-        self, invariant: BusinessInvariant, engagement_id: str, is_violated: bool = False
+        self,
+        invariant: BusinessInvariant,
+        engagement_id: str,
+        is_violated: bool = False,
     ) -> str:
         """Persist a BusinessInvariant so it can be surfaced on the Research
         Intelligence dashboard. Idempotent on invariant id."""
@@ -1071,6 +1806,61 @@ class GraphMemory:
         async with self._driver.session() as session:
             await session.run(cypher, {"id": invariant_id})
 
+    async def add_graphql_schema(self, schema: "GraphQLSchema") -> str:
+        """Persist a discovered GraphQL schema. Idempotent on endpoint+engagement."""
+        cypher = """
+        MERGE (s:GraphQLSchema {id: $id})
+        SET s.endpoint_url = $endpoint_url,
+            s.introspection_enabled = $introspection_enabled,
+            s.engagement_id = $engagement_id,
+            s.created_at = coalesce(s.created_at, $created_at)
+        RETURN s.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": schema.id,
+                    "endpoint_url": schema.endpoint_url,
+                    "introspection_enabled": schema.introspection_enabled,
+                    "engagement_id": schema.engagement_id,
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            record = await result.single()
+            return record["id"] if record else schema.id
+
+    async def add_graphql_operation(self, op: "GraphQLOperation") -> str:
+        """Persist a GraphQL operation and link it to its schema."""
+        cypher = """
+        MERGE (o:GraphQLOperation {id: $id})
+        SET o.name = $name,
+            o.type = $type,
+            o.schema_id = $schema_id,
+            o.is_hidden = $is_hidden,
+            o.description = $description
+        WITH o
+        OPTIONAL MATCH (s:GraphQLSchema {id: $schema_id})
+        FOREACH (x IN CASE WHEN s IS NOT NULL THEN [s] ELSE [] END |
+            MERGE (s)-[:EXPOSES_OPERATION]->(o)
+        )
+        RETURN o.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {
+                    "id": op.id,
+                    "name": op.name,
+                    "type": op.type,
+                    "schema_id": op.schema_id,
+                    "is_hidden": op.is_hidden,
+                    "description": op.description,
+                },
+            )
+            record = await result.single()
+            return record["id"] if record else op.id
+
     async def get_invariants(self, engagement_id: str) -> List[Dict[str, Any]]:
         """Return persisted invariants for an engagement, shaped for the UI."""
         cypher = (
@@ -1093,6 +1883,404 @@ class GraphMemory:
                 )
         return out
 
+    async def get_task_dependents(self, parent_id: str) -> List[str]:
+        """Return IDs of tasks that were SPAWNED by the given parent task."""
+        cypher = """
+        MATCH (parent:Task {id: $pid})-[:SPAWNED]->(child:Task)
+        RETURN child.id AS id
+        """
+        try:
+            async with self._driver.session() as s:
+                res = await s.run(cypher, {"pid": parent_id})
+                return [rec["id"] async for rec in res]
+        except Exception as e:
+            logger.debug("get_task_dependents_failed", error=str(e))
+            return []
+
+    async def import_knowledge_base(self) -> None:
+        """Import the static security taxonomy from SecurityKnowledgeEngine into Neo4j."""
+        from ai_osop.core.knowledge_engine import get_knowledge_engine
+
+        engine = get_knowledge_engine()
+        vulnerabilities_data = engine._data.get("vulnerabilities", {})
+
+        # 1. Create VulnClass nodes
+        vulns_list: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            vulns_list.append(
+                {
+                    "id": vuln_key,
+                    "title": mapping.get("title", ""),
+                    "description": mapping.get("description", ""),
+                }
+            )
+
+        if vulns_list:
+            await self.run_write_query(
+                """
+                UNWIND $vulns AS vuln
+                MERGE (v:VulnClass:TaxonomyNode {id: vuln.id})
+                SET v.title = vuln.title, v.description = vuln.description
+                """,
+                {"vulns": vulns_list},
+            )
+
+        # 2. CWE mappings
+        cwe_mappings: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            for cwe_id in mapping.get("cwe", []):
+                cwe_mappings.append({"vuln_id": vuln_key, "cwe_id": cwe_id})
+
+        if cwe_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $cwes AS c
+                MERGE (vuln:VulnClass:TaxonomyNode {id: c.vuln_id})
+                MERGE (cwe:CWE:TaxonomyNode {id: c.cwe_id})
+                MERGE (vuln)-[:MAPPED_TO]->(cwe)
+                """,
+                {"cwes": cwe_mappings},
+            )
+
+        # 3. CAPEC mappings
+        capec_mappings: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            for capec_id in mapping.get("capec", []):
+                capec_mappings.append({"vuln_id": vuln_key, "capec_id": capec_id})
+
+        if capec_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $capecs AS cap
+                MERGE (vuln:VulnClass:TaxonomyNode {id: cap.vuln_id})
+                MERGE (capec:CAPEC:TaxonomyNode {id: cap.capec_id})
+                MERGE (vuln)-[:MAPPED_TO]->(capec)
+                """,
+                {"capecs": capec_mappings},
+            )
+
+        # 4. MitreAttack mappings
+        mitre_mappings: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            for mitre_id in mapping.get("mitre_attack", []):
+                mitre_mappings.append({"vuln_id": vuln_key, "mitre_id": mitre_id})
+
+        if mitre_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $mitres AS m
+                MERGE (vuln:VulnClass:TaxonomyNode {id: m.vuln_id})
+                MERGE (mitre:MitreAttack:TaxonomyNode {id: m.mitre_id})
+                MERGE (vuln)-[:MAPPED_TO]->(mitre)
+                """,
+                {"mitres": mitre_mappings},
+            )
+
+        # 5. OwaspWstg mappings
+        wstg_mappings: List[Dict[str, Any]] = []
+        for vuln_key, mapping in vulnerabilities_data.items():
+            for wstg_id in mapping.get("owasp_wstg", []):
+                wstg_mappings.append({"vuln_id": vuln_key, "wstg_id": wstg_id})
+
+        if wstg_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $wstgs AS w
+                MERGE (vuln:VulnClass:TaxonomyNode {id: w.vuln_id})
+                MERGE (wstg:OwaspWstg:TaxonomyNode {id: w.wstg_id})
+                MERGE (vuln)-[:MAPPED_TO]->(wstg)
+                """,
+                {"wstgs": wstg_mappings},
+            )
+
+        # 6. Next step recommendation mappings
+        recommendation_chains: List[Dict[str, Any]] = []
+        for vuln_key, next_steps in engine._data.get("recommendation_chains", {}).items():
+            for ns_str in next_steps:
+                recommendation_chains.append({"vuln_id": vuln_key, "next_id": ns_str})
+
+        if recommendation_chains:
+            await self.run_write_query(
+                """
+                UNWIND $chains AS ch
+                MERGE (vuln:VulnClass:TaxonomyNode {id: ch.vuln_id})
+                MERGE (next:VulnClass:TaxonomyNode {id: ch.next_id})
+                MERGE (vuln)-[:NEXT_STEP]->(next)
+                """,
+                {"chains": recommendation_chains},
+            )
+
+        # 7. Technology mappings
+        tech_mappings: List[Dict[str, Any]] = []
+        for tech_name, vuln_classes in engine._data.get("technology_matrix", {}).items():
+            for vuln_class in vuln_classes:
+                tech_mappings.append({"tech_id": tech_name, "vuln_id": vuln_class})
+
+        if tech_mappings:
+            await self.run_write_query(
+                """
+                UNWIND $techs AS t
+                MERGE (tech:Technology:TaxonomyNode {id: t.tech_id})
+                MERGE (vuln:VulnClass:TaxonomyNode {id: t.vuln_id})
+                MERGE (tech)-[:RELEVANT_VULN]->(vuln)
+                """,
+                {"techs": tech_mappings},
+            )
+
+    async def sync_user_session(self, session: Any) -> None:
+        """Sync user session (Identity, Session, Credential, Role) to Neo4j attack graph."""
+        engagement_id = session.engagement_id
+        user_label = session.user_label
+        captured_at = session.captured_at.isoformat() if session.captured_at else None
+        expires_at = session.expires_at.isoformat() if session.expires_at else None
+
+        # Determine type
+        if session.bearer_token:
+            cred_type = "bearer"
+        elif session.cookies:
+            cred_type = "cookie"
+        else:
+            cred_type = "anonymous"
+
+        # Determine role
+        role_name = "admin" if "admin" in user_label else "standard"
+
+        # Node IDs
+        identity_id = f"identity-{engagement_id}-{user_label}"
+        session_id = f"session-{engagement_id}-{user_label}"
+        credential_id = f"credential-{engagement_id}-{user_label}"
+        role_id = f"role-{engagement_id}-{role_name}"
+
+        cypher = """
+        MERGE (i:Identity {id: $identity_id})
+        SET i.user_label = $user_label,
+            i.engagement_id = $engagement_id
+
+        MERGE (s:Session {id: $session_id})
+        SET s.status = $status,
+            s.captured_at = $captured_at,
+            s.expires_at = $expires_at,
+            s.engagement_id = $engagement_id
+
+        MERGE (c:Credential {id: $credential_id})
+        SET c.type = $cred_type,
+            c.captured_at = $captured_at,
+            c.expires_at = $expires_at,
+            c.engagement_id = $engagement_id
+
+        MERGE (r:Role {id: $role_id})
+        SET r.name = $role_name,
+            r.engagement_id = $engagement_id
+
+        MERGE (s)-[:AUTHENTICATED_AS]->(i)
+        MERGE (i)-[:HAS_CREDENTIAL]->(c)
+        MERGE (i)-[:HAS_ROLE]->(r)
+        """
+
+        async with self._driver.session() as db_session:
+            with trace_span(
+                "graph_memory.sync_user_session",
+                attributes={
+                    "engagement_id": engagement_id,
+                    "user_label": user_label,
+                },
+            ):
+                await db_session.run(
+                    cypher,
+                    {
+                        "identity_id": identity_id,
+                        "session_id": session_id,
+                        "credential_id": credential_id,
+                        "role_id": role_id,
+                        "user_label": user_label,
+                        "engagement_id": engagement_id,
+                        "status": "active",
+                        "captured_at": captured_at,
+                        "expires_at": expires_at,
+                        "cred_type": cred_type,
+                        "role_name": role_name,
+                    },
+                )
+
+    async def delete_user_session_node(self, engagement_id: str, user_label: str) -> None:
+        """Mark Session as expired and DETACH DELETE the credential node."""
+        session_id = f"session-{engagement_id}-{user_label}"
+        credential_id = f"credential-{engagement_id}-{user_label}"
+
+        cypher = """
+        OPTIONAL MATCH (s:Session {id: $session_id})
+        SET s.status = 'expired'
+        WITH s
+        OPTIONAL MATCH (c:Credential {id: $credential_id})
+        DETACH DELETE c
+        """
+
+        async with self._driver.session() as db_session:
+            with trace_span(
+                "graph_memory.delete_user_session_node",
+                attributes={
+                    "engagement_id": engagement_id,
+                    "user_label": user_label,
+                },
+            ):
+                await db_session.run(
+                    cypher,
+                    {
+                        "session_id": session_id,
+                        "credential_id": credential_id,
+                    },
+                )
+
     async def close(self) -> None:
         if self._driver:
             await self._driver.close()
+
+    async def find_vulnerability_chains(self, engagement_id: str) -> List[Dict[str, Any]]:
+        """Find multi-hop vulnerability chains."""
+        query = """
+        MATCH path = (v1:Vulnerability)-[:LEADS_TO*1..5]->(v2:Vulnerability)
+        WHERE v1.engagement_id = $eid
+        RETURN [n in nodes(path) | n.id] AS chain,
+               [n in nodes(path) | n.title] AS titles
+        """
+        async with self._driver.session() as session:
+            result = await session.execute_read(lambda tx: tx.run(query, eid=engagement_id))
+            records = await result.data()
+            return records
+
+    async def scan_next_targets(
+        self,
+        engagement_id: str,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Return endpoints that should be scanned next for this engagement.
+
+        Prioritizes by:
+        1. Endpoints with no vulnerability scan history (never scanned)
+        2. Endpoints whose technology stack has associated vuln classes in the
+           knowledge base but no matching Vulnerability node yet
+        3. Endpoints reachable from a known vulnerable endpoint via graph traversal
+
+        Returns a list of dicts with: endpoint_id, url, method, priority_score, reason
+        """
+        cypher = """
+        MATCH (e:Endpoint {engagement_id: $engagement_id})
+        OPTIONAL MATCH (e)-[:HAS_VULNERABILITY]->(v:Vulnerability)
+        WITH e, count(v) AS vuln_count
+        OPTIONAL MATCH (e)<-[:HAS_ENDPOINT]-(:Asset)-[:HAS_ENDPOINT]->(peer:Endpoint)-[:HAS_VULNERABILITY]->(pv:Vulnerability)
+        WITH e, vuln_count, count(DISTINCT pv) AS neighbor_vuln_count
+        RETURN
+            e.id AS endpoint_id,
+            e.url AS url,
+            e.method AS method,
+            e.technologies AS technologies,
+            vuln_count,
+            neighbor_vuln_count,
+            CASE
+                WHEN vuln_count = 0 AND neighbor_vuln_count > 0 THEN 10
+                WHEN vuln_count = 0 THEN 5
+                ELSE 1
+            END AS priority_score,
+            CASE
+                WHEN vuln_count = 0 AND neighbor_vuln_count > 0 THEN 'unscanned_near_vulnerable'
+                WHEN vuln_count = 0 THEN 'unscanned'
+                ELSE 'scanned'
+            END AS reason
+        ORDER BY priority_score DESC, e.url ASC
+        LIMIT $limit
+        """
+        async with self._driver.session() as session:
+            result = await session.run(cypher, {"engagement_id": engagement_id, "limit": limit})
+            return [dict(rec) async for rec in result]
+
+    async def get_related_endpoints(
+        self,
+        endpoint_id: str,
+        max_hops: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Return endpoints related to the given endpoint via graph traversal.
+
+        Traverses LEADS_TO relationships up to max_hops (default 2).
+        Useful for expanding the attack surface from a known vulnerable endpoint.
+        Returns list of dicts with: endpoint_id, url, method, distance.
+        """
+        # ponytail: Neo4j variable-length range bounds must be literals; max 3 hops is
+        # sufficient for attack-surface expansion without exploding traversal cost.
+        cypher = """
+        MATCH path = (start:Endpoint {id: $endpoint_id})
+                     -[:LEADS_TO*1..3]-(related:Endpoint)
+        WHERE related.id <> $endpoint_id
+        RETURN DISTINCT
+            related.id AS endpoint_id,
+            related.url AS url,
+            related.method AS method,
+            length(path) AS distance
+        ORDER BY distance ASC
+        LIMIT 50
+        """
+        async with self._driver.session() as session:
+            result = await session.run(cypher, {"endpoint_id": endpoint_id})
+            return [dict(rec) async for rec in result]
+
+    async def get_co_occurring_vuln_classes(
+        self,
+        vuln_type: str,
+        engagement_id: Optional[str] = None,
+        min_co_occurrences: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """Return vulnerability classes that co-occur with the given vuln_type.
+
+        Looks across all engagements (or a specific one) for endpoints that have
+        both the given vuln_type AND another vuln_type. Returns the co-occurring
+        classes ranked by frequency. Useful for attack-chain planning.
+        """
+        params: Dict[str, Any] = {"vuln_type": vuln_type, "min_co": min_co_occurrences}
+        where_parts = ["v2.vuln_type <> $vuln_type"]
+        if engagement_id:
+            where_parts.append("v1.engagement_id = $engagement_id")
+            params["engagement_id"] = engagement_id
+        where_clause = " AND ".join(where_parts)
+        cypher = f"""
+        MATCH (e:Endpoint)-[:HAS_VULNERABILITY]->(v1:Vulnerability {{vuln_type: $vuln_type}}),
+              (e)-[:HAS_VULNERABILITY]->(v2:Vulnerability)
+        WHERE {where_clause}
+        WITH v2.vuln_type AS co_vuln_type, count(*) AS frequency
+        WHERE frequency >= $min_co
+        RETURN co_vuln_type, frequency
+        ORDER BY frequency DESC
+        LIMIT 20
+        """
+        async with self._driver.session() as session:
+            result = await session.run(cypher, params)
+            return [dict(rec) async for rec in result]
+
+    async def get_reusable_auth_contexts(
+        self,
+        engagement_id: str,
+        target_endpoint_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Return user session contexts that can be reused for the target endpoint.
+
+        Finds UserSession nodes in the same engagement whose auth scope matches
+        the target endpoint's host. Returns sessions ranked by recency.
+        """
+        cypher = """
+        MATCH (us:UserSession {engagement_id: $engagement_id})
+        MATCH (e:Endpoint {id: $endpoint_id})
+        WHERE us.domain = e.host
+           OR e.url CONTAINS us.domain
+        RETURN
+            us.user_label AS user_label,
+            us.domain AS domain,
+            us.captured_at AS captured_at,
+            us.has_bearer AS has_bearer,
+            us.cookie_count AS cookie_count
+        ORDER BY us.captured_at DESC
+        LIMIT 10
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                cypher,
+                {"engagement_id": engagement_id, "endpoint_id": target_endpoint_id},
+            )
+            return [dict(rec) async for rec in result]

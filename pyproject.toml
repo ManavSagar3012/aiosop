@@ -14,7 +14,7 @@ packages = [{include = "ai_osop", from = "src"}]
 [tool.poetry.dependencies]
 python = "^3.11"
 fastapi = "^0.110.0"
-uvicorn = {extras = ["standard"], version = "^0.29.0"}
+uvicorn = {extras = ["standard"], version = "^0.31.1"}
 pydantic = "^2.6.0"
 pydantic-settings = "^2.2.0"
 neo4j = "^5.18.0"
@@ -36,6 +36,7 @@ opentelemetry-instrumentation-redis = "^0.44b0"
 opentelemetry-instrumentation-sqlalchemy = "^0.44b0"
 structlog = "^24.1.0"
 python-dotenv = "^1.0.0"
+sentry-sdk = "^2.0.0"
 docker = "^7.0.0"
 
 # AI/ML
@@ -45,6 +46,9 @@ langchain = "^0.1.0"
 langchain-openai = "^0.0.8"
 jinja2 = "^3.1.6"
 markdown = "^3.10.2"
+psutil = "^7.2.2"
+celery = {extras = ["redis"], version = "^5.6.3"}
+alembic = "^1.13.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
@@ -58,6 +62,25 @@ pre-commit = "^3.6.0"
 
 [tool.poetry.scripts]
 ai-osop = "ai_osop.cli:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E722 bans bare `except:`; the rest catch common silent-failure / dead-code smells.
+# Enforced in CI; a pytest AST guard (tests/test_lint_guards.py) enforces E722 locally too.
+# BLE001 catches `except Exception` (too broad) — part of the P1-15 fix campaign.
+# (ruff's flake8-blind-except equivalent of pylint's W0718.)
+# T201 catches `print()` statements in production code — part of the P1-16 fix campaign.
+select = ["E722", "F811", "F841", "BLE001", "T201"]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow print() in test files, scripts, and CLI entry points
+"tests/*" = ["T201", "BLE001"]
+"scripts/*" = ["T201", "BLE001"]
+"src/ai_osop/cli.py" = ["T201"]
+"src/ai_osop/memory/graph_integrity_checker.py" = ["T201"]
 
 [tool.black]
 line-length = 100
@@ -73,6 +96,7 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 mypy_path = "src"
+explicit_package_bases = true
 
 
 [tool.pytest.ini_options]

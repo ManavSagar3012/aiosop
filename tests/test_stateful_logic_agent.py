@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from ai_osop.agents.base import AgentContext
-from ai_osop.agents.experimental.stateful_logic_agent import StatefulLogicAgent
+from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import BusinessInvariant, Task
 
@@ -146,79 +146,162 @@ async def test_map_business_process_invariant_persist_failure(agent) -> None:
 
 
 # ------------------------------------------------------------------
-# violate_invariant: with invariant_id
+# violate_invariant: NO concrete request -> honest non-executed result
+# (the old behavior fabricated violation_successful=True here)
 # ------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_violate_invariant_with_id(agent) -> None:
+async def test_violate_invariant_hypothesis_only_not_fabricated(agent) -> None:
     await agent.initialize()
-
-    agent.ctx.graph_memory.mark_invariant_violated.return_value = None
 
     task = Task(
         id="task-sl-5",
         type="violate_invariant",
         agent_type=AgentType.STATEFUL_LOGIC,
-        payload={
-            "strategy": "jump_ahead",
-            "invariant_id": "inv-001",
-        },
+        payload={"strategy": "jump_ahead", "invariant_id": "inv-001"},
         engagement_id="test-session",
     )
 
     result = await agent._execute(task)
 
     assert result["status"] == "success"
+    assert result["executed"] is False
+    assert result["violation_successful"] is False  # never fabricated
+    # No real test ran, so nothing is marked violated and no finding is persisted.
+    agent.ctx.graph_memory.mark_invariant_violated.assert_not_awaited()
+    agent.ctx.graph_memory.add_vulnerability.assert_not_awaited()
+
+
+# ------------------------------------------------------------------
+# violate_invariant: concrete request + real (mocked) 200 -> demonstrated
+# ------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_violate_invariant_real_execution_success(agent) -> None:
+    await agent.initialize()
+    agent.ctx.graph_memory.mark_invariant_violated.return_value = None
+    agent.ctx.graph_memory.add_vulnerability.return_value = "vuln-bl-1"
+
+    # Mock the HTTP layer so the test is hermetic but exercises the real path.
+    class _Resp:
+        status_code = 200
+        text = '{"status":"SHIPPED"}'
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, *a, **k):
+            return _Resp()
+
+    with patch("ai_osop.agents.stateful_logic_agent.httpx.AsyncClient", _Client):
+        task = Task(
+            id="task-sl-6",
+            type="violate_invariant",
+            agent_type=AgentType.STATEFUL_LOGIC,
+            payload={
+                "strategy": "jump_ahead",
+                "invariant_id": "inv-001",
+                "request": {"method": "POST", "url": "http://127.0.0.1:3000/api/ship/123"},
+                "success_criteria": {"status_in": [200], "body_contains": "SHIPPED"},
+            },
+            engagement_id="test-session",
+        )
+        result = await agent._execute(task)
+
+    assert result["executed"] is True
     assert result["violation_successful"] is True
-    assert result["impact"] == "High (Financial Loss)"
-    assert "reasoning" in result
+    assert result["response"]["status_code"] == 200
+    # A genuine violation persists a real finding and marks the invariant.
+    agent.ctx.graph_memory.add_vulnerability.assert_awaited_once()
     agent.ctx.graph_memory.mark_invariant_violated.assert_awaited_once_with("inv-001")
 
 
 # ------------------------------------------------------------------
-# violate_invariant: without invariant_id
+# violate_invariant: concrete request + real (mocked) 403 -> NOT demonstrated
 # ------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_violate_invariant_without_id(agent) -> None:
+async def test_violate_invariant_real_execution_blocked(agent) -> None:
     await agent.initialize()
 
-    task = Task(
-        id="task-sl-6",
-        type="violate_invariant",
-        agent_type=AgentType.STATEFUL_LOGIC,
-        payload={"strategy": "race_condition"},
-        engagement_id="test-session",
-    )
+    class _Resp:
+        status_code = 403
+        text = "Forbidden"
 
-    result = await agent._execute(task)
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
 
-    assert result["status"] == "success"
-    assert result["violation_successful"] is True
-    # mark_invariant_violated should NOT be called when no invariant_id
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, *a, **k):
+            return _Resp()
+
+    with patch("ai_osop.agents.stateful_logic_agent.httpx.AsyncClient", _Client):
+        task = Task(
+            id="task-sl-7",
+            type="violate_invariant",
+            agent_type=AgentType.STATEFUL_LOGIC,
+            payload={
+                "strategy": "cross_tenant",
+                "invariant_id": "inv-002",
+                "request": {"method": "DELETE", "url": "http://127.0.0.1:3000/api/resource/1"},
+                "success_criteria": {"status_in": [200]},
+            },
+            engagement_id="test-session",
+        )
+        result = await agent._execute(task)
+
+    assert result["executed"] is True
+    assert result["violation_successful"] is False  # blocked -> no fabrication
+    agent.ctx.graph_memory.add_vulnerability.assert_not_awaited()
     agent.ctx.graph_memory.mark_invariant_violated.assert_not_awaited()
 
 
 # ------------------------------------------------------------------
-# violate_invariant: mark_invariant_violated failure is swallowed
+# violate_invariant: out-of-scope target is never executed
 # ------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_violate_invariant_mark_failure_swallowed(agent) -> None:
+async def test_violate_invariant_out_of_scope(mock_context) -> None:
+    from datetime import datetime, timedelta
+
+    from ai_osop.core.models import ScopeDefinition
+
+    mock_context.scope = ScopeDefinition(
+        engagement_id="test",
+        domains=["127.0.0.1"],
+        ips=["127.0.0.1/32"],
+        exclusions=[],
+        testing_window_start=datetime.utcnow() - timedelta(hours=1),
+        testing_window_end=datetime.utcnow() + timedelta(hours=1),
+    )
+    agent = StatefulLogicAgent(mock_context)
     await agent.initialize()
 
-    agent.ctx.graph_memory.mark_invariant_violated.side_effect = RuntimeError("DB error")
-
     task = Task(
-        id="task-sl-7",
+        id="task-sl-7b",
         type="violate_invariant",
         agent_type=AgentType.STATEFUL_LOGIC,
-        payload={"strategy": "cross_tenant", "invariant_id": "inv-002"},
+        payload={
+            "strategy": "jump_ahead",
+            "request": {"method": "GET", "url": "http://evil.com/api/ship"},
+            "success_criteria": {"status_in": [200]},
+        },
         engagement_id="test-session",
     )
-
-    # Should NOT raise — the agent swallows the error
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert result["violation_successful"] is True
+    assert result["executed"] is False
+    assert result["violation_successful"] is False
+    assert "out of scope" in result["reason"].lower()
 
 
 # ------------------------------------------------------------------

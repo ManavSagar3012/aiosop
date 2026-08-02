@@ -4,11 +4,10 @@ Identifies and maps the target's technology stack (Frontend, Backend, DB, Auth, 
 Enables contextual reasoning based on historical bug bounty patterns.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
-from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Task
 
 
@@ -45,26 +44,25 @@ class StackProfilerAgent(BaseAgent):
         RETURN n.technologies as tech, n.metadata as meta
         """
         raw_tech = []
-        async with self.ctx.graph_memory._driver.session() as session:
-            result = await session.run(cypher, {"sid": engagement_id})
-            async for record in result:
-                if record["tech"]:
-                    raw_tech.extend(record["tech"])
-                if record["meta"]:
-                    import json
+        records = await self.ctx.graph_memory.run_read_query(cypher, {"sid": engagement_id})
+        for record in records:
+            if record["tech"]:
+                raw_tech.extend(record["tech"])
+            if record["meta"]:
+                import json
 
-                    try:
-                        meta = json.loads(record["meta"])
-                        if "framework" in meta:
-                            raw_tech.append(meta["framework"])
-                        if "auth_scheme" in meta:
-                            raw_tech.append(meta["auth_scheme"])
-                    except json.JSONDecodeError:
-                        # PATCH (REL-013, 2026-06-15): Was bare `except: pass` which
-                        # swallowed everything including KeyboardInterrupt/SystemExit.
-                        # Narrow to JSONDecodeError since meta is sometimes a freeform
-                        # string written by older agents (non-JSON tech markers).
-                        pass
+                try:
+                    meta = json.loads(record["meta"])
+                    if "framework" in meta:
+                        raw_tech.append(meta["framework"])
+                    if "auth_scheme" in meta:
+                        raw_tech.append(meta["auth_scheme"])
+                except json.JSONDecodeError:
+                    # PATCH (REL-013, 2026-06-15): Was bare `except: pass` which
+                    # swallowed everything including KeyboardInterrupt/SystemExit.
+                    # Narrow to JSONDecodeError since meta is sometimes a freeform
+                    # string written by older agents (non-JSON tech markers).
+                    pass
 
         # 2. Use LLM to reason over raw tech and build a clean profile
         context = f"Raw technology markers identified for {engagement_id}:\n" + ", ".join(
@@ -84,7 +82,7 @@ class StackProfilerAgent(BaseAgent):
 
         try:
             self.current_profile = json.loads(profile_json)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError):
             self.current_profile = {"error": "Failed to parse profile reasoning"}
 
         # 3. Store the profile in the graph

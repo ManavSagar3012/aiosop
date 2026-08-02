@@ -1,8 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from ai_osop.agents.base import AgentContext
-from ai_osop.agents.experimental.cloud_agent import CloudSpecialistAgent
+from ai_osop.agents.cloud_agent import CloudSpecialistAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 
@@ -39,20 +40,24 @@ async def test_cloud_agent_analyze_iam_success(agent) -> None:
         id="task-1",
         type="analyze_iam",
         agent_type=AgentType.CLOUD_SPECIALIST,
-        payload={"account_id": "123456789012", "principal_arn": "arn:aws:iam::123456789012:user/admin"},
+        payload={
+            "account_id": "123456789012",
+            "principal_arn": "arn:aws:iam::123456789012:user/admin",
+        },
         engagement_id="test-session",
     )
 
     mock_adapter_instance = AsyncMock()
     mock_adapter_instance.analyze_iam_trust_policies.return_value = {
         "findings": [
-            {"role": "arn:aws:iam::123456789012:role/OverprivilegedRole", "issue": "Cross-account assume role allowed"}
+            {
+                "role": "arn:aws:iam::123456789012:role/OverprivilegedRole",
+                "issue": "Cross-account assume role allowed",
+            }
         ]
     }
     mock_adapter_instance.discover_privilege_escalation.return_value = {
-        "paths": [
-            {"target": "admin-policy", "path": "iam:PutUserPolicy"}
-        ]
+        "paths": [{"target": "admin-policy", "path": "iam:PutUserPolicy"}]
     }
 
     with patch("ai_osop.adapters.cloud_mcp.CloudMCPAdapter") as mock_adapter_cls:
@@ -65,7 +70,9 @@ async def test_cloud_agent_analyze_iam_success(agent) -> None:
         assert "complete" in result["msg"]
         mock_adapter_instance.initialize.assert_awaited_once()
         mock_adapter_instance.analyze_iam_trust_policies.assert_awaited_once_with("123456789012")
-        mock_adapter_instance.discover_privilege_escalation.assert_awaited_once_with("arn:aws:iam::123456789012:user/admin")
+        mock_adapter_instance.discover_privilege_escalation.assert_awaited_once_with(
+            "arn:aws:iam::123456789012:user/admin"
+        )
         assert agent.ctx.coordination_bus.publish.call_count == 2
 
 

@@ -1,0 +1,9 @@
+{
+  "endpoint": "/system/dlq/stats",
+  "code": 200,
+  "data": {
+    "pending": 38,
+    "requeued": 0,
+    "discarded": 0
+  }
+}

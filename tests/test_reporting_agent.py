@@ -21,30 +21,26 @@ def mock_context():
 
     ctx.graph_memory = AsyncMock()
     ctx.graph_memory.get_graph_stats.return_value = {"total_assets": 5, "total_endpoints": 20}
+    ctx.graph_memory.get_vulnerabilities_by_engagement.return_value = [
+        {
+            "id": "vuln-1",
+            "title": "Test Vuln",
+            "severity": "HIGH",
+            "vuln_type": "xss",
+            "description": "A test vulnerability",
+            "evidence": [{"type": "proof", "payload": "<script>alert(1)</script>"}],
+            "confidence": 0.9,
+            "engagement_id": "test-session",
+            "endpoint_id": "ep-1",
+        }
+    ]
+    ctx.graph_memory.get_all_nodes_for_engagement.return_value = [
+        {"id": "vuln-1", "labels": ["Vulnerability"], "type": "xss", "title": "Test Vuln"}
+    ]
+    ctx.graph_memory.get_all_edges_for_engagement.return_value = []
 
-    class MockNeo4jSession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            pass
-
-        async def run(self, query, **kwargs):
-            mock_result = AsyncMock()
-            mock_node = MagicMock()
-            mock_node.get.side_effect = lambda k, d=None: {
-                "id": "vuln-1",
-                "title": "Test Vuln",
-                "severity": "HIGH",
-                "vuln_type": "xss",
-            }.get(k, d)
-            mock_node.labels = ["Vulnerability", "Asset"]
-            mock_result.data.return_value = [{"v": mock_node, "n": mock_node}]
-            return mock_result
-
-    mock_driver = MagicMock()
-    mock_driver.session.return_value = MockNeo4jSession()
-    ctx.graph_memory._driver = mock_driver
+    ctx.session_memory = AsyncMock()
+    ctx.session_memory.find_audit_events.return_value = []
 
     return ctx
 

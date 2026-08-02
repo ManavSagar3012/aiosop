@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card } from '../components/shared/Card';
-import { 
-    ReactFlow, 
-    Background, 
-    Controls, 
+import { EmptyState } from '../components/shared/EmptyState';
+import {
+    ReactFlow,
+    Background,
+    Controls,
     MiniMap,
     useNodesState,
     useEdgesState,
@@ -14,11 +15,24 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
-import { 
-  Server, Globe, ShieldAlert, Cloud, Activity, 
-  Database, Key, Box, FileJson, AlertTriangle, Search
+import {
+  Server, Globe, ShieldAlert, Cloud, Activity,
+  Box, FileJson, AlertTriangle, Search
 } from 'lucide-react';
-import { useIntelligenceStore } from '../store/useIntelligenceStore';
+import { useIntelligenceStore } from '../store/useIntelligenceStore'
+import { useToast } from '../hooks/useToast'
+
+// React Flow sets node/edge colors as raw SVG/DOM style props (stroke=,
+// fill=, background-color=), so a bare var(--x) string or Tailwind class
+// will NOT resolve there — we need a resolved color STRING. Read the design
+// tokens straight off the root element (single source of truth = styles.css)
+// and fall back to the historical neon literals only if computed styles are
+// unavailable (same pattern established in LearningAnalytics.tsx / Task 19).
+const cssVar = (name: string, fallback: string) => {
+  if (typeof document === 'undefined') return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+};
 
 
 const GRAPH_FILTERS = {
@@ -43,7 +57,7 @@ const CustomNode = ({ data }: any) => {
             <span className={`font-label-caps text-[10px] tracking-widest ${data.iconClass}`}>{data.type}</span>
          </div>
          {data.confidence > 0 && (
-            <span className="font-code-sm text-[9px] opacity-70">{(data.confidence * 100).toFixed(0)}%</span>
+            <span className="font-code-sm text-label-xs opacity-70">{(data.confidence * 100).toFixed(0)}%</span>
          )}
       </div>
       
@@ -60,12 +74,25 @@ const nodeTypes = { custom: CustomNode };
 
 export const KnowledgeGraphs: React.FC = () => {
   const [activeGraph, setActiveGraph] = useState<'attack' | 'workflow' | 'cloud' | 'learning'>('attack');
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
   const { graphData } = useIntelligenceStore();
+  const { addToast } = useToast();
   const [selectedNode, setSelectedNode] = useState<any>(null);
   const [isRelayouting, setIsRelayouting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // React Flow color tokens — identical hexes as before, now sourced from styles.css.
+  const flowColors = useMemo(() => ({
+    edgeStroke:     cssVar('--on-surface-variant', '#baccb0'),
+    edgeLabelFill:  cssVar('--on-surface', '#e5e2e3'),
+    edgeLabelBg:    cssVar('--surface-container-low', '#0a0a0b'),
+    bgGrid:         cssVar('--surface-container-high', '#1a1a1d'),
+    vuln:           cssVar('--error', '#ff3131'),
+    cloudResource:  cssVar('--primary', '#39ff14'),
+    asset:          cssVar('--secondary', '#00f1fd'),
+    miniMapDefault: cssVar('--surface-container-highest', '#2a2a2d'),
+  }), []);
 
   // 1. Graph Highlighting Logic
   const highlightedNodes = useMemo(() => {
@@ -223,9 +250,9 @@ export const KnowledgeGraphs: React.FC = () => {
             target: e.to,
             label: e.type,
             animated: true,
-            style: { stroke: '#baccb0', strokeWidth: 1.5, opacity: 0.4 },
-            labelStyle: { fill: '#e5e2e3', fontSize: 10, fontFamily: 'JetBrains Mono' },
-            labelBgStyle: { fill: '#0a0a0b', fillOpacity: 0.9 },
+            style: { stroke: flowColors.edgeStroke, strokeWidth: 1.5, opacity: 0.4 },
+            labelStyle: { fill: flowColors.edgeLabelFill, fontSize: 10, fontFamily: 'JetBrains Mono' },
+            labelBgStyle: { fill: flowColors.edgeLabelBg, fillOpacity: 0.9 },
             labelBgPadding: [6, 4],
             labelBgBorderRadius: 2
         };
@@ -236,9 +263,9 @@ export const KnowledgeGraphs: React.FC = () => {
     
     // Tiny delay to allow ReactFlow to render before we hide the loading screen
     setTimeout(() => setIsRelayouting(false), 100);
-  }, [graphData, activeGraph, setNodes, setEdges, highlightedNodes]);
+  }, [graphData, activeGraph, setNodes, setEdges, highlightedNodes, flowColors]);
 
-  const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
+  const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
       setSelectedNode((node as any).__raw);
   }, []);
 
@@ -246,7 +273,8 @@ export const KnowledgeGraphs: React.FC = () => {
       if (!selectedNode) return null;
       return {
           title: selectedNode.labels?.[0] || 'Node',
-          label: selectedNode.properties?.name || selectedNode.properties?.value || selectedNode.properties?.url || selectedNode.id,
+          label: selectedNode.properties?.title || selectedNode.properties?.name || selectedNode.properties?.value || selectedNode.properties?.url || selectedNode.id,
+          description: selectedNode.properties?.description || null,
           confidence: selectedNode.properties?.confidence || 0,
           status: selectedNode.properties?.status || 'DISCOVERED',
           isVuln: selectedNode.labels?.includes('Vulnerability')
@@ -274,11 +302,19 @@ export const KnowledgeGraphs: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 bg-[#050506] border border-outline-variant relative overflow-hidden terminal-grid rounded-sm">
+      <div className="flex-1 min-h-0 bg-surface border border-outline-variant relative overflow-hidden terminal-grid rounded-sm">
         {isRelayouting ? (
-           <div className="absolute inset-0 flex flex-col items-center justify-center text-primary-fixed font-code-sm bg-black/80 z-50 backdrop-blur-sm">
+           <div className="absolute inset-0 flex flex-col items-center justify-center text-primary-fixed font-code-sm text-code-sm bg-black/80 z-50 backdrop-blur-sm">
               <Activity className="animate-spin mb-4" size={32} />
               CALCULATING HIERARCHICAL LAYOUT...
+           </div>
+        ) : nodes.length === 0 ? (
+           <div className="absolute inset-0 flex items-center justify-center">
+              <EmptyState
+                 message="No nodes in this graph view"
+                 hint="Awaiting knowledge graph ingestion for this engagement"
+                 icon={<Box size={28} />}
+              />
            </div>
         ) : (
             <ReactFlow
@@ -293,16 +329,16 @@ export const KnowledgeGraphs: React.FC = () => {
               minZoom={0.05}
               maxZoom={1.5}
             >
-              <Background color="#1a1a1d" gap={30} size={1} className="opacity-0" />
+              <Background color={flowColors.bgGrid} gap={30} size={1} className="opacity-0" />
               <Controls className="bg-surface-container border-outline-variant text-on-surface fill-on-surface rounded-none shadow-xl" />
-              <MiniMap 
-                 className="bg-surface-container border border-outline-variant rounded-none shadow-xl" 
+              <MiniMap
+                 className="bg-surface-container border border-outline-variant rounded-none shadow-xl"
                  nodeColor={(n: any) => {
-                    if (n.data?.type === 'VULNERABILITY') return '#ff3131';
-                    if (n.data?.type === 'CLOUDRESOURCE') return '#39ff14';
-                    if (n.data?.type === 'ASSET') return '#00f1fd';
-                    return '#2a2a2d';
-                 }} 
+                    if (n.data?.type === 'VULNERABILITY') return flowColors.vuln;
+                    if (n.data?.type === 'CLOUDRESOURCE') return flowColors.cloudResource;
+                    if (n.data?.type === 'ASSET') return flowColors.asset;
+                    return flowColors.miniMapDefault;
+                 }}
                  maskColor="rgba(0, 0, 0, 0.7)"
               />
 
@@ -326,13 +362,20 @@ export const KnowledgeGraphs: React.FC = () => {
                     {inspectorData ? (
                        <div className="font-code-sm text-[11px] space-y-5">
                           <div className="bg-black/40 p-3 border border-outline-variant">
-                             <div className="text-on-surface-variant text-[9px] mb-2 uppercase tracking-widest border-b border-outline-variant/30 pb-1">{inspectorData.title}</div>
+                             <div className="text-on-surface-variant text-label-xs mb-2 uppercase tracking-widest border-b border-outline-variant/30 pb-1">{inspectorData.title}</div>
                              <div className="text-primary break-all leading-relaxed" title={inspectorData.label}>{inspectorData.label}</div>
                           </div>
                           
+                          {inspectorData.description && (
+                             <div className="bg-black/40 p-3 border border-outline-variant">
+                                <div className="text-on-surface-variant text-label-xs mb-2 uppercase tracking-widest border-b border-outline-variant/30 pb-1">Description</div>
+                                <div className="text-on-surface leading-relaxed text-[10px] break-words">{inspectorData.description}</div>
+                             </div>
+                          )}
+                          
                           {inspectorData.confidence > 0 && (
                               <div>
-                                 <div className="text-on-surface-variant text-[9px] mb-2 uppercase tracking-widest">Confidence</div>
+                                 <div className="text-on-surface-variant text-label-xs mb-2 uppercase tracking-widest">Confidence</div>
                                  <div className="flex items-center gap-3">
                                     <div className="flex-1 h-1.5 bg-surface-variant">
                                        <div className={`h-full ${inspectorData.isVuln ? 'bg-error glow-red' : 'bg-primary-fixed glow-cyan'}`} style={{ width: `${inspectorData.confidence * 100}%` }}></div>
@@ -343,14 +386,14 @@ export const KnowledgeGraphs: React.FC = () => {
                           )}
                           
                           <div className="flex justify-between items-center bg-black/40 p-3 border border-outline-variant">
-                             <div className="text-on-surface-variant text-[9px] uppercase tracking-widest">Status</div>
+                             <div className="text-on-surface-variant text-label-xs uppercase tracking-widest">Status</div>
                              <div className={`${inspectorData.isVuln ? 'text-error glow-red' : 'text-primary-fixed glow-cyan'} font-bold tracking-widest px-2 py-0.5 border ${inspectorData.isVuln ? 'border-error/30' : 'border-primary-fixed/30'}`}>
                                 {inspectorData.status?.toUpperCase()}
                              </div>
                           </div>
                           
                           <button 
-                            onClick={() => alert(`Showing evidence for ${inspectorData.label}... (Not implemented in demo)`)}
+                            onClick={() => addToast(`Evidence timeline for ${inspectorData.label} not yet implemented`, "warning")}
                             className="w-full py-3 bg-surface-container-high border border-outline-variant text-on-surface font-label-caps text-[10px] hover:bg-surface-variant transition-all mt-4"
                           >
                              VIEW EVIDENCE TIMELINE

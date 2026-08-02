@@ -3,9 +3,8 @@ V4.2A Session Intelligence Layer
 Manages multi-user sessions, token rotation, and drift detection.
 """
 
-import asyncio
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from ai_osop.core.models import BrowserSession
 from ai_osop.memory.session_memory import SessionMemory

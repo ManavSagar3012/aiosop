@@ -1,0 +1,398 @@
+{
+  "endpoint": "/agents",
+  "code": 200,
+  "data": [
+    {
+      "agent_id": "attack-chain-agent-001",
+      "agent_type": "attack_chain",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.710037"
+    },
+    {
+      "agent_id": "recon-agent-001",
+      "agent_type": "recon",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.708020"
+    },
+    {
+      "agent_id": "recon-agent-002",
+      "agent_type": "recon",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.710037"
+    },
+    {
+      "agent_id": "recon-agent-003",
+      "agent_type": "recon",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.712050"
+    },
+    {
+      "agent_id": "vuln-agent-001",
+      "agent_type": "vuln_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.712050"
+    },
+    {
+      "agent_id": "vuln-agent-002",
+      "agent_type": "vuln_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.708020"
+    },
+    {
+      "agent_id": "vuln-agent-003",
+      "agent_type": "vuln_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.710037"
+    },
+    {
+      "agent_id": "vuln-agent-004",
+      "agent_type": "vuln_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.708020"
+    },
+    {
+      "agent_id": "vuln-agent-005",
+      "agent_type": "vuln_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.176982"
+    },
+    {
+      "agent_id": "exploit-agent-001",
+      "agent_type": "exploit_validation",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.935675"
+    },
+    {
+      "agent_id": "exploit-agent-002",
+      "agent_type": "exploit_validation",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "human-oversight-agent-001",
+      "agent_type": "human_oversight",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.133799"
+    },
+    {
+      "agent_id": "payload-agent-001",
+      "agent_type": "payload_mutation",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.179527"
+    },
+    {
+      "agent_id": "reporting-agent-001",
+      "agent_type": "reporting",
+      "status": "running",
+      "current_task": "task-bb2be8e6089a",
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.202487"
+    },
+    {
+      "agent_id": "context-manager-agent-001",
+      "agent_type": "context_manager",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.178198"
+    },
+    {
+      "agent_id": "concurrency-agent-001",
+      "agent_type": "concurrency",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "stack-profiler-agent-001",
+      "agent_type": "context_manager",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.188398"
+    },
+    {
+      "agent_id": "playwright-agent-001",
+      "agent_type": "workflow",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.178771"
+    },
+    {
+      "agent_id": "cloud-agent-001",
+      "agent_type": "cloud_specialist",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.133070"
+    },
+    {
+      "agent_id": "codeql-agent-001",
+      "agent_type": "sast_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.946709"
+    },
+    {
+      "agent_id": "graphql-agent-001",
+      "agent_type": "vuln_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "js-analyzer-agent-001",
+      "agent_type": "vuln_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.188398"
+    },
+    {
+      "agent_id": "mobile-agent-001",
+      "agent_type": "vuln_analysis",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.188911"
+    },
+    {
+      "agent_id": "nextjs-agent-001",
+      "agent_type": "nextjs_specialist",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.188911"
+    },
+    {
+      "agent_id": "react-agent-001",
+      "agent_type": "react_specialist",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.178198"
+    },
+    {
+      "agent_id": "stateful-logic-agent-001",
+      "agent_type": "stateful_logic",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.933026"
+    },
+    {
+      "agent_id": "visual-agent-001",
+      "agent_type": "visual_context",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.133799"
+    },
+    {
+      "agent_id": "ssti-agent-001",
+      "agent_type": "ssti_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "ssti-agent-002",
+      "agent_type": "ssti_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.136096"
+    },
+    {
+      "agent_id": "ssrf-agent-001",
+      "agent_type": "ssrf_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.176982"
+    },
+    {
+      "agent_id": "ssrf-agent-002",
+      "agent_type": "ssrf_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "csrf-agent-001",
+      "agent_type": "csrf_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "csrf-agent-002",
+      "agent_type": "csrf_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.178771"
+    },
+    {
+      "agent_id": "jwt-agent-001",
+      "agent_type": "jwt_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.933026"
+    },
+    {
+      "agent_id": "jwt-agent-002",
+      "agent_type": "jwt_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "smuggling-agent-001",
+      "agent_type": "smuggling_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.187412"
+    },
+    {
+      "agent_id": "smuggling-agent-002",
+      "agent_type": "smuggling_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.188911"
+    },
+    {
+      "agent_id": "race-agent-001",
+      "agent_type": "race_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "race-agent-002",
+      "agent_type": "race_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.134834"
+    },
+    {
+      "agent_id": "upload-agent-001",
+      "agent_type": "upload_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.188398"
+    },
+    {
+      "agent_id": "upload-agent-002",
+      "agent_type": "upload_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.134834"
+    },
+    {
+      "agent_id": "pollution-agent-001",
+      "agent_type": "pollution_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.929301"
+    },
+    {
+      "agent_id": "pollution-agent-002",
+      "agent_type": "pollution_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "websocket-agent-001",
+      "agent_type": "websocket_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.188911"
+    },
+    {
+      "agent_id": "websocket-agent-002",
+      "agent_type": "websocket_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.188911"
+    },
+    {
+      "agent_id": "saml-agent-001",
+      "agent_type": "saml_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:17.946160"
+    },
+    {
+      "agent_id": "saml-agent-002",
+      "agent_type": "saml_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.177551"
+    },
+    {
+      "agent_id": "takeover-agent-001",
+      "agent_type": "takeover_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    },
+    {
+      "agent_id": "takeover-agent-002",
+      "agent_type": "takeover_scanner",
+      "status": "idle",
+      "current_task": null,
+      "task_queue_depth": 0,
+      "last_heartbeat": "2026-07-10T16:48:18.190926"
+    }
+  ]
+}

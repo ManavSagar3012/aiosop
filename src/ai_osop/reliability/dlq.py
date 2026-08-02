@@ -8,7 +8,6 @@ Storage: Redis (hot) + Postgres (warm) for durability.
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -32,8 +31,9 @@ class DLQEntry(BaseModel):
     task_payload: Dict[str, Any] = Field(default_factory=dict)
     status: str = "pending_review"  # pending_review, requeued, discarded
     operator_notes: Optional[str] = None
+    retry_count: Optional[int] = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    resolved_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class DeadLetterQueue:
@@ -62,7 +62,8 @@ class DeadLetterQueue:
             agent_type=task.agent_type.value,
             reason=reason,
             final_error=final_error[:2000],  # truncate to avoid huge payloads
-            task_payload=task.model_dump(),
+            task_payload=task.model_dump(mode="json"),
+            retry_count=getattr(task, "retry_count", 0),
         )
 
         # Store in hot + warm tier
@@ -146,12 +147,15 @@ class DeadLetterQueue:
 
         # Update DLQ entry status
         entry.status = "requeued"
-        entry.resolved_at = datetime.utcnow()
+        entry.updated_at = datetime.utcnow()
+        entry.retry_count = 0  # Reset retry count on requeue
 
         if hasattr(self._session_memory, "store_dlq_entry"):
             await self._session_memory.store_dlq_entry(entry)
         else:
-            await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+            await self._session_memory.store_hot(
+                f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7
+            )
 
         return task
 
@@ -168,13 +172,15 @@ class DeadLetterQueue:
             return
 
         entry.status = "discarded"
-        entry.resolved_at = datetime.utcnow()
+        entry.updated_at = datetime.utcnow()
         entry.operator_notes = operator_notes
 
         if hasattr(self._session_memory, "store_dlq_entry"):
             await self._session_memory.store_dlq_entry(entry)
         else:
-            await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+            await self._session_memory.store_hot(
+                f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7
+            )
 
     @trace_span("dlq.get_stats")
     async def get_stats(self) -> Dict[str, int]:

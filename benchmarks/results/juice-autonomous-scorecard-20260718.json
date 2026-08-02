@@ -1,0 +1,283 @@
+{
+  "summary": {
+    "manifest_positives": 5,
+    "manifest_negative_controls": 4,
+    "findings_total": 29,
+    "findings_real": 29,
+    "findings_simulated_dropped": 0,
+    "true_positives": 2,
+    "false_negatives": 3,
+    "false_positives": 0,
+    "extras_for_triage": 27,
+    "precision": 1.0,
+    "recall": 0.4,
+    "coverage": 0.4,
+    "evidence_completeness": 0.0
+  },
+  "matched": [
+    {
+      "gt_id": "JS-001",
+      "finding_id": "vuln-bc59bab13bb0",
+      "finding_type": "sqli",
+      "endpoint": "http://localhost:3000/rest/user/login",
+      "confidence": 0.98,
+      "evidence_kinds": [
+        "dbms",
+        "parameter",
+        "payload",
+        "payloads",
+        "provenance",
+        "request",
+        "sqlmap_injection",
+        "techniques",
+        "type",
+        "url"
+      ],
+      "evidence_complete": false,
+      "missing_evidence": [
+        "response"
+      ]
+    },
+    {
+      "gt_id": "JS-002",
+      "finding_id": "vuln-28383e9ed781",
+      "finding_type": "sqli",
+      "endpoint": "http://localhost:3000/rest/products/search?q=",
+      "confidence": 0.98,
+      "evidence_kinds": [
+        "dbms",
+        "parameter",
+        "payload",
+        "payloads",
+        "provenance",
+        "request",
+        "sqlmap_injection",
+        "techniques",
+        "type",
+        "url"
+      ],
+      "evidence_complete": false,
+      "missing_evidence": [
+        "response"
+      ]
+    }
+  ],
+  "false_negatives": [
+    {
+      "gt_id": "JS-003",
+      "type": "IDOR",
+      "endpoint": "/rest/basket/",
+      "severity": "High"
+    },
+    {
+      "gt_id": "JS-004",
+      "type": "JWT",
+      "endpoint": "/rest/user/login",
+      "severity": "High"
+    },
+    {
+      "gt_id": "JS-005",
+      "type": "MassAssignment",
+      "endpoint": "/api/Users",
+      "severity": "High"
+    }
+  ],
+  "false_positives": [],
+  "extras": [
+    {
+      "finding_id": "vuln-ce373f9a1d3e",
+      "type": "idor",
+      "endpoint": "api-34a53fefcced02c2",
+      "confidence": 1.0,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-dc67423224cc",
+      "type": "idor",
+      "endpoint": "api-ce2d30702a5ca426",
+      "confidence": 1.0,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-686e6be156a2",
+      "type": "broken_access_control",
+      "endpoint": "api-34a53fefcced02c2",
+      "confidence": 0.9,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-f6c081d43b0c",
+      "type": "broken_access_control",
+      "endpoint": "api-ce2d30702a5ca426",
+      "confidence": 0.9,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-12e413275f5b",
+      "type": "idor",
+      "endpoint": "api-4b0389e847145556",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-37085e8527d3",
+      "type": "idor",
+      "endpoint": "api-b1b2ca6df19113ed",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-5655f709463b",
+      "type": "idor",
+      "endpoint": "api-012f8d13bb9bc7cb",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-a42ea9397535",
+      "type": "idor",
+      "endpoint": "api-d91fe34b8743e8a5",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-a5df377a94c4",
+      "type": "idor",
+      "endpoint": "api-c0d1f02464b03bfb",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-b5ab258f599f",
+      "type": "idor",
+      "endpoint": "api-23c7ce67e007ac73",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-d89402e73004",
+      "type": "idor",
+      "endpoint": "api-2d23b1b809525738",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-d8e876a3d0d8",
+      "type": "idor",
+      "endpoint": "api-229aedd5ee2aa985",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-e8f9d93a5b1a",
+      "type": "idor",
+      "endpoint": "api-e3a56937edc34057",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-f6374e09455b",
+      "type": "idor",
+      "endpoint": "api-d13b5f66263cae52",
+      "confidence": 0.8,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-2c8cbd12546c",
+      "type": "broken_access_control",
+      "endpoint": "api-b1b2ca6df19113ed",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-2d2de33854f4",
+      "type": "broken_access_control",
+      "endpoint": "api-012f8d13bb9bc7cb",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-678cb8ac220f",
+      "type": "broken_access_control",
+      "endpoint": "api-d13b5f66263cae52",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-6d94bcfb9df8",
+      "type": "broken_access_control",
+      "endpoint": "api-229aedd5ee2aa985",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-7e8fac29d5ea",
+      "type": "csrf",
+      "endpoint": "http://localhost:3000/api/SecurityAnswers/",
+      "confidence": 0.7,
+      "severity": "medium"
+    },
+    {
+      "finding_id": "vuln-7f4ba223b7ca",
+      "type": "broken_access_control",
+      "endpoint": "api-4b0389e847145556",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-860eac5b1ca2",
+      "type": "csrf",
+      "endpoint": "http://localhost:3000/api/Users/",
+      "confidence": 0.7,
+      "severity": "medium"
+    },
+    {
+      "finding_id": "vuln-a69760078daa",
+      "type": "broken_access_control",
+      "endpoint": "api-23c7ce67e007ac73",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-a82195cb2967",
+      "type": "broken_access_control",
+      "endpoint": "api-2d23b1b809525738",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-b1d3164a2a85",
+      "type": "csrf",
+      "endpoint": "http://localhost:3000/rest/user/login",
+      "confidence": 0.7,
+      "severity": "medium"
+    },
+    {
+      "finding_id": "vuln-c3d0a5d1198a",
+      "type": "broken_access_control",
+      "endpoint": "api-d91fe34b8743e8a5",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-d0b9cf87f7d8",
+      "type": "broken_access_control",
+      "endpoint": "api-e3a56937edc34057",
+      "confidence": 0.7,
+      "severity": "high"
+    },
+    {
+      "finding_id": "vuln-f72814306385",
+      "type": "broken_access_control",
+      "endpoint": "api-c0d1f02464b03bfb",
+      "confidence": 0.7,
+      "severity": "high"
+    }
+  ],
+  "notes": [
+    "recall measured over manifest positives (what MUST be found).",
+    "precision measured only against explicit negative controls; None means no negative controls were defined.",
+    "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+    "simulated/mock findings dropped before scoring."
+  ]
+}

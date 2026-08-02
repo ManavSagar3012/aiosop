@@ -1,0 +1,4 @@
+ id | original_finding_id | category | severity | outcome | payload | engagement_id | created_at | finalized_at 
+----+---------------------+----------+----------+---------+---------+---------------+------------+--------------
+(0 rows)
+

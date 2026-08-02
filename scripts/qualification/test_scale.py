@@ -20,8 +20,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, "src")
 
+from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.models import ScopeDefinition, SessionState, Task, Vulnerability
-from ai_osop.core.config import AgentType, VulnClass, Severity
 
 
 class ScaleQualification:
@@ -55,7 +55,9 @@ class ScaleQualification:
             sessions.append(s)
         elapsed = time.perf_counter() - start
         rate = 100 / elapsed if elapsed > 0 else float("inf")
-        self._record("engage_creation_100", True, f"100 engagements in {elapsed:.3f}s ({rate:.0f}/s)")
+        self._record(
+            "engage_creation_100", True, f"100 engagements in {elapsed:.3f}s ({rate:.0f}/s)"
+        )
 
     # -------------------- Task Creation Throughput --------------------
 
@@ -121,7 +123,11 @@ class ScaleQualification:
             _ = session.dict()
         elapsed = time.perf_counter() - start
         avg_ms = (elapsed / 1000) * 1000
-        self._record("session_serialize_1000", True, f"1000 serializations in {elapsed:.3f}s (avg {avg_ms:.3f}ms)")
+        self._record(
+            "session_serialize_1000",
+            True,
+            f"1000 serializations in {elapsed:.3f}s (avg {avg_ms:.3f}ms)",
+        )
 
     # -------------------- Orchestrator --------------------
 

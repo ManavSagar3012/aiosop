@@ -1,0 +1,148 @@
+- id: JS-001
+  type: SQLi
+  endpoint: /rest/user/login
+  parameter: email
+  severity: High
+  expected_tool:
+    - sqlmap
+  expected_agent:
+    - vuln-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - payload
+  expected_report:
+    - CWE-89
+    - SQL Injection
+
+- id: JS-002
+  type: SQLi
+  endpoint: /rest/products/search
+  parameter: q
+  severity: High
+  expected_tool:
+    - sqlmap
+  expected_agent:
+    - vuln-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - payload
+  expected_report:
+    - CWE-89
+    - SQL Injection
+
+- id: JS-003
+  type: IDOR
+  endpoint: /rest/basket/
+  parameter: id
+  severity: High
+  expected_tool:
+    - browser-mcp
+  expected_agent:
+    - vuln-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - diff
+  expected_report:
+    - CWE-639
+    - Broken Access Control
+
+- id: JS-004
+  type: JWT
+  endpoint: /rest/user/login
+  parameter: token
+  severity: High
+  expected_tool:
+    - payload-mcp
+  expected_agent:
+    - jwt-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - token
+  expected_report:
+    - CWE-347
+    - Cryptographic Failures
+
+- id: JS-005
+  type: MassAssignment
+  endpoint: /api/Users
+  parameter: role
+  severity: High
+  expected_tool:
+    - payload-mcp
+  expected_agent:
+    - vuln-agent
+  expected_phase:
+    - vuln_discovery
+  expected_evidence:
+    - request
+    - response
+    - payload
+  expected_report:
+    - CWE-915
+    - Broken Access Control
+
+# --------------------------------------------------------------------------- #
+# NEGATIVE CONTROLS (expected: false)
+#
+# These are endpoints/parameters that must NOT be reported with the stated
+# vuln type. A real finding that matches one of these is a genuine false
+# positive — that is the ONLY way the scorer can measure precision. Without
+# them precision is reported as null (honest) rather than a fake 1.0.
+#
+# Each control targets a well-known false-positive trap so a regression in a
+# detector's specificity is caught, not just its recall.
+# --------------------------------------------------------------------------- #
+
+- id: JS-NEG-001
+  # Static JS bundle. A reflected-XSS detector that flags cache-busted asset
+  # URLs (query string echoed in a 404/JS body) trips here. Assets are not XSS.
+  type: XSS
+  endpoint: /main.js
+  parameter: v
+  severity: Info
+  expected: false
+  note: static asset — reflected content is not an injection sink
+
+- id: JS-NEG-002
+  # Product listing is a read-only, parameterised query. A SQLi detector that
+  # calls a benign 500 or a slow response "injection" without a differential
+  # oracle produces a false positive here.
+  type: SQLi
+  endpoint: /api/Products
+  parameter: id
+  severity: Info
+  expected: false
+  note: parameterised read path — no injectable sink, guards against error-based FP
+
+- id: JS-NEG-003
+  # Unauthenticated health/metadata endpoint. No object reference to abuse;
+  # an IDOR/BOLA detector keying on numeric-looking path segments false-fires.
+  type: IDOR
+  endpoint: /rest/admin/application-version
+  parameter: ""
+  severity: Info
+  expected: false
+  note: no user-scoped object — not an access-control boundary
+
+- id: JS-NEG-004
+  # Login already covered as a real JWT finding (JS-004). This control asserts
+  # the SAME endpoint must not ALSO be reported as MassAssignment — catches a
+  # detector that sprays every request body param as mass-assignment.
+  type: MassAssignment
+  endpoint: /rest/user/login
+  parameter: email
+  severity: Info
+  expected: false
+  note: authentication body, not an object-binding sink

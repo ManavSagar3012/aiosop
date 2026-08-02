@@ -4,39 +4,69 @@ services:
   neo4j:
     image: neo4j:5.18-community
     container_name: ai-osop-neo4j
+    restart: unless-stopped
     ports:
       - "7474:7474"
       - "7687:7687"
     environment:
-      - NEO4J_AUTH=neo4j/${OSOP_NEO4J_PASSWORD:-change-me-local}
+      - NEO4J_AUTH=neo4j/${OSOP_NEO4J_PASSWORD}
       - NEO4J_PLUGINS=["apoc"]
+      # Same secret already present via NEO4J_AUTH; exposed as a standalone var
+      # so the container-side healthcheck can authenticate cypher-shell.
+      - OSOP_NEO4J_PASSWORD=${OSOP_NEO4J_PASSWORD}
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
+    healthcheck:
+      # cypher-shell ships in neo4j:5.x; RETURN 1 confirms bolt + auth are live.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p $${OSOP_NEO4J_PASSWORD} 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
     networks:
       - ai-osop
 
   postgres:
     image: pgvector/pgvector:pg15
     container_name: ai-osop-postgres
+    restart: unless-stopped
     ports:
-      - "5432:5432"
+      # PATCH (AIOSOP-PROD-001, 2026-06-27): Remap to 15432 to avoid conflict with
+      # wslrelay.exe (or local PostgreSQL) that shadows 127.0.0.1:5432 on dev hosts
+      # running WSL2. The API .env uses 127.0.0.1:15432 to reach this container
+      # from the host. The internal docker network (postgres:5432) is unaffected.
+      - "15432:5432"
     environment:
-      - POSTGRES_USER=osop
-      - POSTGRES_PASSWORD=osop
-      - POSTGRES_DB=osop
+      - POSTGRES_USER=${OSOP_POSTGRES_USER}
+      - POSTGRES_PASSWORD=${OSOP_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${OSOP_POSTGRES_DB:-osop}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready checks the DB accepts connections for the app user+db.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - ai-osop
 
   redis:
     image: redis:7-alpine
     container_name: ai-osop-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks:
       - ai-osop
 
@@ -45,6 +75,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ai-osop-api
+    restart: unless-stopped
     ports:
       # PATCH (REL-001, 2026-06-15): Was 8080:8080 — but :8080 is squatted by
       # Oracle TNSLSNR/XDB on common dev hosts (TNS XDB picks 8080 by default).
@@ -54,17 +85,25 @@ services:
       - "8200:8200"
     environment:
       - OSOP_ENV=development
+      - OSOP_API_TOKEN=${OSOP_API_TOKEN}
       - OSOP_NEO4J_URI=bolt://neo4j:7687
-      - OSOP_POSTGRES_URI=postgresql+asyncpg://osop:osop@postgres:5432/osop
+      - OSOP_NEO4J_PASSWORD=${OSOP_NEO4J_PASSWORD}
+      - OSOP_POSTGRES_URI=postgresql+asyncpg://${OSOP_POSTGRES_USER}:${OSOP_POSTGRES_PASSWORD}@postgres:5432/${OSOP_POSTGRES_DB}
       - OSOP_REDIS_URI=redis://redis:6379/0
     depends_on:
-      - neo4j
-      - postgres
-      - redis
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - ai-osop
-    volumes:
-      - ./src:/app/src
+    # DEVELOPMENT USE ONLY: Uncomment the line below to enable live code reloading.
+    # For production, remove this volume mount to enforce immutable infrastructure.
+    # volumes:
+    #   - ./src:/app/src
+    volumes: []
 
 volumes:
   neo4j_data:

@@ -1,0 +1,92 @@
+import pathlib, sys
+
+REPO = pathlib.Path(__file__).resolve().parents[1]
+bench = REPO / 'benchmarks' / 'juiceshop' / 'bench.py'
+content = bench.read_text(encoding='utf-8')
+
+GUARD = 'async def check_xss_reflected'
+MARKER = 'CHECKS: dict[str, Callable[[Target], Any]] = {'
+
+if GUARD in content:
+    print('already present - nothing to do')
+    sys.exit(0)
+
+NEW = (
+    '\n\n'
+    'async def check_xss_reflected(t: Target) -> CheckResult:\n'
+    '    probe = chr(60) + chr(115) + chr(99) + chr(114) + chr(105) + chr(112) + chr(116) + chr(62) + chr(97) + chr(108) + chr(101) + chr(114) + chr(116) + chr(40) + chr(49) + chr(41) + chr(60) + chr(47) + chr(115) + chr(99) + chr(114) + chr(105) + chr(112) + chr(116) + chr(62)\n'
+    '    r = await t.c.get(f\'{t.base}/rest/products/search\', params={\'q\': probe})\n'
+    '    body = r.text if r.status_code == 200 else \'\'\n'
+    '    confirmed = probe in body\n'
+    '    return CheckResult(\n'
+    '        \'xss_reflected\', confirmed,\n'
+    '        \'VALIDATED\' if confirmed else \'NOT_FOUND\',\n'
+    '        confidence=1.0 if confirmed else 0.0,\n'
+    '        evidence={\'status\': r.status_code, \'probe_reflected\': confirmed},\n'
+    '    )\n'
+    '\n\n'
+    'async def check_ftp_directory_listing(t: Target) -> CheckResult:\n'
+    '    r = await t.c.get(f\'{t.base}/ftp\')\n'
+    '    body = r.text if r.status_code == 200 else \'\'\n'
+    '    confirmed = r.status_code == 200 and any(\n'
+    '        k in body.lower() for k in (\'acquisitions\', \'.md\', \'.bak\')\n'
+    '    )\n'
+    '    return CheckResult(\n'
+    '        \'ftp_directory_listing\', confirmed,\n'
+    '        \'VALIDATED\' if confirmed else \'NOT_FOUND\',\n'
+    '        confidence=1.0 if confirmed else 0.0,\n'
+    '        evidence={\'status\': r.status_code, \'listing_found\': confirmed},\n'
+    '    )\n'
+    '\n\n'
+    'async def check_unauth_user_list(t: Target) -> CheckResult:\n'
+    '    r = await t.c.get(f\'{t.base}/api/Users\')\n'
+    '    try:\n'
+    '        data = r.json().get(\'data\', [])\n'
+    '    except Exception:\n'
+    '        data = []\n'
+    '    confirmed = r.status_code == 200 and isinstance(data, list) and len(data) > 0\n'
+    '    return CheckResult(\n'
+    '        \'unauth_user_list\', confirmed,\n'
+    '        \'VALIDATED\' if confirmed else \'NOT_FOUND\',\n'
+    '        confidence=1.0 if confirmed else 0.0,\n'
+    '        evidence={\'status\': r.status_code, \'user_count\': len(data)},\n'
+    '    )\n'
+    '\n\n'
+    'async def check_weak_password_policy(t: Target) -> CheckResult:\n'
+    '    import uuid as _uuid\n'
+    '    email = \'bench-weak-\' + _uuid.uuid4().hex[:8] + \'@example.com\'\n'
+    '    body = {\n'
+    '        \'email\': email,\n'
+    '        \'password\': \'a\',\n'
+    '        \'passwordRepeat\': \'a\',\n'
+    '        \'securityQuestion\': {\'id\': 1},\n'
+    '        \'securityAnswer\': \'bench\',\n'
+    '    }\n'
+    '    r = await t.c.post(f\'{t.base}/api/Users\', json=body)\n'
+    '    confirmed = r.status_code in (200, 201)\n'
+    '    return CheckResult(\n'
+    '        \'weak_password_policy\', confirmed,\n'
+    '        \'VALIDATED\' if confirmed else \'NOT_FOUND\',\n'
+    '        confidence=1.0 if confirmed else 0.0,\n'
+    '        evidence={\'status\': r.status_code, \'weak_pw_accepted\': confirmed},\n'
+    '    )\n'
+    '\n\n'
+    'async def check_open_redirect(t: Target) -> CheckResult:\n'
+    '    import httpx as _hx\n'
+    '    async with _hx.AsyncClient(timeout=10.0, verify=False, follow_redirects=False) as c:\n'
+    '        r = await c.get(f\'{t.base}/redirect\', params={\'to\': \'https://google.com\'})\n'
+    '    loc = r.headers.get(\'location\', \'\')\n'
+    '    confirmed = r.status_code in (301, 302, 303, 307, 308) and \'google.com\' in loc\n'
+    '    return CheckResult(\n'
+    '        \'open_redirect\', confirmed,\n'
+    '        \'VALIDATED\' if confirmed else \'NOT_FOUND\',\n'
+    '        confidence=1.0 if confirmed else 0.0,\n'
+    '        evidence={\'status\': r.status_code, \'location\': loc},\n'
+    '    )\n'
+    '\n\n'
+)
+
+idx = content.index(MARKER)
+updated = content[:idx] + NEW + content[idx:]
+bench.write_text(updated, encoding='utf-8')
+print(f'Inserted {len(NEW)} bytes of new check functions before CHECKS dict')

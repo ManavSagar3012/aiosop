@@ -12,10 +12,30 @@ import uuid
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket, Header, Depends
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from pydantic import BaseModel
 
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src")))
+
+from ai_osop.core.config import settings
+
+async def verify_mcp_token(authorization: Optional[str] = Header(None)):
+    """Enforce strict bearer token verification."""
+    expected = settings.api_token or os.getenv("OSOP_API_TOKEN")
+    if not expected:
+        if settings.environment in ("production", "prod"):
+            raise HTTPException(status_code=401, detail="Authentication is not configured")
+        return
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+
+    token = authorization.split(" ", 1)[1]
+    import hmac
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 app = FastAPI(title="Browser MCP Server")
 
 # Evidence is written here so the workflow_agent and the API can find it.
@@ -252,6 +272,24 @@ manager = BrowserManager()
 
 @app.on_event("startup")
 async def startup():
+    # Durable interpreter provenance for tooling-reality audits: prove which
+    # Python + which playwright package this server actually loaded (the API's
+    # .venv vs system Python). Logged once at boot so reviewers don't have to
+    # infer it from OS process metadata (Windows venv launchers re-exec the base
+    # interpreter, making `wmic ExecutablePath` misleading).
+    import sys
+
+    try:
+        import playwright as _pw
+
+        _pw_file = getattr(_pw, "__file__", "unknown")
+    except Exception as _e:  # pragma: no cover
+        _pw_file = f"import-failed: {_e}"
+    print(
+        f"[browser-mcp provenance] python={sys.executable} "
+        f"playwright={_pw_file} venv={'.venv' in (_pw_file or '').lower()}",
+        flush=True,
+    )
     await manager.start()
 
 @app.on_event("shutdown")
@@ -283,9 +321,24 @@ class MCPExecuteRequest(BaseModel):
     request_id: Optional[str] = None
 
 @app.post("/mcp/initialize")
-async def mcp_initialize(req: MCPInitializeRequest):
+async def mcp_initialize(req: MCPInitializeRequest, authenticated: None = Depends(verify_mcp_token)):
     if req.session_id:
         print(f"Initializing session: {req.session_id}")
+    if req.scope:
+        from ai_osop.safety.scope import ScopeEnforcer
+        from ai_osop.core.models import ScopeDefinition
+        try:
+            scope_def = ScopeDefinition(**req.scope)
+            # Per-session scope enforcer (was single global — last-wins across
+            # concurrent engagements, scope-bleed risk). Each engagement gets its
+            # own enforcer so concurrent navigation never validates against the
+            # wrong scope. (AIOSOP-SCOPE-BLEED-001)
+            if not hasattr(app.state, "scope_enforcers"):
+                app.state.scope_enforcers = {}
+            key = req.session_id or "__default__"
+            app.state.scope_enforcers[key] = ScopeEnforcer(scope_def)
+        except Exception as e:  # noqa: BLE001
+            print(f"Failed to initialize scope: {e}")
 
     return {
         "server_id": "browser-mcp",
@@ -304,9 +357,8 @@ async def mcp_initialize(req: MCPInitializeRequest):
             }
         ],
     }
-
 @app.post("/mcp/execute")
-async def mcp_execute(req: MCPExecuteRequest):
+async def mcp_execute(req: MCPExecuteRequest, authenticated: None = Depends(verify_mcp_token)):
     request_id = req.request_id or "req-" + str(uuid.uuid4())
     params = req.parameters or {}
     if req.tool_name != "execute":
@@ -328,6 +380,22 @@ async def mcp_execute(req: MCPExecuteRequest):
 
         if action == "navigate":
             url = params.get("url", "")
+            # Enforce scope check — per-session enforcer so concurrent
+            # engagements never validate against the wrong scope.
+            # (AIOSOP-SCOPE-BLEED-001)
+            enforcer = None
+            if hasattr(app.state, "scope_enforcers"):
+                key = req.session_id or engagement_id or "__default__"
+                enforcer = app.state.scope_enforcers.get(key)
+            if enforcer and key != "__default__":
+                try:
+                    enforcer.validate_target(url)
+                except Exception as e:  # noqa: BLE001
+                    return {
+                        "request_id": request_id,
+                        "status": "error",
+                        "error": f"Out of scope target: {e}",
+                    }
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             # SPA settle: domcontentloaded fires before client-side XHR/fetch
             # (e.g. Angular /rest, /api calls) land. The HAR records the whole
@@ -415,6 +483,10 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8089)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("OSOP_BROWSER_MCP_PORT", "8091")),
+    )
     args = parser.parse_args()
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    uvicorn.run(app, host="127.0.0.1", port=args.port)

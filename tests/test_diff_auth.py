@@ -132,18 +132,18 @@ async def test_analyze_persists_and_flags():
     )
     data = _result(200, keys=["id", "email"], sensitive=["email"], owner=["id", "email"])
     an._replay_user = AsyncMock(side_effect=lambda eng, label, m, u: dict(data))
-    an._replay_anonymous = AsyncMock(return_value=dict(data))  # anon sees data -> open
+    an._replay_anonymous = AsyncMock(return_value=dict(data))  # anonymous sees the identical public response
 
     out = await an.analyze("e", "wf", "user_a", "user_b")
 
     assert out["replay_count"] == 3
     assert out["endpoints_tested"] == 1
-    assert out["findings_count"] == 2  # horizontal_pe (user_b) + broken_access_control (anon)
-    cats = {f["category"] for f in out["findings"]}
-    assert "broken_access_control" in cats and "horizontal_pe" in cats
+    # Identical anonymous access makes this resource public, not an
+    # authorization failure. Findings require a privileged difference.
+    assert out["findings_count"] == 0
     assert gm.add_replay_result.await_count == 3
     assert gm.add_authorization_test.await_count == 1
-    assert gm.add_diff_auth_finding_for_endpoint.await_count == 2
+    assert gm.add_diff_auth_finding_for_endpoint.await_count == 0
 
 
 @pytest.mark.asyncio
