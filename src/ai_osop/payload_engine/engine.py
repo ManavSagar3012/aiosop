@@ -200,10 +200,7 @@ class PayloadTemplateLibrary:
                 ),
             ],
             "billion_laughs_detect": [
-                (
-                    '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY a "detect">]>'
-                    "<lolz>&a;</lolz>"
-                ),
+                ('<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY a "detect">]>' "<lolz>&a;</lolz>"),
             ],
         },
     }
