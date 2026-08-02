@@ -170,7 +170,12 @@ async def test_add_asset_builds_merge_cypher_with_metadata_json_and_returns_db_i
     cy, params = session.run.await_args.args
     assert "MERGE (a:Asset {id: $id})" in cy
     assert params["value"] == "example.com" and params["engagement_id"] == "eng-1"
-    assert params["metadata"] == {"k": "v"} and out == "asset-db-1"
+    # metadata must be JSON-serialized: Neo4j rejects raw map properties, so
+    # add_asset json.dumps() it (AIOSOP-ASSET-MAPPROP). The old assertion checked
+    # the raw dict — a value the live DB rejects — because this test mocks the
+    # driver and never hit real Neo4j. The test name ("metadata_json") already
+    # documented the intended behavior.
+    assert params["metadata"] == '{"k": "v"}' and out == "asset-db-1"
 
 
 # --------------------------------------------------------------------------- #

@@ -42,6 +42,22 @@ recovery→projected to Neo4j, contrast→old behavior loses it). **Remaining:**
 same pattern to `add_endpoint`/workflow writes; promote the tmp proof to a marked
 integration test.
 
+### Update 2026-08-02 — endpoint + asset outbox COMPLETED + PROVEN ON LIVE STACK.
+- `add_endpoint`/`add_asset` gained a `_from_outbox` guard + enqueue `model_dump(mode="json")`;
+  `OutboxProcessor` gained `endpoint`/`asset` projection branches (mirroring `vulnerability`).
+- **Real pre-existing bug found + fixed** via the live proof: `add_asset` passed `metadata` (a dict)
+  raw into Cypher → Neo4j rejects map properties → **every asset write failed**. Now `json.dumps(metadata)`
+  (AIOSOP-ASSET-MAPPROP). The mock-based unit test asserted the raw dict (the value the live DB rejects)
+  and was updated to the JSON its own name already promised.
+- Live proof `tmp/verify_endpoint_asset_outbox.py`: 8/8 PASS (outage→queued in PG, recovery→projected to Neo4j).
+- **STILL OPEN: attack_path.** Its producer (`graph_memory.py` ~:989) enqueues a *minimal custom payload*
+  (`node_ids`/`edges`/…), NOT a model dump, AND enqueues UNCONDITIONALLY (on success, not just on failure).
+  So the naive "reconstruct AttackPath + call add_attack_path(_from_outbox=True)" fix is WRONG twice:
+  (a) `AttackPath(**payload)` raises (missing required fields); (b) without a `_from_outbox` guard the
+  projector re-enqueues every tick → infinite outbox growth even with healthy Neo4j. The correct projector
+  must RE-RUN the LEADS_TO Cypher from `node_ids`+`edges`, and `add_attack_path` needs a `_from_outbox`
+  guard on its unconditional enqueue. Left for a coordinated session (touches actively-churning code).
+
 **Problem.** `memory/outbox_processor.py:59` replicates **only** `entity_type == "task"` to Neo4j.
 `Vulnerability`/`Endpoint`/`Workflow` writes go straight to `graph_memory.add_*` (Cypher). A Neo4j
 blip during a scan loses those findings with no replay path. A single finding write also spans

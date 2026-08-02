@@ -238,7 +238,10 @@ class GraphMemory:
                 "value": asset.value,
                 "source": asset.source,
                 "confidence": asset.confidence,
-                "metadata": asset.metadata,
+                # Neo4j rejects map properties (Property values can only be primitive
+                # types or arrays). asset.metadata is a dict -> serialize like
+                # add_endpoint does for request_headers_sample. (AIOSOP-ASSET-MAPPROP)
+                "metadata": json.dumps(asset.metadata),
                 "first_seen": asset.first_seen.isoformat(),
                 "last_seen": asset.last_seen.isoformat(),
                 "engagement_id": asset.engagement_id,
