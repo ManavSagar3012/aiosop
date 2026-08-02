@@ -1,0 +1,259 @@
+sssssssssssssssssssssssss.............................s................. [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+.........s.............................................................. [ 12%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+.................................................s...................... [ 22%]
+........................................................................ [ 25%]
+........................................................................ [ 28%]
+.................s...................................................... [ 31%]
+........................................................................ [ 34%]
+.......................ss............................................... [ 37%]
+........................................................................ [ 41%]
+........................................................................ [ 44%]
+........................................................................ [ 47%]
+........................................................................ [ 50%]
+........................................................................ [ 53%]
+........................................................................ [ 56%]
+........................................................................ [ 59%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+..................ss.................................................... [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 82%]
+........................................................................ [ 85%]
+........................................................................ [ 88%]
+........................................................................ [ 91%]
+..............s......................................................... [ 94%]
+........................................................................ [ 97%]
+.................................................                        [100%]
+============================== warnings summary ===============================
+tests/test_adversarial_audit.py::test_phase_race_detected
+tests/test_safety_approval_authority.py::test_real_operator_approval_allows_dispatch
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:2124: RuntimeWarning: coroutine 'ApprovalCoordinator._wait_for_approval' was never awaited
+    setattr(_type, entry, MagicProxy(entry, self))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_agent_recovery_e2e.py: 5 warnings
+tests/test_busy_agents.py: 5 warnings
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\src\ai_osop\memory\session_memory.py:295: DeprecationWarning: Call to deprecated close. (Use aclose() instead) -- Deprecated since version 5.0.1.
+    await self._redis.close()
+
+tests/test_api_v2.py::test_health_endpoint
+tests/test_api_v2.py::test_metrics_endpoint
+tests/test_api_v2.py::test_api_startup_registers_agents
+tests/test_api_v2.py::test_root_not_found
+tests/test_api_v2.py::test_websocket_endpoint
+tests/test_api_v2.py::test_submit_finding_endpoint_success
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py:1907: RuntimeWarning: coroutine 'BaseLLMHTTPHandler.async_completion' was never awaited
+    handle = self._ready.popleft()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_approval_workflow.py::test_approval_workflow_success
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\src\ai_osop\orchestrator\approval_coordinator.py:51: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    if not session.scope.verify_signature(scope_signing_key()):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_auto_chain.py: 1 warning
+tests/test_graphql_agent.py: 1 warning
+tests/test_health_api.py: 1 warning
+tests/test_js_analyzer_agent.py: 1 warning
+tests/test_mobile_agent.py: 1 warning
+tests/test_nextjs_agent.py: 1 warning
+tests/test_react_agent.py: 1 warning
+tests/test_reaper_inmem_sync.py: 1 warning
+tests/test_reporting_regression.py: 1 warning
+tests/test_stateful_logic_agent.py: 2 warnings
+tests/test_stored_xss_scan_unit.py: 1 warning
+tests/test_task_execution_timeout.py: 1 warning
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:2124: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    setattr(_type, entry, MagicProxy(entry, self))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_browser_action_timeout.py::test_default_is_bounded_well_under_agent_ceiling
+tests/test_browser_action_timeout.py::test_env_override_respected
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\mcp-servers\python\browser_mcp.py:282: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+tests/test_browser_action_timeout.py::test_default_is_bounded_well_under_agent_ceiling
+tests/test_browser_action_timeout.py::test_default_is_bounded_well_under_agent_ceiling
+tests/test_browser_action_timeout.py::test_env_override_respected
+tests/test_browser_action_timeout.py::test_env_override_respected
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\.venv\Lib\site-packages\fastapi\applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+tests/test_browser_action_timeout.py::test_default_is_bounded_well_under_agent_ceiling
+tests/test_browser_action_timeout.py::test_env_override_respected
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\mcp-servers\python\browser_mcp.py:304: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+tests/test_codeql_agent.py::test_ingest_sarif_dict
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\inspect.py:2328: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    return _signature_fromstr(cls, func, s, skip_bound_arg)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_codeql_agent.py::test_unknown_task_type
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object AsyncMockMixin._execute_mock_call at 0x0000017070204340>
+  
+  Traceback (most recent call last):
+    File "<string>", line 1, in <lambda>
+  KeyError: '__import__'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_codeql_agent.py::test_unknown_task_type
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object AsyncMockMixin._execute_mock_call at 0x0000017074073140>
+  
+  Traceback (most recent call last):
+    File "<string>", line 1, in <lambda>
+  KeyError: '__import__'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_codeql_agent.py::test_unknown_task_type
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object AsyncMockMixin._execute_mock_call at 0x0000017074072F40>
+  
+  Traceback (most recent call last):
+    File "<string>", line 1, in <lambda>
+  KeyError: '__import__'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_codeql_agent.py::test_unknown_task_type
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object AsyncMockMixin._execute_mock_call at 0x0000017074073E40>
+  
+  Traceback (most recent call last):
+    File "<string>", line 1, in <lambda>
+  KeyError: '__import__'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_codeql_agent.py::test_unknown_task_type
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object AsyncMockMixin._execute_mock_call at 0x0000017074073B40>
+  
+  Traceback (most recent call last):
+    File "<string>", line 1, in <lambda>
+  KeyError: '__import__'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_codeql_agent.py::test_unknown_task_type
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object AsyncMockMixin._execute_mock_call at 0x0000017074073440>
+  
+  Traceback (most recent call last):
+    File "<string>", line 1, in <lambda>
+  KeyError: '__import__'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_findings_router_coverage.py::test_get_findings_cvss_drives_evscore_over_severity
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\typing.py:1964: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    _is_callable_members_only(cls)) and
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_health_api.py::test_readiness_503_when_redis_down
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\src\ai_osop\api\health.py:135: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    async with engine.connect() as conn:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_js_analyzer_agent.py::test_analyze_js_with_multiple_aws_keys
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:644: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    raise AttributeError(name)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_lint_guards.py::test_no_bare_except[ai_osop\\adapters\\browser_mcp.py]
+tests/test_lint_guards.py::test_no_bare_except[ai_osop\\api\\main.py]
+tests/test_no_dead_code.py::test_no_duplicate_method_definitions[orchestrator.py]
+tests/test_no_dead_code.py::test_no_duplicate_method_definitions[task_scheduler.py]
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\ast.py:50: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    return compile(source, filename, mode, flags,
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_lint_guards.py::test_no_bare_except[ai_osop\\agents\\vuln_agent.py]
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\src\ai_osop\agents\vuln_agent.py:43: DeprecationWarning: invalid escape sequence '\('
+    _DOM_XSS_SCAN_JS = """
+
+tests/test_mobile_agent.py::test_intercept_mobile_traffic_honest_without_proxy
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\inspect.py:755: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    def _is_wrapper(f):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_observability_health.py::TestHealthEndpoints::test_health_returns_200
+tests/test_observability_health.py::TestHealthEndpoints::test_ready_without_deps_returns_200
+tests/test_observability_health.py::TestHealthEndpoints::test_ready_fails_when_redis_unhealthy
+tests/test_observability_health.py::TestHealthEndpoints::test_ready_fails_when_neo4j_unhealthy
+tests/test_observability_middleware.py::TestCorrelationIdMiddleware::test_generates_request_id_when_missing
+tests/test_observability_middleware.py::TestCorrelationIdMiddleware::test_uses_provided_request_id
+tests/test_observability_middleware.py::TestCorrelationIdMiddleware::test_returns_request_id_in_response
+tests/test_observability_middleware.py::TestCorrelationIdMiddleware::test_extracts_traceparent_as_request_id
+tests/test_observability_middleware.py::TestCorrelationIdMiddleware::test_binds_to_structlog_context
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\.venv\Lib\site-packages\httpx\_client.py:1437: DeprecationWarning: The 'app' shortcut is now deprecated. Use the explicit style 'transport=ASGITransport(app=...)' instead.
+    warnings.warn(message, DeprecationWarning)
+
+tests/test_payload_engine.py::test_evolve_population
+  C:\Users\HP\OneDrive\Desktop\burp_mcp\ai-osop\src\ai_osop\payload_engine\engine.py:314: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    success = PayloadFitnessEvaluator._success_indicator(response, waf_detected)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_recon_agent_coverage.py::TestContentDiscovery::test_katana_failure_returns_error_status
+tests/test_workflow_agent_coverage.py::test_setup_resources_initialises_collaborators
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\inspect.py:3159: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    for param in itertools.chain(parameters_ex, parameters):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_safety_approval_authority.py::test_gate_ignores_tampered_payload
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\inspect.py:2237: RuntimeWarning: coroutine 'ApprovalCoordinator._wait_for_approval' was never awaited
+    def visit_Name(self, node):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_workflow_agent_coverage.py::test_coupon_probe_rejected_reuse_produces_no_finding
+  C:\Users\HP\AppData\Local\Programs\Python\Python311\Lib\inspect.py:2237: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    def visit_Name(self, node):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2247 passed, 34 skipped, 70 warnings in 743.47s (0:12:23)
