@@ -117,3 +117,27 @@ def test_exploitation_entry_requires_manual_approval():
     row = Orchestrator.PHASE_POLICY[EngagementPhase.EXPLOITATION]
     assert row["manual_approval"] is True
     assert row["auto_next"] is EngagementPhase.POST_EXPLOITATION
+
+
+@pytest.mark.asyncio
+async def test_auto_advance_halts_before_exploitation():
+    """Gate (Task 26): when phase-completion would roll VULNERABILITY_DISCOVERY
+    into EXPLOITATION, the monitor halts auto-advance and raises an ApprovalRequest
+    instead. The suite's TestPhaseEntryApprovalGate class covers the deeper
+    lifecycle; this is the canonical single-case gate regression probe."""
+    from ai_osop.orchestrator.orchestrator import EngagementPhase
+    from tests.test_orchestrator_transitions import (
+        _make_monitor_orch,
+        _make_session,
+    )
+
+    orch, monitor = _make_monitor_orch(
+        EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION, manual=True
+    )
+    session = _make_session(EngagementPhase.VULNERABILITY_DISCOVERY)
+    await monitor._auto_advance_phase(session)
+
+    orch.engagement_manager.transition_phase.assert_not_called()
+    orch.approval_coordinator._raise_approval.assert_awaited_once()
+    req = orch.approval_coordinator._raise_approval.await_args.args[0]
+    assert req.engagement_id == "eng-1"

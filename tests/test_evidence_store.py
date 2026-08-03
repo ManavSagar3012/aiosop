@@ -154,3 +154,33 @@ async def test_export_bundle_redacts_and_never_submits(sa_engine, tmp_path):
     assert "stored XSS" in bundle["markdown"]
     for rec in bundle["receipts"]:
         assert "Bearer" not in str(rec.get("request_summary", {}))
+
+
+async def test_export_bundle_no_raw_secrets(sa_engine, tmp_path):
+    """Gate (Task 26): a bundle export must not contain any raw session/auth bearer
+    material. All cookies/tokens/authorization values have been scrubbed at capture
+    time; this asserts the export path does not reconstruct them."""
+    from ai_osop.evidence.migrations import ensure_schema
+    from ai_osop.evidence.models import ExploitReceipt
+    from ai_osop.evidence.store import ReceiptStore
+    from ai_osop.safety.scope import AuditIntegrity
+
+    await ensure_schema(sa_engine)
+    store = ReceiptStore(sa_engine=sa_engine, integrity=AuditIntegrity(b"k-secret-gate"), evidence_root=tmp_path)
+    await store.record(ExploitReceipt(
+        receipt_id="rx-sec", engagement_id="e-sec", vuln_id="v-sec",
+        approval_id="apr-sec", verdict="confirmed", confidence=0.95,
+        confirmation_note="chain completed",
+        oracle_signals={},
+        request_summary={"method": "GET", "url": "https://t/api",
+                          "headers": {"Authorization": "[REDACTED:sha256:a1b2]",
+                                        "Cookie": "[REDACTED:sha256:c3d4]"}},
+        response_summary={"http_code": 200,
+                          "body": "{\"token\": \"[REDACTED:sha256:e5f6]\"}"},
+        scope_hash="",
+    ))
+    bundle = await store.export_bundle("v-sec")
+    md = bundle["markdown"]
+    serialized = str(bundle)
+    for forbidden in ("Bearer abc", "session=", "live-token", "api_key="):
+        assert forbidden not in serialized, f"export_bundle leaked {forbidden!r}"

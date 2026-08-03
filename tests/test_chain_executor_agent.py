@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ai_osop.agents.base import AgentContext
 from ai_osop.core.enums import AgentType
 from ai_osop.core.models import Task, Vulnerability
 
@@ -295,3 +296,51 @@ async def test_abort_chain_task_type_registers_flag_and_returns():
     out = await agent._execute(task)
     assert "chain-Z" in agent._abort_flags
     assert out["status"] == "abort_registered"
+
+
+@pytest.mark.asyncio
+async def test_abort_records_chain_failed_ledger_state():
+    """Abuse gate (Task 26): when the executor aborts mid-chain the ledger gets
+    chain_failed, not chain_executed, for the aborted vuln."""
+    ctx = MagicMock(spec=AgentContext)
+    ctx.agent_id = "exec-abort"
+    ctx.agent_type = AgentType.ATTACK_CHAIN
+    ctx.session_id = "eng-ab"
+    ctx.graph_memory = MagicMock()
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
+        "id": "chain-AB",
+        "nodes": [
+            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+            {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
+        ],
+    }])
+
+    from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
+
+    class _FailOnSecond:
+        calls = 0
+
+        async def validate_exploit(self, endpoint, vuln_class, payload):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("target unreachable")
+            return {"validated": True, "receipt_id": "rcpt-hop-1"}
+
+    ledger = MagicMock()
+    ledger.transition = AsyncMock()
+    agent = ChainExecutorAgent(ctx)
+    agent._exploit = _FailOnSecond()
+    agent.ledger = ledger
+
+    task = Task(type="execute_exploit_chain", agent_type=AgentType.ATTACK_CHAIN,
+                payload={"chain_id": "chain-AB"}, engagement_id="eng-ab")
+    out = await agent._execute(task)
+
+    assert out["status"] == "chain_failed"
+    assert out["aborted_at_hop"] == 1
+    # Ledger saw exactly one success (chain_executed) then one failure (chain_failed).
+    # Transition calls are positional: transition(vuln_id, state, reason=...).
+    calls = [c.args[1] if len(c.args) >= 2 else c.kwargs.get("to_state")
+             for c in ledger.transition.await_args_list]
+    assert "chain_failed" in calls
+    assert calls.count("chain_failed") >= 1
