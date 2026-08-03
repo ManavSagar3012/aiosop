@@ -7,6 +7,7 @@ Manages session state, agent working memory, and checkpoints.
 import hashlib
 import json
 import time
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -552,7 +553,15 @@ class SessionMemory:
         return pubsub
 
     async def push_task_queue(self, queue_name: str, task: Dict[str, Any]) -> None:
-        """Push task to priority queue with adaptive scheduling (Sprint 9)."""
+        """Push task to priority queue with adaptive scheduling (Sprint 9).
+
+        ``queue_name`` is the LOGICAL queue name (e.g. ``tasks:{engagement_id}``).
+        Callers that want tenant isolation pass ``tenant_queue_key(tenant, name)``
+        (which already prepends ``queue:{tenant_scope}::``); this method adds the
+        single ``queue:`` storage prefix. A queue name already carrying a leading
+        ``queue:`` is left untouched so the caller's prefix is not doubled
+        (AIOSOP-QUEUE-KEY-001: the push/pop sides must agree on the exact key).
+        """
         with trace_span("redis.zadd", attributes={"ai_osop.redis.queue": queue_name}):
             r = await self._ensure_redis()
 
@@ -600,17 +609,44 @@ class SessionMemory:
 
             # Update task object's priority property to reflect the adaptive scheduling
             task["priority"] = priority
-            await r.zadd(f"queue:{queue_name}", {json.dumps(task, default=str): priority})
+            storage_key = queue_name if queue_name.startswith("queue:") else f"queue:{queue_name}"
+            await r.zadd(storage_key, {json.dumps(task, default=str): priority})
 
     async def pop_task_queue(self, queue_name: str) -> Optional[Dict[str, Any]]:
-        """Pop highest priority task from queue."""
+        """Pop highest priority task from queue.
+
+        Matches ``push_task_queue``'s key handling exactly (AIOSOP-QUEUE-KEY-001):
+        an already-``queue:``-prefixed name is used verbatim, otherwise the
+        ``queue:`` prefix is added — so callers may pass either the logical name
+        or the tenant_queue_key form and push/pop always agree.
+        """
         with trace_span("redis.zpopmax", attributes={"ai_osop.redis.queue": queue_name}):
             r = await self._ensure_redis()
-            result = await r.zpopmax(f"queue:{queue_name}")
+            storage_key = queue_name if queue_name.startswith("queue:") else f"queue:{queue_name}"
+            result = await r.zpopmax(storage_key)
             if result:
                 task_json, _ = result[0]
                 return json.loads(task_json)
             return None
+
+    # ============== HOT TIER (Redis) — list helpers ==============
+    # Thin public wrappers over Redis RPUSH/LRANGE so consumers (e.g. the
+    # DeadLetterQueue) never reach into the private ``_redis`` attribute. They
+    # route through ``_ensure_redis`` (reconnect-on-demand) and the metrics
+    # wrapper, matching store_hot/retrieve_hot.
+
+    async def list_push(self, key: str, value: str) -> None:
+        """Append ``value`` to the Redis list at ``key`` (RPUSH)."""
+        with trace_span("redis.rpush", attributes={"ai_osop.redis.key": key}):
+            r = await self._ensure_redis()
+            await r.rpush(key, value)  # type: ignore[misc]
+
+    async def list_range(self, key: str, start: int = 0, end: int = -1) -> List[str]:
+        """Return the slice [start, end] of the Redis list at ``key`` (LRANGE)."""
+        with trace_span("redis.lrange", attributes={"ai_osop.redis.key": key}):
+            r = await self._ensure_redis()
+            raw = await r.lrange(key, start, end)  # type: ignore[misc]
+            return [v.decode() if isinstance(v, bytes) else v for v in raw]
 
     # ============== WARM TIER (PostgreSQL) ==============
 
