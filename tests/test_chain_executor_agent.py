@@ -300,6 +300,58 @@ async def test_abort_chain_task_type_registers_flag_and_returns():
 
 @pytest.mark.asyncio
 async def test_abort_records_chain_failed_ledger_state():
+    """Gate (Task 26): when a hop aborts (boom in the exploit facade), the
+    ledger MUST record a chain_failed transition for the affected vuln, and the
+    outcome status must be chain_failed — leaving an auditable terminal state."""
+    from ai_osop.agents.base import AgentContext
+
+    ctx = MagicMock(spec=AgentContext)
+    ctx.agent_id = "exec-gate"
+    ctx.agent_type = AgentType.ATTACK_CHAIN
+    ctx.session_id = "eng-gate"
+    ctx.graph_memory = MagicMock()
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
+        "id": "chain-G", "nodes": [
+            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+        ],
+    }])
+
+    class _BoomFacade:
+        async def validate_exploit(self, endpoint, vuln_class, payload):
+            raise RuntimeError("exploit boom")
+
+    class _LedgerStub:
+        def __init__(self):
+            self.calls = []
+
+        async def transition(self, event_id: str, to_state: str, reason: str = "") -> None:
+            self.calls.append((event_id, to_state, reason))
+
+    from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
+
+    agent = ChainExecutorAgent(ctx)
+    agent._exploit = _BoomFacade()
+    ledger = _LedgerStub()
+    agent.ledger = ledger
+
+    task = Task(
+        type="execute_exploit_chain",
+        agent_type=AgentType.ATTACK_CHAIN,
+        payload={"chain_id": "chain-G"},
+        engagement_id="eng-gate",
+    )
+    out = await agent._execute(task)
+
+    assert out["status"] == "chain_failed"
+    assert ledger.calls, "ledger saw no transition — chain_failed state not recorded"
+    assert any(
+        event_id == "v-1" and to_state == "chain_failed"
+        for (event_id, to_state, _reason) in ledger.calls
+    ), f"expected ledger transition (v-1, chain_failed), got: {ledger.calls}"
+
+
+@pytest.mark.asyncio
+async def test_abort_records_chain_failed_ledger_state():
     """Abuse gate (Task 26): when the executor aborts mid-chain the ledger gets
     chain_failed, not chain_executed, for the aborted vuln."""
     ctx = MagicMock(spec=AgentContext)
