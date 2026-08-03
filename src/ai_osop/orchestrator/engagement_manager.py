@@ -116,13 +116,43 @@ class EngagementManager:
                     handle = handles.pop(task.id, None)
                     if handle is not None and not handle.done():
                         handle.cancel()
+                    # Tech-debt fix (2026-07-20): persist the cancelled status.
+                    # The previous code flipped the in-memory status only; a
+                    # restart mid-halt re-loaded the durable task still marked
+                    # ``running`` and the reaper requeued it, resurrecting work
+                    # the operator explicitly killed. Persist best-effort so the
+                    # durable view matches the in-memory kill.
+                    try:
+                        await self._orch.graph_memory.upsert_task(task)
+                        await self._orch.session_memory.store_task(task)
+                    except Exception as e:  # noqa: BLE001 - halt must proceed
+                        logger.warning("halt_persist_cancelled_failed", task_id=task.id, error=str(e))
 
             # Drain any queued tasks for this engagement so the scheduler can't pull
             # and dispatch them after the halt (bounded so a flood can't spin forever).
+            # AIOSOP-QUEUE-KEY-001: producers push tenant-scoped keys with the
+            # CANONICAL engagement id suffix; drain the same key (and the legacy
+            # bare-key form) so the halt actually stops queued work. The old code
+            # drained ``tasks:{session_id}`` — a key nothing ever wrote to — so
+            # queued tasks survived the halt and were dispatched after it.
             try:
+                from ai_osop.core.tenant_isolation import tenant_queue_key
+
+                _org = getattr(session.scope, "organization_id", None)
+                _tenant = "default" if not isinstance(_org, str) or not _org else _org
+                drain_keys = [
+                    tenant_queue_key(_tenant, f"tasks:{session.canonical_engagement_id}"),
+                    f"tasks:{session.session_id}",
+                    f"tasks:{session.canonical_engagement_id}",
+                ]
                 for _ in range(1000):
-                    item = await self._orch.session_memory.pop_task_queue(f"tasks:{session_id}")
-                    if not item:
+                    drained_any = False
+                    for drain_key in drain_keys:
+                        item = await self._orch.session_memory.pop_task_queue(drain_key)
+                        if item:
+                            drained_any = True
+                            break
+                    if not drained_any:
                         break
             except Exception as e:
                 logger.warning("halt_queue_drain_failed", session_id=session_id, error=str(e))

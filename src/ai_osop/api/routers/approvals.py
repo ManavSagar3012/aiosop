@@ -5,7 +5,7 @@ Approval workflow endpoints for human-in-the-loop gates.
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ai_osop.api.deps import (
     ApprovalDecisionRequest,
@@ -17,10 +17,24 @@ from ai_osop.api.deps import (
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
+# AIOSOP-SCALE-005 (2026-08-03): bound the pending-approvals dump. The router
+# previously returned every pending request with no limit — a fleet of parked
+# exploit tasks or a long-lived engagement can leave hundreds. Server-side
+# default cap + offset like list_tasks/findings.
+_DEFAULT_APPROVALS_LIMIT = 200
+_MAX_APPROVALS_LIMIT = 2000
+
 
 @router.get("/pending")
-async def list_pending_approvals(operator: Dict[str, Any] = Depends(verify_token)):
-    """List all pending approval requests visible to the operator."""
+async def list_pending_approvals(
+    limit: int = Query(_DEFAULT_APPROVALS_LIMIT, ge=1),
+    offset: int = Query(0, ge=0),
+    operator: Dict[str, Any] = Depends(verify_token),
+):
+    """List all pending approval requests visible to the operator.
+
+    Bounded by ``limit``/``offset`` (default 200, max 2000).
+    """
     pending = [
         req.model_dump()
         for req in state["orchestrator"]._approval_requests.values()
@@ -33,7 +47,8 @@ async def list_pending_approvals(operator: Dict[str, Any] = Depends(verify_token
             if sess.created_by == operator.get("sub"):
                 accessible.add(sid)
         pending = [p for p in pending if p.get("engagement_id") in accessible]
-    return pending
+    effective = min(limit, _MAX_APPROVALS_LIMIT)
+    return pending[offset : offset + effective]
 
 
 @router.get("/{request_id}")

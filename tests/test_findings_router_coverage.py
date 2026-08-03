@@ -28,7 +28,6 @@ from ai_osop.api.routers import findings as findings_router
 from ai_osop.core.enums import EngagementPhase
 from ai_osop.core.models import ScopeDefinition, SessionState
 
-
 # --------------------------------------------------------------------------- #
 # Fakes                                                                       #
 # --------------------------------------------------------------------------- #
@@ -229,6 +228,56 @@ async def test_get_findings_cvss_drives_evscore_over_severity(app_with_findings,
     assert findings[0]["evScore"] == 98  # round(9.8 * 10)
 
 
+async def test_get_findings_paginates(app_with_findings, bound_state):
+    """AIOSOP-SCALE-004: get_findings honors limit/offset instead of dumping
+    every node; default cap is 200, server-side max 2000."""
+    app, _fake_verify = app_with_findings
+    session = _session()
+    nodes = [
+        {"id": f"v-{i}", "severity": "low", "cvss_score": 0.0, "validated": False} for i in range(5)
+    ]
+    graph = _fake_graph()
+    graph.get_vulnerabilities_by_engagement = AsyncMock(return_value=list(nodes))
+    orch = _fake_orch(session=session, graph=graph)
+    bound_state(orch)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        # Default limit returns everything for a small set.
+        r1 = await client.get(f"/engagements/{session.session_id}/findings")
+        assert r1.status_code == 200
+        assert len(r1.json()) == 5
+        # limit=2 -> first two.
+        r2 = await client.get(f"/engagements/{session.session_id}/findings", params={"limit": 2})
+        assert [f["id"] for f in r2.json()] == ["v-0", "v-1"]
+        # offset skips the first page.
+        r3 = await client.get(
+            f"/engagements/{session.session_id}/findings", params={"limit": 2, "offset": 2}
+        )
+        assert [f["id"] for f in r3.json()] == ["v-2", "v-3"]
+
+
+async def test_get_findings_caps_server_side_limit(app_with_findings, bound_state):
+    """AIOSOP-SCALE-004: a client asking for more than _MAX_FINDINGS_LIST_LIMIT
+    is capped by the server (never unbounded)."""
+    app, _fake_verify = app_with_findings
+    session = _session()
+    nodes = [
+        {"id": f"v-{i}", "severity": "low", "cvss_score": 0.0, "validated": False}
+        for i in range(10)
+    ]
+    graph = _fake_graph()
+    graph.get_vulnerabilities_by_engagement = AsyncMock(return_value=list(nodes))
+    orch = _fake_orch(session=session, graph=graph)
+    bound_state(orch)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.get(
+            f"/engagements/{session.session_id}/findings", params={"limit": 10**6}
+        )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 10  # server capped at _MAX_FINDINGS_LIST_LIMIT (2000)
+
+
 # --------------------------------------------------------------------------- #
 # GET /engagements/{sid}/uncertainty                                          #
 # --------------------------------------------------------------------------- #
@@ -371,7 +420,9 @@ async def test_get_diff_auth_returns_ranked_records(app_with_findings, bound_sta
     assert rows[0]["confidence"] == 0.9
 
 
-async def test_get_diff_auth_handles_malformed_diff_json(app_with_findings, bound_state, monkeypatch):
+async def test_get_diff_auth_handles_malformed_diff_json(
+    app_with_findings, bound_state, monkeypatch
+):
     app, _fake_verify = app_with_findings
     session = _session()
     graph = _fake_graph()
@@ -414,9 +465,7 @@ async def test_verify_finding_success(app_with_findings, bound_state):
     bound_state(orch)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-        resp = await client.post(
-            f"/engagements/{session.session_id}/findings/vuln-42/verify"
-        )
+        resp = await client.post(f"/engagements/{session.session_id}/findings/vuln-42/verify")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "verified"
@@ -434,9 +483,7 @@ async def test_verify_finding_missing_returns_404(app_with_findings, bound_state
     bound_state(orch)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-        resp = await client.post(
-            f"/engagements/{session.session_id}/findings/nope/verify"
-        )
+        resp = await client.post(f"/engagements/{session.session_id}/findings/nope/verify")
     assert resp.status_code == 404
     assert "Finding not found" in resp.json()["detail"]
     # No mutation happened
@@ -493,9 +540,7 @@ async def test_replay_finding_schedules_task_with_canonical_id(app_with_findings
     bound_state(orch)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-        resp = await client.post(
-            f"/engagements/{session.session_id}/findings/vuln-77/replay"
-        )
+        resp = await client.post(f"/engagements/{session.session_id}/findings/vuln-77/replay")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "queued"
@@ -625,9 +670,7 @@ async def test_replay_workflow_queues_task(app_with_findings, bound_state):
     bound_state(orch)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-        resp = await client.post(
-            f"/engagements/{session.session_id}/workflows/wf-42/replay"
-        )
+        resp = await client.post(f"/engagements/{session.session_id}/workflows/wf-42/replay")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "queued"

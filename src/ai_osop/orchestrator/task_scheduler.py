@@ -1709,5 +1709,29 @@ class TaskScheduler:
         await self._orch.schedule_task(child)
 
     async def _persist_task_dependency(self, parent: Task, child: Task) -> None:
-        """Persist a parent→child dependency in the graph."""
-        await self._orch.graph_memory.link_task_dependency(parent.id, child.id)
+        """Persist a parent→child dependency in the graph.
+
+        AIOSOP-DEPEDGE-001 (2026-08-03): this previously called the nonexistent
+        ``graph_memory.link_task_dependency`` — every invocation raised
+        AttributeError (the EXPLOITATION phase entry at phase_monitor.py:1127 hit
+        it live, and engagement_manager.transition_phase reverted the in-memory
+        phase and raised WorkflowException on the hook failure). The same
+        parent→child ``SPAWNED`` edge is what ``_chain_authenticated_surface``
+        already writes with ``run_write_query`` (the generic parameterized Cypher
+        writer) and what ``get_task_dependents`` reads, so the durable
+        dependency edge now reuses that exact writer and shape: MERGE keeps it
+        idempotent, best-effort so a Neo4j blip can never break task scheduling.
+        """
+        try:
+            await self._orch.graph_memory.run_write_query(
+                "MATCH (p:Task {id: $parent_id}), (c:Task {id: $child_id}) "
+                "MERGE (p)-[:SPAWNED]->(c)",
+                {"parent_id": parent.id, "child_id": child.id},
+            )
+        except Exception as e:  # noqa: BLE001 - dependency edge is best-effort
+            logger.warning(
+                "task_dependency_persist_failed",
+                parent_id=parent.id,
+                child_id=child.id,
+                error=str(e)[:200],
+            )

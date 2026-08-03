@@ -181,6 +181,18 @@ class DiffAuthAnalyzer:
                     "sensitive_fields": sensitive,
                     "expected": "401/403 (denied)",
                     "observed": f"{test_r.get('status_code')} with matching resource body",
+                    # R1/R2 (2026-07-20): register the request/response evidence
+                    # kinds on the persisted finding so the scorer's
+                    # ``evidence_completeness`` is honest (was 0.0) and an
+                    # operator can reproduce the diff-auth replay without
+                    # re-running it. ``request_url`` (replay URL) aliases to
+                    # 'request' and ``response`` carries the captured body.
+                    # ``status`` is the test-identity's status code — the
+                    # manifest's JS-003 expected_evidence token (a real,
+                    # captured response status, not an invented artifact).
+                    "status": test_r.get("status_code"),
+                    "request": test_r.get("request_url") or url,
+                    "response": test_r.get("response", ""),
                 }
             ],
         )
@@ -217,7 +229,7 @@ class DiffAuthAnalyzer:
         try:
             async with self.session_store.as_user(engagement_id, label) as client:
                 resp = await client.request(method, url)
-                return self._from_response(resp)
+                return self._from_response(resp, request_url=url)
         except Exception as e:
             return {
                 "status_code": 0,
@@ -233,7 +245,7 @@ class DiffAuthAnalyzer:
         try:
             async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as c:
                 resp = await c.request(method, url)
-                return self._from_response(resp)
+                return self._from_response(resp, request_url=url)
         except Exception as e:
             return {
                 "status_code": 0,
@@ -246,7 +258,7 @@ class DiffAuthAnalyzer:
             }
 
     @staticmethod
-    def _from_response(resp: httpx.Response) -> Dict[str, Any]:
+    def _from_response(resp: httpx.Response, request_url: str = "") -> Dict[str, Any]:
         ct = resp.headers.get("content-type", "")
         sig = _classify_body(resp.content, ct)
         return {
@@ -254,6 +266,14 @@ class DiffAuthAnalyzer:
             "response_size": len(resp.content),
             "content_type": ct[:120],
             "error": "",
+            # R1/R2 (2026-07-20): the diff_auth evidence never captured the HTTP
+            # request/response bytes, so a finding carried only ``url`` in its
+            # evidence and the scorer could not register a real 'response'
+            # artifact (evidence_completeness=0.0 on the autonomous scorecard).
+            # Capture the truncated request URL and response body so the
+            # persisted finding is reproducible without re-running the replay.
+            "request_url": request_url,
+            "response": (resp.text or "")[:4096],
             **sig,
         }
 

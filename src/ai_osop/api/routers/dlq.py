@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ai_osop.api.deps import require_role, state
+from ai_osop.api.deps import assert_engagement_access, require_role, state
 from ai_osop.core.models import AuditEvent
 from ai_osop.core.tracing import trace_span
 from ai_osop.reliability.dlq import DLQEntry
@@ -41,14 +41,20 @@ async def list_dlq_entries(
         if not orchestrator:
             raise HTTPException(status_code=503, detail="Orchestrator not available")
 
-        # Ownership check: if user is not senior_operator, restrict to their engagement
+        # Ownership check: if user is not senior_operator, restrict to their engagement.
+        # AIOSOP-DLQ-AUTHZ-001 (2026-08-03): the old check compared against
+        # ``operator.get("engagement_id")`` — a claim that exists on NO identity
+        # (JWT claims are sub/role/tenant_id; the static-token identity is
+        # sub/role/tenant_id too), so every non-senior operator was rejected 403
+        # and the DLQ audit endpoints were dead for the operators who need them.
+        # The operator's engagement is "one they created"; resolve it through the
+        # same assert_engagement_access tenant + ownership rules.
         if operator.get("role") != "senior_operator":
             if not engagement_id:
                 raise HTTPException(
                     status_code=403, detail="engagement_id required for non-senior operators"
                 )
-            if engagement_id != operator.get("engagement_id"):
-                raise HTTPException(status_code=403, detail="Not authorized for this engagement")
+            await assert_engagement_access(operator, engagement_id)
 
         entries = await orchestrator.session_memory.list_dlq_entries(engagement_id, status)
         return DLQListResponse(entries=entries, total=len(entries))
@@ -69,10 +75,11 @@ async def get_dlq_entry(
         if not entry:
             raise HTTPException(status_code=404, detail="DLQ entry not found")
 
-        # Ownership check
+        # Ownership check. AIOSOP-DLQ-AUTHZ-001: same dead-claim bug as the list
+        # endpoint — ``operator.get("engagement_id")`` never exists. Route the
+        # entry's engagement through assert_engagement_access (tenant + ownership).
         if operator.get("role") != "senior_operator":
-            if entry.engagement_id != operator.get("engagement_id"):
-                raise HTTPException(status_code=403, detail="Not authorized for this engagement")
+            await assert_engagement_access(operator, entry.engagement_id)
 
         return entry
 

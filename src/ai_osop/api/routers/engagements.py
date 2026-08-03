@@ -47,8 +47,6 @@ async def create_engagement(
         authorization_ref=request.authorization_ref,
     )
 
-    import traceback as _tb
-
     _orch = state.get("orchestrator")
     if _orch is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -56,10 +54,17 @@ async def create_engagement(
         session = await _orch.create_engagement(scope, request.roe, created_by=operator.get("sub"))
         return session
     except Exception:
-        _tb_content = _tb.format_exc()
+        # AIOSOP-ERROR-DISCLOSURE (2026-08-03): the previous handler returned up
+        # to 2000 chars of the traceback in the HTTP response — internal paths,
+        # hostnames, and stack content leaked to the caller. Log the traceback
+        # server-side; return a generic message. The caller can inspect logs.
+        import logging
+
+        logger = logging.getLogger("ai_osop.api.engagements")
+        logger.exception("engagement_creation_failed")
         raise HTTPException(
             status_code=500,
-            detail=f"Engagement creation failed: {_tb_content[:2000]}",
+            detail="Engagement creation failed — see server logs",
         )
 
 

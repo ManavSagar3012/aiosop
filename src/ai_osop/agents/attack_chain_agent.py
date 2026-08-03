@@ -734,9 +734,37 @@ class AttackChainAgent(BaseAgent):
                         },
                         engagement_id=self.ctx.current_task.engagement_id,
                     )
-                    # Push to orchestrator task queue
+                    # Push to orchestrator task queue. AIOSOP-QUEUE-KEY-001: the
+                    # scheduler pops tenant-scoped keys with the canonical
+                    # engagement id suffix; a bare ``tasks:{id}`` push lands in a
+                    # key no consumer reads (and is not tenant-partitioned). Route
+                    # through tenant_queue_key like schedule_task does.
+                    from ai_osop.core.tenant_isolation import tenant_queue_key
+
+                    _tenant = "default"
+                    # Best-effort tenant resolution: the agent context carries no
+                    # orchestrator handle, so fall back to the API state dict that
+                    # also backs the routers. None/absent -> "default" (matches
+                    # tenant_queue_key's own fallback).
+                    _registry = None
+                    try:
+                        from ai_osop.api.deps import state as _api_state
+
+                        _registry = _api_state.get("orchestrator")
+                    except Exception:  # noqa: BLE001 - tenant resolution is best-effort
+                        _registry = None
+                    _session = (
+                        _registry._sessions.get(self.ctx.current_task.engagement_id)
+                        if _registry is not None
+                        else None
+                    )
+                    _scope = getattr(_session, "scope", None)
+                    _org = getattr(_scope, "organization_id", None)
+                    if isinstance(_org, str) and _org:
+                        _tenant = _org
                     await self.ctx.session_memory.push_task_queue(
-                        f"tasks:{self.ctx.current_task.engagement_id}", task.model_dump()
+                        tenant_queue_key(_tenant, f"tasks:{self.ctx.current_task.engagement_id}"),
+                        task.model_dump(),
                     )
                     validation_results.append(
                         {"node_id": node_id, "status": "validation_scheduled", "task_id": task.id}

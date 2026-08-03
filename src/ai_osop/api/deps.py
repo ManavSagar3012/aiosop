@@ -4,6 +4,7 @@ Centralized auth, shared module-level singletons, and request/response models
 so that routers can import them without circular imports from main.py.
 """
 
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -207,6 +208,16 @@ async def assert_engagement_access(operator: Dict[str, Any], session_id: str) ->
     orch = state.get("orchestrator")
     if orch is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    # AIOSOP-TRAVERSAL-GUARD (2026-08-03): session_id is used to build filesystem
+    # paths in get_report (reports/{session_id}/...) and is matched against session
+    # keys. Reject separators/traversal BEFORE any lookup or disk access so a crafted
+    # id can never escape the reports/ directory or confuse lookup. (Starlette path
+    # params can carry traversal forms when called directly / via proxy.)
+    if session_id and (
+        ".." in session_id or "/" in session_id or "\\" in session_id or os.sep in session_id
+    ):
+        raise HTTPException(status_code=400, detail="invalid engagement id")
 
     session: Optional[SessionState] = orch._sessions.get(session_id)
     if not session:

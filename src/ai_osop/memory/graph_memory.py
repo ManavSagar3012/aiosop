@@ -447,6 +447,8 @@ class GraphMemory:
             v.impact = $impact,
             v.endpoint_id = $endpoint_id,
             v.engagement_id = $engagement_id,
+            v.yield_metadata = $yield_metadata,
+            v.correlated_ids = $correlated_ids,
             v.last_seen = $created_at
         WITH v
         OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
@@ -514,6 +516,10 @@ class GraphMemory:
             "engagement_id": vuln.engagement_id,
             "created_at": vuln.created_at.isoformat(),
             "endpoint_id": vuln.endpoint_id,
+            # AIOSOP-CONF-PERSIST-001: serialize the enrichment metadata and
+            # correlated_ids (Neo4j rejects raw maps/lists-of-maps; JSON-encode).
+            "yield_metadata": json.dumps(getattr(vuln, "yield_metadata", None) or {}, default=str),
+            "correlated_ids": json.dumps(getattr(vuln, "correlated_ids", None) or [], default=str),
         }
         try:
             record = await self._write_vulnerability_cypher(vuln, cypher, params)
@@ -963,8 +969,17 @@ class GraphMemory:
             record = await result.single()
             return record["id"] if record else exploit.id
 
-    async def add_attack_path(self, path: AttackPath) -> str:
-        """Add an attack path with its nodes and edges."""
+    async def add_attack_path(self, path: AttackPath, _from_outbox: bool = False) -> str:
+        """Add an attack path with its nodes and edges.
+
+        The LEADS_TO Cypher is the projection; a full ``AttackPath`` model dump
+        cannot round-trip through the outbox (the model requires ``entry_node_id``,
+        ``goal_node_id``, ``edge_ids``, ``risk_score`` — none of which the writer
+        persists), so the outbox entry carries the minimal ``{node_ids, edges, ...}``
+        payload and the projector re-runs this same Cypher (AIOSOP-ATTACK-OUTBOX).
+        ``_from_outbox=True`` skips the enqueue so the projector cannot re-enqueue
+        itself (infinite outbox growth on every healthy tick).
+        """
         # Create LEADS_TO relationships between consecutive nodes
         cypher = """
         UNWIND $edges as edge
@@ -997,23 +1012,81 @@ class GraphMemory:
 
         # Unlike vulns/endpoints/assets, an attack path is a graph-shaping,
         # path-dependent record — post-write, enqueue for projection on recovery.
-        # payload is encoded minimally; path_id is the write-key.
-        try:
-            outbox_payload = {
-                "id": path.id,
-                "node_ids": path.node_ids,
-                "confidence": path.confidence,
-                "total_time_estimate": path.total_time_estimate,
-                "detection_risk": path.detection_risk,
-                "edges": edges,
-            }
-            await self._enqueue_outbox("attack_path", path.id, outbox_payload)
-        except Exception as obe:  # noqa: BLE001 - never block chain persistence
-            logger.warning(
-                "attack_path_outbox_enqueue_failed id=%s error=%s", path.id, str(obe)[:80]
-            )
+        # payload is encoded minimally; path_id is the write-key. Only enqueue on
+        # the failure path (guarded by _from_outbox); enqueueing on success meant
+        # every healthy write spawned a poison outbox row that OutboxProcessor
+        # DLQ'd after 10 attempts (there was no attack_path handler).
+        if not _from_outbox:
+            try:
+                outbox_payload = {
+                    "id": path.id,
+                    "node_ids": path.node_ids,
+                    "confidence": path.confidence,
+                    "total_time_estimate": path.total_time_estimate,
+                    "detection_risk": path.detection_risk,
+                    "edges": edges,
+                }
+                await self._enqueue_outbox("attack_path", path.id, outbox_payload)
+            except Exception as obe:  # noqa: BLE001 - never block chain persistence
+                logger.warning(
+                    "attack_path_outbox_enqueue_failed id=%s error=%s", path.id, str(obe)[:80]
+                )
 
         return path.id
+
+    async def add_attack_path_from_outbox(self, payload: Dict[str, Any]) -> None:
+        """Re-run the attack-path LEADS_TO projection from a durable outbox payload.
+
+        AIOSOP-ATTACK-OUTBOX: ``add_attack_path`` persists only the edge list (the
+        graph-shaping fact), so on replay we re-run exactly the edges the original
+        write created rather than attempting to reconstruct an ``AttackPath`` model
+        (which needs fields the payload does not carry). MERGE keeps replay
+        idempotent, so a doubly-delivered outbox row cannot duplicate edges.
+        """
+        from ai_osop.core.models import AttackPath
+
+        cypher = """
+        UNWIND $edges as edge
+        OPTIONAL MATCH (from {id: edge.from_id})
+        OPTIONAL MATCH (to {id: edge.to_id})
+        FOREACH (pair IN CASE WHEN from IS NOT NULL AND to IS NOT NULL THEN [1] ELSE [] END |
+            MERGE (from)-[r:LEADS_TO]->(to)
+            SET r.type = edge.type,
+                r.probability = edge.probability,
+                r.time_estimate = edge.time_estimate,
+                r.detection_risk = edge.detection_risk
+        )
+        """
+        async with self._driver.session() as session:
+            await session.run(cypher, {"edges": payload.get("edges", [])})
+        logger.debug(
+            "attack_path_outbox_replayed id=%s edges=%d",
+            payload.get("id"),
+            len(payload.get("edges", [])),
+        )
+
+        # Validate the payload can still construct an AttackPath so a malformed
+        # row fails loudly instead of being marked processed silently. Kept OUT
+        # of the critical path: only raise if required fields are truly absent.
+        # AIOSOP-ATTACK-OUTBOX (2026-08-03): the minimal outbox payload does NOT
+        # carry entry_node_id/goal_node_id/edge_ids/risk_score, so the strict
+        # model_validate raised here on every replay and the entry was DLQ'd
+        # after 10 attempts even though the LEADS_TO projection (the actual
+        # graph-shaping work) succeeded. Validate only the fields the payload
+        # must carry for the replay to be meaningful; a row that can still
+        # re-run the edges is a success.
+        _ = AttackPath(
+            id=str(payload.get("id") or uuid.uuid4().hex[:12]),
+            node_ids=list(payload.get("node_ids", [])),
+            edge_ids=[],
+            confidence=float(payload.get("confidence", 0.5)),
+            risk_score=0.0,
+            total_time_estimate=int(payload.get("total_time_estimate", 0) or 0),
+            detection_risk=float(payload.get("detection_risk", 0.0) or 0.0),
+            entry_node_id=str(payload.get("node_ids", [""])[0]) if payload.get("node_ids") else "",
+            goal_node_id=str(payload.get("node_ids", [""])[-1]) if payload.get("node_ids") else "",
+            engagement_id=str(payload.get("engagement_id", "") or ""),
+        )
 
     async def find_attack_paths(
         self,

@@ -16,13 +16,19 @@ class TestDeadLetterQueue:
     @pytest.fixture
     def mock_session_memory(self):
         """Mock session memory with Redis-like interface."""
-        mem = MagicMock(spec=["store_hot", "retrieve_hot", "_redis"])
+        mem = MagicMock(spec=["store_hot", "retrieve_hot", "_redis", "list_push", "list_range"])
         mem._redis = MagicMock()
         mem._redis.rpush = AsyncMock()
         mem._redis.lrange = AsyncMock(return_value=[])
         mem._redis.keys = AsyncMock(return_value=[])
         mem.store_hot = AsyncMock()
         mem.retrieve_hot = AsyncMock(return_value=None)
+        # The DLQ now routes list ops through the public list_push/list_range
+        # helpers (tech-debt fix, 2026-07-20) when SessionMemory exposes them;
+        # this mock simulates a SessionMemory that does, so the raw
+        # _redis.rpush/_redis.lrange fallbacks are unused.
+        mem.list_push = AsyncMock()
+        mem.list_range = AsyncMock(return_value=[])
         return mem
 
     @pytest.fixture
@@ -49,7 +55,8 @@ class TestDeadLetterQueue:
         )
         assert entry_id.startswith("dlq-")
         mock_session_memory.store_hot.assert_called_once()
-        mock_session_memory._redis.rpush.assert_called_once()
+        # List membership goes through the public list_push helper, not _redis.
+        mock_session_memory.list_push.assert_called_once()
 
     async def test_enqueue_truncates_long_errors(self, dlq, mock_session_memory, sample_task):
         """enqueue should truncate errors longer than 2000 chars."""
@@ -132,10 +139,12 @@ class TestDeadLetterQueue:
             final_error="timeout",
             task_payload=sample_task.model_dump(),
         )
-        mock_session_memory._redis.lrange = AsyncMock(return_value=[entry.id])
+        mock_session_memory.list_range = AsyncMock(return_value=[entry.id])
         mock_session_memory.retrieve_hot = AsyncMock(return_value=entry.model_dump())
         dlq._session_memory = mock_session_memory
 
         entries = await dlq.list_entries(engagement_id=sample_task.engagement_id)
         assert len(entries) == 1
         assert entries[0].task_id == sample_task.id
+        # The list read goes through the public helper, not the private redis.
+        mock_session_memory.list_range.assert_called_once()

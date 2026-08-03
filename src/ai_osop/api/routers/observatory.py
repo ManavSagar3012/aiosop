@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ai_osop.api.deps import require_role, state
+from ai_osop.api.deps import assert_engagement_access, require_role, state
 from ai_osop.core.execution_trace import get_trace as _get_trace
 from ai_osop.core.execution_trace import load_trace_from_redis
 
@@ -21,7 +21,14 @@ async def get_task_trace(
     task_id: str,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
 ):
-    """Return the full execution trace for a single task."""
+    """Return the full execution trace for a single task.
+
+    AIOSOP-OBS-AUTHZ (2026-08-03): the trace endpoints were role-gated but had no
+    engagement-scope check — any operator could read any engagement's traces by
+    guessing the id. Enforce the same tenant + ownership rules as the rest of the
+    API.
+    """
+    await assert_engagement_access(operator, engagement_id)
     orch = state.get("orchestrator")
     if orch is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -41,7 +48,8 @@ async def list_engagement_traces(
     engagement_id: str,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
 ):
-    """List all execution traces for tasks in an engagement."""
+    """List all execution traces for tasks in an engagement (engagement-scoped)."""
+    await assert_engagement_access(operator, engagement_id)
     orch = state.get("orchestrator")
     if orch is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
@@ -74,10 +82,21 @@ async def get_scanner_audit(
     engagement_id: Optional[str] = None,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
 ):
-    """Audit summary: for every scanner determine applicable/scheduled/completed/failed."""
+    """Audit summary: for every scanner determine applicable/scheduled/completed/failed.
+
+    When an engagement_id is supplied it is engagement-scoped; without one the
+    global view is senior_operator-only (it aggregates every engagement's tasks).
+    """
     orch = state.get("orchestrator")
     if orch is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    if engagement_id:
+        await assert_engagement_access(operator, engagement_id)
+    elif operator.get("role") != "senior_operator":
+        raise HTTPException(
+            status_code=403,
+            detail="Global scanner audit requires senior_operator; pass engagement_id to scope it",
+        )
     scanners: Dict[str, Dict[str, Any]] = {}
     for task_id, task_obj in orch._tasks.items():
         if engagement_id and task_obj.engagement_id != engagement_id:

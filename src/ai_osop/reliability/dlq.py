@@ -111,6 +111,18 @@ class DeadLetterQueue:
             else:
                 entry_ids = await self._session_memory._redis.lrange(list_key, 0, -1)
             entry_ids = [eid.decode() if isinstance(eid, bytes) else eid for eid in entry_ids]
+            if not entry_ids:
+                # Fallback: scan all DLQ keys (use sparingly — not for large
+                # datasets). Previously this block unconditionally REPLACED the
+                # list-derived ids with the scan result, so a populated list key
+                # was ignored (only the entries matching the literal "dlq:dlq-*"
+                # scan survived) — and with the new public list helper the raw
+                # _redis.keys call would fail on mocks exposing only list_range.
+                keys = await self._session_memory._redis.keys("dlq:dlq-*")
+                entry_ids = [
+                    k.decode().split(":", 1)[1] if isinstance(k, bytes) else k.split(":", 1)[1]
+                    for k in keys
+                ]
         else:
             # Scan all DLQ keys (use sparingly — not for large datasets)
             keys = await self._session_memory._redis.keys("dlq:dlq-*")

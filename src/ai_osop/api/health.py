@@ -20,17 +20,33 @@ from collections import deque
 from datetime import datetime
 from typing import Any, Deque, Dict
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from ai_osop.api.deps import state
+from ai_osop.api.deps import require_role, state
 from ai_osop.core.metrics import READY_STATUS
 
 router = APIRouter(tags=["health"])
 
 
+# AIOSOP-HEALTH-AUTH (2026-08-03): the /health/tooling and /health/tooling/deep
+# endpoints drive REAL offensive tooling (nmap/nuclei/browser/Burp scans against
+# the platform's own port 8200) and return per-server host/port/verdict telemetry
+# AND transmit the platform API keys as Bearer headers to every MCP server. They
+# were previously unauthenticated — any caller could trigger scan traffic and
+# read the MCP inventory, and a stub/attacker-controlled MCP server could harvest
+# the platform secret on every call. Gate them behind the operator role. The pure
+# liveness/readiness routes (/health, /ready, /health/platform, /health/metrics)
+# stay unauthenticated for k8s probes.
+# NOTE: /health/mcp and /health/system call _check_tool_reality() which transmits
+# API keys to MCP servers; those too are operator-gated (the plain /ready probe
+# covers dependency liveness without touching tool credentials).
+
+
 @router.get("/health/mcp")
-async def health_mcp():
-    """Execution-level reality probe for the MCP tooling layer."""
+async def health_mcp(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
+):
+    """Execution-level reality probe for the MCP tooling layer (operator-only)."""
     return await _check_tool_reality()
 
 
@@ -46,9 +62,11 @@ async def health_platform():
 
 
 @router.get("/health/system")
-async def health_system():
-    """Unified system health check."""
-    return {"platform": await health_platform(), "mcp": await health_mcp()}
+async def health_system(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
+):
+    """Unified system health check (operator-only — probes MCP tool credentials)."""
+    return {"platform": await health_platform(), "mcp": await health_mcp(operator)}
 
 
 @router.get("/health/metrics")
@@ -328,12 +346,17 @@ async def _check_tool_reality() -> Dict[str, Any]:
 
 
 @router.get("/health/tooling", status_code=status.HTTP_200_OK)
-async def tooling_reality() -> Dict[str, Any]:
+async def tooling_reality(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
+) -> Dict[str, Any]:
     """Expose the execution-level MCP tooling-reality probe (A-5).
 
     Surfaces stub servers (zero tools) and — crucially — suspect mocks (servers
     that register tools but fail an execution reality check). Use this instead of
     trusting per-server /health, which a stub also passes.
+
+    AIOSOP-HEALTH-AUTH: operator-only — executes a real nmap probe and returns
+    per-server inventory/verdicts.
     """
     return await _check_tool_reality()
 
@@ -497,12 +520,16 @@ async def _deep_probe() -> Dict[str, Any]:
 
 
 @router.get("/health/tooling/deep", status_code=status.HTTP_200_OK)
-async def tooling_reality_deep() -> Dict[str, Any]:
+async def tooling_reality_deep(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
+) -> Dict[str, Any]:
     """Deep execution-level capability verification of recon/nuclei/browser/burp.
 
     Opens a socket and runs a real tool on each channel, returning per-channel
     `real_execution_verified` plus latency. Heavier than /health/tooling; use
     on-demand (operator/CI), not as a liveness probe.
+
+    AIOSOP-HEALTH-AUTH: operator-only — drives real nuclei/browser/Burp runs.
     """
     return await _deep_probe()
 

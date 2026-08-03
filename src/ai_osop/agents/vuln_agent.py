@@ -7,12 +7,11 @@ import asyncio
 import json
 import uuid
 import warnings
-
-import httpx  # noqa: F401
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
+import httpx  # noqa: F401
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -817,6 +816,13 @@ class VulnAnalysisAgent(BaseAgent):
                     "dbms": dbms,
                     "techniques": techniques,
                     "payloads": payloads,
+                    # R2 (2026-07-20): register a 'request' evidence kind. The
+                    # sqlmap dict carries ``url`` (request shape) and ``payloads``
+                    # but no 'request' key, so the scorer's evidence_completeness
+                    # could not register the request artifact and reported 0.0 on
+                    # the autonomous scorecard. Keep the semantic keys and add the
+                    # explicit request token.
+                    "request": url,
                 }
             ],
             tool_source="sqlmap",
@@ -3385,6 +3391,15 @@ class VulnAnalysisAgent(BaseAgent):
             if len(similar) > 1:
                 vuln.confidence = 0.95
                 vuln.correlated_ids = [s.id for s in similar if s.id != vuln.id]
+                # AIOSOP-CONF-PERSIST-001: the confidence boost was previously
+                # in-memory only — the graph node kept its pre-correlation value,
+                # so the dashboard/report/bounty funnel never saw the cross-tool
+                # confirmation. Persist the updated finding (idempotent MERGE)
+                # so the boosted signal reaches every consumer.
+                try:
+                    await self.ctx.graph_memory.add_vulnerability(vuln)
+                except Exception as e:
+                    logger.warning("correlation_persist_failed", vuln_id=vuln.id, error=str(e))
                 confirmed_findings.append(vuln)
 
         return {
@@ -3405,16 +3420,31 @@ class VulnAnalysisAgent(BaseAgent):
         # Check against false positive patterns
         is_fp = await self._check_false_positive(vuln)
 
+        # AIOSOP-CONF-PERSIST-001: the triage verdict was previously recorded in
+        # ``vuln.metadata`` — a field the Vulnerability model does not define
+        # (pydantic silently drops it), so the verdict was LOST before the
+        # down-rank could ever persist. Record the verdict on the model's real
+        # ``yield_metadata`` enrichment field instead.
         if is_fp:
             vuln.confidence = 0.1
-            vuln.metadata["triage_result"] = "likely_false_positive"
+            vuln.yield_metadata["triage_result"] = "likely_false_positive"
         else:
-            vuln.metadata["triage_result"] = "confirmed"
+            vuln.yield_metadata["triage_result"] = "confirmed"
+
+        # AIOSOP-CONF-PERSIST-001: the FP down-rank (or confirmed keep) was
+        # previously in-memory only — a finding triaged as likely-FP kept its
+        # original confidence in the graph, so the triage verdict never reached
+        # the report/bounty funnel. Persist the triaged finding so the down-rank
+        # is durable and visible everywhere the finding is read.
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+        except Exception as e:
+            logger.warning("triage_persist_failed", vuln_id=vuln.id, error=str(e))
 
         return {
             "status": "success",
             "finding_id": finding_id,
-            "triage_result": vuln.metadata["triage_result"],
+            "triage_result": vuln.yield_metadata["triage_result"],
             "confidence": vuln.confidence,
         }
 

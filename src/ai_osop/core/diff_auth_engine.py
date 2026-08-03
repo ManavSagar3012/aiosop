@@ -111,6 +111,11 @@ class DifferentialAuthEngine:
                 category = f"{category}_with_leakage"
 
         if confidence > 0:
+            # R2 (2026-07-20): carry the raw request/response artifacts onto the
+            # DiffAuthFinding so the downstream Vulnerability bridge and the
+            # scorer can register a real 'request'/'response' pair. The evidence
+            # dicts are the raw replay results; ``identity_b_evidence`` is the
+            # test-identity's captured response (the unauthorized access proof).
             return DiffAuthFinding(
                 category=category,
                 resource_id=resource.id,
@@ -126,6 +131,11 @@ class DifferentialAuthEngine:
                     "compared_with_anonymous": anonymous_evidence is not None,
                     "shared_with_anonymous": shared_with_anon,
                     "needs_manual_confirmation": needs_manual,
+                    # Raw replay evidence (request/response bytes when captured).
+                    "request": identity_b_evidence.get("request") or identity_b_evidence.get(
+                        "request_url"
+                    ),
+                    "response": identity_b_evidence.get("response", ""),
                 },
                 confidence=confidence,
                 engagement_id=resource.engagement_id,

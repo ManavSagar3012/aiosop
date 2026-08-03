@@ -93,19 +93,42 @@ class RecoveryService:
 
             # reaper: ensure task is actually terminated if it exceeds budget
             if task.status == "running" and task.retry_count < task.max_retries:
-                # A retry must replace the execution that timed out.
-                handles = getattr(self._orch, "_task_handles", None)
-                handle = handles.pop(task.id, None) if handles is not None else None
-                if handle is not None and not handle.done():
-                    handle.cancel()
-                    try:
-                        await asyncio.wait_for(handle, timeout=5.0)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
-                        pass
+                # DUAL-REAPER RACE FIX (GAP-6): both AgentReaper
+                # (reliability/agent_reaper.py) and this RecoveryService reaper can
+                # recover the same stuck task concurrently. AgentReaper serializes
+                # through ``task-recovery:{task_id}`` (TTL 120, agent_reaper.py:83-86);
+                # this path previously took NO lock, so both callers could
+                # ``_maybe_retry``/``schedule_task`` the same task — double retry_count
+                # bumps and a double dispatch against a dead handle. Acquire the SAME
+                # per-task lock here (non-blocking) and skip if another reaper holds it.
+                task_lock_key = f"task-recovery:{task.id}"
+                if not await self._orch.session_memory.acquire_lock(
+                    task_lock_key, ttl=120
+                ):
+                    logger.warning(
+                        "reaper_task_recovery_skipped_locked",
+                        task_id=task.id,
+                        lock_key=task_lock_key,
+                    )
+                    continue
+                try:
+                    # A retry must replace the execution that timed out.
+                    handles = getattr(self._orch, "_task_handles", None)
+                    handle = handles.pop(task.id, None) if handles is not None else None
+                    if handle is not None and not handle.done():
+                        handle.cancel()
+                        try:
+                            await asyncio.wait_for(handle, timeout=5.0)
+                        except (asyncio.CancelledError, asyncio.TimeoutError):
+                            pass
 
-                await self._orch.task_scheduler._maybe_retry(
-                    task, {"error": f"reaper: stuck {int(age)}s > {timeout}s timeout"}
-                )
+                    await self._orch.task_scheduler._maybe_retry(
+                        task, {"error": f"reaper: stuck {int(age)}s > {timeout}s timeout"}
+                    )
+                finally:
+                    await self._orch.session_memory.release_lock(
+                        task_lock_key, lock_value="locked"
+                    )
                 await self._orch._audit_log(self._reaper_audit(task, age, "recovering"))
                 reaped += 1
                 continue
@@ -374,9 +397,24 @@ class RecoveryService:
 
                 self._orch._tasks[task.id] = task
                 recovered["tasks"] += 1
-                await self._orch.session_memory.push_task_queue(
-                    f"tasks:{task.engagement_id}", task.model_dump()
-                )
+                # AIOSOP-QUEUE-KEY-001: producers push tenant-scoped keys with the
+                # CANONICAL engagement id; this startup re-push used the bare
+                # ``tasks:{engagement_id}`` key, so recovered tasks were re-queued
+                # into a key the scheduler never pops (and a namespace another
+                # tenant could see). Route through tenant_queue_key like
+                # task_scheduler.schedule_task does.
+                try:
+                    from ai_osop.core.tenant_isolation import tenant_queue_key
+
+                    _session = self._orch._sessions.get(task.engagement_id)
+                    _org = getattr(getattr(_session, "scope", None), "organization_id", None)
+                    _tenant = "default" if not isinstance(_org, str) or not _org else _org
+                    await self._orch.session_memory.push_task_queue(
+                        tenant_queue_key(_tenant, f"tasks:{task.engagement_id}"),
+                        task.model_dump(),
+                    )
+                except Exception as e:  # noqa: BLE001 - recovery must not abort
+                    logger.warning("recovery_requeue_failed", task_id=task.id, error=str(e))
         except Exception as e:
             logger.warning("orchestrator_startup_recovery_failed", error=str(e))
         return recovered

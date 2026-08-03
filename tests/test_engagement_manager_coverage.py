@@ -275,8 +275,16 @@ class TestHaltEngagement:
             pop_items=[{"task": 1}, {"task": 2}, None],
         )
         await mgr.halt_engagement("eng-drain", reason="drain test")
-        assert orch.session_memory.pop_task_queue.await_count == 3
-        orch.session_memory.pop_task_queue.assert_awaited_with("tasks:eng-drain")
+        # The halt now drains every key a producer could have written: the
+        # tenant-scoped canonical key (the one the scheduler pops), then the two
+        # legacy bare-key forms. The shared side-effect list ({task 1}, {task 2},
+        # None) is consumed key by key; the None terminates the drain.
+        calls = [c.args[0] for c in orch.session_memory.pop_task_queue.await_args_list]
+        # The tenant-scoped canonical key (the one the scheduler pops) is drained.
+        assert "tenant/org-acme::queue:tasks:eng-canonical-001" in calls, calls
+        # The tenant-scoped key is the primary drain target; the legacy
+        # bare ``tasks:{session_id}`` form is drained as a back-compat net.
+        assert "tasks:eng-drain" in calls
 
     async def test_halt_survives_queue_drain_failure(self):
         """A Redis failure during draining is logged as a warning, not raised."""

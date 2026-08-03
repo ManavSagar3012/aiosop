@@ -212,6 +212,39 @@ async def test_unknown_entity_type_increments_attempt():
     assert len(update_executes) >= 1
 
 
+@pytest.mark.asyncio
+async def test_attack_path_entry_projected_via_replay():
+    """AIOSOP-ATTACK-OUTBOX: an attack_path outbox entry must be projected by
+    re-running the LEADS_TO edge write (add_attack_path_from_outbox), not by
+    reconstructing an AttackPath model (the minimal payload cannot round-trip:
+    entry_node_id/goal_node_id/edge_ids/risk_score are absent). Previously the
+    processor had no attack_path handler, so every entry hit the unknown-type
+    ValueError and was DLQ'd after 10 attempts, emitting poison alerts."""
+    payload = {
+        "id": "path-abc",
+        "node_ids": ["vuln-1", "vuln-2"],
+        "confidence": 0.8,
+        "total_time_estimate": 60,
+        "detection_risk": 0.2,
+        "edges": [{"from_id": "vuln-1", "to_id": "vuln-2", "type": "exploit_chain"}],
+    }
+    row = _make_outbox_row(entity_type="attack_path", payload=payload, entity_id="path-abc")
+    sm = _make_session_memory([row])
+
+    gm = MagicMock()
+    gm.add_attack_path_from_outbox = AsyncMock(return_value=None)
+    proc = OutboxProcessor(sm, gm)
+
+    await proc.process_batch()
+
+    gm.add_attack_path_from_outbox.assert_awaited_once_with(payload)
+    # Marked processed (UPDATE issued), NOT counted as a failed attempt.
+    update_executes = [
+        e for e in sm._fake_session.executes if str(e[0]).strip().lower().startswith("update")
+    ]
+    assert len(update_executes) >= 1
+
+
 def test_max_attempts_constant_is_reasonable():
     """MAX_ATTEMPTS must be small enough to surface a real bug quickly but
     large enough to ride out a transient blip. 10 at the default 5s interval

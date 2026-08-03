@@ -102,13 +102,33 @@ async def _finding_exists(
 _engagement_id_forms = engagement_id_forms
 
 
+# AIOSOP-SCALE-004 (2026-08-03): bound the findings dump. get_findings returned
+# every Vulnerability node for an engagement with no limit/offset — a long-lived
+# engagement or a broad scan returns hundreds/thousands of nodes per call. Apply
+# the same sane server-side cap pattern as list_tasks (AIOSOP-SCALE-002): the
+# client can paginate with limit/offset, the server never unbounded-dumps.
+_DEFAULT_FINDINGS_LIST_LIMIT = 200
+_MAX_FINDINGS_LIST_LIMIT = 2000
+
+
 @router.get("/{session_id}/findings")
-async def get_findings(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
-    """All Vulnerability nodes for an engagement, shaped for the UI."""
+async def get_findings(
+    session_id: str,
+    limit: int = Query(_DEFAULT_FINDINGS_LIST_LIMIT, ge=1),
+    offset: int = Query(0, ge=0),
+    operator: Dict[str, Any] = Depends(verify_token),
+):
+    """All Vulnerability nodes for an engagement, shaped for the UI.
+
+    Bounded by ``limit``/``offset`` (default 200, max 2000) so a broad scan's
+    full finding set is never dumped in one response; the UI paginates.
+    """
     session = await assert_engagement_access(operator, session_id)
     forms = _engagement_id_forms(session, session_id)
     vuln_nodes = await state["orchestrator"].graph_memory.get_vulnerabilities_by_engagement(*forms)
-    return [_vuln_node_to_finding(n) for n in vuln_nodes]
+    findings = [_vuln_node_to_finding(n) for n in vuln_nodes]
+    effective_limit = min(limit, _MAX_FINDINGS_LIST_LIMIT)
+    return findings[offset : offset + effective_limit]
 
 
 @router.get("/{session_id}/report")

@@ -417,6 +417,12 @@ async def lifespan(app: FastAPI):
 
             outbox_processor = OutboxProcessor(session_memory, graph_memory)
             asyncio.create_task(outbox_processor.run())
+            # AIOSOP-OUTBOX-SHUTDOWN (2026-08-03): the loop was started but never
+            # stopped — the handle was discarded, so on shutdown the 5s-tick loop
+            # kept running forever against a torn-down session, hung the TestClient
+            # lifespan teardown (websocket tests), and leaked the task in prod.
+            # Keep the handle so lifespan shutdown can stop it cleanly.
+            app.state.outbox_processor = outbox_processor
             logger.info("OutboxProcessor started.")
         except Exception as e:  # noqa: BLE001
             logger.warning(f"OutboxProcessor initialization failed: {e}")
@@ -517,6 +523,14 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("AI-OSOP API shutting down...")
     await graph_memory.stop_pool_metrics_export()
+    # AIOSOP-OUTBOX-SHUTDOWN: stop the outbox loop BEFORE tearing down the
+    # session so a mid-tick projection cannot run against a closing engine.
+    _obp = getattr(app.state, "outbox_processor", None)
+    if _obp is not None:
+        try:
+            await _obp.stop()
+        except Exception as e:  # noqa: BLE001 - shutdown must proceed
+            logger.warning(f"OutboxProcessor stop failed: {e}")
     await orch.shutdown()
     await vector_memory.close()
     await mcp_registry.close_all()
@@ -586,7 +600,11 @@ class CatchAllErrorMiddleware:
             try:
                 body = json.dumps(
                     {
-                        "detail": f"Internal server error: {type(exc).__name__}: {exc}",
+                        # AIOSOP-ERROR-DISCLOSURE (2026-08-03): the previous response
+                        # echoed ``{type}: {exc}`` to the caller — internal paths, DB
+                        # errors, and stack content leaked. The full traceback is logged
+                        # above; the client gets a generic message and an error type.
+                        "detail": "Internal server error — see server logs",
                         "error_type": type(exc).__name__,
                     }
                 ).encode("utf-8")

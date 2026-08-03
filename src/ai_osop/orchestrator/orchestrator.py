@@ -768,10 +768,20 @@ class Orchestrator:
 
                     from ai_osop.core.tenant_isolation import tenant_queue_key
 
+                    # AIOSOP-QUEUE-KEY-001 (2026-08-03): producers push with the
+                    # CANONICAL engagement id (``task.engagement_id`` =
+                    # ``scope.engagement_id``, task_scheduler.py:230-232) but this
+                    # consumer popped with ``session.session_id`` (eng-<ts>-<canonical>)
+                    # — the keys never matched, so nothing was ever consumed from
+                    # Redis. SessionDict.get resolves both id forms, so the session
+                    # is authoritative for the tenant; the queue suffix is the
+                    # canonical id to match the producers.
+                    _org = getattr(session.scope, "organization_id", None)
+                    _tenant = "default" if not isinstance(_org, str) or not _org else _org
                     task_data = await self.session_memory.pop_task_queue(
                         tenant_queue_key(
-                            getattr(session.scope, "organization_id", "default"),
-                            f"tasks:{session.session_id}",
+                            _tenant,
+                            f"tasks:{session.canonical_engagement_id}",
                         )
                     )
                     if task_data:
