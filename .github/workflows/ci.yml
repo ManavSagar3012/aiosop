@@ -84,7 +84,7 @@ jobs:
         OSOP_REDIS_URI: redis://localhost:6379/0
         OSOP_JWT_SECRET: test-secret-for-ci-only
         OSOP_API_TOKEN: test-token-for-ci-only
-      run: poetry run pytest -q --cov=src/ai_osop --cov-fail-under=60
+      run: poetry run pytest -q --cov=src/ai_osop --cov-fail-under=70
 
     # Detection-regression tripwire. Re-scores the committed baseline findings
     # export against the ground-truth manifest and fails the build if recall
