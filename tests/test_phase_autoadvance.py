@@ -126,10 +126,7 @@ async def test_auto_advance_halts_before_exploitation():
     instead. The suite's TestPhaseEntryApprovalGate class covers the deeper
     lifecycle; this is the canonical single-case gate regression probe."""
     from ai_osop.orchestrator.orchestrator import EngagementPhase
-    from tests.test_orchestrator_transitions import (
-        _make_monitor_orch,
-        _make_session,
-    )
+    from tests.test_orchestrator_transitions import _make_monitor_orch, _make_session
 
     orch, monitor = _make_monitor_orch(
         EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION, manual=True
