@@ -63,16 +63,40 @@ class PayoutPredictionEngine:
         """
         Calculates Expected Yield ($)
         Yield = Likelihood_of_Acceptance * Expected_Payout
+
+        AIOSOP-FABRICATED-TELEMETRY (2026-08-03): this previously returned a
+        hardcoded ``acceptance_rate = 0.85`` and ``duplicate_prob = 0.1`` — a
+        made-up number surfaced to the payouts UI as real intel. Acceptance rate
+        now comes from the same calibrated outcome corpus the rest of the
+        platform learns from (``get_historical_outcome_counts``), so a finding
+        class with recorded decisions yields a REAL rate and a cold class is
+        reported honestly as ``unknown`` (0.5 rate) rather than fabricated high.
         """
-        # 1. Get historical acceptance rate for this type (from LearningEngine data)
-        acceptance_rate = 0.85  # Default high for now
+        acceptance_rate = 0.5  # neutral: "no recorded signal" — never fabricated high
+        n_valid = n_total = 0
+        try:
+            counts_fn = getattr(self.session_memory, "get_historical_outcome_counts", None)
+            if counts_fn is not None:
+                n_valid, n_total = await counts_fn(finding_type)
+                if n_total > 0:
+                    acceptance_rate = n_valid / n_total
+        except Exception:  # noqa: BLE001 - a telemetry hiccup must not raise
+            acceptance_rate = 0.5
 
         # 2. Get expected payout from PortSwigger/HackerOne baselines
         payout_map = {"critical": 2500.0, "high": 1000.0, "medium": 400.0, "low": 100.0}
         base_payout = payout_map.get(severity.lower(), 50.0)
 
-        # 3. Factor in duplicate probability (V6.3 Challenge)
-        duplicate_prob = 0.1  # Real system would query session_memory.get_duplicate_rate()
+        # 3. Duplicate probability from the corpus where available (a duplicate is
+        # still a real valid detection — but for YIELD it pays nothing). Defaults
+        # to the measured baseline only when real duplicate counts exist.
+        duplicate_prob = 0.0
+        try:
+            dup_fn = getattr(self.session_memory, "get_duplicate_rate", None)
+            if dup_fn is not None:
+                duplicate_prob = await dup_fn(finding_type)
+        except Exception:  # noqa: BLE001 - advisory
+            duplicate_prob = 0.0
 
         expected_yield = base_payout * acceptance_rate * (1.0 - duplicate_prob)
         return round(expected_yield, 2)

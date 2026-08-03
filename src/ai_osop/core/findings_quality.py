@@ -676,9 +676,13 @@ class AttackSurfaceCertifier:
         except Exception as e:
             logger.warning("broad_exception_caught", error=str(e))
 
-        # Fallback: raw crawled count is at least the persisted count
+        # Fallback: never fabricate a crawled count. AIOSOP-FABRICATED-TELEMETRY
+        # (2026-08-03): the old ``* 5`` heuristic presented a made-up number as
+        # "Raw URLs Discovered" in the report. If the recon task did not record
+        # one, report 0 honestly — the endpoint count is already surfaced
+        # separately, so no information is lost, and no false metric is shipped.
         if raw_crawled_count == 0:
-            raw_crawled_count = endpoints_count * 5 if endpoints_count > 1 else endpoints_count
+            raw_crawled_count = 0
 
         # Query Neo4j for detailed assets and endpoints breakdown (Sprint 12/13)
         subdomains = []

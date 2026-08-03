@@ -720,14 +720,51 @@ class ReconAgent(BaseAgent):
         return {"status": "success", "endpoints_discovered": len(endpoints)}
 
     async def _execute_osint(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute OSINT lookups."""
+        """Execute OSINT lookups.
+
+        AIOSOP-FABRICATED-TELEMETRY (2026-08-03): this previously returned
+        ``{"status": "success", "findings": []}`` — a task that REPORTED SUCCESS
+        while doing nothing, and the empty ``findings`` disguised the missing
+        capability. Route through the real Shodan-backed adapter (the same
+        ``osint_lookup`` the full recon chain uses); on adapter failure report
+        ``failed`` honestly instead of a fabricated success.
+        """
         domain = payload["domain"]
-        return {"status": "success", "domain": domain, "findings": []}
+        try:
+            assets = await self.recon_adapter.osint_lookup(domain)
+        except Exception as e:
+            logger.warning("osint_lookup_failed", domain=domain, error=str(e)[:200])
+            return {
+                "status": "failed",
+                "domain": domain,
+                "findings": [],
+                "error": str(e)[:200],
+            }
+        return {
+            "status": "success",
+            "domain": domain,
+            "findings": [a.model_dump() for a in assets],
+        }
 
     async def _execute_tech_fingerprint(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Fingerprint technologies on endpoints."""
+        """Fingerprint technologies on endpoints.
+
+        AIOSOP-FABRICATED-TELEMETRY (2026-08-03): the stub returned
+        ``processed_count`` without processing. Route through the real
+        ``technology_fingerprint`` adapter; surface the actual URL->tech mapping
+        and an honest failure on adapter error.
+        """
         endpoints = payload["endpoints"]
-        return {"status": "success", "processed_count": len(endpoints)}
+        try:
+            fingerprints = await self.recon_adapter.technology_fingerprint(endpoints)
+        except Exception as e:
+            logger.warning("tech_fingerprint_failed", error=str(e)[:200])
+            return {"status": "failed", "processed_count": 0, "error": str(e)[:200]}
+        return {
+            "status": "success",
+            "processed_count": len(fingerprints),
+            "fingerprints": fingerprints,
+        }
 
     async def _execute_full_recon(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute comprehensive reconnaissance chain."""
