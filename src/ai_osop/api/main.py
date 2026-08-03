@@ -731,15 +731,28 @@ async def audit_log_middleware(request: Request, call_next):
         request_id = getattr(request.state, "request_id", "unknown")
         op = request.scope.get("operator", {})
         operator_id = op.get("sub", "anonymous") if isinstance(op, dict) else "anonymous"
+        # AIOSOP-AUDIT-LOGGER-001 (2026-08-03): ``logger`` here is a stdlib
+        # logging.Logger — passing the context as keyword arguments raised
+        # ``TypeError: Logger._log() got an unexpected keyword argument 'method'``
+        # and turned every state-changing request into a 500. Attach the context
+        # via ``extra`` (surfaces as attributes on the LogRecord) and keep a
+        # printf-style message so stdlib logging stays happy.
         logger.info(
-            "api_audit",
-            method=method,
-            path=request.url.path,
-            operator_id=operator_id,
-            status_code=response.status_code,
-            user_agent=request.headers.get("user-agent", ""),
-            client_ip=request.client.host if request.client else "",
-            request_id=request_id,
+            "api_audit method=%s path=%s operator_id=%s status_code=%s request_id=%s",
+            method,
+            request.url.path,
+            operator_id,
+            response.status_code,
+            request_id,
+            extra={
+                "method": method,
+                "path": request.url.path,
+                "operator_id": operator_id,
+                "status_code": response.status_code,
+                "user_agent": request.headers.get("user-agent", ""),
+                "client_ip": request.client.host if request.client else "",
+                "request_id": request_id,
+            },
         )
     return response
 

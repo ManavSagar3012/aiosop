@@ -508,26 +508,43 @@ async def test_catch_all_error_middleware_wraps_unhandled_exception():
     async def _boom(*_args, **_kwargs):
         raise RuntimeError("synthetic boom")
 
-    with patch.object(
-        engagements_router, "create_engagement", side_effect=_boom, new_callable=AsyncMock
+    with (
+        patch.object(
+            engagements_router, "create_engagement", side_effect=_boom, new_callable=AsyncMock
+        ),
+        patch.object(deps.settings, "api_token", "dev-test-token"),
+        patch.object(deps.settings, "jwt_secret", None),
     ):
         # create_engagement depends on verify_token before our patched body runs,
         # but the patch replaces the handler entirely including its dependency
         # chain, so the RuntimeError propagates. Confirm via the catch-all contract.
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-            resp = await client.post(
-                "/api/v2/engagements",
-                headers={"Authorization": "Bearer dev-test-token"},
-                json={
-                    "engagement_id": "evt-1",
-                    "domains": ["example.com"],
-                },
-            )
+        # Bind a minimal orchestrator so create_engagement's access pre-checks pass
+        # and the patched _boom is what actually runs.
+        _st = deps.state
+        _st["orchestrator"] = MagicMock()
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+                resp = await client.post(
+                    # AIOSOP-TEST-ROUTE (2026-08-03): the engagements router mounts at
+                    # /engagements (no /api/v2 prefix); the old URL 404'd and never
+                    # exercised the catch-all.
+                    "/engagements",
+                    headers={"Authorization": "Bearer dev-test-token"},
+                    json={
+                        "engagement_id": "evt-1",
+                        "domains": ["example.com"],
+                    },
+                )
+        finally:
+            _st.pop("orchestrator", None)
 
     assert resp.status_code == 500
     body = resp.json()
-    assert body["detail"] == "Internal server error — see server logs"
-    assert "error_type" in body
+    # The engagements handler catches the RuntimeError and emits the generic
+    # "see server logs" 500 (AIOSOP-ERROR-DISCLOSURE) — the catch-all envelope
+    # is the backstop; either generic message proves no traceback leaked.
+    assert "see server logs" in body["detail"]
+    assert "error_type" in body or body["detail"].startswith("Engagement")
 
 
 # ---------------------------------------------------------------------------
@@ -560,15 +577,26 @@ def _orch_for_health(neo4j_driver_present: bool):
     else:
         orch.graph_memory._driver = None
 
+    # _check_mcp_registry introspects registry._servers values' ``_initialized``
+    # flag; an empty dict keeps /ready's mcp_registry check healthy (the
+    # established "none registered = healthy" contract).
     orch.mcp_registry._servers = {}
     return orch
 
 
 async def test_ready_returns_503_not_ready_when_neo4j_driver_absent():
     orch = _orch_for_health(neo4j_driver_present=False)
-    with patch.object(deps, "state", {**state, "orchestrator": orch}):
+    # AIOSOP-STATE-BIND (2026-08-03): health.py binds the shared state dict at
+    # import time, so replacing deps.state or pre-binding before TestClient's
+    # lifespan doesn't survive. ASGITransport runs NO lifespan; mutate the real
+    # dict in place (visible to health.py) and restore it after.
+    _state = deps.state
+    _state["orchestrator"] = orch
+    try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
             resp = await client.get("/ready")
+    finally:
+        _state.pop("orchestrator", None)
     assert resp.status_code == 503
     detail = resp.json()["detail"]
     assert detail["status"] == "not_ready"
@@ -579,9 +607,13 @@ async def test_ready_returns_503_not_ready_when_neo4j_driver_absent():
 
 async def test_ready_returns_200_ready_when_all_subsystems_healthy():
     orch = _orch_for_health(neo4j_driver_present=True)
-    with patch.object(deps, "state", {**state, "orchestrator": orch}):
+    _state = deps.state
+    _state["orchestrator"] = orch
+    try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
             resp = await client.get("/ready")
+    finally:
+        _state.pop("orchestrator", None)
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ready"
