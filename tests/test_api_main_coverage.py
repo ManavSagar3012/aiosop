@@ -33,13 +33,6 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-# NOTE(AIOSOP-IT-INTEGRATION): these tests spin the full FastAPI lifespan +
-# middleware stack for real (see module docstring). They materially extend the
-# local developer loop and currently dominate full-suite wall time. Gate them
-# behind the integration marker so CI's `--maxfail=1`-driven runs stay fast, and
-# opt into them explicitly with `pytest -m integration`.
-pytestmark = pytest.mark.integration
-
 from ai_osop.api import deps
 from ai_osop.api.deps import state
 from ai_osop.api.main import app, connect_with_retry, get_websocket_operator, lifespan
