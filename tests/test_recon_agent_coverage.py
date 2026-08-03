@@ -500,16 +500,28 @@ class TestExecuteDispatcher:
     async def test_dispatches_osint_lookup(self):
         agent = _make_agent()
         agent.recon_adapter.initialize = AsyncMock()
+        # AIOSOP-FABRICATED-TELEMETRY: _execute_osint now calls the real adapter
+        # (Shodan-backed) instead of fabricating success with empty findings.
+        agent.recon_adapter.osint_lookup = AsyncMock(return_value=[])
         result = await agent._execute(_task("osint_lookup", {"domain": "example.com"}))
         assert result == {"status": "success", "domain": "example.com", "findings": []}
+        agent.recon_adapter.osint_lookup.assert_awaited_once_with("example.com")
 
     async def test_dispatches_technology_fingerprint(self):
         agent = _make_agent()
         agent.recon_adapter.initialize = AsyncMock()
+        # AIOSOP-FABRICATED-TELEMETRY: _execute_tech_fingerprint now calls the
+        # real adapter instead of counting endpoints without processing.
+        agent.recon_adapter.technology_fingerprint = AsyncMock(
+            return_value={"a": ["React"], "b": ["nginx"]}
+        )
         result = await agent._execute(
             _task("technology_fingerprint", {"endpoints": ["a", "b", "c"]})
         )
-        assert result == {"status": "success", "processed_count": 3}
+        assert result["status"] == "success"
+        assert result["processed_count"] == 2
+        assert result["fingerprints"] == {"a": ["React"], "b": ["nginx"]}
+        agent.recon_adapter.technology_fingerprint.assert_awaited_once_with(["a", "b", "c"])
 
     async def test_scope_payload_triggers_adapter_initialize(self):
         agent = _make_agent()
