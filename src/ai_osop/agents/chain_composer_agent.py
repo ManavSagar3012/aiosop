@@ -13,6 +13,21 @@ from ai_osop.core.models import Task
 
 logger = structlog.get_logger(__name__)
 
+# Vuln-class synonyms: different scanners/report paths label the same technique
+# differently (e.g. IDOR vs BOLA, xss vs cross_site_scripting). Normalize both the
+# scope's allowed_techniques and each hop's vuln type through this map before the
+# admissibility check so chains aren't dropped on vocabulary alone.
+_CLASS_SYNONYMS: Dict[str, str] = {
+    "bola": "idor",
+    "cross_site_scripting": "xss",
+}
+
+
+def _normalize_class(raw: Any) -> str:
+    """Lowercase + collapse synonym classes to a canonical token."""
+    tok = str(raw or "").strip().lower()
+    return _CLASS_SYNONYMS.get(tok, tok)
+
 
 class ChainComposerAgent(BaseAgent):
     """
@@ -35,10 +50,32 @@ class ChainComposerAgent(BaseAgent):
         # 1. Find chains
         chains = await self.ctx.graph_memory.find_vulnerability_chains(engagement_id)
 
-        # 2. Reason over chains
         if not chains:
             return {"status": "success", "message": "No vulnerability chains found"}
 
+        # 2. Admissibility filter: drop chains whose hops use techniques outside
+        #    scope.allowed_techniques. Filtering happens BEFORE LLM reasoning so
+        #    the model never sees (and never proposes) out-of-scope chains.
+        scope = getattr(self.ctx, "scope", None)
+        allowed = {_normalize_class(t) for t in (getattr(scope, "allowed_techniques", []) or [])}
+        allowed.discard("")
+        if allowed:
+            admissible = []
+            for chain in chains:
+                hop_types = {
+                    _normalize_class(n.get("vuln", {}).get("type", ""))
+                    for n in chain.get("nodes", [])
+                }
+                hop_types.discard("")
+                if hop_types and hop_types.issubset(allowed):
+                    admissible.append(chain)
+                else:
+                    logger.info("chain.filtered", dropped=sorted(hop_types - allowed))
+            chains = admissible
+        if not chains:
+            return {"status": "success", "message": "No admissible chains for scope"}
+
+        # 3. Reason over chains
         analysis = await self.think(
             f"Analyzing {len(chains)} potential exploit chains.",
             ["attack_graph", "chain_composition"],

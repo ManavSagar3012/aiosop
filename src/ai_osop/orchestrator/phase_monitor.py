@@ -305,6 +305,47 @@ class PhaseMonitor:
                 )
                 if next_phase is None:
                     return
+
+                # Part II Task 19: gated phase ENTRY. When the resolved
+                # auto-next phase is EXPLOITATION and its policy row requires
+                # manual approval, do NOT transition. Surface (once) an
+                # ApprovalRequest and hold the current phase until the
+                # operator approves; on the tick where the approval has
+                # landed, fall through and transition.
+                if next_phase == EngagementPhase.EXPLOITATION and (
+                    self._orch.PHASE_POLICY.get(next_phase, {}).get("manual_approval")
+                ):
+                    gate_task_id = f"phase-entry:{session_id}:{next_phase.value}"
+                    approver = self._orch.approval_coordinator
+                    if approver.approved_request_id(gate_task_id):
+                        # Operator approved on a prior tick — proceed.
+                        pass
+                    else:
+                        if not approver.has_pending_approval(gate_task_id):
+                            from ai_osop.core.models import ApprovalRequest
+
+                            request = ApprovalRequest(
+                                task_id=gate_task_id,
+                                agent_id="",
+                                action_type="phase_transition",
+                                target=f"enter_phase:{next_phase.value}",
+                                payload_summary=(
+                                    f"Auto-advance from {phase.value} to gated phase "
+                                    f"{next_phase.value} for engagement {session_id}"
+                                ),
+                                risk_assessment="high",
+                                engagement_id=session_id,
+                            )
+                            await approver._raise_approval(request)
+                            logger.info(
+                                "phase_entry_approval_requested",
+                                session_id=session_id,
+                                next_phase=next_phase.value,
+                                request_id=request.id,
+                            )
+                        # Hold the current phase — no transition without approval.
+                        return
+
                 if not self._orch._auto_transition_ready(session_id, phase, self._tick):
                     return
                 try:

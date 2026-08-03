@@ -10,15 +10,21 @@ engagement from running end-to-end without manual intervention:
      it as a pass-through (complete when no in-flight tasks) rather than hanging.
   3. Work-scheduling phases with tasks still in flight must NOT be considered
      complete (guards against premature advance).
+
+Also covers the single-source-of-truth PHASE_POLICY consolidation (Part II
+Task 19): the dead shadow dicts in core.config / core.enums are gone and the
+EXPLOITATION row on Orchestrator requires operator approval to ENTER.
 """
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.enums import AgentType
+import ai_osop.core.config as core_config
+import ai_osop.core.enums as core_enums
+from ai_osop.core.enums import AgentType, EngagementPhase
 from ai_osop.core.models import Task
-from ai_osop.orchestrator.orchestrator import EngagementPhase, Orchestrator
+from ai_osop.orchestrator.orchestrator import Orchestrator
 
 
 def _orch(vuln_count: int) -> Orchestrator:
@@ -88,3 +94,47 @@ async def test_recon_complete_when_task_finished():
     orch._tasks = {t.id: t}
     done = await orch._is_phase_complete("eng-x", EngagementPhase.RECONNAISSANCE)
     assert done is True
+
+
+# ── Single-source-of-truth PHASE_POLICY (Part II Task 19) ─────────────────────
+
+
+def test_dead_phase_policy_removed_from_config():
+    """The shadow PHASE_POLICY in core.config used different keys
+    (requires_manual_approval / automatic_next_phase) and was never imported.
+    It must be deleted so Orchestrator.PHASE_POLICY is the only copy."""
+    assert not hasattr(core_config, "PHASE_POLICY")
+
+
+def test_dead_phase_policy_removed_from_enums():
+    """The shadow PHASE_POLICY in core.enums (same dead shape) must be gone."""
+    assert not hasattr(core_enums, "PHASE_POLICY")
+
+
+def test_exploitation_entry_requires_manual_approval():
+    """EXPLOITATION is gated on entry: manual_approval=True. Its EXIT stays
+    automatic (auto_next=POST_EXPLOITATION)."""
+    row = Orchestrator.PHASE_POLICY[EngagementPhase.EXPLOITATION]
+    assert row["manual_approval"] is True
+    assert row["auto_next"] is EngagementPhase.POST_EXPLOITATION
+
+
+@pytest.mark.asyncio
+async def test_auto_advance_halts_before_exploitation():
+    """Gate (Task 26): when phase-completion would roll VULNERABILITY_DISCOVERY
+    into EXPLOITATION, the monitor halts auto-advance and raises an ApprovalRequest
+    instead. The suite's TestPhaseEntryApprovalGate class covers the deeper
+    lifecycle; this is the canonical single-case gate regression probe."""
+    from ai_osop.orchestrator.orchestrator import EngagementPhase
+    from tests.test_orchestrator_transitions import _make_monitor_orch, _make_session
+
+    orch, monitor = _make_monitor_orch(
+        EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION, manual=True
+    )
+    session = _make_session(EngagementPhase.VULNERABILITY_DISCOVERY)
+    await monitor._auto_advance_phase(session)
+
+    orch.engagement_manager.transition_phase.assert_not_called()
+    orch.approval_coordinator._raise_approval.assert_awaited_once()
+    req = orch.approval_coordinator._raise_approval.await_args.args[0]
+    assert req.engagement_id == "eng-1"

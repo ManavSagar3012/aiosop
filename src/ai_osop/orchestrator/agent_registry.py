@@ -167,6 +167,7 @@ async def register_all_agents(
         )
 
     skill_engine = state.get("skill_engine")
+    receipt_store = state.get("receipt_store")
 
     for agent_cls, agent_type, agent_id in agents_to_register:
         ctx = AgentContext(
@@ -185,6 +186,10 @@ async def register_all_agents(
         )
         ctx.skill_engine = skill_engine
         agent_inst = agent_cls(ctx)
+        # Proof-carrying chains: receipts gated by evidence_receipts_enabled. When
+        # the flag is OFF receipt_store is None; agents must treat it as
+        # best-effort and never flip a verdict based on receipt success/failure.
+        agent_inst.receipt_store = receipt_store
         await orch.register_agent(agent_inst)
 
     logger.info(

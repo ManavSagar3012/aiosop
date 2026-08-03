@@ -215,40 +215,6 @@ VALID_TRANSITIONS = {
     EngagementPhase.HALTED: [],
 }
 
-PHASE_POLICY = {
-    EngagementPhase.INITIALIZED: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.RECONNAISSANCE: {
-        "requires_manual_approval": False,
-        "automatic_next_phase": EngagementPhase.VULNERABILITY_DISCOVERY,
-    },
-    EngagementPhase.VULNERABILITY_DISCOVERY: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.EXPLOITATION: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.POST_EXPLOITATION: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.REPORTING: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.COMPLETED: {
-        "requires_manual_approval": False,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.HALTED: {
-        "requires_manual_approval": False,
-        "automatic_next_phase": None,
-    },
-}
 
 
 class AgentState(str, Enum):

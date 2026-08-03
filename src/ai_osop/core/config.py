@@ -170,6 +170,10 @@ class Settings(BaseSettings):
     allow_simulated_findings: bool = Field(
         default=False, validation_alias="OSOP_ALLOW_SIMULATED_FINDINGS"
     )
+    evidence_receipts_enabled: bool = Field(
+        default=False, validation_alias="OSOP_EVIDENCE_RECEIPTS_ENABLED"
+    )
+    evidence_root: str = Field(default="./evidence", validation_alias="OSOP_EVIDENCE_ROOT")
 
     # MCP
     mcp_server_host: str = "0.0.0.0"
@@ -254,6 +258,7 @@ class Settings(BaseSettings):
     sandbox_network_mode: str = "isolated"
     sandbox_cpu_limit: str = "2"
     sandbox_memory_limit: str = "4Gi"
+    sandbox_timeout_seconds: int = 30
 
     # Orchestration
     max_concurrent_agents: int = (
@@ -599,37 +604,3 @@ VALID_TRANSITIONS = {
     EngagementPhase.HALTED: [],
 }
 
-PHASE_POLICY = {
-    EngagementPhase.INITIALIZED: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.RECONNAISSANCE: {
-        "requires_manual_approval": False,
-        "automatic_next_phase": EngagementPhase.VULNERABILITY_DISCOVERY,
-    },
-    EngagementPhase.VULNERABILITY_DISCOVERY: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.EXPLOITATION: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.POST_EXPLOITATION: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.REPORTING: {
-        "requires_manual_approval": True,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.COMPLETED: {
-        "requires_manual_approval": False,
-        "automatic_next_phase": None,
-    },
-    EngagementPhase.HALTED: {
-        "requires_manual_approval": False,
-        "automatic_next_phase": None,
-    },
-}

@@ -72,7 +72,11 @@ class Orchestrator:
             "auto_next": EngagementPhase.EXPLOITATION,
         },
         EngagementPhase.EXPLOITATION: {
-            "manual_approval": False,
+            # Part II Task 19: EXPLOITATION is gated on ENTRY — the monitor
+            # surfaces an ApprovalRequest and holds the current phase until an
+            # operator approves (see PhaseMonitor._auto_advance_phase). The
+            # phase EXIT stays automatic.
+            "manual_approval": True,
             "auto_next": EngagementPhase.POST_EXPLOITATION,
         },
         EngagementPhase.POST_EXPLOITATION: {

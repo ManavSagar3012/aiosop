@@ -159,3 +159,25 @@ async def test_waf_character_probing(engine) -> None:
     mutated = await engine._mutate(original, VulnClass.SQLI, {"target_hash": "test-target"})
     assert len(mutated.encoding_chain) > 0
     assert any(enc in mutated.encoding_chain for enc in ["url", "hex", "unicode"])
+
+
+def test_payload_engine_includes_blind_templates():
+    from ai_osop.payload_engine.engine import PayloadTemplateLibrary
+
+    lib = PayloadTemplateLibrary()
+    for cls in ("blind_xss", "blind_sqli", "blind_ssti"):
+        templates = lib.templates_for(cls)
+        assert templates, f"missing template family {cls}"
+
+
+def test_blind_templates_embed_oast_callback_placeholder():
+    from ai_osop.payload_engine.engine import PayloadTemplateLibrary
+
+    lib = PayloadTemplateLibrary()
+    for cls in ("blind_xss", "blind_sqli", "blind_ssti"):
+        templates = lib.templates_for(cls)
+        for family in templates:
+            for payload in templates[family]:
+                assert (
+                    "{{OAST_CALLBACK_URL}}" in payload
+                ), f"{cls}/{family} payload missing OAST placeholder: {payload!r}"

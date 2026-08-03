@@ -262,6 +262,23 @@ async def _verify_critical_tool_names(logger) -> None:
             logger.warning("AIOSOP-TOOLGUARD probe of %s failed (non-fatal): %s", server_id, e)
 
 
+def _build_receipt_store_if_enabled(sa_engine, integrity):
+    """Build a ReceiptStore only when the evidence_receipts_enabled flag is ON.
+
+    Returns None when the feature flag is off so callers can branch on
+    ``store is None`` (receipts are best-effort, never flip an exploit result).
+    """
+    if not settings.evidence_receipts_enabled:
+        return None
+    from ai_osop.evidence.store import ReceiptStore
+
+    return ReceiptStore(
+        sa_engine=sa_engine,
+        integrity=integrity,
+        evidence_root=settings.evidence_root,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
@@ -411,6 +428,35 @@ async def lifespan(app: FastAPI):
                 logger.info("Primitive ledger wired to graph memory.")
         except Exception as e:  # noqa: BLE001 - chain loop is optional
             logger.warning(f"Primitive ledger wiring failed: {e}")
+
+        # Proof-carrying chains: ReceiptStore construction gated by
+        # evidence_receipts_enabled (defaults OFF). When ON, ensure schema on the
+        # shared SQLAlchemy AsyncEngine first, then stash for agent injection.
+        # Best-effort — receipts never flip an exploit result; failures here only
+        # disable receipts, never startup.
+        receipt_store = None
+        if settings.evidence_receipts_enabled:
+            try:
+                from ai_osop.core.config import scope_signing_key
+                from ai_osop.evidence.migrations import ensure_schema
+                from ai_osop.safety.scope import AuditIntegrity
+
+                _sa_engine = getattr(session_memory, "_pg_engine", None)
+                if _sa_engine is not None:
+                    await ensure_schema(_sa_engine)
+                _integrity = AuditIntegrity(signing_key=scope_signing_key())
+                receipt_store = _build_receipt_store_if_enabled(
+                    sa_engine=_sa_engine,
+                    integrity=_integrity,
+                )
+                if receipt_store is not None:
+                    logger.info("ReceiptStore wired (evidence_receipts_enabled=ON).")
+            except Exception as e:  # noqa: BLE001 - receipts are best-effort
+                logger.warning(f"ReceiptStore wiring failed (non-fatal): {e}")
+                receipt_store = None
+        app.state.receipt_store = receipt_store
+        state["receipt_store"] = receipt_store
+
         # 5a. Outbox Processor (Transactional sync)
         try:
             from ai_osop.memory.outbox_processor import OutboxProcessor

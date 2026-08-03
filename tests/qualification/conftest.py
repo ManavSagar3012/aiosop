@@ -21,8 +21,10 @@ from __future__ import annotations
 import json
 import os
 import threading
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import httpx
 import pytest
@@ -226,3 +228,47 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "qualification: MCP tooling-reality gate (real execution, not stub)"
     )
+
+
+@pytest.fixture
+def blind_sink_target():
+    """Ephemeral callback sink for blind-oracle verification.
+
+    `/inject?cb=<url>` triggers a server-side GET to `cb` (the blind-SSRF /
+    blind-XSS / blind-SSTI out-of-band pattern). Every request path the sink
+    sees is appended to a thread-safe list so tests can assert the callback
+    actually landed. Yields `(base_url, seen_paths)`.
+    """
+    seen: List[str] = []
+    lock = threading.Lock()
+
+    class _BlindSinkHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            with lock:
+                seen.append(self.path)
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/inject":
+                qs = urllib.parse.parse_qs(parsed.query)
+                cb = qs.get("cb", [""])[0]
+                if cb:
+                    threading.Thread(
+                        target=lambda: urllib.request.urlopen(cb, timeout=1),
+                        daemon=True,
+                    ).start()
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):  # silence
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _BlindSinkHandler)
+    port = server.server_address[1]
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield f"http://127.0.0.1:{port}", seen
+    finally:
+        server.shutdown()
