@@ -13,16 +13,14 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import insert, select
 
 from ai_osop.evidence.migrations import exploit_receipts
-from ai_osop.evidence.models import ExploitReceipt
+from ai_osop.evidence.models import ExploitReceipt, ReceiptArtifact
 
 
 def _canonical_payload(receipt_fields: Dict[str, Any]) -> str:
     return json.dumps(receipt_fields, sort_keys=True, default=str, separators=(",", ":"))
 
 
-def _sign_receipt_fields(
-    signing_key: bytes, prev_hash: str, receipt_fields: Dict[str, Any]
-) -> str:
+def _sign_receipt_fields(signing_key: bytes, prev_hash: str, receipt_fields: Dict[str, Any]) -> str:
     data = f"{prev_hash}:{_canonical_payload(receipt_fields)}"
     return hmac.new(signing_key, data.encode(), hashlib.sha256).hexdigest()
 
@@ -114,10 +112,14 @@ class ReceiptStore:
     async def get(self, receipt_id: str) -> "Optional[ExploitReceipt]":
         async with self._engine.connect() as conn:
             row = (
-                await conn.execute(
-                    select(exploit_receipts).where(exploit_receipts.c.receipt_id == receipt_id)
+                (
+                    await conn.execute(
+                        select(exploit_receipts).where(exploit_receipts.c.receipt_id == receipt_id)
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         if not row:
             return None
         data = dict(row)
@@ -128,21 +130,32 @@ class ReceiptStore:
     async def verify_chain(self, engagement_id: str) -> bool:
         async with self._engine.connect() as conn:
             rows = (
-                await conn.execute(
-                    select(exploit_receipts)
-                    .where(exploit_receipts.c.engagement_id == engagement_id)
-                    .order_by(exploit_receipts.c.created_at)
+                (
+                    await conn.execute(
+                        select(exploit_receipts)
+                        .where(exploit_receipts.c.engagement_id == engagement_id)
+                        .order_by(exploit_receipts.c.created_at)
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         prev = ""
         for row in rows:
             payload = {
-                "receipt_id": row["receipt_id"], "engagement_id": row["engagement_id"],
-                "vuln_id": row["vuln_id"], "approval_id": row["approval_id"],
-                "verdict": row["verdict"], "confidence": row["confidence"],
-                "scope_hash": row["scope_hash"], "oracle_signals": row["oracle_signals"],
+                "receipt_id": row["receipt_id"],
+                "engagement_id": row["engagement_id"],
+                "vuln_id": row["vuln_id"],
+                "approval_id": row["approval_id"],
+                "verdict": row["verdict"],
+                "confidence": row["confidence"],
+                "scope_hash": row["scope_hash"],
+                "oracle_signals": row["oracle_signals"],
             }
-            if _sign_receipt_fields(self._integrity.signing_key, prev, payload) != row["integrity_sig"]:
+            if (
+                _sign_receipt_fields(self._integrity.signing_key, prev, payload)
+                != row["integrity_sig"]
+            ):
                 return False
             prev = row["integrity_sig"]
         return True
@@ -150,10 +163,16 @@ class ReceiptStore:
     async def _fetch_where(self, clause) -> "List[ExploitReceipt]":
         async with self._engine.connect() as conn:
             rows = (
-                await conn.execute(
-                    select(exploit_receipts).where(clause).order_by(exploit_receipts.c.created_at)
+                (
+                    await conn.execute(
+                        select(exploit_receipts)
+                        .where(clause)
+                        .order_by(exploit_receipts.c.created_at)
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [ExploitReceipt(**dict(r)) for r in rows]
 
     async def for_vulnerability(self, vuln_id: str) -> "List[ExploitReceipt]":
@@ -169,13 +188,10 @@ class ReceiptStore:
         manifest: List[Dict[str, Any]] = []
         for r in receipts:
             manifest.extend(a.model_dump() for a in r.artifacts)
-        markdown = (
-            f"## Exploit receipts for {vuln_id}\n\n"
-            + "\n\n".join(
-                f"- **{r.receipt_id}** verdict={r.verdict} confidence={r.confidence:.2f} "
-                f"note={r.confirmation_note} scope_hash={r.scope_hash}"
-                for r in receipts
-            )
+        markdown = f"## Exploit receipts for {vuln_id}\n\n" + "\n\n".join(
+            f"- **{r.receipt_id}** verdict={r.verdict} confidence={r.confidence:.2f} "
+            f"note={r.confirmation_note} scope_hash={r.scope_hash}"
+            for r in receipts
         )
         return {
             "markdown": markdown,
@@ -185,4 +201,3 @@ class ReceiptStore:
             "submitted": False,
             "redact_secrets": redact_secrets,
         }
-

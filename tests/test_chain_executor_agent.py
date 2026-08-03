@@ -155,17 +155,22 @@ async def test_executor_aborts_on_first_hop_failure():
     ctx.agent_type = AgentType.ATTACK_CHAIN
     ctx.session_id = "eng-c"
     ctx.graph_memory = MagicMock()
-    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
-        "id": "chain-X",
-        "nodes": [
-            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
-            {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
-            {"url": "https://c", "vuln": {"id": "v-3", "type": "rce", "payload": {}}},
-        ],
-    }])
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(
+        return_value=[
+            {
+                "id": "chain-X",
+                "nodes": [
+                    {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+                    {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
+                    {"url": "https://c", "vuln": {"id": "v-3", "type": "rce", "payload": {}}},
+                ],
+            }
+        ]
+    )
 
     class _Facade:
         calls: int = 0
+
         async def validate_exploit(self, endpoint, vuln_class, payload):
             self.calls += 1
             return {"validated": self.calls == 1}  # hop 1 ok; hop 2 fails
@@ -176,10 +181,15 @@ async def test_executor_aborts_on_first_hop_failure():
     agent = ChainExecutorAgent(ctx)
     agent._exploit = facade
 
-    task = Task(type="execute_exploit_chain", agent_type=AgentType.ATTACK_CHAIN, payload={}, engagement_id="eng-c")
+    task = Task(
+        type="execute_exploit_chain",
+        agent_type=AgentType.ATTACK_CHAIN,
+        payload={},
+        engagement_id="eng-c",
+    )
     out = await agent._execute(task)
 
-    assert facade.calls == 2                      # stopped before hop 3
+    assert facade.calls == 2  # stopped before hop 3
     assert len(out["chain_run"]) == 2
     assert out["status"] == "chain_failed"
     assert out.get("aborted_at_hop") == 1
@@ -194,30 +204,42 @@ async def test_executor_records_receipt_per_attempted_hop(tmp_path):
     ctx.agent_type = AgentType.ATTACK_CHAIN
     ctx.session_id = "eng-r"
     ctx.graph_memory = MagicMock()
-    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
-        "id": "chain-R", "nodes": [
-            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
-            {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
-        ],
-    }])
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(
+        return_value=[
+            {
+                "id": "chain-R",
+                "nodes": [
+                    {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+                    {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
+                ],
+            }
+        ]
+    )
 
     class _Facade:
         async def validate_exploit(self, endpoint, vuln_class, payload):
             return {"validated": True, "receipt_id": f"rcpt-underlying"}
 
-    store = MagicMock(); store.record = AsyncMock(return_value="sig-hop")
+    store = MagicMock()
+    store.record = AsyncMock(return_value="sig-hop")
     from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
 
     agent = ChainExecutorAgent(ctx)
     agent._exploit = _Facade()
     agent.receipt_store = store
 
-    task = Task(type="execute_exploit_chain", agent_type=AgentType.ATTACK_CHAIN, payload={}, engagement_id="eng-r")
+    task = Task(
+        type="execute_exploit_chain",
+        agent_type=AgentType.ATTACK_CHAIN,
+        payload={},
+        engagement_id="eng-r",
+    )
     # DEVIATION from plan: the plan's exact test omits enabling the evidence flag,
     # but the impl gates emission on settings.evidence_receipts_enabled (per plan
     # step 3 and the Part I precedent in tests/test_exploit_agent.py). Enable it
     # here (and restore) so the receipt path actually runs.
     from ai_osop.core.config import settings
+
     settings.evidence_receipts_enabled = True
     try:
         await agent._execute(task)
@@ -240,12 +262,17 @@ async def test_abort_chain_marks_hops_and_stops():
     ctx.agent_type = AgentType.ATTACK_CHAIN
     ctx.session_id = "eng-c"
     ctx.graph_memory = MagicMock()
-    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
-        "id": "chain-X", "nodes": [
-            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
-            {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
-        ],
-    }])
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(
+        return_value=[
+            {
+                "id": "chain-X",
+                "nodes": [
+                    {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+                    {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
+                ],
+            }
+        ]
+    )
 
     class _Facade:
         def __init__(self):
@@ -310,11 +337,16 @@ async def test_abort_records_chain_failed_ledger_state():
     ctx.agent_type = AgentType.ATTACK_CHAIN
     ctx.session_id = "eng-gate"
     ctx.graph_memory = MagicMock()
-    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
-        "id": "chain-G", "nodes": [
-            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
-        ],
-    }])
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(
+        return_value=[
+            {
+                "id": "chain-G",
+                "nodes": [
+                    {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+                ],
+            }
+        ]
+    )
 
     class _BoomFacade:
         async def validate_exploit(self, endpoint, vuln_class, payload):
@@ -359,13 +391,17 @@ async def test_abort_records_chain_failed_ledger_state():
     ctx.agent_type = AgentType.ATTACK_CHAIN
     ctx.session_id = "eng-ab"
     ctx.graph_memory = MagicMock()
-    ctx.graph_memory.find_vulnerability_chains = AsyncMock(return_value=[{
-        "id": "chain-AB",
-        "nodes": [
-            {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
-            {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
-        ],
-    }])
+    ctx.graph_memory.find_vulnerability_chains = AsyncMock(
+        return_value=[
+            {
+                "id": "chain-AB",
+                "nodes": [
+                    {"url": "https://a", "vuln": {"id": "v-1", "type": "sqli", "payload": {}}},
+                    {"url": "https://b", "vuln": {"id": "v-2", "type": "xss", "payload": {}}},
+                ],
+            }
+        ]
+    )
 
     from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
 
@@ -384,15 +420,21 @@ async def test_abort_records_chain_failed_ledger_state():
     agent._exploit = _FailOnSecond()
     agent.ledger = ledger
 
-    task = Task(type="execute_exploit_chain", agent_type=AgentType.ATTACK_CHAIN,
-                payload={"chain_id": "chain-AB"}, engagement_id="eng-ab")
+    task = Task(
+        type="execute_exploit_chain",
+        agent_type=AgentType.ATTACK_CHAIN,
+        payload={"chain_id": "chain-AB"},
+        engagement_id="eng-ab",
+    )
     out = await agent._execute(task)
 
     assert out["status"] == "chain_failed"
     assert out["aborted_at_hop"] == 1
     # Ledger saw exactly one success (chain_executed) then one failure (chain_failed).
     # Transition calls are positional: transition(vuln_id, state, reason=...).
-    calls = [c.args[1] if len(c.args) >= 2 else c.kwargs.get("to_state")
-             for c in ledger.transition.await_args_list]
+    calls = [
+        c.args[1] if len(c.args) >= 2 else c.kwargs.get("to_state")
+        for c in ledger.transition.await_args_list
+    ]
     assert "chain_failed" in calls
     assert calls.count("chain_failed") >= 1

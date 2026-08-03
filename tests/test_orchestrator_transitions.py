@@ -315,9 +315,7 @@ class TestPhaseEntryApprovalGate:
         orch, monitor = _make_monitor_orch(
             EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION, manual=True
         )
-        await monitor._auto_advance_phase(
-            _make_session(EngagementPhase.VULNERABILITY_DISCOVERY)
-        )
+        await monitor._auto_advance_phase(_make_session(EngagementPhase.VULNERABILITY_DISCOVERY))
 
         orch.engagement_manager.transition_phase.assert_not_called()
         orch.approval_coordinator._raise_approval.assert_awaited_once()

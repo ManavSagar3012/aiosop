@@ -5,7 +5,9 @@ import re
 from typing import Dict
 
 # Headers whose values are bearer material and must never persist in plaintext.
-_SECRET_HEADERS = frozenset({"authorization", "cookie", "x-api-key", "set-cookie", "proxy-authorization"})
+_SECRET_HEADERS = frozenset(
+    {"authorization", "cookie", "x-api-key", "set-cookie", "proxy-authorization"}
+)
 
 # Long hex/alnum runs are usually tokens or hashes of secrets.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9\-_/+]{24,}={0,2}")

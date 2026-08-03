@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 
 class ReceiptArtifact(BaseModel):
     artifact_id: str  # "art-<sha256[:12]>" content-addressed
-    kind: str  # "http_request" | "http_response" | "screenshot" | "oast_interaction" | "console_log"
+    kind: (
+        str  # "http_request" | "http_response" | "screenshot" | "oast_interaction" | "console_log"
+    )
     sha256: str
     blob_path: str  # relative to the evidence root
     redaction_map: Dict[str, str] = Field(default_factory=dict)

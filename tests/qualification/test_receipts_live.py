@@ -6,6 +6,7 @@ round-trip -> ``verify_chain(engagement) is True``.
 Marked ``integration``: requires a live Postgres (the ``exploit_receipts``
 table). Skips cleanly when Postgres is absent.
 """
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

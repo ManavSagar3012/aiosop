@@ -57,10 +57,7 @@ class ChainComposerAgent(BaseAgent):
         #    scope.allowed_techniques. Filtering happens BEFORE LLM reasoning so
         #    the model never sees (and never proposes) out-of-scope chains.
         scope = getattr(self.ctx, "scope", None)
-        allowed = {
-            _normalize_class(t)
-            for t in (getattr(scope, "allowed_techniques", []) or [])
-        }
+        allowed = {_normalize_class(t) for t in (getattr(scope, "allowed_techniques", []) or [])}
         allowed.discard("")
         if allowed:
             admissible = []
