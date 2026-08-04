@@ -26,7 +26,13 @@ def _sign_receipt_fields(signing_key: bytes, prev_hash: str, receipt_fields: Dic
 
 
 def _receipt_signing_fields(receipt: "ExploitReceipt") -> Dict[str, Any]:
-    """Subset of fields covered by the HMAC chain (tamper-relevant only)."""
+    """Subset of fields covered by the HMAC chain (tamper-relevant only).
+
+    Timestamps are normalised to ISO strings so that naive-vs-aware datetimes
+    round-tripping through ``DateTime(timezone=True)`` columns never break the
+    chain.
+    """
+    ts = receipt.timestamp
     return {
         "receipt_id": receipt.receipt_id,
         "engagement_id": receipt.engagement_id,
@@ -36,6 +42,13 @@ def _receipt_signing_fields(receipt: "ExploitReceipt") -> Dict[str, Any]:
         "confidence": receipt.confidence,
         "scope_hash": receipt.scope_hash,
         "oracle_signals": receipt.oracle_signals,
+        "hop_idx": receipt.hop_idx,
+        "chain_id": receipt.chain_id,
+        "confirmation_note": receipt.confirmation_note,
+        "request_summary": receipt.request_summary,
+        "response_summary": receipt.response_summary,
+        "timestamp": ts.isoformat() if ts is not None else "",
+        "simulated": receipt.simulated,
     }
 
 
@@ -151,6 +164,13 @@ class ReceiptStore:
                 "confidence": row["confidence"],
                 "scope_hash": row["scope_hash"],
                 "oracle_signals": row["oracle_signals"],
+                "hop_idx": row["hop_idx"],
+                "chain_id": row["chain_id"],
+                "confirmation_note": row["confirmation_note"],
+                "request_summary": row["request_summary"],
+                "response_summary": row["response_summary"],
+                "timestamp": row["created_at"].isoformat() if row["created_at"] is not None else "",
+                "simulated": row["simulated"],
             }
             if (
                 _sign_receipt_fields(self._integrity.signing_key, prev, payload)

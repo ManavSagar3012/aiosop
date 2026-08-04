@@ -1,6 +1,6 @@
 """Pydantic schemas for exploit receipts and content-addressed artifacts."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -32,7 +32,7 @@ class ExploitReceipt(BaseModel):
     request_summary: Dict[str, Any] = Field(default_factory=dict)
     response_summary: Dict[str, Any] = Field(default_factory=dict)
     scope_hash: str = ""
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     prev_receipt_hash: str = ""
     integrity_sig: str = ""
     simulated: bool = False  # mirrors Vulnerability.is_simulated gate
