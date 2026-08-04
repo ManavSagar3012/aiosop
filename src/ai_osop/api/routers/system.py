@@ -14,7 +14,11 @@ from ai_osop.core.config import settings
 router = APIRouter(prefix="/system", tags=["system"])
 
 
-@router.get("/skills/stats")
+@router.get(
+    "/skills/stats",
+    summary="Get skill engine statistics",
+    description="Return SkillEngine reputation and usage stats, including loaded skills, findings contributed, revenue, and recent executions. Shaped for the UI skill store.",
+)
 async def get_skill_stats(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
 ):
@@ -32,7 +36,11 @@ async def get_skill_stats(
     return state["skill_engine"].get_stats()
 
 
-@router.get("/config")
+@router.get(
+    "/config",
+    summary="Get system configuration",
+    description="Return non-sensitive system configuration including environment, log level, MCP port, LLM model, sandbox runtime, active agents, and registered MCP servers.",
+)
 async def get_system_config(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
 ):
@@ -48,7 +56,11 @@ async def get_system_config(
     }
 
 
-@router.get("/sandbox/status")
+@router.get(
+    "/sandbox/status",
+    summary="Get sandbox status",
+    description="Report the real executor state for execution sandboxes. Returns honest negatives for unverifiable controls (eBPF, Tetragon) rather than fabricated values.",
+)
 async def get_sandbox_status(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
 ):
@@ -91,7 +103,11 @@ async def get_sandbox_status(
     }
 
 
-@router.get("/mcp/health")
+@router.get(
+    "/mcp/health",
+    summary="Get MCP server health",
+    description="Return circuit breaker state, failure counts, recovery attempts, and connection health for every registered MCP server.",
+)
 async def get_mcp_health(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
 ):
@@ -125,7 +141,11 @@ async def get_mcp_health(
     return {"servers": servers}
 
 
-@router.get("/dlq/stats")
+@router.get(
+    "/dlq/stats",
+    summary="Get DLQ statistics",
+    description="Return Dead Letter Queue statistics so operators know when failed tasks need manual intervention.",
+)
 async def get_dlq_stats(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
 ):
@@ -139,7 +159,11 @@ async def get_dlq_stats(
     return stats
 
 
-@router.get("/dlq/entries")
+@router.get(
+    "/dlq/entries",
+    summary="List DLQ entries",
+    description="List Dead Letter Queue entries for operator review and requeue/discard decisions. Optionally filter by engagement ID and status.",
+)
 async def list_dlq_entries(
     engagement_id: str = None,
     status: str = None,
@@ -151,7 +175,11 @@ async def list_dlq_entries(
     return {"entries": [e.model_dump() for e in entries]}
 
 
-@router.post("/dlq/requeue")
+@router.post(
+    "/dlq/requeue",
+    summary="Requeue DLQ entry",
+    description="Move a failed DLQ task back into the normal task queue for retry. Only senior operators may requeue.",
+)
 async def requeue_dlq_entry(
     dlq_entry_id: str,
     operator: Dict[str, Any] = Depends(require_role("senior_operator")),
@@ -165,7 +193,11 @@ async def requeue_dlq_entry(
     return {"status": "requeued", "task_id": task.id}
 
 
-@router.post("/dlq/discard")
+@router.post(
+    "/dlq/discard",
+    summary="Discard DLQ entry",
+    description="Permanently discard a DLQ entry with optional operator notes. Only senior operators may discard.",
+)
 async def discard_dlq_entry(
     dlq_entry_id: str,
     operator_notes: str = "",
@@ -177,7 +209,11 @@ async def discard_dlq_entry(
     return {"status": "discarded", "dlq_entry_id": dlq_entry_id}
 
 
-@router.get("/readiness/trust-score")
+@router.get(
+    "/readiness/trust-score",
+    summary="Get live trust score",
+    description="Compute a live trust/readiness score from real subsystem health checks (Redis, Neo4j, Postgres, MCP tools). Replaces previously hardcoded fabricated values.",
+)
 async def get_trust_score(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
 ):

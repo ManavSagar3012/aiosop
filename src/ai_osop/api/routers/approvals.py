@@ -25,7 +25,11 @@ _DEFAULT_APPROVALS_LIMIT = 200
 _MAX_APPROVALS_LIMIT = 2000
 
 
-@router.get("/pending")
+@router.get(
+    "/pending",
+    summary="List pending approvals",
+    description="Return all pending human-in-the-loop approval requests visible to the caller. Bounded by limit/offset.",
+)
 async def list_pending_approvals(
     limit: int = Query(_DEFAULT_APPROVALS_LIMIT, ge=1),
     offset: int = Query(0, ge=0),
@@ -51,7 +55,11 @@ async def list_pending_approvals(
     return pending[offset : offset + effective]
 
 
-@router.get("/{request_id}")
+@router.get(
+    "/{request_id}",
+    summary="Get approval request",
+    description="Retrieve the details of a specific approval request by its ID.",
+)
 async def get_approval(request_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Get approval request details."""
     request = state["orchestrator"]._approval_requests.get(request_id)
@@ -61,7 +69,11 @@ async def get_approval(request_id: str, operator: Dict[str, Any] = Depends(verif
     return request
 
 
-@router.post("/{request_id}/resolve")
+@router.post(
+    "/{request_id}/resolve",
+    summary="Resolve approval request",
+    description="Approve or reject a pending approval request. Only senior operators may resolve approvals.",
+)
 async def resolve_approval(
     request_id: str,
     decision: ApprovalDecisionRequest,

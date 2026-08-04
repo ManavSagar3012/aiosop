@@ -15,7 +15,11 @@ from ai_osop.api.deps import assert_engagement_access, engagement_id_forms, stat
 router = APIRouter(tags=["cognition"])
 
 
-@router.get("/engagements/{session_id}/reasoning-trace")
+@router.get(
+    "/engagements/{session_id}/reasoning-trace",
+    summary="Get reasoning trace",
+    description="Return every decision the reasoning loop made: step type (observe/orient/hypothesize/select/dispatch/evaluate/critique/learn), decision, rationale, confidence, and alternatives considered.",
+)
 async def get_reasoning_trace(
     session_id: str,
     operator: Dict[str, Any] = Depends(verify_token),
@@ -36,7 +40,11 @@ async def get_reasoning_trace(
     return {"session_id": session_id, "count": len(entries), "trace": entries}
 
 
-@router.get("/engagements/{session_id}/uncertainties")
+@router.get(
+    "/engagements/{session_id}/uncertainties",
+    summary="Get open uncertainties",
+    description="Return open uncertainties detected by the UncertaintyTracker, including what the system does not yet know (authenticated status, framework, etc.).",
+)
 async def get_uncertainties(
     session_id: str,
     operator: Dict[str, Any] = Depends(verify_token),
@@ -62,7 +70,11 @@ async def get_uncertainties(
     }
 
 
-@router.get("/engagements/{session_id}/business-context")
+@router.get(
+    "/engagements/{session_id}/business-context",
+    summary="Get business context categorization",
+    description="Return business-context categorization of all endpoints, including domain classification (payment/auth/admin/etc.), criticality scores, and recommended tests.",
+)
 async def get_business_context(
     session_id: str,
     operator: Dict[str, Any] = Depends(verify_token),
@@ -99,7 +111,11 @@ async def get_business_context(
     }
 
 
-@router.get("/engagements/{session_id}/attack-chains")
+@router.get(
+    "/engagements/{session_id}/attack-chains",
+    summary="Get attack chains",
+    description="Return multi-step attack chains discovered by the GraphPathfinder, linking confirmed vulnerabilities to high-value endpoints via Neo4j graph traversal.",
+)
 async def get_attack_chains(
     session_id: str,
     operator: Dict[str, Any] = Depends(verify_token),
@@ -122,7 +138,11 @@ async def get_attack_chains(
     }
 
 
-@router.get("/engagements/{session_id}/critic-review")
+@router.get(
+    "/engagements/{session_id}/critic-review",
+    summary="Get adversarial critic review",
+    description="Return the CriticAgent's review of validated findings, auditing for false positives, missing evidence, and incomplete validation before reporting.",
+)
 async def get_critic_review(
     session_id: str,
     operator: Dict[str, Any] = Depends(verify_token),
@@ -145,7 +165,11 @@ async def get_critic_review(
     }
 
 
-@router.get("/engagements/{session_id}/cognition-summary")
+@router.get(
+    "/engagements/{session_id}/cognition-summary",
+    summary="Get cognition summary",
+    description="Unified cognition metrics summary aggregating reasoning trace steps, hypothesis counts, uncertainty counts, attack chains, critic issues, and high-value endpoint counts.",
+)
 async def get_cognition_summary(
     session_id: str,
     operator: Dict[str, Any] = Depends(verify_token),

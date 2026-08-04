@@ -31,7 +31,12 @@ _DEFAULT_TASK_LIST_LIMIT = 200
 _MAX_TASK_LIST_LIMIT = 2000
 
 
-@router.get("", response_model=List[Task])
+@router.get(
+    "",
+    response_model=List[Task],
+    summary="List tasks",
+    description="Return tasks optionally filtered by engagement ID, ordered newest-first. Bounded by a server-side limit.",
+)
 async def list_tasks(
     engagement_id: Optional[str] = None,
     limit: Optional[int] = Query(None, ge=1),
@@ -64,7 +69,12 @@ from ai_osop.core.models import Task
 # TaskScheduler._is_dangerous_task. See AIOSOP-APPROVAL-SURFACE-001.
 
 
-@router.post("", response_model=Task)
+@router.post(
+    "",
+    response_model=Task,
+    summary="Create a task",
+    description="Create and schedule a new task for an engagement. Dangerous task types are automatically gated behind operator approval.",
+)
 async def create_task(
     request: CreateTaskRequest,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
@@ -109,7 +119,11 @@ async def create_task(
     return task
 
 
-@router.get("/{task_id}")
+@router.get(
+    "/{task_id}",
+    summary="Get task status",
+    description="Retrieve the current status, payload, and results for a specific task by its ID.",
+)
 async def get_task(
     task_id: str,
     operator: Dict[str, Any] = Depends(verify_token),

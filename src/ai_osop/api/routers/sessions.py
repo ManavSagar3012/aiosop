@@ -78,7 +78,12 @@ async def _project_session_to_graph(engagement_id: str, user_label: str, sess: A
         )
 
 
-@router.put("/{session_id}/sessions/{user_label}", response_model=UserSessionResponse)
+@router.put(
+    "/{session_id}/sessions/{user_label}",
+    response_model=UserSessionResponse,
+    summary="Import or replace user session",
+    description="Import or replace a user-session (cookies, bearer tokens, CSRF tokens) for an engagement. Triggers authenticated discovery after import.",
+)
 async def put_user_session(
     session_id: str,
     user_label: str,
@@ -112,7 +117,12 @@ async def put_user_session(
     return _session_response(sess)
 
 
-@router.post("/{session_id}/sessions", response_model=UserSessionResponse)
+@router.post(
+    "/{session_id}/sessions",
+    response_model=UserSessionResponse,
+    summary="Create or replace user session (POST)",
+    description="Create-or-replace a user-session via POST. The user_label must be provided in the request body.",
+)
 async def post_user_session(
     session_id: str,
     body: UserSessionImportRequest,
@@ -142,7 +152,12 @@ async def post_user_session(
     return _session_response(sess)
 
 
-@router.get("/{session_id}/sessions", response_model=List[UserSessionResponse])
+@router.get(
+    "/{session_id}/sessions",
+    response_model=List[UserSessionResponse],
+    summary="List user sessions",
+    description="Return all captured user sessions for an engagement, including metadata about cookies, tokens, and capture timestamps.",
+)
 async def list_user_sessions(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """List all captured user sessions for an engagement."""
     session = await assert_engagement_access(operator, session_id)
@@ -153,7 +168,12 @@ async def list_user_sessions(session_id: str, operator: Dict[str, Any] = Depends
     return [_session_response(s) for s in sessions]
 
 
-@router.get("/{session_id}/sessions/{user_label}", response_model=UserSessionResponse)
+@router.get(
+    "/{session_id}/sessions/{user_label}",
+    response_model=UserSessionResponse,
+    summary="Get user session details",
+    description="Retrieve metadata for a single user session by label. Secrets (cookies, tokens) are not returned in the response.",
+)
 async def get_user_session(
     session_id: str,
     user_label: str,
@@ -171,7 +191,11 @@ async def get_user_session(
     return _session_response(sess)
 
 
-@router.delete("/{session_id}/sessions/{user_label}")
+@router.delete(
+    "/{session_id}/sessions/{user_label}",
+    summary="Delete user session",
+    description="Revoke and permanently delete a captured user session. Only senior operators may delete sessions.",
+)
 async def delete_user_session(
     session_id: str,
     user_label: str,

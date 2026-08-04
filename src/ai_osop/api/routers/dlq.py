@@ -29,7 +29,12 @@ class DLQActionResponse(BaseModel):
     entry_id: Optional[str] = None
 
 
-@router.get("", response_model=DLQListResponse)
+@router.get(
+    "",
+    response_model=DLQListResponse,
+    summary="List DLQ entries",
+    description="List Dead Letter Queue entries with optional filtering by engagement ID and status. Non-senior operators must provide an engagement_id.",
+)
 async def list_dlq_entries(
     engagement_id: Optional[str] = None,
     status: Optional[str] = None,
@@ -60,7 +65,12 @@ async def list_dlq_entries(
         return DLQListResponse(entries=entries, total=len(entries))
 
 
-@router.get("/{entry_id}", response_model=DLQEntry)
+@router.get(
+    "/{entry_id}",
+    response_model=DLQEntry,
+    summary="Get DLQ entry details",
+    description="Retrieve the full details of a single DLQ entry by its ID, including the original error and task context.",
+)
 async def get_dlq_entry(
     entry_id: str,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
@@ -84,7 +94,12 @@ async def get_dlq_entry(
         return entry
 
 
-@router.post("/{entry_id}/requeue", response_model=DLQActionResponse)
+@router.post(
+    "/{entry_id}/requeue",
+    response_model=DLQActionResponse,
+    summary="Requeue DLQ entry",
+    description="Move a DLQ entry back into the normal task queue for retry. Only senior operators may requeue.",
+)
 async def requeue_dlq_entry(
     entry_id: str,
     operator: Dict[str, Any] = Depends(require_role("senior_operator")),
@@ -122,7 +137,12 @@ async def requeue_dlq_entry(
         )
 
 
-@router.post("/{entry_id}/discard", response_model=DLQActionResponse)
+@router.post(
+    "/{entry_id}/discard",
+    response_model=DLQActionResponse,
+    summary="Discard DLQ entry",
+    description="Permanently discard a DLQ entry. Only senior operators may discard entries.",
+)
 async def discard_dlq_entry(
     entry_id: str,
     notes: Optional[str] = None,
@@ -161,7 +181,12 @@ async def discard_dlq_entry(
         )
 
 
-@router.post("/{entry_id}/retry", response_model=DLQActionResponse)
+@router.post(
+    "/{entry_id}/retry",
+    response_model=DLQActionResponse,
+    summary="Retry DLQ entry",
+    description="Retry a DLQ entry (alias for requeue). Moves the entry back into the normal task queue.",
+)
 async def retry_dlq_entry(
     entry_id: str,
     operator: Dict[str, Any] = Depends(require_role("senior_operator")),

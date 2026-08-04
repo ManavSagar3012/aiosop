@@ -12,7 +12,12 @@ from ai_osop.api.deps import AgentStatusResponse, require_role, state, update_ac
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-@router.get("", response_model=List[AgentStatusResponse])
+@router.get(
+    "",
+    response_model=List[AgentStatusResponse],
+    summary="List agents",
+    description="Return all registered worker agents and their current status (idle, busy, offline).",
+)
 async def list_agents(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
 ):
@@ -25,7 +30,11 @@ async def list_agents(
     return agents
 
 
-@router.get("/{agent_id}")
+@router.get(
+    "/{agent_id}",
+    summary="Get agent status",
+    description="Retrieve the current status and task queue depth for a specific agent by its ID.",
+)
 async def get_agent(
     agent_id: str,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),

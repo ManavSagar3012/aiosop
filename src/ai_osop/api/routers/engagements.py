@@ -21,7 +21,12 @@ from ai_osop.orchestrator.orchestrator import EngagementPhase
 router = APIRouter(prefix="/engagements", tags=["engagements"])
 
 
-@router.post("", response_model=SessionState)
+@router.post(
+    "",
+    response_model=SessionState,
+    summary="Create a new engagement",
+    description="Initialize a penetration testing engagement with target scope, rules of engagement, and operator context.",
+)
 async def create_engagement(
     request: CreateEngagementRequest,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
@@ -68,7 +73,11 @@ async def create_engagement(
         )
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="List engagements",
+    description="Return all engagements visible to the caller, ordered newest-first. Operators see only their own engagements; senior operators see all. Bounded by limit/offset.",
+)
 async def list_engagements(
     operator: Dict[str, Any] = Depends(verify_token),
     limit: int = Query(200, ge=1, le=2000),
@@ -110,14 +119,22 @@ async def list_engagements(
         )
 
 
-@router.get("/{session_id}")
+@router.get(
+    "/{session_id}",
+    summary="Get engagement details",
+    description="Retrieve the full session state for an engagement by its session ID.",
+)
 async def get_engagement(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Get engagement details."""
     session = await assert_engagement_access(operator, session_id)
     return session
 
 
-@router.get("/{session_id}/audit-log")
+@router.get(
+    "/{session_id}/audit-log",
+    summary="Get engagement audit log",
+    description="Return the chronological audit trail for an engagement, including all state-changing events.",
+)
 async def get_audit_log(
     session_id: str,
     limit: int = 1000,
@@ -147,7 +164,11 @@ async def get_audit_log(
     return [e.model_dump(mode="json") for e in sorted_events[:limit]]
 
 
-@router.post("/{session_id}/scan/deterministic")
+@router.post(
+    "/{session_id}/scan/deterministic",
+    summary="Run deterministic vulnerability scan",
+    description="Execute the deterministic detection backbone (SQLi, IDOR, JWT forgery, mass-assignment) against the engagement target and persist validated findings. Supports suite, discovered, or both modes.",
+)
 async def deterministic_scan(
     session_id: str,
     target: str = "",
@@ -277,7 +298,11 @@ async def deterministic_scan(
 # findings.py. core/report_generator.py stays available for other callers.
 
 
-@router.post("/{session_id}/transition")
+@router.post(
+    "/{session_id}/transition",
+    summary="Transition engagement phase",
+    description="Advance an engagement to the next lifecycle phase (e.g. reconnaissance, exploitation, reporting).",
+)
 async def transition_phase(
     session_id: str,
     new_phase: str,
@@ -304,7 +329,11 @@ async def transition_phase(
         raise HTTPException(status_code=400, detail="Phase transition failed")
 
 
-@router.post("/{session_id}/halt")
+@router.post(
+    "/{session_id}/halt",
+    summary="Halt engagement",
+    description="Emergency halt of an engagement. Stops all running tasks and transitions the session to a halted state.",
+)
 async def halt_engagement(
     session_id: str,
     reason: str,

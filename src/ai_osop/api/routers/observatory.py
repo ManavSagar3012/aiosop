@@ -15,7 +15,11 @@ from ai_osop.core.execution_trace import load_trace_from_redis
 router = APIRouter(tags=["observatory"])
 
 
-@router.get("/engagements/{engagement_id}/trace/{task_id}")
+@router.get(
+    "/engagements/{engagement_id}/trace/{task_id}",
+    summary="Get task execution trace",
+    description="Return the full execution trace for a single task, including steps, timing, and failure details. Engagement-scoped for authorization.",
+)
 async def get_task_trace(
     engagement_id: str,
     task_id: str,
@@ -43,7 +47,11 @@ async def get_task_trace(
     raise HTTPException(status_code=404, detail=f"No execution trace found for task {task_id}")
 
 
-@router.get("/engagements/{engagement_id}/traces")
+@router.get(
+    "/engagements/{engagement_id}/traces",
+    summary="List engagement execution traces",
+    description="List all execution traces for tasks within an engagement, providing an overview of task execution across the engagement.",
+)
 async def list_engagement_traces(
     engagement_id: str,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
@@ -63,7 +71,11 @@ async def list_engagement_traces(
     return {"engagement_id": engagement_id, "trace_count": len(traces), "traces": traces}
 
 
-@router.get("/system/observatory/mcp-telemetry")
+@router.get(
+    "/system/observatory/mcp-telemetry",
+    summary="Get MCP server telemetry",
+    description="Return telemetry metrics for every registered MCP server, including request counts, latencies, and error rates.",
+)
 async def get_mcp_telemetry(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
 ):
@@ -77,7 +89,11 @@ async def get_mcp_telemetry(
     return {"mcp_servers": len(telemetry), "telemetry": telemetry}
 
 
-@router.get("/system/observatory/scanner-audit")
+@router.get(
+    "/system/observatory/scanner-audit",
+    summary="Get scanner audit summary",
+    description="Audit summary showing applicable, scheduled, completed, and failed counts per scanner type. Global view requires senior_operator; pass engagement_id to scope it.",
+)
 async def get_scanner_audit(
     engagement_id: Optional[str] = None,
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
@@ -130,7 +146,11 @@ async def get_scanner_audit(
     return {"scanner_count": len(scanners), "scanners": list(scanners.values())}
 
 
-@router.get("/system/observatory/worker-telemetry")
+@router.get(
+    "/system/observatory/worker-telemetry",
+    summary="Get worker agent telemetry",
+    description="Return telemetry for every registered worker agent, including status, task queue depth, and last heartbeat timestamp.",
+)
 async def get_worker_telemetry(
     operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
 ):

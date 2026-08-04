@@ -111,7 +111,11 @@ _DEFAULT_FINDINGS_LIST_LIMIT = 200
 _MAX_FINDINGS_LIST_LIMIT = 2000
 
 
-@router.get("/{session_id}/findings")
+@router.get(
+    "/{session_id}/findings",
+    summary="List findings",
+    description="Return all Vulnerability nodes for an engagement, shaped for the UI. Bounded by limit/offset (default 200, max 2000).",
+)
 async def get_findings(
     session_id: str,
     limit: int = Query(_DEFAULT_FINDINGS_LIST_LIMIT, ge=1),
@@ -131,7 +135,11 @@ async def get_findings(
     return findings[offset : offset + effective_limit]
 
 
-@router.get("/{session_id}/report")
+@router.get(
+    "/{session_id}/report",
+    summary="Get assessment report",
+    description="Serve the persisted assessment report (markdown and HTML) for an engagement. Returns 404 if no report has been generated yet.",
+)
 async def get_report(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Serve the persisted assessment report for an engagement.
 
@@ -188,7 +196,11 @@ async def get_report(session_id: str, operator: Dict[str, Any] = Depends(verify_
     }
 
 
-@router.get("/{session_id}/report/bounty")
+@router.get(
+    "/{session_id}/report/bounty",
+    summary="Generate bounty report",
+    description="Compile a bug-bounty formatted report from live findings via the reporting MCP service.",
+)
 async def bounty_report(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Generate a bug-bounty formatted report from live findings.
 
@@ -236,7 +248,11 @@ async def bounty_report(session_id: str, operator: Dict[str, Any] = Depends(veri
     }
 
 
-@router.get("/{session_id}/diff-auth")
+@router.get(
+    "/{session_id}/diff-auth",
+    summary="Get differential-authorization findings",
+    description="Return differential-authorization findings that compare resource access across different user identities.",
+)
 async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Differential-authorization findings for an engagement."""
     session = await assert_engagement_access(operator, session_id)
@@ -271,7 +287,11 @@ async def get_diff_auth_findings(session_id: str, operator: Dict[str, Any] = Dep
     return rank_findings(out)
 
 
-@router.get("/{session_id}/uncertainty")
+@router.get(
+    "/{session_id}/uncertainty",
+    summary="Get open uncertainties",
+    description="Return open uncertainties detected by the UncertaintyTracker for an engagement.",
+)
 async def get_uncertainties(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Open uncertainties for an engagement.
 
@@ -296,14 +316,22 @@ async def get_uncertainties(session_id: str, operator: Dict[str, Any] = Depends(
     }
 
 
-@router.get("/{session_id}/invariants")
+@router.get(
+    "/{session_id}/invariants",
+    summary="Get business-logic invariants",
+    description="Return business-logic invariants discovered for an engagement via graph analysis.",
+)
 async def get_invariants(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Business-logic invariants discovered for an engagement."""
     await assert_engagement_access(operator, session_id)
     return await state["orchestrator"].graph_memory.get_invariants(session_id)
 
 
-@router.get("/{session_id}/payouts")
+@router.get(
+    "/{session_id}/payouts",
+    summary="Get predicted payouts",
+    description="Return predicted or realised bug-bounty payouts for an engagement. Currently returns 404 as payout estimation is not yet implemented.",
+)
 async def get_payouts(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Predicted/realised bug-bounty payouts for an engagement.
 
@@ -324,7 +352,11 @@ async def get_payouts(session_id: str, operator: Dict[str, Any] = Depends(verify
     )
 
 
-@router.post("/{session_id}/discovery/trigger")
+@router.post(
+    "/{session_id}/discovery/trigger",
+    summary="Trigger authenticated discovery",
+    description="Kick off autonomous authenticated discovery for the engagement using imported user sessions.",
+)
 async def trigger_discovery(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Kick off authenticated discovery for the engagement."""
     await assert_engagement_access(operator, session_id)
@@ -334,7 +366,11 @@ async def trigger_discovery(session_id: str, operator: Dict[str, Any] = Depends(
     return {"status": "triggered", "session_id": session_id}
 
 
-@router.post("/{session_id}/findings/{finding_id}/verify")
+@router.post(
+    "/{session_id}/findings/{finding_id}/verify",
+    summary="Verify finding",
+    description="Force-verify a vulnerability finding in the graph. Only senior operators may verify findings.",
+)
 async def verify_finding(
     session_id: str,
     finding_id: str,
@@ -349,7 +385,11 @@ async def verify_finding(
     return {"status": "verified", "finding_id": finding_id, "session_id": session_id}
 
 
-@router.post("/{session_id}/findings/{finding_id}/resolve")
+@router.post(
+    "/{session_id}/findings/{finding_id}/resolve",
+    summary="Resolve finding",
+    description="Set the outcome status of a finding (e.g. confirmed, false-positive, accepted).",
+)
 async def resolve_finding(
     session_id: str,
     finding_id: str,
@@ -368,7 +408,11 @@ async def resolve_finding(
     )
 
 
-@router.post("/{session_id}/findings/{finding_id}/replay")
+@router.post(
+    "/{session_id}/findings/{finding_id}/replay",
+    summary="Replay finding",
+    description="Queue an exploit-validation replay task for a finding. Only senior operators may trigger replays.",
+)
 async def replay_finding(
     session_id: str,
     finding_id: str,
@@ -393,7 +437,11 @@ async def replay_finding(
     return {"status": "queued", "task_id": task.id, "task_type": task.type}
 
 
-@router.get("/{session_id}/findings/{finding_id}/vault")
+@router.get(
+    "/{session_id}/findings/{finding_id}/vault",
+    summary="Get evidence vault",
+    description="Assemble the complete evidence package for a finding, including raw requests, responses, screenshots, and workflow traces.",
+)
 async def get_finding_vault(
     session_id: str, finding_id: str, operator: Dict[str, Any] = Depends(verify_token)
 ):
@@ -468,7 +516,11 @@ async def get_finding_vault(
     }
 
 
-@router.post("/{session_id}/poc/generate")
+@router.post(
+    "/{session_id}/poc/generate",
+    summary="Generate proof of concept",
+    description="Queue a PoC-generation task for the ExploitAgent to create a reproducible proof-of-concept for a finding.",
+)
 async def generate_poc(
     session_id: str,
     finding_id: str = Query(...),
@@ -489,7 +541,11 @@ async def generate_poc(
     return {"status": "queued", "task_id": task.id, "finding_id": finding_id}
 
 
-@router.post("/{session_id}/workflows/{workflow_id}/replay")
+@router.post(
+    "/{session_id}/workflows/{workflow_id}/replay",
+    summary="Replay workflow",
+    description="Queue a workflow replay (differential-auth re-run) for the WorkflowAgent.",
+)
 async def replay_workflow(
     session_id: str,
     workflow_id: str,
@@ -509,7 +565,11 @@ async def replay_workflow(
     return {"status": "queued", "task_id": task.id, "workflow_id": workflow_id}
 
 
-@router.post("/{session_id}/findings/{finding_id}/submit")
+@router.post(
+    "/{session_id}/findings/{finding_id}/submit",
+    summary="Submit finding to bounty platform",
+    description="Submit a verified finding to an external bug bounty platform (HackerOne, Bugcrowd). Only senior operators may submit.",
+)
 async def submit_finding_to_bounty(
     session_id: str,
     finding_id: str,

@@ -13,7 +13,11 @@ from ai_osop.core.hypothesis_engine import HypothesisEngine
 router = APIRouter(tags=["intelligence"])
 
 
-@router.get("/engagements/{session_id}/graph")
+@router.get(
+    "/engagements/{session_id}/graph",
+    summary="Get full attack graph",
+    description="Return all attack graph nodes and edges for an engagement, including assets, endpoints, vulnerabilities, and their relationships.",
+)
 async def get_full_graph(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Get full attack graph nodes and edges."""
     session = await assert_engagement_access(operator, session_id)
@@ -59,7 +63,11 @@ async def get_full_graph(session_id: str, operator: Dict[str, Any] = Depends(ver
     return {"nodes": list(nodes.values()), "edges": edges}
 
 
-@router.get("/engagements/{session_id}/attack-paths")
+@router.get(
+    "/engagements/{session_id}/attack-paths",
+    summary="Discover attack paths",
+    description="Find attack paths from entry points to goal nodes (RCE, admin access, data exfiltration) using graph traversal. Supports configurable depth and goal types.",
+)
 async def get_attack_paths(
     session_id: str,
     entry_node_id: Optional[str] = Query(None),
@@ -89,7 +97,11 @@ async def get_attack_paths(
     return [p.model_dump() for p in paths]
 
 
-@router.get("/engagements/{session_id}/hypotheses")
+@router.get(
+    "/engagements/{session_id}/hypotheses",
+    summary="Get engagement hypotheses",
+    description="Generate or retrieve graph-native hypotheses for an engagement. Use refresh=true to force regeneration. Supports focus filtering and configurable limits.",
+)
 async def get_hypotheses(
     session_id: str,
     refresh: bool = Query(False),
@@ -121,7 +133,11 @@ async def get_hypotheses(
     return {"session_id": session_id, "count": len(hypotheses), "hypotheses": hypotheses}
 
 
-@router.get("/intelligence/vulnerability-edu/{vuln_class}")
+@router.get(
+    "/intelligence/vulnerability-edu/{vuln_class}",
+    summary="Get vulnerability education content",
+    description="Return educational content for a vulnerability class (SQLi, XSS, SSRF, IDOR, SSTI), including description, impact, exploitation steps, and prevention guidance.",
+)
 async def get_vuln_education(vuln_class: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Educational content for vulnerability classes and exploitation techniques."""
     education_db = {
@@ -193,7 +209,11 @@ async def get_vuln_education(vuln_class: str, operator: Dict[str, Any] = Depends
     return content
 
 
-@router.get("/engagements/{session_id}/waf-profiles")
+@router.get(
+    "/engagements/{session_id}/waf-profiles",
+    summary="Get detected WAF profiles",
+    description="Return WAF profiles actually detected for the engagement from the graph. Reports nothing when no WAF was observed rather than inventing data.",
+)
 async def get_waf_profiles(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Get WAF profiles actually detected for the engagement (from the graph).
 
