@@ -25,6 +25,7 @@ class AgentType(str, Enum):
     VULN_ANALYSIS = "vuln_analysis"
     PAYLOAD_MUTATION = "payload_mutation"
     EXPLOIT_VALIDATION = "exploit_validation"
+    EXPLOITATION = "exploitation"
     ATTACK_CHAIN = "attack_chain"
     REPORTING = "reporting"
     HUMAN_OVERSIGHT = "human_oversight"

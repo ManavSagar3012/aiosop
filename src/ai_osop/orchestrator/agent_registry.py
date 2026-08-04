@@ -12,6 +12,7 @@ from typing import Any, Dict
 from ai_osop.agents.attack_chain_agent import AttackChainAgent
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.chain_composer_agent import ChainComposerAgent
+from ai_osop.agents.chain_executor_agent import ChainExecutorAgent
 from ai_osop.agents.cloud_agent import CloudSpecialistAgent
 from ai_osop.agents.codeql_agent import CodeQLAgent
 from ai_osop.agents.concurrency_agent import ConcurrencyAgent
@@ -27,10 +28,12 @@ from ai_osop.agents.nextjs_agent import NextJSSpecialistAgent
 from ai_osop.agents.passive_recon_agent import PassiveReconAgent
 from ai_osop.agents.payload_agent import PayloadMutationAgent
 from ai_osop.agents.pollution_scanner import PollutionScanner
+from ai_osop.agents.post_exploit_agent import PostExploitAgent
 from ai_osop.agents.race_scanner import RaceScanner
 from ai_osop.agents.react_agent import ReactSpecialistAgent
 from ai_osop.agents.recon_agent import ReconAgent
 from ai_osop.agents.reporting_agent import ReportingAgent
+from ai_osop.agents.retrieval_agent import RetrievalAgent
 from ai_osop.agents.saml_agent import SAMLAgent
 from ai_osop.agents.smuggling_scanner import SmugglingScanner
 from ai_osop.agents.ssrf_agent import SSRFAgent
@@ -89,6 +92,9 @@ async def register_all_agents(
     agents_to_register = [
         (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
         (ChainComposerAgent, AgentType.ATTACK_CHAIN, "chain-composer-agent-001"),
+        (ChainExecutorAgent, AgentType.ATTACK_CHAIN, "chain-executor-agent-001"),
+        (PostExploitAgent, AgentType.EXPLOITATION, "post-exploit-agent-001"),
+        (RetrievalAgent, AgentType.RETRIEVAL, "retrieval-agent-001"),
     ]
 
     for i in range(1, _RECON_WORKERS + 1):
