@@ -1,43 +1,85 @@
 ```
-# Python
+# Compiled and binary files
+*.pyc
 __pycache__/
-*.py[cod]
-*$py.class
+*.o
+*.obj
+*.exe
+*.dll
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+*.a
+*.out
+
+# Dependencies and packages
+.venv/
+venv/
+node_modules/
+pip-log.txt
+pipenv.lock
+requirements.txt
 *.egg-info/
-.installed.cfg
+
+# Build and distribution artifacts
+build/
+dist/
 *.egg
-MANIFEST
+*.tar.gz
+*.whl
 
-# Coverage
-.coverage
-coverage/
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
 
-# Testing
-.pytest_cache/
-.mypy_cache/
-
-# Reports
-reports/
-
-# Database
-dump.rdb
-
-# Environment
+# Environment variables and local configs
 .env
 .env.local
-.env.*
+*.env.*
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# IDE and editor specific
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# System files
+*.DS_Store
+.DS_Store
+Thumbs.db
+
+# Compressed archives
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+
+# Database dump
+dump.rdb
+
 ```

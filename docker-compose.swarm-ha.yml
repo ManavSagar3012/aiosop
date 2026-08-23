@@ -1,0 +1,275 @@
+version: '3.8'
+
+services:
+  # ===========================
+  # HIGH AVAILABILITY CORE
+  # ===========================
+
+  # --- Redis Sentinel Cluster (HA Event Bus) ---
+  redis-master:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_master_data:/data
+    networks:
+      - aiosop-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  redis-replica:
+    image: redis:7-alpine
+    command: redis-server --replicaof redis-master 6379 --appendonly yes
+    depends_on:
+      - redis-master
+    networks:
+      - aiosop-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  redis-sentinel:
+    image: redis:7-alpine
+    command: >
+      sh -c "echo 'sentinel monitor mymaster redis-master 6379 2' > /etc/redis/sentinel.conf &&
+             echo 'sentinel down-after-milliseconds mymaster 5000' >> /etc/redis/sentinel.conf &&
+             echo 'sentinel failover-timeout mymaster 60000' >> /etc/redis/sentinel.conf &&
+             echo 'sentinel parallel-syncs mymaster 1' >> /etc/redis/sentinel.conf &&
+             redis-sentinel /etc/redis/sentinel.conf"
+    depends_on:
+      - redis-master
+      - redis-replica
+    networks:
+      - aiosop-net
+
+  # --- Neo4j Causal Cluster (HA Knowledge Graph) ---
+  neo4j-core-1:
+    image: neo4j:5-enterprise
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-secure_password}
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_SERVER_GROUPS=core
+      - NEO4J_INITIAL_CORE_MEMBERS=neo4j-core-1,neo4j-core-2,neo4j-core-3
+      - NEO4J_DISCOVERY_LISTEN_ADDRESS=0.0.0.0
+      - NEO4J_TRANSACTION_ADVERTISED_ADDRESS=neo4j-core-1:5000
+      - NEO4J_RAFT_ADVERTISED_ADDRESS=neo4j-core-1:7000
+      - NEO4J_BOLT_ADVERTISED_ADDRESS=neo4j-core-1:7687
+    volumes:
+      - neo4j_core_1_data:/data
+    networks:
+      - aiosop-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j-core-2:
+    image: neo4j:5-enterprise
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-secure_password}
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_SERVER_GROUPS=core
+      - NEO4J_INITIAL_CORE_MEMBERS=neo4j-core-1,neo4j-core-2,neo4j-core-3
+      - NEO4J_DISCOVERY_LISTEN_ADDRESS=0.0.0.0
+      - NEO4J_TRANSACTION_ADVERTISED_ADDRESS=neo4j-core-2:5000
+      - NEO4J_RAFT_ADVERTISED_ADDRESS=neo4j-core-2:7000
+      - NEO4J_BOLT_ADVERTISED_ADDRESS=neo4j-core-2:7687
+    depends_on:
+      - neo4j-core-1
+    volumes:
+      - neo4j_core_2_data:/data
+    networks:
+      - aiosop-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j-core-3:
+    image: neo4j:5-enterprise
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-secure_password}
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_SERVER_GROUPS=core
+      - NEO4J_INITIAL_CORE_MEMBERS=neo4j-core-1,neo4j-core-2,neo4j-core-3
+      - NEO4J_DISCOVERY_LISTEN_ADDRESS=0.0.0.0
+      - NEO4J_TRANSACTION_ADVERTISED_ADDRESS=neo4j-core-3:5000
+      - NEO4J_RAFT_ADVERTISED_ADDRESS=neo4j-core-3:7000
+      - NEO4J_BOLT_ADVERTISED_ADDRESS=neo4j-core-3:7687
+    depends_on:
+      - neo4j-core-1
+    volumes:
+      - neo4j_core_3_data:/data
+    networks:
+      - aiosop-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- PostgreSQL (Primary/Replica ready) ---
+  postgres-primary:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-aiosop}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password}
+      - POSTGRES_DB=${POSTGRES_DB:-aiosop_db}
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+    networks:
+      - aiosop-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiosop}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ===========================
+  # APPLICATION LAYER
+  # ===========================
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    environment:
+      - REDIS_URL=redis://redis-sentinel:26379?master_name=mymaster
+      - NEO4J_URI=bolt://neo4j-core-1:7687,bolt://neo4j-core-2:7687,bolt://neo4j-core-3:7687
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-aiosop}:${POSTGRES_PASSWORD:-secure_password}@postgres-primary:5432/${POSTGRES_DB:-aiosop_db}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    depends_on:
+      redis-sentinel:
+        condition: service_healthy
+      neo4j-core-1:
+        condition: service_healthy
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - aiosop-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  agent-recon:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    environment:
+      - AGENT_TYPE=recon
+      - REDIS_URL=redis://redis-sentinel:26379?master_name=mymaster
+      - NEO4J_URI=bolt://neo4j-core-1:7687,bolt://neo4j-core-2:7687,bolt://neo4j-core-3:7687
+    depends_on:
+      - orchestrator
+    networks:
+      - aiosop-net
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+
+  agent-vuln:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    environment:
+      - AGENT_TYPE=vuln
+      - REDIS_URL=redis://redis-sentinel:26379?master_name=mymaster
+      - NEO4J_URI=bolt://neo4j-core-1:7687,bolt://neo4j-core-2:7687,bolt://neo4j-core-3:7687
+    depends_on:
+      - orchestrator
+    networks:
+      - aiosop-net
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+
+  agent-attack-chain:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    environment:
+      - AGENT_TYPE=attack_chain
+      - REDIS_URL=redis://redis-sentinel:26379?master_name=mymaster
+      - NEO4J_URI=bolt://neo4j-core-1:7687,bolt://neo4j-core-2:7687,bolt://neo4j-core-3:7687
+    depends_on:
+      - orchestrator
+    networks:
+      - aiosop-net
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+
+  # ===========================
+  # OBSERVABILITY & SECURITY
+  # ===========================
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+    networks:
+      - aiosop-net
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - aiosop-net
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - aiosop-net
+    depends_on:
+      - prometheus
+
+  # Self-Pentest Agent (Adversarial Validation)
+  self-pentest-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    environment:
+      - AGENT_TYPE=self_pentest
+      - TARGET_URL=http://orchestrator:8000
+      - REDIS_URL=redis://redis-sentinel:26379?master_name=mymaster
+    depends_on:
+      - orchestrator
+    networks:
+      - aiosop-net
+    profiles:
+      - security-audit
+
+networks:
+  aiosop-net:
+    driver: overlay
+    attachable: true
+
+volumes:
+  redis_master_data:
+  neo4j_core_1_data:
+  neo4j_core_2_data:
+  neo4j_core_3_data:
+  postgres_primary_data:
+  grafana_data:
