@@ -90,6 +90,10 @@ class DistributedCoordinationBus:
         if self.redis:
             await self.redis.close()
             logger.info("Disconnected from Redis")
+    
+    async def close(self):
+        """Alias for disconnect()."""
+        await self.disconnect()
 
     async def publish(self, event: CoordinationEvent) -> str:
         """Publish an event to the stream."""

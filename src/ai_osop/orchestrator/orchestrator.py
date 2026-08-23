@@ -52,6 +52,7 @@ from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
 from ai_osop.orchestrator.coordination_bus import AgentCoordinationBus
+from ai_osop.orchestrator.distributed_bus import DistributedCoordinationBus, get_coordination_bus
 from ai_osop.orchestrator.temporal_worker import (
     TemporalTaskScheduler,
     TemporalUnavailableError,
@@ -120,6 +121,9 @@ class Orchestrator:
         state: Optional[OrchestrationState] = None,
         temporal_scheduler: Optional[TemporalTaskScheduler] = None,
         coordination_bus: Optional[AgentCoordinationBus] = None,
+        distributed_bus: Optional[DistributedCoordinationBus] = None,
+        redis_url: str = "redis://localhost:6379",
+        engagement_id: str = "default",
     ):
         self.state = state or OrchestrationState()
         self.session_memory = session_memory
@@ -129,7 +133,16 @@ class Orchestrator:
         self.rate_limiter = RateLimiter()
         self.temporal_scheduler = temporal_scheduler
         self.temporal_enabled = settings.temporal_enabled
-        self.coordination_bus = coordination_bus or AgentCoordinationBus()
+        
+        # Support both legacy in-memory bus and new distributed bus
+        if distributed_bus:
+            self.coordination_bus = distributed_bus
+        elif coordination_bus:
+            self.coordination_bus = coordination_bus
+        else:
+            # Default to distributed bus for production, fallback to in-memory
+            self.coordination_bus = get_coordination_bus(engagement_id=engagement_id)
+        
         self.session_store = SessionStore(session_memory)
         self.dlq = DeadLetterQueue(session_memory)
 
