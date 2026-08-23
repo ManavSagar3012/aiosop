@@ -38,6 +38,7 @@ class AgentType(str, Enum):
     NEXTJS_SPECIALIST = "nextjs_specialist"
     REACT_SPECIALIST = "react_specialist"
     RETRIEVAL = "retrieval"
+    SELF_PENTEST = "self_pentest"
 
 
 class VulnClass(str, Enum):
@@ -434,6 +435,14 @@ class Settings(BaseSettings):
         default=True, validation_alias="OSOP_TRACE_PROPAGATION_ENABLED"
     )
     otel_sampling_rate: float = Field(default=1.0, validation_alias="OSOP_OTEL_SAMPLING_RATE")
+
+    # mTLS (Phase 2: Adversarial Validation)
+    mtls_enabled: bool = Field(default=False, validation_alias="OSOP_MTLS_ENABLED")
+    mtls_cert_path: Optional[str] = Field(default=None, validation_alias="OSOP_MTLS_CERT_PATH")
+    mtls_key_path: Optional[str] = Field(default=None, validation_alias="OSOP_MTLS_KEY_PATH")
+    mtls_ca_cert_path: Optional[str] = Field(default=None, validation_alias="OSOP_MTLS_CA_CERT_PATH")
+    redis_tls_enabled: bool = Field(default=False, validation_alias="OSOP_REDIS_TLS_ENABLED")
+    neo4j_tls_enabled: bool = Field(default=False, validation_alias="OSOP_NEO4J_TLS_ENABLED")
 
     # Sentry
     sentry_dsn: Optional[str] = Field(default=None, validation_alias="SENTRY_DSN")

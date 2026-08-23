@@ -57,6 +57,16 @@ class DistributedCoordinationBus:
         await bus.subscribe(["recon.*"], "recon_agent_01", callback)
     """
 
+    # Phase 6: Authorized sources — only these agents can publish events
+    AUTHORIZED_SOURCES = {
+        "recon_agent", "vuln_agent", "exploit_agent", "attack_chain_agent",
+        "payload_agent", "reporting_agent", "workflow_agent",
+        "strategic_planner", "self_pentest_agent",
+        "orchestrator", "system",
+        # Simulated/demo sources
+        "simulated_recon_01", "simulated_scanner_01",
+    }
+
     def __init__(self, redis_url: str = "redis://localhost:6379", engagement_id: str = "default"):
         self.redis_url = redis_url
         self.engagement_id = engagement_id
@@ -223,9 +233,28 @@ class DistributedCoordinationBus:
                 await asyncio.sleep(1)  # Backoff on error
 
     def _parse_message(self, fields: Dict[str, str]) -> CoordinationEvent:
-        """Parse raw Redis message into CoordinationEvent."""
+        """Parse raw Redis message into CoordinationEvent.
+
+        Phase 6: Validates source_agent against the authorized sources list.
+        Unauthorized sources are logged and tagged but still delivered
+        (defense-in-depth — consumers should also validate).
+        """
         try:
             payload_data = json.loads(fields.get("payload", "{}"))
+            source = fields.get("source", "unknown")
+
+            # Phase 6: Source validation
+            if source not in self.AUTHORIZED_SOURCES:
+                logger.warning(
+                    "unauthorized_event_source",
+                    source=source,
+                    topic=fields.get("topic", "?"),
+                    event_id=fields.get("event_id", "?"),
+                )
+                # Tag the event so consumers can filter it
+                payload_data["_unauthorized_source"] = True
+                payload_data["_original_source"] = source
+
             return CoordinationEvent(
                 event_id=fields.get("event_id", str(uuid.uuid4())),  # Ideally stored in stream too
                 topic=fields["topic"],

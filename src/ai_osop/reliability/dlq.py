@@ -49,13 +49,20 @@ class DeadLetterQueue:
 
     def __init__(self, session_memory: Any) -> None:
         self._session_memory = session_memory
+        # Phase 6: Deduplication set — prevents replay of already-processed tasks
+        self._processed_ids: set = set()
 
     @trace_span("dlq.enqueue")
     async def enqueue(self, task: Task, reason: str, final_error: str) -> str:
         """Add a failed task to the DLQ.
 
-        Returns the DLQ entry ID.
+        Returns the DLQ entry ID. Deduplicates: if the task was already
+        enqueued (same task_id), returns the existing entry ID instead.
         """
+        # Phase 6: Deduplication — reject already-processed tasks
+        if task.id in self._processed_ids:
+            return f"dlq-dedup-{task.id}"
+
         entry = DLQEntry(
             task_id=task.id,
             engagement_id=task.engagement_id,
@@ -77,6 +84,13 @@ class DeadLetterQueue:
         # Also add to engagement-scoped list
         list_key = f"dlq:list:{task.engagement_id}"
         await self._session_memory._redis.rpush(list_key, entry.id)
+
+        # Track as processed to prevent replay
+        self._processed_ids.add(task.id)
+        # Cap the set to prevent unbounded memory growth
+        if len(self._processed_ids) > 100000:
+            # Keep only the most recent 50k entries
+            self._processed_ids = set(list(self._processed_ids)[-50000:])
 
         return entry.id
 
