@@ -23,6 +23,7 @@ disabled, a structurally valid provider key can rise no higher than ``unverified
 `base_override` lets callers point checks at a controlled mock (for tests / to avoid
 touching third parties).
 """
+
 import math
 import re
 from typing import Any, Dict, Optional, Pattern
@@ -44,32 +45,47 @@ SECRET_PROVIDERS: Dict[str, Dict[str, Any]] = {
     "github": {
         "prefixes": ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"],
         "pattern": re.compile(r"(?:gh[opsur]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})$"),
-        "base": "https://api.github.com", "path": "/user", "method": "GET",
-        "auth": "bearer", "live_codes": [200],
+        "base": "https://api.github.com",
+        "path": "/user",
+        "method": "GET",
+        "auth": "bearer",
+        "live_codes": [200],
     },
     "gitlab": {
         "prefixes": ["glpat-"],
         "pattern": re.compile(r"glpat-[A-Za-z0-9_\-]{20}$"),
-        "base": "https://gitlab.com", "path": "/api/v4/user", "method": "GET",
-        "auth": "bearer", "live_codes": [200],
+        "base": "https://gitlab.com",
+        "path": "/api/v4/user",
+        "method": "GET",
+        "auth": "bearer",
+        "live_codes": [200],
     },
     "stripe": {
         "prefixes": ["sk_live_", "rk_live_"],
         "pattern": re.compile(r"(?:sk|rk)_live_[A-Za-z0-9]{24,}$"),
-        "base": "https://api.stripe.com", "path": "/v1/account", "method": "GET",
-        "auth": "bearer", "live_codes": [200],
+        "base": "https://api.stripe.com",
+        "path": "/v1/account",
+        "method": "GET",
+        "auth": "bearer",
+        "live_codes": [200],
     },
     "npm": {
         "prefixes": ["npm_"],
         "pattern": re.compile(r"npm_[A-Za-z0-9]{36}$"),
-        "base": "https://registry.npmjs.org", "path": "/-/whoami", "method": "GET",
-        "auth": "bearer", "live_codes": [200],
+        "base": "https://registry.npmjs.org",
+        "path": "/-/whoami",
+        "method": "GET",
+        "auth": "bearer",
+        "live_codes": [200],
     },
     "slack": {
         "prefixes": ["xoxb-", "xoxp-", "xoxa-", "xoxr-"],
         "pattern": re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}$"),
-        "base": "https://slack.com", "path": "/api/auth.test", "method": "GET",
-        "auth": "bearer", "live_codes": [200],
+        "base": "https://slack.com",
+        "path": "/api/auth.test",
+        "method": "GET",
+        "auth": "bearer",
+        "live_codes": [200],
     },
     # Structural-only providers: strong format signal, but no safe key-only verify
     # endpoint, so probing is not available (they top out at `unverified`).
@@ -105,9 +121,26 @@ SECRET_PROVIDERS: Dict[str, Dict[str, Any]] = {
 # Values that are obviously not real credentials: vendor test keys, examples,
 # placeholders, redactions. These classify as `not_a_secret` (never reported).
 _TEST_PLACEHOLDER_TOKENS = (
-    "sk_test_", "pk_test_", "rk_test_", "whsec_test", "_test_", "test_key",
-    "your_", "example", "changeme", "change-me", "placeholder", "dummy",
-    "sample", "redacted", "insert", "todo", "foobar", "xxxx", "<", "{{",
+    "sk_test_",
+    "pk_test_",
+    "rk_test_",
+    "whsec_test",
+    "_test_",
+    "test_key",
+    "your_",
+    "example",
+    "changeme",
+    "change-me",
+    "placeholder",
+    "dummy",
+    "sample",
+    "redacted",
+    "insert",
+    "todo",
+    "foobar",
+    "xxxx",
+    "<",
+    "{{",
 )
 
 # Confidence scores per outcome. Only `confirmed_live` clears a reportable bar.
@@ -252,9 +285,13 @@ async def assess_secret(
     """
     v = value or ""
     if not v or _is_test_or_placeholder(v):
-        return _verdict(value=v, provider=None, status=STATUS_NOT_A_SECRET,
-                        confidence=_CONF_NOT_A_SECRET,
-                        detail="test/example/placeholder value")
+        return _verdict(
+            value=v,
+            provider=None,
+            status=STATUS_NOT_A_SECRET,
+            confidence=_CONF_NOT_A_SECRET,
+            detail="test/example/placeholder value",
+        )
 
     provider_name = classify_secret(v)
 
@@ -262,41 +299,72 @@ async def assess_secret(
     if not provider_name:
         entropy = _shannon_entropy(v)
         if len(v) >= _GENERIC_MIN_LEN and entropy >= _GENERIC_MIN_ENTROPY:
-            return _verdict(value=v, provider=None, status=STATUS_UNVERIFIED,
-                            confidence=_CONF_GENERIC_ENTROPY,
-                            detail=f"generic high-entropy string (H={entropy:.2f}); no provider")
-        return _verdict(value=v, provider=None, status=STATUS_NOT_A_SECRET,
-                        confidence=_CONF_NOT_A_SECRET,
-                        detail=f"no provider and low entropy (H={entropy:.2f})")
+            return _verdict(
+                value=v,
+                provider=None,
+                status=STATUS_UNVERIFIED,
+                confidence=_CONF_GENERIC_ENTROPY,
+                detail=f"generic high-entropy string (H={entropy:.2f}); no provider",
+            )
+        return _verdict(
+            value=v,
+            provider=None,
+            status=STATUS_NOT_A_SECRET,
+            confidence=_CONF_NOT_A_SECRET,
+            detail=f"no provider and low entropy (H={entropy:.2f})",
+        )
 
     # --- Recognized provider: structural validation gate. ----------------------
     if not structural_valid(v, provider_name):
-        return _verdict(value=v, provider=provider_name, status=STATUS_UNVERIFIED,
-                        confidence=_CONF_STRUCT_INVALID, structural=False,
-                        detail=f"{provider_name} prefix but structurally invalid")
+        return _verdict(
+            value=v,
+            provider=provider_name,
+            status=STATUS_UNVERIFIED,
+            confidence=_CONF_STRUCT_INVALID,
+            structural=False,
+            detail=f"{provider_name} prefix but structurally invalid",
+        )
 
     # Structurally valid. Without a real, positive probe we cannot claim liveness.
     if not allow_live_probe or not _can_probe(provider_name):
-        reason = ("probing disabled" if not allow_live_probe
-                  else "no safe verify endpoint for provider")
-        return _verdict(value=v, provider=provider_name, status=STATUS_UNVERIFIED,
-                        confidence=_CONF_STRUCT_VALID_UNPROBED, structural=True,
-                        detail=f"{provider_name} format valid but unproven ({reason})")
+        reason = (
+            "probing disabled" if not allow_live_probe else "no safe verify endpoint for provider"
+        )
+        return _verdict(
+            value=v,
+            provider=provider_name,
+            status=STATUS_UNVERIFIED,
+            confidence=_CONF_STRUCT_VALID_UNPROBED,
+            structural=True,
+            detail=f"{provider_name} format valid but unproven ({reason})",
+        )
 
     # --- Real read-only liveness probe. ----------------------------------------
-    probe = await verify_secret(
-        v, client=client, base_override=base_override, timeout=timeout
-    )
+    probe = await verify_secret(v, client=client, base_override=base_override, timeout=timeout)
     http_status = int(probe.get("status") or 0)
     if probe.get("live"):
-        return _verdict(value=v, provider=provider_name, status=STATUS_CONFIRMED_LIVE,
-                        confidence=_CONF_CONFIRMED_LIVE, structural=True, live=True,
-                        probed=True, http_status=http_status,
-                        detail=f"{provider_name} credential authenticated (read-only)")
-    return _verdict(value=v, provider=provider_name, status=STATUS_UNVERIFIED,
-                    confidence=_CONF_PROBE_REJECTED, structural=True, live=False,
-                    probed=True, http_status=http_status,
-                    detail=f"{provider_name} format valid but probe rejected: {probe.get('detail')}")
+        return _verdict(
+            value=v,
+            provider=provider_name,
+            status=STATUS_CONFIRMED_LIVE,
+            confidence=_CONF_CONFIRMED_LIVE,
+            structural=True,
+            live=True,
+            probed=True,
+            http_status=http_status,
+            detail=f"{provider_name} credential authenticated (read-only)",
+        )
+    return _verdict(
+        value=v,
+        provider=provider_name,
+        status=STATUS_UNVERIFIED,
+        confidence=_CONF_PROBE_REJECTED,
+        structural=True,
+        live=False,
+        probed=True,
+        http_status=http_status,
+        detail=f"{provider_name} format valid but probe rejected: {probe.get('detail')}",
+    )
 
 
 async def verify_secret(
@@ -314,13 +382,23 @@ async def verify_secret(
     """
     provider_name = classify_secret(secret)
     if not provider_name:
-        return {"provider": None, "classified": False, "live": False,
-                "status": 0, "detail": "unrecognized secret format"}
+        return {
+            "provider": None,
+            "classified": False,
+            "live": False,
+            "status": 0,
+            "detail": "unrecognized secret format",
+        }
 
     provider = SECRET_PROVIDERS[provider_name]
     if not _can_probe(provider_name):
-        return {"provider": provider_name, "classified": True, "live": False,
-                "status": 0, "detail": "no safe verify endpoint for provider"}
+        return {
+            "provider": provider_name,
+            "classified": True,
+            "live": False,
+            "status": 0,
+            "detail": "no safe verify endpoint for provider",
+        }
 
     base = base_override or provider["base"]
     url = base.rstrip("/") + provider["path"]
@@ -332,12 +410,21 @@ async def verify_secret(
     try:
         resp = await client.request(provider["method"], url, headers=headers)
         live = resp.status_code in provider["live_codes"]
-        return {"provider": provider_name, "classified": True, "live": live,
-                "status": resp.status_code,
-                "detail": "authenticated" if live else f"rejected ({resp.status_code})"}
+        return {
+            "provider": provider_name,
+            "classified": True,
+            "live": live,
+            "status": resp.status_code,
+            "detail": "authenticated" if live else f"rejected ({resp.status_code})",
+        }
     except Exception as e:
-        return {"provider": provider_name, "classified": True, "live": False,
-                "status": 0, "detail": f"probe error: {e}"}
+        return {
+            "provider": provider_name,
+            "classified": True,
+            "live": False,
+            "status": 0,
+            "detail": f"probe error: {e}",
+        }
     finally:
         if own_client:
             await client.aclose()

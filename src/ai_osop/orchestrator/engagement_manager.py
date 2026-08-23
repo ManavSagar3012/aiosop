@@ -9,13 +9,13 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from ai_osop.core.config import AgentType, EngagementPhase
-from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
-from ai_osop.core.tracing import trace_span
-from ai_osop.core.observability import record_engagement_started, record_engagement_halted
-from ai_osop.core.exceptions import WorkflowException, WorkflowTransitionError
-
 import structlog
+
+from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.exceptions import WorkflowException, WorkflowTransitionError
+from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.observability import record_engagement_halted, record_engagement_started
+from ai_osop.core.tracing import trace_span
 
 logger = structlog.get_logger("ai_osop.orchestrator.engagement_manager")
 
@@ -111,9 +111,7 @@ class EngagementManager:
             # and dispatch them after the halt (bounded so a flood can't spin forever).
             try:
                 for _ in range(1000):
-                    item = await self._orch.session_memory.pop_task_queue(
-                        f"tasks:{session_id}"
-                    )
+                    item = await self._orch.session_memory.pop_task_queue(f"tasks:{session_id}")
                     if not item:
                         break
             except Exception as e:
@@ -205,9 +203,12 @@ class EngagementManager:
         is_local = (
             host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
             or host.startswith(("10.", "192.168."))
-            or (host.startswith("172.") and host.count(".") >= 1
+            or (
+                host.startswith("172.")
+                and host.count(".") >= 1
                 and host.split(".")[1].isdigit()
-                and 16 <= int(host.split(".")[1]) <= 31)
+                and 16 <= int(host.split(".")[1]) <= 31
+            )
         )
         scheme = "http" if is_local else "https"
         return f"{scheme}://{d}/"

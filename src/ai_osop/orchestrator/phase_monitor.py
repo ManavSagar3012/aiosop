@@ -4,8 +4,8 @@ Handles phase monitoring and automatic task dispatch on phase entry.
 """
 
 from __future__ import annotations
-import asyncio
 
+import asyncio
 from typing import Any, Dict, List
 
 import structlog
@@ -43,9 +43,7 @@ class PhaseMonitor:
                     return
                 try:
                     await self._orch.engagement_manager.transition_phase(session_id, next_phase)
-                    logger.info(
-                        "auto_transition", session_id=session_id, phase=next_phase.value
-                    )
+                    logger.info("auto_transition", session_id=session_id, phase=next_phase.value)
                     self._orch._auto_transition_failures.pop(session_id, None)
                 except Exception as e:
                     self._orch._record_auto_transition_failure(session_id, phase, self._tick, e)
@@ -117,12 +115,14 @@ class PhaseMonitor:
             )
             for r in endpoint_records:
                 if r.get("url"):
-                    endpoints.append({
-                        "url": r["url"],
-                        "method": r.get("method") or "GET",
-                        "status_code": r.get("status_code"),
-                        "technologies": r.get("technologies") or [],
-                    })
+                    endpoints.append(
+                        {
+                            "url": r["url"],
+                            "method": r.get("method") or "GET",
+                            "status_code": r.get("status_code"),
+                            "technologies": r.get("technologies") or [],
+                        }
+                    )
 
             batches = batch_endpoints_for_scan(endpoints, batch_size=20, max_targets=200)
             if batches:
@@ -189,7 +189,11 @@ class PhaseMonitor:
                     payload={
                         "engagement_id": session.session_id,
                         "user_label": labels[0],
-                        "url": self._orch.engagement_manager._domain_to_url(primary) if primary else None,
+                        "url": (
+                            self._orch.engagement_manager._domain_to_url(primary)
+                            if primary
+                            else None
+                        ),
                     },
                     engagement_id=session.session_id,
                     timeout_seconds=300,
@@ -281,8 +285,10 @@ class PhaseMonitor:
             for vid, sev in exploitable:
                 endpoint_url = await self._orch.graph_memory.get_endpoint_url_for_vulnerability(vid)
                 vuln_details = await self._orch.graph_memory.get_node_details(vid) or {}
-                vuln_type = vuln_details.get("vuln_type") or vuln_details.get("classification") or "sqli"
-                
+                vuln_type = (
+                    vuln_details.get("vuln_type") or vuln_details.get("classification") or "sqli"
+                )
+
                 # 1. Generate adaptive payloads for this vulnerability
                 payload_task = Task(
                     type="generate_payloads",
@@ -300,7 +306,7 @@ class PhaseMonitor:
                     engagement_id=session.session_id,
                 )
                 await self._orch.task_scheduler.schedule_task(payload_task)
-                
+
                 # 2. Schedule exploit validation with dependency on payload generation
                 exploit_task = Task(
                     type="exploit_validation",

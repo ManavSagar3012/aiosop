@@ -9,11 +9,11 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict
 
+import structlog
+
+from ai_osop.core.config import AgentType
 from ai_osop.core.models import AuditEvent, Task
 from ai_osop.core.tracing import trace_span
-from ai_osop.core.config import AgentType
-
-import structlog
 
 logger = structlog.get_logger("ai_osop.orchestrator.recovery_service")
 
@@ -70,7 +70,11 @@ class RecoveryService:
                             "reaper_terminal_resync_failed", task_id=task.id, error=str(e)
                         )
                 continue
-            ref = task.started_at if (task.status == "running" and task.started_at) else task.created_at
+            ref = (
+                task.started_at
+                if (task.status == "running" and task.started_at)
+                else task.created_at
+            )
             if not ref:
                 continue
             age = (now - ref).total_seconds()

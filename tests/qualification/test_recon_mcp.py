@@ -44,8 +44,12 @@ def test_closed_port_is_empty_not_canned(local_target):
 def test_output_varies_per_target(local_target):
     base = require_server("recon")
     host, open_port, closed_port = local_target
-    open_res = _open_ports(mcp_execute(base, "nmap_scan", {"targets": [host], "ports": str(open_port)}))
-    closed_res = _open_ports(mcp_execute(base, "nmap_scan", {"targets": [host], "ports": str(closed_port)}))
+    open_res = _open_ports(
+        mcp_execute(base, "nmap_scan", {"targets": [host], "ports": str(open_port)})
+    )
+    closed_res = _open_ports(
+        mcp_execute(base, "nmap_scan", {"targets": [host], "ports": str(closed_port)})
+    )
     assert open_res != closed_res, "scan output identical for open vs closed port -> not real"
 
 

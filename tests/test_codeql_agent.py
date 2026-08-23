@@ -154,9 +154,7 @@ async def test_map_sast_to_graph(agent) -> None:
     ]
 
     # Set up mock Neo4j via run_read_query abstraction
-    agent.ctx.graph_memory.run_read_query = AsyncMock(return_value=[
-        {"id": "ep-123"}
-    ])
+    agent.ctx.graph_memory.run_read_query = AsyncMock(return_value=[{"id": "ep-123"}])
 
     task = Task(
         id="task-4",

@@ -1,0 +1,22 @@
+# Prometheus Configuration for AI-OSOP Monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Orchestrator metrics
+  - job_name: 'orchestrator'
+    static_configs:
+      - targets: ['orchestrator:8000']
+    metrics_path: '/metrics'
+    
+  # Redis metrics (using redis_exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-primary:6379']
+      
+  # Node exporter for system metrics
+  - job_name: 'node'
+    static_configs:
+      - targets: ['orchestrator:9100', 'recon-agent:9100', 'vuln-agent:9100']

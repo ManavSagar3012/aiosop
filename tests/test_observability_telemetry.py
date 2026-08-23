@@ -20,11 +20,13 @@ from ai_osop.core.telemetry import (
 def setup_test_tracing():
     from opentelemetry import trace as otel_trace
     from opentelemetry.sdk.trace import TracerProvider
+
     try:
         otel_trace.set_tracer_provider(TracerProvider())
     except Exception:
         pass
     yield
+
 
 class TestRequestContext:
     def test_bind_sets_contextvars(self) -> None:
@@ -95,6 +97,7 @@ class TestTelemetryCarrier:
     def test_inject_puts_traceparent(self) -> None:
         """Inject should add traceparent to carrier dict."""
         from opentelemetry import trace as otel_trace
+
         tracer = otel_trace.get_tracer("test")
         with tracer.start_as_current_span("test-span"):
             carrier: dict = {}
@@ -110,6 +113,7 @@ class TestTelemetryCarrier:
     def test_roundtrip_inject_extract(self) -> None:
         """Inject then extract should yield a valid span context."""
         from opentelemetry import trace as otel_trace
+
         tracer = otel_trace.get_tracer("test")
         with tracer.start_as_current_span("test-span"):
             carrier: dict = {}

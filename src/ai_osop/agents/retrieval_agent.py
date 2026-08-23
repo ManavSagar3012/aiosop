@@ -1,10 +1,12 @@
 import json
 import os
 from typing import Any, Dict, List, Optional
+
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.findings_knowledge import FindingsKnowledge, VectorMemoryFindingsStore
 from ai_osop.core.models import Task
+
 
 class RetrievalAgent(BaseAgent):
     """Retrieval Agent for querying bug bounty methodology knowledge.
@@ -83,7 +85,7 @@ class RetrievalAgent(BaseAgent):
         matches = []
         if not os.path.exists(self.knowledge_base_path):
             return matches
-        
+
         for filename in os.listdir(self.knowledge_base_path):
             if filename.endswith(".json"):
                 file_path = os.path.join(self.knowledge_base_path, filename)

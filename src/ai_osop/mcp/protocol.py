@@ -14,11 +14,11 @@ import aiohttp
 import websockets
 from pydantic import BaseModel, Field
 
+from ai_osop.core.config import settings
 from ai_osop.core.exceptions import MCPConnectionError, MCPException, MCPTimeoutError
 from ai_osop.core.models import AuditEvent
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
-from ai_osop.core.config import settings
 
 
 class MCPToolParameter(BaseModel):
@@ -153,6 +153,7 @@ class MCPConnection:
         new_state = self.get_circuit_state()
         if old_state != new_state:
             from ai_osop.core.observability import record_circuit_breaker_state
+
             record_circuit_breaker_state(self.server_id, is_open=(new_state == "open"))
 
     def _record_failure(self) -> None:
@@ -183,6 +184,7 @@ class MCPConnection:
         new_state = self.get_circuit_state()
         if old_state != new_state:
             from ai_osop.core.observability import record_circuit_breaker_state
+
             record_circuit_breaker_state(self.server_id, is_open=(new_state == "open"))
 
     def get_circuit_state(self) -> str:
@@ -205,6 +207,7 @@ class MCPConnection:
         if self._circuit_open and not self._half_open:
             raise MCPConnectionError(f"MCP server {self.server_id} circuit breaker is open")
         from ai_osop.reliability.retry import retry_with_backoff
+
         async def _do_connect():
             self._session = aiohttp.ClientSession(
                 headers={"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
@@ -220,7 +223,7 @@ class MCPConnection:
                 _do_connect,
                 max_retries=max_retries,
                 base_delay=1,
-                retry_name=f"mcp_connect_{self.server_id}"
+                retry_name=f"mcp_connect_{self.server_id}",
             )
             self._record_success()
         except Exception as e:
@@ -304,7 +307,9 @@ class MCPConnection:
                 )
             except Exception as e:
                 self._record_failure()
-                return MCPExecuteResponse(request_id=request.request_id, status="error", error=str(e))
+                return MCPExecuteResponse(
+                    request_id=request.request_id, status="error", error=str(e)
+                )
 
     async def get_state(self) -> MCPStateResponse:
         """Get current server state."""
@@ -337,7 +342,11 @@ class MCPRegistry:
         self.call_counts: Dict[str, int] = {}
 
     async def register_server(
-        self, server_id: str, host: str, port: int, auth_token: Optional[str] = None,
+        self,
+        server_id: str,
+        host: str,
+        port: int,
+        auth_token: Optional[str] = None,
         connect_retries: int = 5,
     ) -> MCPConnection:
         """Register and connect to a new MCP server.
@@ -350,9 +359,11 @@ class MCPRegistry:
             await conn.connect(max_retries=connect_retries)
             self._servers[server_id] = conn
             import logging
+
             logging.getLogger("ai_osop.mcp").info(f"Registered server: {server_id}")
         except Exception as e:
             import logging
+
             logging.getLogger("ai_osop.mcp").warning(
                 f"MCP server {server_id} at {host}:{port} unavailable: {e}. Will retry on demand."
             )
@@ -427,7 +438,9 @@ class MCPRegistry:
                 if server_filter and not server_filter(conn):
                     continue
                 if tool_name in conn._tools:
-                    task = conn.execute(MCPExecuteRequest(tool_name=tool_name, parameters=parameters))
+                    task = conn.execute(
+                        MCPExecuteRequest(tool_name=tool_name, parameters=parameters)
+                    )
                     tasks.append((server_id, task))
 
             for server_id, task in tasks:

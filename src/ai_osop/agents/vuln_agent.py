@@ -12,12 +12,12 @@ from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 import httpx
 import structlog
+
 logger = structlog.get_logger(__name__)
 
 from ai_osop.adapters.browser_mcp import BrowserMCPAdapter
 from ai_osop.adapters.burp_mcp import BurpMCPAdapter
 from ai_osop.adapters.oast_mcp import OASTAdapter
-from ai_osop.core.oast_correlation import OASTCorrelationRegistry, OASTProbe
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.adapters.turbo_intruder_mcp import TurboIntruderMCPAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
@@ -25,6 +25,7 @@ from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import NUCLEI_SCAN_PROFILES, AgentType, Severity, VulnClass, settings
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, Vulnerability
+from ai_osop.core.oast_correlation import OASTCorrelationRegistry, OASTProbe
 
 
 class VulnAnalysisAgent(BaseAgent):
@@ -83,9 +84,7 @@ class VulnAnalysisAgent(BaseAgent):
     async def _has_session(self, engagement_id: str, user_label: str) -> bool:
         """True if an imported (and non-expired) user session exists for replay."""
         try:
-            sess = await self.session_store.get_session_or_none(
-                engagement_id, user_label
-            )
+            sess = await self.session_store.get_session_or_none(engagement_id, user_label)
         except Exception:
             return False
         return sess is not None and not sess.is_expired()
@@ -184,10 +183,8 @@ class VulnAnalysisAgent(BaseAgent):
         )
         logger.info("vuln_agent_recalled_prior_findings", domain=domain, count=len(prior))
         return (
-            context
-            + "\n\nPrior similar findings from past engagements "
-            "(consider these attack patterns first):\n"
-            + prior_lines
+            context + "\n\nPrior similar findings from past engagements "
+            "(consider these attack patterns first):\n" + prior_lines
         )
 
     async def _execute_burp_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -269,8 +266,6 @@ class VulnAnalysisAgent(BaseAgent):
         logger.debug("Requesting issues, sitemap, and proxy history for %s", url)
         vulns = await self.burp_adapter.get_scan_issues(url)
 
-
-
         endpoints = await self.burp_adapter.get_sitemap(url_prefix=domain)
         history = await self.burp_adapter.get_proxy_history()
 
@@ -325,9 +320,7 @@ class VulnAnalysisAgent(BaseAgent):
         # Perform reasoning using security skills (best-effort, never blocks
         # finding persistence; bounded by a short timeout so vuln_agent fits
         # inside its 300s task budget even when Ollama is slow).
-        analysis_context = (
-            f"Target {domain} identified. Initializing vulnerability analysis phase."
-        )
+        analysis_context = f"Target {domain} identified. Initializing vulnerability analysis phase."
         if all_endpoints:
             analysis_context = (
                 f"Analyzing {len(all_endpoints)} new endpoints for {domain} to identify potential vulnerabilities:\n"
@@ -379,9 +372,7 @@ class VulnAnalysisAgent(BaseAgent):
         payload_set = payload.get(
             "payload_set", ["' OR 1=1 --", "admin'--", "<script>alert(1)</script>"]
         )
-        tab_name = payload.get(
-            "tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}"
-        )
+        tab_name = payload.get("tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}")
 
         logger.debug(f"Deploying Intruder attack against {url}")
 
@@ -413,9 +404,9 @@ class VulnAnalysisAgent(BaseAgent):
                 "target": url,
                 "tab_name": tab_name,
                 "reasoning": reasoning,
-                "mcp_response": response.model_dump()
-                if hasattr(response, "model_dump")
-                else str(response),
+                "mcp_response": (
+                    response.model_dump() if hasattr(response, "model_dump") else str(response)
+                ),
             }
 
         except Exception as e:
@@ -429,9 +420,7 @@ class VulnAnalysisAgent(BaseAgent):
         # when callers passed a single URL string rather than a list.
         targets = payload.get("targets")
         if targets is None:
-            single = (
-                payload.get("target") or payload.get("url") or payload.get("target_url")
-            )
+            single = payload.get("target") or payload.get("url") or payload.get("target_url")
             if single:
                 targets = [single]
         if not targets:
@@ -489,9 +478,7 @@ class VulnAnalysisAgent(BaseAgent):
         # catch-all page and yield false positives (e.g. a "default-login" template
         # 'succeeding' against a marketing SPA). Detected here so matches can be
         # down-ranked BEFORE they are persisted or reach the exploitation gate.
-        catch_all = (
-            await self._detect_catch_all(targets[0]) if targets else {"is_catch_all": False}
-        )
+        catch_all = await self._detect_catch_all(targets[0]) if targets else {"is_catch_all": False}
         if catch_all.get("is_catch_all"):
             logger.warning(
                 "catch_all_host_detected",
@@ -576,9 +563,7 @@ class VulnAnalysisAgent(BaseAgent):
             await self.security_bridge.initialize(session.scope, session.session_id)
 
         try:
-            verdict = await self.security_bridge.run_sqlmap(
-                url, data=data, level=level, risk=risk
-            )
+            verdict = await self.security_bridge.run_sqlmap(url, data=data, level=level, risk=risk)
         except Exception as e:  # MCPException etc. — report, do not crash the agent
             logger.warning("sqli_scan_failed", url=url, error=str(e))
             return {"status": "error", "tool": "sqlmap", "target": url, "error": str(e)}
@@ -677,9 +662,7 @@ class VulnAnalysisAgent(BaseAgent):
         q[target] = payload
         return urlunparse(parsed._replace(query=urlencode(q, quote_via=quote)))
 
-    async def _confirm_xss_execution(
-        self, url: str, token: str, engagement_id: str
-    ) -> bool:
+    async def _confirm_xss_execution(self, url: str, token: str, engagement_id: str) -> bool:
         """Navigate a real browser to ``url`` and confirm the payload EXECUTED.
 
         The payload sets ``window.__osopxss`` to a per-scan token via an <img onerror>
@@ -707,9 +690,7 @@ class VulnAnalysisAgent(BaseAgent):
         verbatim in the HTTP response body (i.e. the app did not entity-encode it).
         Catches classic reflected XSS that never reaches a browser sink."""
         try:
-            async with httpx.AsyncClient(
-                verify=False, follow_redirects=True, timeout=20
-            ) as client:
+            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as client:
                 resp = await client.get(url)
                 body = resp.text
         except Exception as e:
@@ -867,7 +848,9 @@ class VulnAnalysisAgent(BaseAgent):
 
         token = payload.get("token")
         if not token:
-            token = await self._token_from_session(engagement_id, payload.get("user_label", "user_a"))
+            token = await self._token_from_session(
+                engagement_id, payload.get("user_label", "user_a")
+            )
         if not token:
             return {
                 "status": "error",
@@ -1003,7 +986,9 @@ class VulnAnalysisAgent(BaseAgent):
                     control_text = (await c.get(readback_url, headers=headers)).text
 
                 # 2. INJECTED — the same request WITH the privileged fields added.
-                inj_resp = await c.request(method, url, json={**base_body, **inject}, headers=headers)
+                inj_resp = await c.request(
+                    method, url, json={**base_body, **inject}, headers=headers
+                )
                 inj_text = inj_resp.text
                 independent_readback = False
                 if readback_url:
@@ -1063,17 +1048,19 @@ class VulnAnalysisAgent(BaseAgent):
                 f"request without those fields did not exhibit them ({proof}). This "
                 f"enables privilege escalation."
             ),
-            evidence=[{
-                "type": "mass_assignment",
-                "provenance": provenance,
-                "url": url,
-                "method": method,
-                "accepted_fields": accepted_fields,
-                "injected": inject,
-                "baseline_suppressed": True,   # confirmed absent in the control request
-                "independent_readback": independent_readback,
-                "manual_confirm_required": manual_confirm_required,
-            }],
+            evidence=[
+                {
+                    "type": "mass_assignment",
+                    "provenance": provenance,
+                    "url": url,
+                    "method": method,
+                    "accepted_fields": accepted_fields,
+                    "injected": inject,
+                    "baseline_suppressed": True,  # confirmed absent in the control request
+                    "independent_readback": independent_readback,
+                    "manual_confirm_required": manual_confirm_required,
+                }
+            ],
             tool_source="mass_assignment_scan",
             confidence=confidence,
             validated=validated,
@@ -1131,7 +1118,7 @@ class VulnAnalysisAgent(BaseAgent):
         method = payload.get("method", "POST").upper()
         body = payload.get("body")
         cookie = payload.get("cookie")  # ambient credential => CSRF-relevant
-        token = payload.get("token")    # bearer => NOT CSRF-able
+        token = payload.get("token")  # bearer => NOT CSRF-able
         ok_statuses = set(payload.get("success_status", [200, 201, 204]))
 
         if not cookie:
@@ -1184,14 +1171,16 @@ class VulnAnalysisAgent(BaseAgent):
                 f"cookie, no anti-CSRF token) with status {resp.status_code}, indicating "
                 f"the state-changing action can be forged from an attacker page."
             ),
-            evidence=[{
-                "type": "csrf",
-                "provenance": "http",
-                "url": url,
-                "method": method,
-                "status": resp.status_code,
-                "origin": headers["Origin"],
-            }],
+            evidence=[
+                {
+                    "type": "csrf",
+                    "provenance": "http",
+                    "url": url,
+                    "method": method,
+                    "status": resp.status_code,
+                    "origin": headers["Origin"],
+                }
+            ],
             tool_source="csrf_scan",
             confidence=0.85,
             validated=True,
@@ -1252,8 +1241,14 @@ class VulnAnalysisAgent(BaseAgent):
         probes = []
         for tech in techniques:
             res = await asyncio.to_thread(
-                probe_desync, host, port, path=path, technique=tech,
-                use_tls=use_tls, recv_timeout=recv_timeout, threshold_ms=threshold_ms,
+                probe_desync,
+                host,
+                port,
+                path=path,
+                technique=tech,
+                use_tls=use_tls,
+                recv_timeout=recv_timeout,
+                threshold_ms=threshold_ms,
             )
             probes.append(res)
             if res.get("vulnerable"):
@@ -1262,8 +1257,14 @@ class VulnAnalysisAgent(BaseAgent):
 
         if not confirmed:
             logger.info("request_smuggling_clean", url=url, probes=probes)
-            return {"status": "success", "tool": "request_smuggling_scan", "target": url,
-                    "confirmed": False, "probes": probes, "findings_count": 0}
+            return {
+                "status": "success",
+                "tool": "request_smuggling_scan",
+                "target": url,
+                "confirmed": False,
+                "probes": probes,
+                "findings_count": 0,
+            }
 
         # A single elevated desync timing is notoriously noisy (network jitter, GC pause,
         # cold cache). Require the winning technique to REPRODUCE before claiming validated
@@ -1272,8 +1273,14 @@ class VulnAnalysisAgent(BaseAgent):
         reproductions = 1  # the initial hit
         for _ in range(2):
             r = await asyncio.to_thread(
-                probe_desync, host, port, path=path, technique=tech,
-                use_tls=use_tls, recv_timeout=recv_timeout, threshold_ms=threshold_ms,
+                probe_desync,
+                host,
+                port,
+                path=path,
+                technique=tech,
+                use_tls=use_tls,
+                recv_timeout=recv_timeout,
+                threshold_ms=threshold_ms,
             )
             probes.append(r)
             if r.get("vulnerable"):
@@ -1303,14 +1310,16 @@ class VulnAnalysisAgent(BaseAgent):
                     "differential (smuggled-prefix) response before submitting."
                 )
             ),
-            evidence=[{
-                "type": "request_smuggling",
-                "provenance": "timing_probe",
-                "url": url,
-                "reproductions": reproductions,
-                "manual_confirm_required": manual_confirm,
-                **confirmed,
-            }],
+            evidence=[
+                {
+                    "type": "request_smuggling",
+                    "provenance": "timing_probe",
+                    "url": url,
+                    "reproductions": reproductions,
+                    "manual_confirm_required": manual_confirm,
+                    **confirmed,
+                }
+            ],
             tool_source="request_smuggling_scan",
             confidence=confidence,
             validated=validated,
@@ -1325,10 +1334,18 @@ class VulnAnalysisAgent(BaseAgent):
             logger.error("request_smuggling_persist_failed", vuln_id=vuln.id, error=str(e))
 
         logger.info("request_smuggling_confirmed", url=url, technique=confirmed["technique"])
-        return {"status": "success", "tool": "request_smuggling_scan", "target": url,
-                "confirmed": True, "technique": confirmed["technique"],
-                "manual_confirm_required": manual_confirm, "reproductions": reproductions,
-                "probes": probes, "findings_count": 1, "findings": [vuln.model_dump()]}
+        return {
+            "status": "success",
+            "tool": "request_smuggling_scan",
+            "target": url,
+            "confirmed": True,
+            "technique": confirmed["technique"],
+            "manual_confirm_required": manual_confirm,
+            "reproductions": reproductions,
+            "probes": probes,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
 
     async def _ssrf_fetch_via_sink(self, metadata_url: str) -> str:
         """Drive an in-band SSRF: place metadata_url into the configured sink and
@@ -1389,10 +1406,13 @@ class VulnAnalysisAgent(BaseAgent):
         if payload.get("cookie"):
             headers["Cookie"] = payload["cookie"]
         self._ssrf_chain_cfg = {
-            "url": url, "param": payload.get("param"), "body_field": payload.get("body_field"),
+            "url": url,
+            "param": payload.get("param"),
+            "body_field": payload.get("body_field"),
             "body_format": payload.get("body_format", "json"),
             "method": payload.get("method", "POST" if payload.get("body_field") else "GET"),
-            "base_body": dict(payload.get("base_body") or {}), "headers": headers,
+            "base_body": dict(payload.get("base_body") or {}),
+            "headers": headers,
         }
 
         targets = payload.get("metadata_targets") or IMDS_TARGETS
@@ -1416,8 +1436,13 @@ class VulnAnalysisAgent(BaseAgent):
 
         if not found:
             logger.info("ssrf_metadata_chain_clean", url=url)
-            return {"status": "success", "tool": "ssrf_metadata_chain", "target": url,
-                    "confirmed": False, "findings_count": 0}
+            return {
+                "status": "success",
+                "tool": "ssrf_metadata_chain",
+                "target": url,
+                "confirmed": False,
+                "findings_count": 0,
+            }
 
         provider = found[0]["provider"]
         vuln = Vulnerability(
@@ -1430,13 +1455,15 @@ class VulnAnalysisAgent(BaseAgent):
                 f"({proof_url}) and returned live cloud credentials, enabling full account "
                 f"compromise. This is a critical SSRF -> credential-theft chain."
             ),
-            evidence=[{
-                "type": "ssrf_metadata_chain",
-                "provenance": "ssrf+metadata",
-                "ssrf_url": url,
-                "metadata_url": proof_url,
-                "credentials": found,  # already redacted by extract_credentials
-            }],
+            evidence=[
+                {
+                    "type": "ssrf_metadata_chain",
+                    "provenance": "ssrf+metadata",
+                    "ssrf_url": url,
+                    "metadata_url": proof_url,
+                    "credentials": found,  # already redacted by extract_credentials
+                }
+            ],
             tool_source="ssrf_metadata_chain",
             confidence=0.98,
             validated=True,
@@ -1450,10 +1477,18 @@ class VulnAnalysisAgent(BaseAgent):
         except Exception as e:
             logger.error("ssrf_metadata_persist_failed", vuln_id=vuln.id, error=str(e))
 
-        logger.info("ssrf_metadata_chain_confirmed", url=url, provider=provider, metadata_url=proof_url)
-        return {"status": "success", "tool": "ssrf_metadata_chain", "target": url,
-                "confirmed": True, "provider": provider, "findings_count": 1,
-                "findings": [vuln.model_dump()]}
+        logger.info(
+            "ssrf_metadata_chain_confirmed", url=url, provider=provider, metadata_url=proof_url
+        )
+        return {
+            "status": "success",
+            "tool": "ssrf_metadata_chain",
+            "target": url,
+            "confirmed": True,
+            "provider": provider,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
 
     async def _execute_race_limit_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Confirm a race-condition / limit bypass (TOCTOU, double-spend, coupon
@@ -1517,9 +1552,13 @@ class VulnAnalysisAgent(BaseAgent):
         if success_count <= expected_max:
             logger.info("race_limit_clean", url=url, success_count=success_count)
             return {
-                "status": "success", "tool": "race_limit_scan", "target": url,
-                "confirmed": False, "success_count": success_count,
-                "status_distribution": dist, "findings_count": 0,
+                "status": "success",
+                "tool": "race_limit_scan",
+                "target": url,
+                "confirmed": False,
+                "success_count": success_count,
+                "status_distribution": dist,
+                "findings_count": 0,
             }
 
         vuln = Vulnerability(
@@ -1533,16 +1572,18 @@ class VulnAnalysisAgent(BaseAgent):
                 f"single-packet requests (release window {result.get('release_window_ms')}ms). "
                 f"The time-of-check/time-of-use window enables double-spend / limit bypass."
             ),
-            evidence=[{
-                "type": "race_condition",
-                "provenance": "turbo_single_packet",
-                "url": url,
-                "success_count": success_count,
-                "expected_max": expected_max,
-                "concurrency": n,
-                "status_distribution": dist,
-                "release_window_ms": result.get("release_window_ms"),
-            }],
+            evidence=[
+                {
+                    "type": "race_condition",
+                    "provenance": "turbo_single_packet",
+                    "url": url,
+                    "success_count": success_count,
+                    "expected_max": expected_max,
+                    "concurrency": n,
+                    "status_distribution": dist,
+                    "release_window_ms": result.get("release_window_ms"),
+                }
+            ],
             tool_source="race_limit_scan",
             confidence=0.96,
             validated=True,
@@ -1556,11 +1597,17 @@ class VulnAnalysisAgent(BaseAgent):
         except Exception as e:
             logger.error("race_limit_persist_failed", vuln_id=vuln.id, error=str(e))
 
-        logger.info("race_limit_confirmed", url=url, success_count=success_count, expected_max=expected_max)
+        logger.info(
+            "race_limit_confirmed", url=url, success_count=success_count, expected_max=expected_max
+        )
         return {
-            "status": "success", "tool": "race_limit_scan", "target": url,
-            "confirmed": True, "success_count": success_count,
-            "status_distribution": dist, "findings_count": 1,
+            "status": "success",
+            "tool": "race_limit_scan",
+            "target": url,
+            "confirmed": True,
+            "success_count": success_count,
+            "status_distribution": dist,
+            "findings_count": 1,
             "findings": [vuln.model_dump()],
         }
 
@@ -1628,14 +1675,16 @@ class VulnAnalysisAgent(BaseAgent):
                     f"identity check (HTTP {verdict.get('status')}). The credential "
                     f"authenticates and grants access — not a theoretical leak."
                 ),
-                evidence=[{
-                    "type": "live_credential",
-                    "provenance": "secret_verifier",
-                    "provider": provider,
-                    "secret_redacted": self._redact_secret(secret),
-                    "verify_status": verdict.get("status"),
-                    "check": "read-only identity endpoint",
-                }],
+                evidence=[
+                    {
+                        "type": "live_credential",
+                        "provenance": "secret_verifier",
+                        "provider": provider,
+                        "secret_redacted": self._redact_secret(secret),
+                        "verify_status": verdict.get("status"),
+                        "check": "read-only identity endpoint",
+                    }
+                ],
                 tool_source="secret_liveness_scan",
                 confidence=0.98,
                 validated=True,
@@ -1708,17 +1757,19 @@ class VulnAnalysisAgent(BaseAgent):
                     f"retrieved it served in a way that confirms unrestricted upload: "
                     f"{getattr(r, 'detail', '')}"
                 ),
-                evidence=[{
-                    "type": "unrestricted_file_upload",
-                    "provenance": "file_upload_tester",
-                    "technique": r.technique,
-                    "detail": getattr(r, "detail", ""),
-                    "filename": getattr(r, "filename", ""),
-                    "retrieval_url": getattr(r, "retrieval_url", ""),
-                    "served_content_type": getattr(r, "served_content_type", ""),
-                    "marker": getattr(r, "marker", ""),
-                    "tester_evidence": getattr(r, "evidence", {}),
-                }],
+                evidence=[
+                    {
+                        "type": "unrestricted_file_upload",
+                        "provenance": "file_upload_tester",
+                        "technique": r.technique,
+                        "detail": getattr(r, "detail", ""),
+                        "filename": getattr(r, "filename", ""),
+                        "retrieval_url": getattr(r, "retrieval_url", ""),
+                        "served_content_type": getattr(r, "served_content_type", ""),
+                        "marker": getattr(r, "marker", ""),
+                        "tester_evidence": getattr(r, "evidence", {}),
+                    }
+                ],
                 tool_source="file_upload_scan",
                 confidence=0.95,
                 validated=True,
@@ -1791,14 +1842,16 @@ class VulnAnalysisAgent(BaseAgent):
                     f"(gadget {getattr(r, 'gadget', '')}) and observed the effect in a "
                     f"payload-free probe: {getattr(r, 'detail', '')}"
                 ),
-                evidence=[{
-                    "type": "prototype_pollution",
-                    "provenance": "prototype_pollution_tester",
-                    "technique": r.technique,
-                    "gadget": getattr(r, "gadget", ""),
-                    "detail": getattr(r, "detail", ""),
-                    "tester_evidence": getattr(r, "evidence", {}),
-                }],
+                evidence=[
+                    {
+                        "type": "prototype_pollution",
+                        "provenance": "prototype_pollution_tester",
+                        "technique": r.technique,
+                        "gadget": getattr(r, "gadget", ""),
+                        "detail": getattr(r, "detail", ""),
+                        "tester_evidence": getattr(r, "evidence", {}),
+                    }
+                ],
                 tool_source="prototype_pollution_scan",
                 confidence=0.95,
                 validated=True,
@@ -1885,13 +1938,15 @@ class VulnAnalysisAgent(BaseAgent):
                     f"WebSocketTester confirmed a real flaw against {url} via the "
                     f"{r.technique} oracle: {getattr(r, 'detail', '')}"
                 ),
-                evidence=[{
-                    "type": "websocket_flaw",
-                    "provenance": "websocket_tester",
-                    "technique": r.technique,
-                    "detail": getattr(r, "detail", ""),
-                    "tester_evidence": getattr(r, "evidence", {}),
-                }],
+                evidence=[
+                    {
+                        "type": "websocket_flaw",
+                        "provenance": "websocket_tester",
+                        "technique": r.technique,
+                        "detail": getattr(r, "detail", ""),
+                        "tester_evidence": getattr(r, "evidence", {}),
+                    }
+                ],
                 tool_source="websocket_scan",
                 confidence=0.95,
                 validated=True,
@@ -1969,14 +2024,16 @@ class VulnAnalysisAgent(BaseAgent):
                     f"'{getattr(r, 'attacker_identity', '')}' via {r.technique}: "
                     f"{getattr(r, 'detail', '')}"
                 ),
-                evidence=[{
-                    "type": "saml_assertion_forgery",
-                    "provenance": "saml_tester",
-                    "technique": r.technique,
-                    "detail": getattr(r, "detail", ""),
-                    "attacker_identity": getattr(r, "attacker_identity", ""),
-                    "tester_evidence": getattr(r, "evidence", {}),
-                }],
+                evidence=[
+                    {
+                        "type": "saml_assertion_forgery",
+                        "provenance": "saml_tester",
+                        "technique": r.technique,
+                        "detail": getattr(r, "detail", ""),
+                        "attacker_identity": getattr(r, "attacker_identity", ""),
+                        "tester_evidence": getattr(r, "evidence", {}),
+                    }
+                ],
                 tool_source="saml_scan",
                 confidence=0.97,
                 validated=True,
@@ -2073,11 +2130,13 @@ class VulnAnalysisAgent(BaseAgent):
                     + "). The dangling reference can be claimed by an attacker to serve "
                     "content under this domain."
                 ),
-                evidence=[{
-                    "type": "subdomain_takeover",
-                    "provenance": "http_fingerprint",
-                    **m,
-                }],
+                evidence=[
+                    {
+                        "type": "subdomain_takeover",
+                        "provenance": "http_fingerprint",
+                        **m,
+                    }
+                ],
                 tool_source="subdomain_takeover_scan",
                 confidence=m["confidence"],
                 validated=True,
@@ -2103,8 +2162,14 @@ class VulnAnalysisAgent(BaseAgent):
         }
 
     async def _store_payload(
-        self, store_url: str, method: str, field: str, value: str,
-        base: Dict[str, Any], fmt: str, headers: Dict[str, str],
+        self,
+        store_url: str,
+        method: str,
+        field: str,
+        value: str,
+        base: Dict[str, Any],
+        fmt: str,
+        headers: Dict[str, str],
     ) -> None:
         """Persist a payload into a stored sink as the attacker (best-effort)."""
         body = {**base, field: value}
@@ -2180,8 +2245,15 @@ class VulnAnalysisAgent(BaseAgent):
         if mode in ("auto", "browser") and render_url:
             token = f"OSOPSXSS{uuid.uuid4().hex[:10]}"
             exec_payload = f"<img src=x onerror=\"window.__osopxss='{token}'\">"
-            await self._store_payload(store_url, store_method, store_field,
-                                      exec_payload, store_base, store_format, headers)
+            await self._store_payload(
+                store_url,
+                store_method,
+                store_field,
+                exec_payload,
+                store_base,
+                store_format,
+                headers,
+            )
             executed = await self._confirm_xss_execution(render_url, token, engagement_id)
             if executed:
                 proof = {"method": "execution", "render_url": render_url, "token": token}
@@ -2198,16 +2270,26 @@ class VulnAnalysisAgent(BaseAgent):
                 source_agent_id=getattr(self, "agent_id", "") or "",
             ).to_context()
             otoken, callback_url = await self.oast.register(
-                label=f"stored_xss:{store_url}", context=xss_ctx)
-            beacon_payload = f"<img src=\"{callback_url}\">"
-            await self._store_payload(store_url, store_method, store_field,
-                                      beacon_payload, store_base, store_format, headers)
+                label=f"stored_xss:{store_url}", context=xss_ctx
+            )
+            beacon_payload = f'<img src="{callback_url}">'
+            await self._store_payload(
+                store_url,
+                store_method,
+                store_field,
+                beacon_payload,
+                store_base,
+                store_format,
+                headers,
+            )
             # Trigger a render ourselves if we have a page that displays it.
             if render_url and hasattr(self, "browser_adapter"):
                 try:
                     await self.browser_adapter.navigate(
-                        render_url, user_label=payload.get("render_user_label", "victim"),
-                        engagement_id=engagement_id)
+                        render_url,
+                        user_label=payload.get("render_user_label", "victim"),
+                        engagement_id=engagement_id,
+                    )
                 except Exception as e:
                     logger.warning("stored_xss_render_failed", url=render_url, error=str(e))
             hits: List[Dict[str, Any]] = []
@@ -2223,14 +2305,20 @@ class VulnAnalysisAgent(BaseAgent):
                 waited += poll_interval
             if hits:
                 beaconed = True
-                proof = {"method": "oast_beacon", "callback_url": callback_url,
-                         "interaction": hits[0]}
+                proof = {
+                    "method": "oast_beacon",
+                    "callback_url": callback_url,
+                    "interaction": hits[0],
+                }
 
         if not (executed or beaconed):
             logger.info("stored_xss_clean", store_url=store_url)
             return {
-                "status": "success", "tool": "stored_xss_scan", "target": store_url,
-                "confirmed": False, "findings_count": 0,
+                "status": "success",
+                "tool": "stored_xss_scan",
+                "target": store_url,
+                "confirmed": False,
+                "findings_count": 0,
             }
 
         vuln = Vulnerability(
@@ -2240,21 +2328,25 @@ class VulnAnalysisAgent(BaseAgent):
             title=f"Stored XSS (confirmed via {method})",
             description=(
                 f"A payload stored via {store_url} (field '{store_field}') was confirmed to "
-                + ("execute in a real browser when the consuming page was rendered."
-                   if method == "execution"
-                   else "beacon out-of-band when the consuming page was rendered (blind stored XSS).")
+                + (
+                    "execute in a real browser when the consuming page was rendered."
+                    if method == "execution"
+                    else "beacon out-of-band when the consuming page was rendered (blind stored XSS)."
+                )
                 + f" Render surface: {render_url or 'n/a'}."
             ),
-            evidence=[{
-                "type": "stored_xss_confirmation",
-                "provenance": "browser" if method == "execution" else "oast",
-                "stored": True,
-                "method": method,
-                "store_url": store_url,
-                "store_field": store_field,
-                "render_url": render_url,
-                **proof,
-            }],
+            evidence=[
+                {
+                    "type": "stored_xss_confirmation",
+                    "provenance": "browser" if method == "execution" else "oast",
+                    "stored": True,
+                    "method": method,
+                    "store_url": store_url,
+                    "store_field": store_field,
+                    "render_url": render_url,
+                    **proof,
+                }
+            ],
             tool_source="stored_xss_scan",
             confidence=0.97 if method == "execution" else 0.95,
             validated=True,
@@ -2270,8 +2362,12 @@ class VulnAnalysisAgent(BaseAgent):
 
         logger.info("stored_xss_confirmed", store_url=store_url, method=method)
         return {
-            "status": "success", "tool": "stored_xss_scan", "target": store_url,
-            "confirmed": True, "method": method, "findings_count": 1,
+            "status": "success",
+            "tool": "stored_xss_scan",
+            "target": store_url,
+            "confirmed": True,
+            "method": method,
+            "findings_count": 1,
             "findings": [vuln.model_dump()],
         }
 
@@ -2324,9 +2420,7 @@ class VulnAnalysisAgent(BaseAgent):
             request_summary=f"{method} {url}",
             source_agent_id=getattr(self, "agent_id", "") or "",
         ).to_context()
-        token, callback_url = await self.oast.register(
-            label=f"ssrf:{url}", context=ssrf_ctx
-        )
+        token, callback_url = await self.oast.register(label=f"ssrf:{url}", context=ssrf_ctx)
 
         headers: Dict[str, str] = {}
         if auth_token:
@@ -2368,8 +2462,11 @@ class VulnAnalysisAgent(BaseAgent):
         if not hits:
             logger.info("ssrf_scan_clean", url=url)
             return {
-                "status": "success", "tool": "ssrf_scan", "target": url,
-                "confirmed": False, "findings_count": 0,
+                "status": "success",
+                "tool": "ssrf_scan",
+                "target": url,
+                "confirmed": False,
+                "findings_count": 0,
             }
 
         hit = hits[0]
@@ -2384,14 +2481,16 @@ class VulnAnalysisAgent(BaseAgent):
                 f"method {hit.get('method')}, path {hit.get('path')}), proving server-side "
                 f"request forgery."
             ),
-            evidence=[{
-                "type": "ssrf_callback",
-                "provenance": "oast",
-                "url": url,
-                "callback_url": callback_url,
-                "injection": body_field or param,
-                "interaction": hit,
-            }],
+            evidence=[
+                {
+                    "type": "ssrf_callback",
+                    "provenance": "oast",
+                    "url": url,
+                    "callback_url": callback_url,
+                    "injection": body_field or param,
+                    "interaction": hit,
+                }
+            ],
             tool_source="oast_ssrf",
             confidence=0.97,
             validated=True,
@@ -2407,8 +2506,12 @@ class VulnAnalysisAgent(BaseAgent):
 
         logger.info("ssrf_scan_confirmed", url=url, source_ip=hit.get("source_ip"))
         return {
-            "status": "success", "tool": "ssrf_scan", "target": url,
-            "confirmed": True, "findings_count": 1, "findings": [vuln.model_dump()],
+            "status": "success",
+            "tool": "ssrf_scan",
+            "target": url,
+            "confirmed": True,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
         }
 
     async def _token_from_session(self, engagement_id: str, user_label: str) -> Optional[str]:
@@ -2427,9 +2530,7 @@ class VulnAnalysisAgent(BaseAgent):
         engagement_id = payload["engagement_id"]
 
         # Get correlations from graph memory
-        correlations = await self.ctx.graph_memory.correlate_vulnerabilities(
-            engagement_id
-        )
+        correlations = await self.ctx.graph_memory.correlate_vulnerabilities(engagement_id)
 
         # Cross-tool confirmation
         confirmed_findings = []
@@ -2529,11 +2630,7 @@ class VulnAnalysisAgent(BaseAgent):
 
         avg_len = int(sum(lengths) / len(lengths)) if lengths else 0
         # Catch-all iff every random path returned 2xx with a real (non-trivial) body.
-        is_catch_all = (
-            bool(statuses)
-            and all(200 <= s < 300 for s in statuses)
-            and avg_len > 200
-        )
+        is_catch_all = bool(statuses) and all(200 <= s < 300 for s in statuses) and avg_len > 200
         return {
             "is_catch_all": is_catch_all,
             "baseline_status": statuses[0] if statuses else None,
@@ -2541,9 +2638,7 @@ class VulnAnalysisAgent(BaseAgent):
             "probes": probes,
         }
 
-    def _apply_catch_all_fp_downrank(
-        self, vuln: Vulnerability, catch_all: Dict[str, Any]
-    ) -> None:
+    def _apply_catch_all_fp_downrank(self, vuln: Vulnerability, catch_all: Dict[str, Any]) -> None:
         """Down-rank a finding that is likely a catch-all false positive.
 
         Lowers confidence and demotes exploitability (so it will not pass the
@@ -2559,11 +2654,7 @@ class VulnAnalysisAgent(BaseAgent):
         reasons: List[str] = []
         if any(m in template for m in self._FP_PRONE_TEMPLATE_MARKERS):
             reasons.append(f"catch_all_host + fp_prone_template:{template or 'unknown'}")
-        if (
-            resp
-            and baseline_len
-            and abs(len(resp) - baseline_len) / max(baseline_len, 1) < 0.25
-        ):
+        if resp and baseline_len and abs(len(resp) - baseline_len) / max(baseline_len, 1) < 0.25:
             reasons.append("matched_response_indistinguishable_from_catch_all_baseline")
 
         if not reasons:
@@ -2656,10 +2747,7 @@ class VulnAnalysisAgent(BaseAgent):
         for other in self.findings.values():
             if other.id == vuln.id:
                 continue
-            if (
-                other.vuln_type == vuln.vuln_type
-                and other.endpoint_id == vuln.endpoint_id
-            ):
+            if other.vuln_type == vuln.vuln_type and other.endpoint_id == vuln.endpoint_id:
                 similar.append(other)
         return similar
 

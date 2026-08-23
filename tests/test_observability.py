@@ -30,12 +30,20 @@ from ai_osop.core.telemetry import (
     extract_trace_id_from_traceparent,
     generate_request_id,
 )
-from ai_osop.core.tracing import get_tracer, init_tracing, shutdown_tracing, trace_span, trace_span_with_parent
+from ai_osop.core.tracing import (
+    get_tracer,
+    init_tracing,
+    shutdown_tracing,
+    trace_span,
+    trace_span_with_parent,
+)
+
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_test_tracing():
     from opentelemetry import trace as otel_trace
     from opentelemetry.sdk.trace import TracerProvider
+
     try:
         otel_trace.set_tracer_provider(TracerProvider())
     except Exception:
@@ -46,6 +54,7 @@ def setup_test_tracing():
 # =============================================================================
 # CorrelationIdMiddleware tests
 # =============================================================================
+
 
 class TestCorrelationIdMiddleware:
     """Test request ID injection, propagation, and response headers."""
@@ -113,6 +122,7 @@ class TestCorrelationIdMiddleware:
 # TraceContext / TelemetryCarrier tests
 # =============================================================================
 
+
 class TestTelemetryCarrier:
     """Test W3C TraceContext propagation."""
 
@@ -121,6 +131,7 @@ class TestTelemetryCarrier:
         init_tracing()
         try:
             from opentelemetry import trace as otel_trace
+
             tracer = otel_trace.get_tracer("test")
             with tracer.start_as_current_span("test-span"):
                 carrier = {}
@@ -150,6 +161,7 @@ class TestTelemetryCarrier:
 # trace_span and trace_span_with_parent tests
 # =============================================================================
 
+
 class TestTraceSpans:
     """Test trace span context managers and decorators."""
 
@@ -168,6 +180,7 @@ class TestTraceSpans:
         init_tracing()
         try:
             from opentelemetry import trace as otel_trace
+
             tracer = otel_trace.get_tracer("test")
             with tracer.start_as_current_span("parent-span"):
                 carrier = {}
@@ -196,6 +209,7 @@ class TestTraceSpans:
 # =============================================================================
 # RequestContext tests
 # =============================================================================
+
 
 class TestRequestContext:
     """Test contextvar binding and clearing."""
@@ -231,6 +245,7 @@ class TestRequestContext:
 # Helper function tests
 # =============================================================================
 
+
 class TestHelpers:
     def test_generate_request_id(self):
         rid = generate_request_id()
@@ -252,33 +267,41 @@ class TestHelpers:
 # Metrics registration tests (no duplicates)
 # =============================================================================
 
+
 class TestMetricsRegistration:
     """Verify that importing metrics and observability modules doesn't cause duplicate registration."""
 
     def test_metrics_module_imports_without_error(self):
         """Importing metrics.py should register all metrics without ValueError."""
         import importlib
+
         import ai_osop.core.metrics as metrics_module
+
         importlib.reload(metrics_module)  # Should not raise ValueError
 
     def test_observability_module_imports_without_error(self):
         """Importing observability.py should not duplicate metrics."""
         import importlib
+
         import ai_osop.core.observability as obs_module
+
         importlib.reload(obs_module)  # Should not raise ValueError
 
     def test_both_modules_importable_together(self):
         """Both modules can be imported in any order without conflict."""
         import importlib
+
         # Clear any cached modules to force re-registration
         import ai_osop.core.metrics as m1
         import ai_osop.core.observability as o1
+
         importlib.reload(m1)
         importlib.reload(o1)
         # If we got here without ValueError, registration is clean
 
     def test_all_slo_metrics_exist(self):
         from ai_osop.core import metrics
+
         assert hasattr(metrics, "SLO_AVAILABILITY")
         assert hasattr(metrics, "SLO_ERROR_BUDGET")
         assert hasattr(metrics, "SLO_LATENCY_P99")
@@ -289,6 +312,7 @@ class TestMetricsRegistration:
 
     def test_all_new_metrics_exist(self):
         from ai_osop.core import metrics
+
         assert hasattr(metrics, "TASK_COMPLETION_TIME")
         assert hasattr(metrics, "ENGAGEMENT_COMPLETION_TIME")
         assert hasattr(metrics, "APPROVALS_TOTAL")
@@ -299,6 +323,7 @@ class TestMetricsRegistration:
 
     def test_observability_helpers_exist(self):
         from ai_osop.core import observability
+
         assert hasattr(observability, "record_engagement_started")
         assert hasattr(observability, "record_engagement_completed")
         assert hasattr(observability, "record_engagement_halted")
@@ -315,11 +340,13 @@ class TestMetricsRegistration:
 # Integration: trace propagation through Task model
 # =============================================================================
 
+
 class TestTaskTracePropagation:
     """Verify Task.trace_context field exists and carries traceparent."""
 
     def test_task_has_trace_context_field(self):
-        from ai_osop.core.models import Task, AgentType
+        from ai_osop.core.models import AgentType, Task
+
         task = Task(
             type="test",
             agent_type=AgentType.RECON,
@@ -329,7 +356,8 @@ class TestTaskTracePropagation:
         assert task.trace_context["traceparent"] == "00-abc123-xyz789-01"
 
     def test_task_trace_context_defaults_to_empty_dict(self):
-        from ai_osop.core.models import Task, AgentType
+        from ai_osop.core.models import AgentType, Task
+
         task = Task(
             type="test",
             agent_type=AgentType.RECON,

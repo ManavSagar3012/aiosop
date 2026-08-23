@@ -1,4 +1,4 @@
-from ai_osop.core.secret_verifier import classify_secret, SECRET_PROVIDERS
+from ai_osop.core.secret_verifier import SECRET_PROVIDERS, classify_secret
 
 
 def test_classify_github_token():

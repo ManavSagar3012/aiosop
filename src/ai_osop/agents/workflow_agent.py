@@ -5,6 +5,7 @@ Orchestrates real browser journeys, handles authentication, and maps workflows.
 
 import hashlib
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +17,7 @@ from ai_osop.core.config import AgentType, settings
 from ai_osop.core.diff_auth_analyzer import DiffAuthAnalyzer
 from ai_osop.core.diff_auth_engine import DifferentialAuthEngine
 from ai_osop.core.models import Observation, Task, Workflow, WorkflowStep, WorkflowTransition
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,7 +108,9 @@ class PlaywrightAgent(BaseAgent):
         except Exception as e:
             import traceback
 
-            logger.debug(f"DEBUG: Agent {self.ctx.agent_id} _execute exception for task {task.id}: {e}")
+            logger.debug(
+                f"DEBUG: Agent {self.ctx.agent_id} _execute exception for task {task.id}: {e}"
+            )
             traceback.print_exc()
             raise e
 
@@ -439,7 +442,10 @@ class PlaywrightAgent(BaseAgent):
         try:
             await self.browser_adapter.execute_action(
                 action="fill",
-                params={"selector": user_sel, "value": credentials.get("username", credentials.get("email", ""))},
+                params={
+                    "selector": user_sel,
+                    "value": credentials.get("username", credentials.get("email", "")),
+                },
                 user_label=user_label,
                 engagement_id=engagement_id,
             )
@@ -567,16 +573,18 @@ class PlaywrightAgent(BaseAgent):
                 )
                 r = result.get("result", {}) or {}
                 if r.get("found"):
-                    findings.append({
-                        "type": "payment_manipulation",
-                        "label": test["label"],
-                        "amount_injected": test["amount"],
-                        "original_amount": r.get("original"),
-                        "selector": r.get("selector"),
-                        "target_url": target_url,
-                        "confidence": 0.6,
-                        "note": "Amount field found and manipulated — verify server-side enforcement",
-                    })
+                    findings.append(
+                        {
+                            "type": "payment_manipulation",
+                            "label": test["label"],
+                            "amount_injected": test["amount"],
+                            "original_amount": r.get("original"),
+                            "selector": r.get("selector"),
+                            "target_url": target_url,
+                            "confidence": 0.6,
+                            "note": "Amount field found and manipulated — verify server-side enforcement",
+                        }
+                    )
             except Exception as e:
                 logger.debug(f"Payment probe {test['label']} error: {e}")
 
@@ -612,7 +620,9 @@ class PlaywrightAgent(BaseAgent):
 
         for attempt, label_used in [(1, user_label_a), (2, user_label_a), (3, user_label_b)]:
             try:
-                await self.browser_adapter.navigate(target_url, label_used, engagement_id=engagement_id)
+                await self.browser_adapter.navigate(
+                    target_url, label_used, engagement_id=engagement_id
+                )
                 result = await self.browser_adapter.execute_action(
                     action="eval",
                     params={"expression": js_apply_coupon},
@@ -627,16 +637,18 @@ class PlaywrightAgent(BaseAgent):
                     accepted = any(w in snippet for w in success_words)
                     rejected = any(w in snippet for w in error_words)
                     if attempt > 1 and accepted and not rejected:
-                        findings.append({
-                            "type": "coupon_reuse",
-                            "attempt": attempt,
-                            "user": label_used,
-                            "coupon_code": coupon_code,
-                            "target_url": target_url,
-                            "confidence": 0.75,
-                            "evidence_snippet": r.get("page_text_snippet", "")[:200],
-                            "note": "Coupon accepted on repeat use — no server-side use tracking",
-                        })
+                        findings.append(
+                            {
+                                "type": "coupon_reuse",
+                                "attempt": attempt,
+                                "user": label_used,
+                                "coupon_code": coupon_code,
+                                "target_url": target_url,
+                                "confidence": 0.75,
+                                "evidence_snippet": r.get("page_text_snippet", "")[:200],
+                                "note": "Coupon accepted on repeat use — no server-side use tracking",
+                            }
+                        )
             except Exception as e:
                 logger.debug(f"Coupon probe attempt {attempt} error: {e}")
 
@@ -655,7 +667,11 @@ class PlaywrightAgent(BaseAgent):
         if not invite_token:
             return findings
 
-        invite_url = f"{target_url}?invite={invite_token}" if "?" not in target_url else f"{target_url}&invite={invite_token}"
+        invite_url = (
+            f"{target_url}?invite={invite_token}"
+            if "?" not in target_url
+            else f"{target_url}&invite={invite_token}"
+        )
 
         for attempt, user in [(1, user_label_a), (2, user_label_b)]:
             try:
@@ -664,21 +680,29 @@ class PlaywrightAgent(BaseAgent):
                 )
                 state = await self.browser_adapter.capture_state(user, engagement_id=engagement_id)
                 body = (state.get("body") or "").lower()
-                success_words = ["welcome", "account created", "registered", "invite accepted", "join"]
+                success_words = [
+                    "welcome",
+                    "account created",
+                    "registered",
+                    "invite accepted",
+                    "join",
+                ]
                 error_words = ["invalid", "expired", "already used", "token used"]
                 accepted = any(w in body for w in success_words)
                 rejected = any(w in body for w in error_words)
 
                 if attempt == 2 and accepted and not rejected:
-                    findings.append({
-                        "type": "invitation_token_reuse",
-                        "attempt": attempt,
-                        "user": user,
-                        "invite_token": invite_token,
-                        "target_url": invite_url,
-                        "confidence": 0.80,
-                        "note": "Single-use invite token accepted for a second account",
-                    })
+                    findings.append(
+                        {
+                            "type": "invitation_token_reuse",
+                            "attempt": attempt,
+                            "user": user,
+                            "invite_token": invite_token,
+                            "target_url": invite_url,
+                            "confidence": 0.80,
+                            "note": "Single-use invite token accepted for a second account",
+                        }
+                    )
             except Exception as e:
                 logger.debug(f"Invitation probe attempt {attempt} error: {e}")
 
@@ -727,15 +751,17 @@ class PlaywrightAgent(BaseAgent):
             results = await _asyncio.gather(*[_single_request(i) for i in range(5)])
             successes = [r for r in results if r.get("ok") or r.get("status") == 200]
             if len(successes) > 1:
-                findings.append({
-                    "type": "race_condition",
-                    "target_url": target_url,
-                    "concurrent_successes": len(successes),
-                    "total_requests": 5,
-                    "confidence": 0.70,
-                    "note": f"{len(successes)}/5 concurrent requests succeeded — TOCTOU likely",
-                    "raw_results": results,
-                })
+                findings.append(
+                    {
+                        "type": "race_condition",
+                        "target_url": target_url,
+                        "concurrent_successes": len(successes),
+                        "total_requests": 5,
+                        "confidence": 0.70,
+                        "note": f"{len(successes)}/5 concurrent requests succeeded — TOCTOU likely",
+                        "raw_results": results,
+                    }
+                )
         except Exception as e:
             logger.debug(f"Race condition probe error: {e}")
 
@@ -1100,7 +1126,9 @@ class PlaywrightAgent(BaseAgent):
             extracted.append(element)
 
             # Emit as observation for AttackChainAgent
-            await self.observe(target_id=page_url, obs_type="ui_semantics", data=element.model_dump())
+            await self.observe(
+                target_id=page_url, obs_type="ui_semantics", data=element.model_dump()
+            )
 
         return {"status": "success", "elements_found": len(extracted), "url": page_url}
 

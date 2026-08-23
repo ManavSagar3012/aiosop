@@ -4,26 +4,35 @@ Specialized agent for DNS enumeration, port scanning, service discovery,
 and asset inventory maintenance.
 """
 
+import hashlib
+import re
 from datetime import datetime
+from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, urljoin, urlparse
+
+import aiohttp
+import structlog
 
 from ai_osop.adapters.recon_mcp import ReconMCPAdapter
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.retrieval_agent import RetrievalAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task, make_asset_id
 from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
-from ai_osop.core.url_intelligence import classify_url, endpoint_template, extract_params, extract_form_fields, mine_urls
+from ai_osop.core.url_intelligence import (
+    classify_url,
+    endpoint_template,
+    extract_form_fields,
+    extract_params,
+    mine_urls,
+)
 from ai_osop.safety.scope import ScopeEnforcer
-import re
-from ai_osop.agents.retrieval_agent import RetrievalAgent
-import hashlib
-import aiohttp
-from html.parser import HTMLParser
-from urllib.parse import urljoin, urlparse, parse_qs
-import structlog
+
 logger = structlog.get_logger(__name__)
+
 
 class SimpleHTMLParser(HTMLParser):
     def __init__(self):
@@ -43,7 +52,7 @@ class SimpleHTMLParser(HTMLParser):
             self.current_form = {
                 "action": attrs_dict["action"],
                 "method": attrs_dict.get("method", "GET").upper(),
-                "inputs": []
+                "inputs": [],
             }
             self.forms.append(self.current_form)
         elif tag == "input" and self.current_form and "name" in attrs_dict:
@@ -62,8 +71,19 @@ class ReconAgent(BaseAgent):
     @property
     def agent_type(self) -> AgentType:
         return AgentType.RECON
+
     def supports_task_type(self, task_type: str) -> bool:
-        return task_type in ["full_recon", "dns_enumeration", "port_scan", "service_probe", "osint_lookup", "technology_fingerprint", "content_discovery", "openapi_ingest", "expand_subdomains"]
+        return task_type in [
+            "full_recon",
+            "dns_enumeration",
+            "port_scan",
+            "service_probe",
+            "osint_lookup",
+            "technology_fingerprint",
+            "content_discovery",
+            "openapi_ingest",
+            "expand_subdomains",
+        ]
 
     async def _setup_resources(self) -> None:
         """Initialize recon tools and inventory."""
@@ -92,11 +112,22 @@ class ReconAgent(BaseAgent):
             methodologies = retrieval_agent.search("Other")
 
             # Filter for recon-related methodology
-            recon_methodologies = [m for m in methodologies if any(tool in m.get("command_pattern", "") for tool in ["subfinder", "httpx", "nuclei", "katana"])]
+            recon_methodologies = [
+                m
+                for m in methodologies
+                if any(
+                    tool in m.get("command_pattern", "")
+                    for tool in ["subfinder", "httpx", "nuclei", "katana"]
+                )
+            ]
 
             # Add retrieved methodology to context
-            retrieved_patterns = "\n".join([m.get("command_pattern", "") for m in recon_methodologies])
-            retrieved_prerequisites = "\n".join([str(p) for m in recon_methodologies for p in m.get("prerequisites", [])])
+            retrieved_patterns = "\n".join(
+                [m.get("command_pattern", "") for m in recon_methodologies]
+            )
+            retrieved_prerequisites = "\n".join(
+                [str(p) for m in recon_methodologies for p in m.get("prerequisites", [])]
+            )
 
             enriched_context = f"{context}\n\nRetrieved Recon Methodology:\n{retrieved_patterns}\n\nRetrieved Recon Prerequisites:\n{retrieved_prerequisites}"
 
@@ -111,6 +142,7 @@ class ReconAgent(BaseAgent):
             # AIOSOP-LLM-WARM-001: cap advisory reasoning tokens so a warm model
             # answers fast (and a reasoning model's <think> trace can't blow the bound).
             from ai_osop.core.config import settings as _settings
+
             return await self.ctx.llm_client.complete(
                 messages, max_tokens=_settings.llm_reasoning_max_tokens
             )
@@ -156,40 +188,46 @@ class ReconAgent(BaseAgent):
         form fields extracted from HTML content.
         """
         from urllib.parse import urlsplit as _us
+
         _p = _us(url)
         params = extra.pop("parameters", None)
         if params is None:
             params = extract_params(url)
-        
+
         # Merge any form fields extracted from HTML response
         form_fields = extra.pop("form_fields", [])
         if form_fields:
             params = sorted(set(params) | set(form_fields))
-        
+
         return Endpoint(
-            url=url, source=source, confidence=extra.pop("confidence", 0.85),
+            url=url,
+            source=source,
+            confidence=extra.pop("confidence", 0.85),
             engagement_id=engagement_id,
-            parameters=params, query_keys=params,
-            host=_p.netloc, path=extra.pop("path", _p.path),
-            metadata={"tags": classify_url(url), "template": endpoint_template(url),
-                      **extra.pop("metadata", {})},
+            parameters=params,
+            query_keys=params,
+            host=_p.netloc,
+            path=extra.pop("path", _p.path),
+            metadata={
+                "tags": classify_url(url),
+                "template": endpoint_template(url),
+                **extra.pop("metadata", {}),
+            },
             **extra,
         )
 
     async def _fetch_and_extract_form_fields(self, url: str) -> List[str]:
         """Fetch a URL and extract form field names from HTML response.
-        
+
         Returns a list of field names. On any error (network, timeout, non-HTML),
         returns an empty list to allow discovery to continue.
         """
         import asyncio
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    url, 
-                    timeout=aiohttp.ClientTimeout(total=5),
-                    allow_redirects=True,
-                    ssl=False
+                    url, timeout=aiohttp.ClientTimeout(total=5), allow_redirects=True, ssl=False
                 ) as resp:
                     if resp.status == 200 and "text/html" in resp.headers.get("content-type", ""):
                         html = await resp.text()
@@ -216,12 +254,15 @@ class ReconAgent(BaseAgent):
         except Exception as e:
             logger.warning("content_discovery_katana_failed", error=str(e))
             return {"status": "error", "error": f"katana crawl failed: {e}"}
-        urls = [u for u in (list(result.get("endpoints", [])) + list(result.get("js_files", [])))
-                if isinstance(u, str) and u]
-        
+        urls = [
+            u
+            for u in (list(result.get("endpoints", [])) + list(result.get("js_files", [])))
+            if isinstance(u, str) and u
+        ]
+
         # Build form field map (sampling up to 50 endpoints to reduce latency)
         form_field_map: Dict[str, List[str]] = {}
-        sample_urls = urls[:min(50, len(urls))]
+        sample_urls = urls[: min(50, len(urls))]
         for url in sample_urls:
             try:
                 form_fields = await self._fetch_and_extract_form_fields(url)
@@ -230,7 +271,7 @@ class ReconAgent(BaseAgent):
             except Exception as ex:
                 # Best-effort form extraction; don't fail the whole discovery
                 logger.debug("form_field_extraction_failed", url=url, error=str(ex))
-        
+
         added = 0
         for url in urls:
             try:
@@ -243,11 +284,18 @@ class ReconAgent(BaseAgent):
                 logger.error("content_discovery_add_endpoint_failed", url=url, error=str(ex))
         intel = mine_urls(urls).as_dict()
         if intel["interesting_params"]:
-            logger.info("content_discovery_param_intel",
-                        high_risk_params=intel["interesting_params"],
-                        unique_endpoints=intel["unique_endpoint_count"])
-        return {"status": "success", "target": target, "endpoints_found": added,
-                "js_files": len(result.get("js_files", [])), "parameter_intelligence": intel}
+            logger.info(
+                "content_discovery_param_intel",
+                high_risk_params=intel["interesting_params"],
+                unique_endpoints=intel["unique_endpoint_count"],
+            )
+        return {
+            "status": "success",
+            "target": target,
+            "endpoints_found": added,
+            "js_files": len(result.get("js_files", [])),
+            "parameter_intelligence": intel,
+        }
 
     async def _execute_openapi_ingest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Discover + ingest an exposed OpenAPI/Swagger spec (P1.3).
@@ -283,14 +331,24 @@ class ReconAgent(BaseAgent):
                     spec, found_url = doc, cand
                     break
         if spec is None:
-            return {"status": "success", "target": target, "spec_found": False, "endpoints_found": 0}
+            return {
+                "status": "success",
+                "target": target,
+                "spec_found": False,
+                "endpoints_found": 0,
+            }
         descriptors = parse_spec(spec, base_url=payload.get("base_url") or target)
         added = 0
         for d in descriptors:
             try:
                 ep = self._mk_endpoint(
-                    d["url"], engagement_id, source="openapi", confidence=0.9,
-                    method=d["method"], type="api", path=d["path"],
+                    d["url"],
+                    engagement_id,
+                    source="openapi",
+                    confidence=0.9,
+                    method=d["method"],
+                    type="api",
+                    path=d["path"],
                     parameters=d.get("parameters", []),
                     body_schema_keys=d.get("body_keys", []),
                     metadata={"operation_id": d.get("operation_id", ""), "spec_url": found_url},
@@ -301,8 +359,13 @@ class ReconAgent(BaseAgent):
             except Exception as ex:
                 logger.error("openapi_add_endpoint_failed", url=d["url"], error=str(ex))
         logger.info("openapi_ingested", spec_url=found_url, endpoints=added)
-        return {"status": "success", "target": target, "spec_found": True,
-                "spec_url": found_url, "endpoints_found": added}
+        return {
+            "status": "success",
+            "target": target,
+            "spec_found": True,
+            "spec_url": found_url,
+            "endpoints_found": added,
+        }
 
     async def _execute_expand_subdomains(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Expand discovered subdomains into likely candidates (altdns-style) and,
@@ -327,29 +390,40 @@ class ReconAgent(BaseAgent):
             self.ctx.current_task.engagement_id if self.ctx.current_task else None
         )
 
-        known = payload.get("known_subs") or list(self.asset_inventory and
-                                                  [a.value for a in self.asset_inventory.values()
-                                                   if getattr(a, "type", "") in ("subdomain", "domain")])
+        known = payload.get("known_subs") or list(
+            self.asset_inventory
+            and [
+                a.value
+                for a in self.asset_inventory.values()
+                if getattr(a, "type", "") in ("subdomain", "domain")
+            ]
+        )
         candidates = generate_permutations(domain, known, payload.get("words"))
 
         resolve = bool(payload.get("resolve", True))
         max_resolve = int(payload.get("max_resolve", 500))
         live: List[str] = []
         if resolve:
+
             async def _res(host: str) -> bool:
                 try:
                     await asyncio.to_thread(socket.gethostbyname, host)
                     return True
                 except Exception:
                     return False
+
             checked = candidates[:max_resolve]
             results = await asyncio.gather(*[_res(h) for h in checked])
             live = [h for h, ok in zip(checked, results) if ok]
             for host in live:
                 try:
                     asset = Asset(
-                        id=f"asset-{engagement_id}-{host}", type="subdomain", value=host,
-                        source="permutation", confidence=0.9, engagement_id=engagement_id,
+                        id=f"asset-{engagement_id}-{host}",
+                        type="subdomain",
+                        value=host,
+                        source="permutation",
+                        confidence=0.9,
+                        engagement_id=engagement_id,
                     )
                     await self.ctx.graph_memory.add_asset(asset)
                     self.asset_inventory[asset.id] = asset
@@ -446,6 +520,7 @@ class ReconAgent(BaseAgent):
             # than silently yielding zero endpoints (the bug that hid the recon-mcp
             # "not initialized" failure for so long). AIOSOP-RECON-PERSIST-2026-06-24.
             import logging
+
             logging.getLogger("ai_osop.recon").error(
                 "service_probe_failed", error=str(e), target_count=len(targets), exc_info=True
             )
@@ -505,7 +580,10 @@ class ReconAgent(BaseAgent):
         except Exception as e:
             logger.debug(f"full_recon_failure: {str(e)}")
             import logging
-            logging.getLogger("ai_osop.recon").error("full_recon_failure", error=str(e), exc_info=True)
+
+            logging.getLogger("ai_osop.recon").error(
+                "full_recon_failure", error=str(e), exc_info=True
+            )
             return {"status": "failed", "error": str(e)}
 
         # 2. Port Scan found subdomains
@@ -528,7 +606,7 @@ class ReconAgent(BaseAgent):
         for sub in subdomains:
             urls_to_probe.extend([f"http://{sub}", f"https://{sub}"])
         urls_to_probe.extend([f"http://{domain}", f"https://{domain}"])
-        
+
         endpoints_count = 0
         if urls_to_probe:
             try:
@@ -567,7 +645,7 @@ class ReconAgent(BaseAgent):
                     logger.error(f"Failed to add historical endpoint {ep.url} to graph: {ex}")
         except Exception as e:
             logger.warning(f"Historical URLs lookup failed: {e}")
-            
+
         # 5. OSINT Shodan Lookup (Sprint 12)
         shodan_assets_count = 0
         try:
@@ -588,9 +666,7 @@ class ReconAgent(BaseAgent):
         # probes) into parameter/endpoint intelligence. This turns a raw URL dump into
         # a prioritised list of hidden parameters and high-risk surface (open-redirect,
         # SSRF, LFI, IDOR candidates) that the vuln/exploit agents can target directly.
-        all_urls = [
-            ep.url for ep in self.endpoint_inventory.values() if getattr(ep, "url", None)
-        ]
+        all_urls = [ep.url for ep in self.endpoint_inventory.values() if getattr(ep, "url", None)]
         param_intel = mine_urls(all_urls).as_dict()
         if param_intel["interesting_params"]:
             logger.info(
@@ -610,7 +686,9 @@ class ReconAgent(BaseAgent):
             "reasoning": reasoning,
         }
 
-    async def _active_crawl_target(self, domain: str, session_store: Optional[Any] = None) -> List[Endpoint]:
+    async def _active_crawl_target(
+        self, domain: str, session_store: Optional[Any] = None
+    ) -> List[Endpoint]:
         """
         Active Web Crawler & Endpoint Explosion Engine (Sprint 13).
         Actively crawls the target application under multiple authenticated identities
@@ -619,9 +697,11 @@ class ReconAgent(BaseAgent):
         # 1. Load captured user sessions for the engagement (Swarm Identity Matrix)
         store = session_store or SessionStore(self.ctx.session_memory)
         sessions = await store.list_sessions(self.ctx.current_task.engagement_id)
-        
+
         # Load previously discovered endpoints to adapt crawling
-        known_endpoints = await self.ctx.graph_memory.get_endpoints(self.ctx.current_task.engagement_id)
+        known_endpoints = await self.ctx.graph_memory.get_endpoints(
+            self.ctx.current_task.engagement_id
+        )
         known_paths = {ep.url for ep in known_endpoints}
 
         # Seed crawl with known endpoints if available
@@ -629,38 +709,42 @@ class ReconAgent(BaseAgent):
         if known_paths:
             # Prioritize discovery of sub-paths from previously known endpoints
             initial_urls = list(known_paths) + initial_urls
-            
+
         discovered_endpoints = []
-        
+
         # Limit total identity-identities to maintain budget
         identities = [{"label": "anonymous", "session": None}]
         for s in sessions:
             identities.append({"label": s.user_label, "session": s})
-            
-        logger.debug(f"Active crawler initialized with {len(identities)} identities: {[i['label'] for i in identities]}. Known paths: {len(known_paths)}")
-        
+
+        logger.debug(
+            f"Active crawler initialized with {len(identities)} identities: {[i['label'] for i in identities]}. Known paths: {len(known_paths)}"
+        )
+
         # Regex patterns for API routes and parameters in JS
         param_pattern = re.compile(r"[?&]([a-zA-Z0-9_\-]+)=")
-        
+
         for identity in identities:
             user_label = identity["label"]
             user_session = identity["session"]
-            
+
             logger.debug(f"Starting active crawl phase for identity: {user_label}")
-            
+
             visited_urls = set()
             urls_to_crawl = list(set(initial_urls))
-            
-            max_pages = 20 # Limit per identity to stay within budget
+
+            max_pages = 20  # Limit per identity to stay within budget
             pages_crawled = 0
-            
+
             js_files = set()
             api_routes = set()
             parameters_found = set()
-            
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-OSOP-Crawler/1.2"}
+
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-OSOP-Crawler/1.2"
+            }
             cookies = {}
-            
+
             # Inject session tokens/cookies if present
             if user_session:
                 if user_session.bearer_token:
@@ -670,7 +754,7 @@ class ReconAgent(BaseAgent):
                 if user_session.cookies:
                     for c in user_session.cookies:
                         cookies[c["name"]] = c["value"]
-                        
+
             async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
                 while urls_to_crawl and pages_crawled < max_pages:
                     url = urls_to_crawl.pop(0)
@@ -678,21 +762,29 @@ class ReconAgent(BaseAgent):
                         continue
                     visited_urls.add(url)
                     pages_crawled += 1
-                    
+
                     try:
                         async with session.get(url, timeout=5, allow_redirects=True) as response:
                             status = response.status
                             content_type = response.headers.get("Content-Type", "")
-                            
+
                             parsed_url = urlparse(str(response.url))
                             if parsed_url.netloc.endswith(domain):
                                 # Check if already discovered
                                 is_new = str(response.url) not in self.endpoint_inventory
-                                
+
                                 # Set auth parameters based on identity context
-                                auth_req = user_label != "anonymous" if is_new else self.endpoint_inventory[str(response.url)].auth_required
-                                final_label = user_label if is_new else self.endpoint_inventory[str(response.url)].user_label
-                                
+                                auth_req = (
+                                    user_label != "anonymous"
+                                    if is_new
+                                    else self.endpoint_inventory[str(response.url)].auth_required
+                                )
+                                final_label = (
+                                    user_label
+                                    if is_new
+                                    else self.endpoint_inventory[str(response.url)].user_label
+                                )
+
                                 query_params = list(parse_qs(parsed_url.query).keys())
                                 ep = Endpoint(
                                     id=f"endpoint-{hashlib.md5(str(response.url).encode()).hexdigest()[:12]}",
@@ -705,23 +797,26 @@ class ReconAgent(BaseAgent):
                                     status_codes_seen=[status],
                                     query_keys=query_params,
                                     auth_required=auth_req,
-                                    user_label=final_label
+                                    user_label=final_label,
                                 )
                                 discovered_endpoints.append(ep)
                                 self.endpoint_inventory[str(response.url)] = ep
-                                
+
                                 if "text/html" in content_type:
                                     html_text = await response.text()
                                     parser = SimpleHTMLParser()
                                     parser.feed(html_text)
-                                    
+
                                     # 1. Extract Links
                                     for href in parser.links:
                                         link = urljoin(str(response.url), href)
                                         parsed_link = urlparse(link)
-                                        if parsed_link.netloc.endswith(domain) and link not in visited_urls:
+                                        if (
+                                            parsed_link.netloc.endswith(domain)
+                                            and link not in visited_urls
+                                        ):
                                             urls_to_crawl.append(link)
-                                            
+
                                     # 2. Extract Forms & Parameters
                                     for form in parser.forms:
                                         form_url = urljoin(str(response.url), form["action"])
@@ -729,11 +824,19 @@ class ReconAgent(BaseAgent):
                                         form_params = form["inputs"]
                                         for p in form_params:
                                             parameters_found.add(p)
-                                            
+
                                         is_form_new = form_url not in self.endpoint_inventory
-                                        form_auth_req = user_label != "anonymous" if is_form_new else self.endpoint_inventory[form_url].auth_required
-                                        form_final_label = user_label if is_form_new else self.endpoint_inventory[form_url].user_label
-                                        
+                                        form_auth_req = (
+                                            user_label != "anonymous"
+                                            if is_form_new
+                                            else self.endpoint_inventory[form_url].auth_required
+                                        )
+                                        form_final_label = (
+                                            user_label
+                                            if is_form_new
+                                            else self.endpoint_inventory[form_url].user_label
+                                        )
+
                                         form_ep = Endpoint(
                                             id=f"endpoint-{hashlib.md5(form_url.encode()).hexdigest()[:12]}",
                                             type="web",
@@ -742,42 +845,65 @@ class ReconAgent(BaseAgent):
                                             confidence=0.95,
                                             engagement_id=self.ctx.current_task.engagement_id,
                                             source="active_crawl_form",
-                                            body_schema_keys=form_params if form_method == "POST" else [],
+                                            body_schema_keys=(
+                                                form_params if form_method == "POST" else []
+                                            ),
                                             query_keys=form_params if form_method == "GET" else [],
                                             auth_required=form_auth_req,
-                                            user_label=form_final_label
+                                            user_label=form_final_label,
                                         )
                                         discovered_endpoints.append(form_ep)
                                         self.endpoint_inventory[form_url] = form_ep
-                                        
+
                                     # 3. Extract Script sources (JS bundles) (Sprint 12)
                                     for src in parser.scripts:
                                         script_url = urljoin(str(response.url), src)
                                         parsed_script = urlparse(script_url)
                                         script_host = parsed_script.netloc
-                                        
+
                                         # Get root domain dynamically
                                         domain_parts = domain.split(".")
-                                        root_domain = ".".join(domain_parts[-2:]) if len(domain_parts) >= 2 else domain
-                                        
+                                        root_domain = (
+                                            ".".join(domain_parts[-2:])
+                                            if len(domain_parts) >= 2
+                                            else domain
+                                        )
+
                                         # Allow same subdomain, same root domain, relative paths, or Webflow assets (for Webflow targets)
                                         is_valid = (
-                                            script_host == "" or 
-                                            script_host.endswith(domain) or 
-                                            script_host.endswith(root_domain) or
-                                            "website-files.com" in script_host or
-                                            "webflow" in script_host
+                                            script_host == ""
+                                            or script_host.endswith(domain)
+                                            or script_host.endswith(root_domain)
+                                            or "website-files.com" in script_host
+                                            or "webflow" in script_host
                                         )
-                                        
+
                                         # Ignore common global trackers to avoid noise
-                                        ignore_trackers = ["google-analytics", "googletagmanager", "facebook.net", "doubleclick"]
-                                        if is_valid and not any(t in script_url for t in ignore_trackers):
+                                        ignore_trackers = [
+                                            "google-analytics",
+                                            "googletagmanager",
+                                            "facebook.net",
+                                            "doubleclick",
+                                        ]
+                                        if is_valid and not any(
+                                            t in script_url for t in ignore_trackers
+                                        ):
                                             js_files.add(script_url)
-                                            
+
                                             is_js_new = script_url not in self.endpoint_inventory
-                                            js_auth_req = user_label != "anonymous" if is_js_new else self.endpoint_inventory[script_url].auth_required
-                                            js_final_label = user_label if is_js_new else self.endpoint_inventory[script_url].user_label
-                                            
+                                            js_auth_req = (
+                                                user_label != "anonymous"
+                                                if is_js_new
+                                                else self.endpoint_inventory[
+                                                    script_url
+                                                ].auth_required
+                                            )
+                                            js_final_label = (
+                                                user_label
+                                                if is_js_new
+                                                else self.endpoint_inventory[script_url].user_label
+                                            )
+
                                             # Persist the JS file itself as an Endpoint in the graph
                                             js_ep = Endpoint(
                                                 id=f"endpoint-{hashlib.md5(script_url.encode()).hexdigest()[:12]}",
@@ -788,33 +914,43 @@ class ReconAgent(BaseAgent):
                                                 engagement_id=self.ctx.current_task.engagement_id,
                                                 source="active_crawl_script",
                                                 auth_required=js_auth_req,
-                                                user_label=js_final_label
+                                                user_label=js_final_label,
                                             )
                                             discovered_endpoints.append(js_ep)
                                             self.endpoint_inventory[script_url] = js_ep
-                                            
+
                     except Exception as e:
                         logger.debug(f"Active crawl failed for {url} under {user_label}: {e}")
-                        
+
                 # 4. Parse JavaScript Bundles for hidden API routes and parameters
-                logger.debug(f"Discovered {len(js_files)} JS bundles for {user_label}. Starting deep route extraction...")
+                logger.debug(
+                    f"Discovered {len(js_files)} JS bundles for {user_label}. Starting deep route extraction..."
+                )
                 for js_url in list(js_files)[:10]:
                     try:
                         async with session.get(js_url, timeout=5) as js_response:
                             if js_response.status == 200:
                                 js_text = await js_response.text()
-                                
+
                                 routes = js_route_pattern.findall(js_text)
                                 params = param_pattern.findall(js_text)
-                                
+
                                 for route in routes:
                                     api_routes.add(route)
                                     full_api_url = urljoin(f"https://{domain}/", route)
-                                    
+
                                     is_api_new = full_api_url not in self.endpoint_inventory
-                                    api_auth_req = user_label != "anonymous" if is_api_new else self.endpoint_inventory[full_api_url].auth_required
-                                    api_final_label = user_label if is_api_new else self.endpoint_inventory[full_api_url].user_label
-                                    
+                                    api_auth_req = (
+                                        user_label != "anonymous"
+                                        if is_api_new
+                                        else self.endpoint_inventory[full_api_url].auth_required
+                                    )
+                                    api_final_label = (
+                                        user_label
+                                        if is_api_new
+                                        else self.endpoint_inventory[full_api_url].user_label
+                                    )
+
                                     api_ep = Endpoint(
                                         id=f"endpoint-{hashlib.md5(full_api_url.encode()).hexdigest()[:12]}",
                                         type="api",
@@ -825,20 +961,25 @@ class ReconAgent(BaseAgent):
                                         source="js_route_extraction",
                                         path=route,
                                         auth_required=api_auth_req,
-                                        user_label=api_final_label
+                                        user_label=api_final_label,
                                     )
                                     discovered_endpoints.append(api_ep)
                                     self.endpoint_inventory[full_api_url] = api_ep
-                                    
+
                                 for param in params:
                                     parameters_found.add(param)
-                                    
+
                     except Exception as e:
-                        logger.debug(f"JS route extraction failed for {js_url} under {user_label}: {e}")
-                        
-            logger.debug(f"Active crawl complete for {user_label}. Found {len(discovered_endpoints)} total endpoints, {len(api_routes)} API routes, and {len(parameters_found)} parameters.")
-            
+                        logger.debug(
+                            f"JS route extraction failed for {js_url} under {user_label}: {e}"
+                        )
+
+            logger.debug(
+                f"Active crawl complete for {user_label}. Found {len(discovered_endpoints)} total endpoints, {len(api_routes)} API routes, and {len(parameters_found)} parameters."
+            )
+
         return discovered_endpoints
+
     async def _cleanup_resources(self) -> None:
         """Cleanup recon resources."""
         self.asset_inventory.clear()

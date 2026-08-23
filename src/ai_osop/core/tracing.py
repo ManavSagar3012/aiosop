@@ -138,6 +138,7 @@ def trace_span_with_parent(
     tracer = get_tracer()
     if parent_span_context is not None and parent_span_context.is_valid:
         from opentelemetry.trace import NonRecordingSpan, set_span_in_context
+
         parent = NonRecordingSpan(parent_span_context)
         ctx = set_span_in_context(parent)
         with tracer.start_as_current_span(name, context=ctx, kind=kind) as span:
@@ -199,4 +200,3 @@ def _set_attrs(span, attributes, args, kwargs):
     for key, value in ctx.items():
         if value:
             span.set_attribute(f"ai_osop.{key}", value)
-

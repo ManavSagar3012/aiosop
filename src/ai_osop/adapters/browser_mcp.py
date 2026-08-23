@@ -81,7 +81,7 @@ class BrowserMCPAdapter:
             if ("SSL" in str(e) or "ERR_SSL" in str(e)) and self._is_local_http_target(url):
                 return await self.execute_action(
                     "navigate",
-                    {"url": "http://" + url[len("https://"):]},
+                    {"url": "http://" + url[len("https://") :]},
                     user_label=user_label,
                     engagement_id=engagement_id,
                     storage_state=storage_state,
@@ -92,7 +92,7 @@ class BrowserMCPAdapter:
     def _is_local_http_target(url: str) -> bool:
         if not url.startswith("https://"):
             return False
-        host = url[len("https://"):].split("/")[0].split(":")[0].lower()
+        host = url[len("https://") :].split("/")[0].split(":")[0].lower()
         if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
             return True
         if host.startswith(("10.", "192.168.")):

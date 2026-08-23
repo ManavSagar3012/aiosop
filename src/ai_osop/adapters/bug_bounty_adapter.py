@@ -154,7 +154,13 @@ class BugBountyAdapter:
             or "cross site request forgery" in combined
         ):
             return "csrf"
-        if "nosql" in combined or "no-sql" in combined or "mongodb" in combined or "couchdb" in combined or "$where" in combined:
+        if (
+            "nosql" in combined
+            or "no-sql" in combined
+            or "mongodb" in combined
+            or "couchdb" in combined
+            or "$where" in combined
+        ):
             return "nosql_injection"
         if "sqli" in combined or "sql injection" in combined:
             return "sqli"
@@ -174,27 +180,58 @@ class BugBountyAdapter:
             return "jwt_abuse"
         if "oauth" in combined or "openid" in combined or "sso" in combined:
             return "oauth2"
-        if "s3" in combined or "aws" in combined or "bucket" in combined or "cloud storage" in combined:
+        if (
+            "s3" in combined
+            or "aws" in combined
+            or "bucket" in combined
+            or "cloud storage" in combined
+        ):
             return "cloud_vuln"
-        if "prototype pollution" in combined or "__proto__" in combined or "constructor.prototype" in combined:
+        if (
+            "prototype pollution" in combined
+            or "__proto__" in combined
+            or "constructor.prototype" in combined
+        ):
             return "prototype_pollution"
         if "cache poison" in combined or "cache deception" in combined or "web cache" in combined:
             return "cache_poisoning"
-        if "http/2" in combined or "h2c" in combined or "http2 desync" in combined or "request tunneling" in combined:
+        if (
+            "http/2" in combined
+            or "h2c" in combined
+            or "http2 desync" in combined
+            or "request tunneling" in combined
+        ):
             return "http2_desync"
         if "xxe" in combined or "xml external" in combined or "xml injection" in combined:
             return "xxe"
         if "deserialization" in combined or "insecure deserialization" in combined:
             return "deserialization"
-        if "path traversal" in combined or "directory traversal" in combined or "lfi" in combined or "local file inclusion" in combined:
+        if (
+            "path traversal" in combined
+            or "directory traversal" in combined
+            or "lfi" in combined
+            or "local file inclusion" in combined
+        ):
             return "path_traversal"
-        if "ssti" in combined or "server-side template" in combined or "template injection" in combined:
+        if (
+            "ssti" in combined
+            or "server-side template" in combined
+            or "template injection" in combined
+        ):
             return "ssti"
         if "subdomain takeover" in combined or "dangling cname" in combined:
             return "subdomain_takeover"
-        if "business logic" in combined or "workflow abuse" in combined or "payment bypass" in combined:
+        if (
+            "business logic" in combined
+            or "workflow abuse" in combined
+            or "payment bypass" in combined
+        ):
             return "business_logic"
-        if "information disclosure" in combined or "sensitive data" in combined or "data exposure" in combined:
+        if (
+            "information disclosure" in combined
+            or "sensitive data" in combined
+            or "data exposure" in combined
+        ):
             return "info_disclosure"
         if "privilege escalation" in combined or "privesc" in combined:
             return "privesc"

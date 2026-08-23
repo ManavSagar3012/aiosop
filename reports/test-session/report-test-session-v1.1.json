@@ -1,0 +1,42 @@
+{
+  "engagement_id": "test-session",
+  "date": "2026-08-23",
+  "version": "v1.1",
+  "risk_narrative": "Mocked Executive Risk Narrative.",
+  "stats": {
+    "assets_count": 0,
+    "endpoints_count": 0,
+    "critical_count": 0,
+    "high_count": 1,
+    "medium_count": 0,
+    "low_count": 0,
+    "info_count": 0,
+    "total_findings": 1
+  },
+  "top_findings": [
+    {
+      "id": "vuln-1",
+      "title": "Test Vuln",
+      "severity": "HIGH",
+      "vuln_type": "xss",
+      "target": "ep-1",
+      "description": "A test vulnerability",
+      "evidence": "Type: proof\nPayload: <script>alert(1)</script>",
+      "evidence_hash": "6181cd90ed49fd22f83eb9c257856296af2c11becbaa600b457db5d92a212be7",
+      "event_id": "no-audit-event"
+    }
+  ],
+  "findings": [
+    {
+      "id": "vuln-1",
+      "title": "Test Vuln",
+      "severity": "HIGH",
+      "vuln_type": "xss",
+      "target": "ep-1",
+      "description": "A test vulnerability",
+      "evidence": "Type: proof\nPayload: <script>alert(1)</script>",
+      "evidence_hash": "6181cd90ed49fd22f83eb9c257856296af2c11becbaa600b457db5d92a212be7",
+      "event_id": "no-audit-event"
+    }
+  ]
+}

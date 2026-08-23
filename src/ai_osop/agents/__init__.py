@@ -15,8 +15,8 @@ from ai_osop.agents.react_agent import ReactSpecialistAgent
 from ai_osop.agents.recon_agent import ReconAgent
 from ai_osop.agents.reporting_agent import ReportingAgent
 from ai_osop.agents.retrieval_agent import RetrievalAgent
-from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
 from ai_osop.agents.stack_profiler_agent import StackProfilerAgent
+from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
 from ai_osop.agents.visual_agent import VisualContextAgent
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
 from ai_osop.agents.workflow_agent import PlaywrightAgent

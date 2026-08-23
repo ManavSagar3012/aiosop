@@ -1,6 +1,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+
 from ai_osop.core.config import AgentType
 from ai_osop.orchestrator.orchestrator import Orchestrator
 

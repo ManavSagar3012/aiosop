@@ -51,6 +51,7 @@ logger = structlog.get_logger("ai_osop.chain_composer")
 # list representing the PoC command. Returns [] if no PoC can be constructed.
 # ---------------------------------------------------------------------------
 
+
 def _poc_nuclei(primitives: List[PrimitiveLedger]) -> List[str]:
     """nuclei re-verification PoC."""
     targets = list({p.target for p in primitives if p.target})
@@ -100,7 +101,8 @@ def _poc_diff_auth(primitives: List[PrimitiveLedger]) -> List[str]:
     attacker_cookie = first.raw.get("attacker_cookie", "<ATTACKER_COOKIE>")
     url = targets[0]
     return [
-        "python3", "-c",
+        "python3",
+        "-c",
         (
             "import httpx; "
             f"r1=httpx.get('{url}', cookies={{'session': '{victim_cookie}'}}); "
@@ -120,9 +122,12 @@ def _poc_oast(primitives: List[PrimitiveLedger]) -> List[str]:
     oast_domain = first.raw.get("oast_domain", "<OAST_DOMAIN>")
     param = first.raw.get("ssrf_param", "url")
     return [
-        "curl", "-s", "-G",
+        "curl",
+        "-s",
+        "-G",
         f"{targets[0]}",
-        "--data-urlencode", f"{param}=http://{oast_domain}/ssrf-probe",
+        "--data-urlencode",
+        f"{param}=http://{oast_domain}/ssrf-probe",
     ]
 
 
@@ -170,6 +175,7 @@ def _chain_confidence(primitives: List[PrimitiveLedger]) -> float:
 # ---------------------------------------------------------------------------
 # ChainComposer
 # ---------------------------------------------------------------------------
+
 
 class ChainComposer:
     """Assembles Primitives into an AttackChain with a concrete payload.
@@ -306,7 +312,7 @@ class ChainComposer:
                 screenshots.append(p.raw["screenshot"])
 
         pkg = EvidencePackage(
-            finding_id=chain.id,         # use chain id as placeholder finding_id
+            finding_id=chain.id,  # use chain id as placeholder finding_id
             engagement_id=chain.engagement_id,
             raw_requests=raw_requests,
             raw_responses=raw_responses,

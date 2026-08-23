@@ -89,6 +89,20 @@ jobs:
   migration:
     name: Migration Check
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: osop
+          POSTGRES_PASSWORD: osop
+          POSTGRES_DB: osop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -96,7 +110,21 @@ jobs:
           python-version: "3.11"
       - run: pip install poetry
       - run: poetry install
+      - name: Wait for PostgreSQL
+        run: |
+          for i in {1..30}; do
+            if pg_isready -h localhost -p 5432 -U osop; then
+              echo "PostgreSQL is ready!"
+              exit 0
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+          done
+          echo "PostgreSQL did not become ready in time"
+          exit 1
       - run: poetry run alembic check
+        env:
+          OSOP_POSTGRES_URI: postgresql+asyncpg://osop:osop@localhost:5432/osop
 
   release_certificate:
     name: Generate Release Certificate

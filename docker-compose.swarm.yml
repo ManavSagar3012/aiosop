@@ -1,0 +1,200 @@
+# AI-OSOP Distributed Swarm Deployment
+# Production-ready multi-agent deployment with Redis Streams coordination
+
+version: '3.8'
+
+services:
+  # Redis Cluster for high availability
+  redis-primary:
+    image: redis:7-alpine
+    container_name: aiosop-redis-primary
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+      - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "6379:6379"
+    networks:
+      - aiosop-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Orchestrator service
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    container_name: aiosop-orchestrator
+    environment:
+      - REDIS_URL=redis://redis-primary:6379
+      - LOG_LEVEL=INFO
+      - ORCHESTRATOR_ID=orchestrator-01
+      - ENABLE_SWARM=true
+      - TRACE_ENABLED=true
+      - METRICS_ENABLED=true
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Recon Agent (horizontal scaling possible)
+  recon-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: aiosop-recon-agent
+    environment:
+      - AGENT_TYPE=recon
+      - AGENT_ID=recon-01
+      - REDIS_URL=redis://redis-primary:6379
+      - CONSUMER_GROUP=recon-agents
+      - LOG_LEVEL=INFO
+    depends_on:
+      - redis-primary
+      - orchestrator
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+
+  # Vulnerability Analysis Agent
+  vuln-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: aiosop-vuln-agent
+    environment:
+      - AGENT_TYPE=vulnerability
+      - AGENT_ID=vuln-01
+      - REDIS_URL=redis://redis-primary:6379
+      - CONSUMER_GROUP=vuln-agents
+      - LOG_LEVEL=INFO
+    depends_on:
+      - redis-primary
+      - orchestrator
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+
+  # Attack Chain Agent
+  attack-chain-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: aiosop-attack-chain-agent
+    environment:
+      - AGENT_TYPE=attack_chain
+      - AGENT_ID=chain-01
+      - REDIS_URL=redis://redis-primary:6379
+      - CONSUMER_GROUP=chain-agents
+      - LOG_LEVEL=INFO
+    depends_on:
+      - redis-primary
+      - orchestrator
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+
+  # Payload Generation Agent
+  payload-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: aiosop-payload-agent
+    environment:
+      - AGENT_TYPE=payload
+      - AGENT_ID=payload-01
+      - REDIS_URL=redis://redis-primary:6379
+      - CONSUMER_GROUP=payload-agents
+      - LOG_LEVEL=INFO
+    depends_on:
+      - redis-primary
+      - orchestrator
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+
+  # OAST Server for out-of-band testing
+  oast-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.oast
+    container_name: aiosop-oast-server
+    environment:
+      - REDIS_URL=redis://redis-primary:6379
+      - OAST_DOMAIN=oast.ai-osop.local
+    ports:
+      - "8080:8080"
+      - "53:53/udp"
+    depends_on:
+      - redis-primary
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aiosop-prometheus
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aiosop-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: aiosop-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - aiosop-network
+    restart: unless-stopped
+
+networks:
+  aiosop-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  redis_data:
+  grafana_data:

@@ -8,12 +8,14 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import structlog
+
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Task, Vulnerability
 from ai_osop.reporting.exporters import ReportExporter
-import structlog
+
 logger = structlog.get_logger(__name__)
 
 
@@ -47,7 +49,6 @@ class ReportingAgent(BaseAgent):
         else:
             raise AgentException(f"Unknown reporting task type: {task_type}")
 
-
     async def _generate_report(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate full assessment report."""
         engagement_id = self.ctx.current_task.engagement_id
@@ -60,8 +61,12 @@ class ReportingAgent(BaseAgent):
         # Real vulnerability nodes for this engagement, fetched from the graph below.
         findings = []
         try:
-            vuln_nodes = await self.ctx.graph_memory.get_vulnerabilities_by_engagement(engagement_id)
-            logger.info("report_vuln_fetch", engagement_id=repr(engagement_id), vuln_count=len(vuln_nodes))
+            vuln_nodes = await self.ctx.graph_memory.get_vulnerabilities_by_engagement(
+                engagement_id
+            )
+            logger.info(
+                "report_vuln_fetch", engagement_id=repr(engagement_id), vuln_count=len(vuln_nodes)
+            )
 
             # Best-effort traceability: map vulnerability id -> audit event_id with a
             # single query (not one per finding). This MUST be fully isolated — any
@@ -209,16 +214,17 @@ class ReportingAgent(BaseAgent):
             nodes = await self.ctx.graph_memory.get_all_nodes_for_engagement(engagement_id)
             edges = await self.ctx.graph_memory.get_all_edges_for_engagement(engagement_id)
             for n in nodes:
-                graph_data["nodes"].append({
-                    "id": n.get("id") or "unknown",
-                    "labels": list(n.get("labels") or [])
-                })
+                graph_data["nodes"].append(
+                    {"id": n.get("id") or "unknown", "labels": list(n.get("labels") or [])}
+                )
             for e in edges:
-                graph_data["edges"].append({
-                    "source": e.get("source") or "unknown",
-                    "target": e.get("target") or "unknown",
-                    "type": e.get("type") or "unknown"
-                })
+                graph_data["edges"].append(
+                    {
+                        "source": e.get("source") or "unknown",
+                        "target": e.get("target") or "unknown",
+                        "type": e.get("type") or "unknown",
+                    }
+                )
         except Exception as e:
             logger.warning("attack_graph_compilation_failed", error=str(e))
 
@@ -227,6 +233,7 @@ class ReportingAgent(BaseAgent):
         # 4.5. Generate Mission Quality Certificate (Sprint 11)
         try:
             from ai_osop.core.findings_quality import FindingCertificationEngine
+
             await FindingCertificationEngine.generate_mission_certificate(
                 engagement_id, self.ctx.session_memory, self.ctx.graph_memory
             )
@@ -236,6 +243,7 @@ class ReportingAgent(BaseAgent):
         # 4.6. Generate Attack Surface Coverage Certificate (Sprint 12)
         try:
             from ai_osop.core.findings_quality import AttackSurfaceCertifier
+
             await AttackSurfaceCertifier.generate_attack_surface_certificate(
                 engagement_id, self.ctx.session_memory, self.ctx.graph_memory
             )
@@ -254,6 +262,7 @@ class ReportingAgent(BaseAgent):
         }
 
         import os
+
         reports_dir = os.path.join("reports", engagement_id)
         os.makedirs(reports_dir, exist_ok=True)
         artifacts: Dict[str, str] = {}
@@ -282,8 +291,9 @@ class ReportingAgent(BaseAgent):
     async def _generate_yield_report(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate findings conversion and yield report (Sprint 14)."""
         from ai_osop.core.findings_quality import FindingConversionEngine
+
         engagement_id = self.ctx.current_task.engagement_id
-        
+
         # 1. Fetch Findings (already fetched in _generate_report or here)
         # Mocking finding fetch for this demonstration
         # 1. Fetch Findings (already fetched in _generate_report or here)
@@ -291,27 +301,29 @@ class ReportingAgent(BaseAgent):
         outcomes = []
         try:
             from sqlalchemy import text
+
             async with self.ctx.session_memory._async_session() as session:
                 res = await session.execute(
-                    text("SELECT original_finding_id AS finding_id, outcome AS status FROM finding_corpus WHERE engagement_id = :eid"),
-                    {"engagement_id": engagement_id}
+                    text(
+                        "SELECT original_finding_id AS finding_id, outcome AS status FROM finding_corpus WHERE engagement_id = :eid"
+                    ),
+                    {"engagement_id": engagement_id},
                 )
                 outcomes = [dict(r._mapping) for r in res.all()]
         except Exception as e:
             logger.warning("failed_fetch_outcomes", error=str(e))
-            
+
         # 2. Calculate Yield
         stats = FindingConversionEngine.calculate_yield(
             discovery_inputs=payload.get("discovery_inputs", 100),
             raw_findings=len(outcomes),
-            certified_findings=len([o for o in outcomes if o["status"] == "accepted"])
+            certified_findings=len([o for o in outcomes if o["status"] == "accepted"]),
         )
-        
-        heatmap = FindingConversionEngine.generate_yield_heatmap([
-            {"id": o["finding_id"], "certification": {"status": o["status"]}} for o in outcomes
-        ])
-        
-        
+
+        heatmap = FindingConversionEngine.generate_yield_heatmap(
+            [{"id": o["finding_id"], "certification": {"status": o["status"]}} for o in outcomes]
+        )
+
         # 3. Save Report
         md_content = f"""# FINDING YIELD INTELLIGENCE REPORT
 **Engagement ID:** `{engagement_id}`
@@ -335,7 +347,7 @@ class ReportingAgent(BaseAgent):
         report_path = os.path.join(reports_dir, "FINDING_YIELD_REPORT.md")
         with open(report_path, "w", encoding="utf-8") as fh:
             fh.write(md_content)
-            
+
         return {"status": "success", "report_path": os.path.abspath(report_path)}
 
     async def _compile_evidence(self, payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -2,9 +2,10 @@
 AI-OSOP Shared Data Models
 Pydantic models for all cross-component communication.
 """
-import uuid
-import hmac
+
 import hashlib
+import hmac
+import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -296,7 +297,7 @@ class DiffAuthFinding(BaseModel):
     evidence_diff: Dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0)
     # Sprint 7: Outcome Feedback
-    outcome: Optional[str] = None # e.g., "accepted", "duplicate", "informative", "na"
+    outcome: Optional[str] = None  # e.g., "accepted", "duplicate", "informative", "na"
     outcome_notes: Optional[str] = None
     outcome_at: Optional[datetime] = None
     engagement_id: str
@@ -579,6 +580,7 @@ class GraphQLSchema(BaseModel):
 
 # ================= PRIMITIVE LEDGER (Sprint 1.2) =================
 
+
 class PrimitiveType(str, Enum):
     """Type taxonomy for raw signals entering the Primitive Ledger.
 
@@ -586,18 +588,19 @@ class PrimitiveType(str, Enum):
     finding. The chain engine escalates from here; triager gate decides what
     is eventually emitted as a finding.
     """
-    NUCLEI_SIGNAL = "nuclei_signal"      # Nuclei template hit (unvalidated)
+
+    NUCLEI_SIGNAL = "nuclei_signal"  # Nuclei template hit (unvalidated)
     ENDPOINT_OBSERVED = "endpoint_observed"  # URL/endpoint seen in recon
-    AUTH_SIGNAL = "auth_signal"          # Auth anomaly (diff-auth engine output)
-    PORT_OPEN = "port_open"              # Open port from recon
-    DNS_RECORD = "dns_record"            # DNS/subdomain discovered
-    JS_SECRET = "js_secret"             # Potential secret extracted from JS
-    HEADER_ANOMALY = "header_anomaly"    # Suspicious response header
+    AUTH_SIGNAL = "auth_signal"  # Auth anomaly (diff-auth engine output)
+    PORT_OPEN = "port_open"  # Open port from recon
+    DNS_RECORD = "dns_record"  # DNS/subdomain discovered
+    JS_SECRET = "js_secret"  # Potential secret extracted from JS
+    HEADER_ANOMALY = "header_anomaly"  # Suspicious response header
     RATE_LIMIT_MISS = "rate_limit_miss"  # Endpoint has no rate limiting
-    REDIRECT_CHAIN = "redirect_chain"    # Interesting redirect sequence
-    SSRF_HINT = "ssrf_hint"             # Possible SSRF vector
-    IDOR_HINT = "idor_hint"             # Possible IDOR vector
-    GENERIC = "generic"                  # Catch-all for unclassified signals
+    REDIRECT_CHAIN = "redirect_chain"  # Interesting redirect sequence
+    SSRF_HINT = "ssrf_hint"  # Possible SSRF vector
+    IDOR_HINT = "idor_hint"  # Possible IDOR vector
+    GENERIC = "generic"  # Catch-all for unclassified signals
 
 
 class PrimitiveLedger(BaseModel):
@@ -622,28 +625,30 @@ class PrimitiveLedger(BaseModel):
     id: str = Field(default_factory=lambda: f"prim-{uuid.uuid4().hex[:12]}")
     primitive_type: PrimitiveType
     engagement_id: str
-    source: str                           # e.g. "nuclei", "recon_mcp", "diff_auth"
-    dedup_key: str                        # Stable fingerprint; drives MERGE in Neo4j
-    target: str                           # URL, host, domain, port — the affected target
-    raw: Dict[str, Any] = Field(default_factory=dict)   # Original tool output
+    source: str  # e.g. "nuclei", "recon_mcp", "diff_auth"
+    dedup_key: str  # Stable fingerprint; drives MERGE in Neo4j
+    target: str  # URL, host, domain, port — the affected target
+    raw: Dict[str, Any] = Field(default_factory=dict)  # Original tool output
     confidence: float = Field(0.5, ge=0.0, le=1.0)
-    severity_hint: str = "info"           # "critical" | "high" | "medium" | "low" | "info"
+    severity_hint: str = "info"  # "critical" | "high" | "medium" | "low" | "info"
     tags: List[str] = Field(default_factory=list)
     # Escalation linkage (populated by EscalationEngine)
     escalated_from: Optional[str] = None  # parent prim-id if escalated
-    chain_id: Optional[str] = None        # chain-id if part of a chain
-    promoted_to_finding: bool = False     # True once TriagerGate emits a finding
-    finding_id: Optional[str] = None      # back-ref once promoted
+    chain_id: Optional[str] = None  # chain-id if part of a chain
+    promoted_to_finding: bool = False  # True once TriagerGate emits a finding
+    finding_id: Optional[str] = None  # back-ref once promoted
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ================= TRIAGER GATE (Sprint 1.3) =================
 
+
 class TriageVerdict(str, Enum):
     """Decision output from the Triager Gate."""
-    EMIT = "emit"          # Strong enough — emit as a finding
+
+    EMIT = "emit"  # Strong enough — emit as a finding
     ESCALATE = "escalate"  # Signal found, needs more evidence first
-    DROP = "drop"          # Noise or duplicate — discard
+    DROP = "drop"  # Noise or duplicate — discard
     NEEDS_POC = "needs_poc"  # Interesting but missing runnable PoC
 
 
@@ -655,8 +660,8 @@ class TriageReport(BaseModel):
     chain_id: Optional[str] = None
     verdict: TriageVerdict
     confidence: float = Field(0.0, ge=0.0, le=1.0)
-    reasons: List[str] = Field(default_factory=list)        # human-readable rationale
-    blockers: List[str] = Field(default_factory=list)       # what prevented EMIT
+    reasons: List[str] = Field(default_factory=list)  # human-readable rationale
+    blockers: List[str] = Field(default_factory=list)  # what prevented EMIT
     reproducibility_score: float = Field(0.0, ge=0.0, le=1.0)
     has_poc: bool = False
     has_captured_evidence: bool = False
@@ -668,12 +673,13 @@ class TriageReport(BaseModel):
 
 # ================= ESCALATION (Sprint 2.1) =================
 
+
 class EscalationPath(BaseModel):
     """One possible escalation step inferred by the Escalation Engine."""
 
     id: str = Field(default_factory=lambda: f"esc-{uuid.uuid4().hex[:12]}")
     source_primitive_id: str
-    suggested_technique: str          # e.g. "nuclei_verify", "burp_active_scan"
+    suggested_technique: str  # e.g. "nuclei_verify", "burp_active_scan"
     reason: str
     confidence: float = Field(0.5, ge=0.0, le=1.0)
     required_skills: List[str] = Field(default_factory=list)
@@ -682,6 +688,7 @@ class EscalationPath(BaseModel):
 
 
 # ================= ATTACK CHAIN (Sprint 2.2 / 2.3) =================
+
 
 class ChainStatus(str, Enum):
     BUILDING = "building"
@@ -706,7 +713,7 @@ class AttackChain(BaseModel):
     status: ChainStatus = ChainStatus.BUILDING
     confidence: float = Field(0.5, ge=0.0, le=1.0)
     severity: str = "medium"
-    poc_script: List[str] = Field(default_factory=list)     # argv for replay
+    poc_script: List[str] = Field(default_factory=list)  # argv for replay
     triage_report_id: Optional[str] = None
     emitted_finding_id: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

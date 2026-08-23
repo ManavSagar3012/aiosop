@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from neo4j.graph import Node, Path, Relationship
 from neo4j.exceptions import ServiceUnavailable
+from neo4j.graph import Node, Path, Relationship
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import GraphQueryError, MemoryException
@@ -23,9 +23,9 @@ from ai_osop.core.models import (
     AttackPath,
     BusinessInvariant,
     DiffAuthFinding,
-    Hypothesis,
     Endpoint,
     Exploit,
+    Hypothesis,
     Payload,
     Vulnerability,
     Workflow,
@@ -261,9 +261,7 @@ class GraphMemory:
                         "content_type": endpoint.content_type,
                         "body_schema_keys": endpoint.body_schema_keys,
                         "auth_class": endpoint.auth_class,
-                        "request_headers_sample": json.dumps(
-                            endpoint.request_headers_sample
-                        ),
+                        "request_headers_sample": json.dumps(endpoint.request_headers_sample),
                         "status_codes_seen": endpoint.status_codes_seen,
                         "response_size_avg": endpoint.response_size_avg,
                         "response_content_type": endpoint.response_content_type,
@@ -341,7 +339,7 @@ class GraphMemory:
         try:
             from urllib.parse import urlsplit
 
-            for ev in (vuln.evidence or []):
+            for ev in vuln.evidence or []:
                 if not isinstance(ev, dict):
                     continue
                 candidate = ev.get("matched_at") or ev.get("url") or ev.get("host")
@@ -421,9 +419,7 @@ class GraphMemory:
         RETURN v.id
         """
         async with self._driver.session() as session:
-            await session.run(
-                cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()}
-            )
+            await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
 
     async def add_exploit(self, exploit: Exploit) -> str:
         """Add an Exploit and link to Vulnerability and Payload."""
@@ -496,8 +492,7 @@ class GraphMemory:
                     "to_id": path.node_ids[i + 1],
                     "type": "exploit_chain",
                     "probability": path.confidence,
-                    "time_estimate": path.total_time_estimate
-                    // max(len(path.node_ids) - 1, 1),
+                    "time_estimate": path.total_time_estimate // max(len(path.node_ids) - 1, 1),
                     "detection_risk": path.detection_risk,
                 }
             )
@@ -570,9 +565,7 @@ class GraphMemory:
 
                     path = AttackPath(
                         node_ids=record["node_ids"],
-                        edge_ids=[
-                            f"{e['type']}-{i}" for i, e in enumerate(record["edges"])
-                        ],
+                        edge_ids=[f"{e['type']}-{i}" for i, e in enumerate(record["edges"])],
                         confidence=min(max(conf, 0.0), 1.0),
                         risk_score=min(max(conf * 10, 0.0), 10.0),
                         total_time_estimate=record["total_time"],
@@ -627,9 +620,7 @@ class GraphMemory:
         """
 
         async with self._driver.session() as session:
-            await session.run(
-                cypher, {"exploit_id": exploit_id, "impact_score": impact_score}
-            )
+            await session.run(cypher, {"exploit_id": exploit_id, "impact_score": impact_score})
 
     async def get_node_details(self, node_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve details for a node by ID."""
@@ -756,7 +747,9 @@ class GraphMemory:
                 result = await session.run(cypher, {"engagement_id": engagement_id})
                 return await result.data()
 
-    async def run_read_query(self, cypher: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def run_read_query(
+        self, cypher: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Execute a parameterized read-only Cypher query and return records.
 
         This is the escape hatch for complex queries that don't have a dedicated
@@ -771,7 +764,9 @@ class GraphMemory:
                 result = await session.run(cypher, params)
                 return await result.data()
 
-    async def run_write_query(self, cypher: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def run_write_query(
+        self, cypher: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Execute a parameterized write Cypher query and return records if any.
 
         This is the escape hatch for writes that don't have a dedicated method yet.
@@ -916,9 +911,7 @@ class GraphMemory:
                     "created_at": finding.created_at.isoformat(),
                     "outcome": finding.outcome,
                     "outcome_notes": finding.outcome_notes,
-                    "outcome_at": finding.outcome_at.isoformat()
-                    if finding.outcome_at
-                    else None,
+                    "outcome_at": finding.outcome_at.isoformat() if finding.outcome_at else None,
                 },
             )
             record = await result.single()
@@ -1111,13 +1104,14 @@ class GraphMemory:
             async with self._driver.session() as session:
                 result = await session.run(cypher, {"engagement_id": engagement_id})
                 records = await result.data()
-                return [dict(record["h"]) if hasattr(record["h"], "items") else record["h"] for record in records]
+                return [
+                    dict(record["h"]) if hasattr(record["h"], "items") else record["h"]
+                    for record in records
+                ]
 
     # ---- Reliability sprint: durable task lifecycle + dedupe + recovery ----
 
-    async def upsert_task(
-        self, task: Any, result_summary: Optional[Dict[str, Any]] = None
-    ) -> bool:
+    async def upsert_task(self, task: Any, result_summary: Optional[Dict[str, Any]] = None) -> bool:
         """Persist a Task's lifecycle state to Neo4j. Ground truth for the stuck-task
         reaper, restart recovery, and graph-backed dedupe (replaces in-memory only state)."""
         # AIOSOP-AUDIT-2026-06-16: persist payload + priority so restart recovery can
@@ -1145,19 +1139,13 @@ class GraphMemory:
             "max_retries": getattr(task, "max_retries", 0),
             "timeout_seconds": getattr(task, "timeout_seconds", 300),
             "created_at": (
-                task.created_at.isoformat()
-                if getattr(task, "created_at", None)
-                else None
+                task.created_at.isoformat() if getattr(task, "created_at", None) else None
             ),
             "started_at": (
-                task.started_at.isoformat()
-                if getattr(task, "started_at", None)
-                else None
+                task.started_at.isoformat() if getattr(task, "started_at", None) else None
             ),
             "completed_at": (
-                task.completed_at.isoformat()
-                if getattr(task, "completed_at", None)
-                else None
+                task.completed_at.isoformat() if getattr(task, "completed_at", None) else None
             ),
             "updated_at": datetime.utcnow().isoformat(),
             "result_summary": json.dumps(result_summary or {}, default=str),
@@ -1206,9 +1194,7 @@ class GraphMemory:
                 # All callers ignore the return value, so re-raising would change
                 # behavior (and could crash lifecycle transitions); return False
                 # after logging at ERROR so the dropped write stays observable.
-                logger.error(
-                    "upsert_task failed for task %s after retries: %s", task.id, e
-                )
+                logger.error("upsert_task failed for task %s after retries: %s", task.id, e)
                 return False
 
     async def task_has_spawned(self, task_id: str) -> bool:
@@ -1317,9 +1303,7 @@ class GraphMemory:
     ) -> str:
         """Create an Evidence node and link it to a WorkflowStep and parent Workflow.
         Returns the evidence node id. Idempotent on (step_id, path)."""
-        evidence_id = (
-            f"ev-{hashlib.sha1(f'{step_id}|{path}'.encode()).hexdigest()[:16]}"
-        )
+        evidence_id = f"ev-{hashlib.sha1(f'{step_id}|{path}'.encode()).hexdigest()[:16]}"
         cypher = """
         MERGE (ev:Evidence {id: $id})
         SET ev.type = $type,
@@ -1397,9 +1381,7 @@ class GraphMemory:
 
     async def mark_invariant_violated(self, invariant_id: str) -> None:
         """Flag a previously-persisted invariant as violated."""
-        cypher = (
-            "MATCH (i:BusinessInvariant {id: $id}) SET i.is_violated = true RETURN i.id"
-        )
+        cypher = "MATCH (i:BusinessInvariant {id: $id}) SET i.is_violated = true RETURN i.id"
         async with self._driver.session() as session:
             await session.run(cypher, {"id": invariant_id})
 

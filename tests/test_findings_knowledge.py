@@ -3,6 +3,7 @@
 Uses a deterministic, text-dependent fake embedder so semantic ranking is
 actually exercised offline — no LLM or DB required.
 """
+
 import hashlib
 
 import pytest
@@ -40,8 +41,14 @@ class _Vuln:
 
 
 def test_finding_to_document_is_deterministic_and_has_key_fields():
-    v = _Vuln(vuln_type="ssrf", severity="high", title="Blind SSRF in webhook",
-              cwe="CWE-918", description="url param fetches attacker host", endpoint_id="/api/webhook")
+    v = _Vuln(
+        vuln_type="ssrf",
+        severity="high",
+        title="Blind SSRF in webhook",
+        cwe="CWE-918",
+        description="url param fetches attacker host",
+        endpoint_id="/api/webhook",
+    )
     doc1 = finding_to_document(v)
     doc2 = finding_to_document(v)
     assert doc1 == doc2  # deterministic
@@ -64,12 +71,36 @@ def test_cosine_similarity_bounds():
 @pytest.mark.asyncio
 async def test_record_then_recall_ranks_similar_finding_first():
     kb = FindingsKnowledge(_fake_embed_factory(), store=InMemoryVectorIndex())
-    await kb.record_finding(_Vuln(vuln_type="ssrf", severity="high", title="Blind SSRF via url param",
-                                  description="url param fetches internal metadata", engagement_id="e1", id="v1"))
-    await kb.record_finding(_Vuln(vuln_type="xss", severity="medium", title="Reflected XSS in search",
-                                  description="q param reflected unescaped", engagement_id="e1", id="v2"))
-    await kb.record_finding(_Vuln(vuln_type="sqli", severity="critical", title="SQL injection in login",
-                                  description="username param concatenated into query", engagement_id="e1", id="v3"))
+    await kb.record_finding(
+        _Vuln(
+            vuln_type="ssrf",
+            severity="high",
+            title="Blind SSRF via url param",
+            description="url param fetches internal metadata",
+            engagement_id="e1",
+            id="v1",
+        )
+    )
+    await kb.record_finding(
+        _Vuln(
+            vuln_type="xss",
+            severity="medium",
+            title="Reflected XSS in search",
+            description="q param reflected unescaped",
+            engagement_id="e1",
+            id="v2",
+        )
+    )
+    await kb.record_finding(
+        _Vuln(
+            vuln_type="sqli",
+            severity="critical",
+            title="SQL injection in login",
+            description="username param concatenated into query",
+            engagement_id="e1",
+            id="v3",
+        )
+    )
 
     hits = await kb.recall_similar("ssrf url param fetches internal metadata", limit=3)
     assert hits, "expected at least one recalled finding"
@@ -99,10 +130,26 @@ async def test_vector_memory_backend_round_trip():
     vm._mock_findings = []
 
     kb = FindingsKnowledge(_fake_embed_factory(), store=VectorMemoryFindingsStore(vm))
-    await kb.record_finding(_Vuln(vuln_type="ssrf", severity="high", title="SSRF via url",
-                                  description="url param hits metadata", engagement_id="e1", id="v1"))
-    await kb.record_finding(_Vuln(vuln_type="idor", severity="high", title="IDOR on invoice",
-                                  description="id param enumerates invoices", engagement_id="e1", id="v2"))
+    await kb.record_finding(
+        _Vuln(
+            vuln_type="ssrf",
+            severity="high",
+            title="SSRF via url",
+            description="url param hits metadata",
+            engagement_id="e1",
+            id="v1",
+        )
+    )
+    await kb.record_finding(
+        _Vuln(
+            vuln_type="idor",
+            severity="high",
+            title="IDOR on invoice",
+            description="id param enumerates invoices",
+            engagement_id="e1",
+            id="v2",
+        )
+    )
 
     assert len(vm._mock_findings) == 2  # persisted to the backend
     hits = await kb.recall_similar("url param hits metadata ssrf", limit=2)
@@ -113,7 +160,9 @@ async def test_vector_memory_backend_round_trip():
 @pytest.mark.asyncio
 async def test_recall_respects_min_score_and_empty_query():
     kb = FindingsKnowledge(_fake_embed_factory(), store=InMemoryVectorIndex())
-    await kb.record_finding(_Vuln(vuln_type="ssrf", severity="high", title="SSRF", description="alpha", id="v1"))
+    await kb.record_finding(
+        _Vuln(vuln_type="ssrf", severity="high", title="SSRF", description="alpha", id="v1")
+    )
     # A query with no shared tokens -> zero similarity -> filtered by min_score.
     assert await kb.recall_similar("zzz nonmatching tokens", limit=5, min_score=0.01) == []
     assert await kb.recall_similar("", limit=5) == []

@@ -3,7 +3,6 @@ React Specialist Agent
 Specializes in identifying DOM-based vulnerabilities and component-level flaws in React applications.
 """
 
-
 import logging
 from typing import Any, Dict, List, Optional
 

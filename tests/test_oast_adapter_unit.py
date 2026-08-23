@@ -13,16 +13,28 @@ class _Resp:
 class _Registry:
     def __init__(self):
         self.calls = []
+
     async def execute_tool(self, server_id, tool, params, timeout_override=None):
         self.calls.append((tool, params))
         if tool == "oast_register":
-            return _Resp("success", {"token": "abc123", "callback_url": "http://127.0.0.1:8099/abc123"})
+            return _Resp(
+                "success", {"token": "abc123", "callback_url": "http://127.0.0.1:8099/abc123"}
+            )
         if tool == "oast_drain":
-            return _Resp("success", {"cursor": 7, "count": 1,
-                                     "interactions": [{"seq": 7, "token": "abc123",
-                                                       "context": {"engagement_id": "e1"}}]})
-        return _Resp("success", {"token": params["token"], "hit_count": 1,
-                                 "interactions": [{"method": "GET"}]})
+            return _Resp(
+                "success",
+                {
+                    "cursor": 7,
+                    "count": 1,
+                    "interactions": [
+                        {"seq": 7, "token": "abc123", "context": {"engagement_id": "e1"}}
+                    ],
+                },
+            )
+        return _Resp(
+            "success",
+            {"token": params["token"], "hit_count": 1, "interactions": [{"method": "GET"}]},
+        )
 
 
 def test_register_returns_token_and_url():

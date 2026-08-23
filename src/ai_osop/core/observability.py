@@ -12,8 +12,8 @@ from ai_osop.core.metrics import (
     AGENT_SUCCESS_RATE,
     AGENT_THROUGHPUT,
     AGENT_UTILIZATION,
-    APPROVALS_TOTAL,
     APPROVAL_WAIT_TIME,
+    APPROVALS_TOTAL,
     BROWSER_RUNTIME_SECONDS,
     DENIED_ACTIONS_TOTAL,
     ENGAGEMENT_COMPLETION_TIME,
@@ -30,21 +30,22 @@ from ai_osop.core.metrics import (
     PENDING_APPROVALS,
     POSTGRES_LATENCY_SECONDS,
     QUEUED_TASKS,
-    RBAC_FAILURES_TOTAL,
     RATE_LIMIT_EVENTS,
+    RBAC_FAILURES_TOTAL,
     REDIS_LATENCY_SECONDS,
     RUNNING_TASKS,
     SANDBOX_BLOCKS_TOTAL,
     SANDBOX_RUNTIME_SECONDS,
     SCOPE_VIOLATIONS_TOTAL,
+    TASK_COMPLETION_TIME,
+    TASK_DURATION_SECONDS,
+    TASK_THROUGHPUT,
     TASKS_BY_STATUS,
     TASKS_COMPLETED_TOTAL,
     TASKS_FAILED_TOTAL,
     TASKS_TOTAL,
-    TASK_COMPLETION_TIME,
-    TASK_DURATION_SECONDS,
-    TASK_THROUGHPUT,
 )
+
 
 # ============== Public API ==============
 def record_task(status: str, agent_type: str, duration_seconds: float) -> None:
@@ -138,7 +139,9 @@ def record_agent_execution_started(agent_type: str) -> None:
 
 def record_mcp_call(server_id: str, method: str, latency_seconds: float, success: bool) -> None:
     """Record MCP call latency and update success rate."""
-    MCP_LATENCY_SECONDS.labels(server_id=server_id, method=method).observe(max(latency_seconds, 0.0))
+    MCP_LATENCY_SECONDS.labels(server_id=server_id, method=method).observe(
+        max(latency_seconds, 0.0)
+    )
     if success:
         MCP_SUCCESS_RATE.labels(server_id=server_id).set(1.0)
     else:
@@ -181,7 +184,9 @@ def record_rate_limiter_metrics(metrics: Dict[str, int]) -> None:
 
 def record_mcp_latency(server_id: str, method: str, latency_seconds: float) -> None:
     """Record MCP call latency."""
-    MCP_LATENCY_SECONDS.labels(server_id=server_id, method=method).observe(max(latency_seconds, 0.0))
+    MCP_LATENCY_SECONDS.labels(server_id=server_id, method=method).observe(
+        max(latency_seconds, 0.0)
+    )
 
 
 def record_graph_latency(operation: str, latency_seconds: float) -> None:
@@ -199,7 +204,9 @@ def record_postgres_latency(operation: str, latency_seconds: float) -> None:
     POSTGRES_LATENCY_SECONDS.labels(operation=operation).observe(max(latency_seconds, 0.0))
 
 
-def record_llm_call(model: str, operation: str, tokens_input: int = 0, tokens_output: int = 0, cost_usd: float = 0.0) -> None:
+def record_llm_call(
+    model: str, operation: str, tokens_input: int = 0, tokens_output: int = 0, cost_usd: float = 0.0
+) -> None:
     """Record LLM usage and estimated cost."""
     LLM_CALLS_TOTAL.labels(model=model, operation=operation).inc()
     if tokens_input:

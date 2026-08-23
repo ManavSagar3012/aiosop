@@ -5,6 +5,7 @@ shell-safe, runnable PoC built deterministically from its captured evidence — 
 honest MANUAL fallback (never a fabricated command) when the evidence is insufficient.
 Hermetic — no network, nothing is executed.
 """
+
 import shlex
 
 import pytest
@@ -32,10 +33,14 @@ def _v(vuln_type, evidence, **kw):
 # Runnable builders per class                                                  #
 # --------------------------------------------------------------------------- #
 
+
 def test_sqli_poc_is_runnable_and_shell_safe():
     """A payload full of quotes/spaces must survive shlex quoting intact."""
     payload = "' OR '1'='1' -- -"
-    v = _v("sqli", {"url": "https://x/search", "parameter": "q", "payloads": [payload], "method": "GET"})
+    v = _v(
+        "sqli",
+        {"url": "https://x/search", "parameter": "q", "payloads": [payload], "method": "GET"},
+    )
     art = generate_poc(v)
     assert art.kind == "curl" and art.reproducible
     cmd = art.commands[0]
@@ -54,7 +59,10 @@ def test_ssrf_poc_has_collaborator_placeholder():
 
 
 def test_mass_assignment_poc_sends_privileged_field():
-    v = _v("mass_assignment", {"url": "https://x/api/users", "accepted_fields": {"role": "admin"}, "method": "PUT"})
+    v = _v(
+        "mass_assignment",
+        {"url": "https://x/api/users", "accepted_fields": {"role": "admin"}, "method": "PUT"},
+    )
     art = generate_poc(v)
     argv = shlex.split(art.commands[0])
     assert "PUT" in argv
@@ -84,7 +92,10 @@ def test_csrf_poc_is_autosubmitting_html():
 
 
 def test_subdomain_takeover_poc_resolves_host():
-    v = _v("subdomain_takeover", {"host": "dangling.x.com", "service": "S3", "signature": "NoSuchBucket"})
+    v = _v(
+        "subdomain_takeover",
+        {"host": "dangling.x.com", "service": "S3", "signature": "NoSuchBucket"},
+    )
     art = generate_poc(v)
     assert art.kind == "shell"
     assert "dig" in art.commands[0] and "dangling.x.com" in art.commands[0]
@@ -93,6 +104,7 @@ def test_subdomain_takeover_poc_resolves_host():
 # --------------------------------------------------------------------------- #
 # Honest fallback — never fabricate                                            #
 # --------------------------------------------------------------------------- #
+
 
 def test_unmapped_class_falls_back_to_manual():
     """A class with no builder (e.g. XXE) must return a non-reproducible MANUAL artifact."""
@@ -112,8 +124,14 @@ def test_missing_evidence_falls_back_to_manual():
 
 def test_generate_poc_never_raises_on_empty_evidence():
     v = Vulnerability(
-        vuln_type="ssrf", severity="high", title="t", description="d",
-        engagement_id="e1", confidence=0.5, tool_source="test", evidence=[],
+        vuln_type="ssrf",
+        severity="high",
+        title="t",
+        description="d",
+        engagement_id="e1",
+        confidence=0.5,
+        tool_source="test",
+        evidence=[],
     )
     art = generate_poc(v)
     assert isinstance(art, PoCArtifact)
@@ -123,6 +141,7 @@ def test_generate_poc_never_raises_on_empty_evidence():
 # --------------------------------------------------------------------------- #
 # Markdown rendering + report integration                                      #
 # --------------------------------------------------------------------------- #
+
 
 def test_render_markdown_fenced_block_for_runnable():
     v = _v("sqli", {"url": "https://x/s", "parameter": "q", "payloads": ["1"]})
@@ -143,4 +162,8 @@ def test_report_embeds_proof_of_concept_section():
     assert "## Proof of Concept" in report
     assert "curl" in report
     # Section ordering: PoC sits between Steps to Reproduce and Impact.
-    assert report.index("## Steps to Reproduce") < report.index("## Proof of Concept") < report.index("## Impact")
+    assert (
+        report.index("## Steps to Reproduce")
+        < report.index("## Proof of Concept")
+        < report.index("## Impact")
+    )

@@ -4,8 +4,8 @@ Certificate generators and report exporters for engagement output.
 """
 
 from ai_osop.core.findings_quality import (
-    FindingCertificationEngine,
     AttackSurfaceCertifier,
+    FindingCertificationEngine,
     FindingConversionEngine,
 )
 

@@ -82,8 +82,21 @@ _PATH_SIGNALS = [
 
 # Low-value static asset extensions.
 _STATIC_EXT = (
-    ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2",
-    ".ttf", ".eot", ".map", ".webp", ".mp4", ".webm",
+    ".css",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".map",
+    ".webp",
+    ".mp4",
+    ".webm",
 )
 
 _STATE_CHANGING = {"POST", "PUT", "DELETE", "PATCH"}
@@ -165,9 +178,18 @@ def score_asset(value: str, asset_type: str = "domain") -> Dict[str, Any]:
     signals = [asset_type]
     score = 40
     for kw, s in (
-        ("admin", 90), ("internal", 88), ("api", 70), ("staging", 65),
-        ("dev", 60), ("test", 58), ("uat", 55), ("vpn", 75), ("git", 80),
-        ("jenkins", 85), ("grafana", 75), ("kibana", 75),
+        ("admin", 90),
+        ("internal", 88),
+        ("api", 70),
+        ("staging", 65),
+        ("dev", 60),
+        ("test", 58),
+        ("uat", 55),
+        ("vpn", 75),
+        ("git", 80),
+        ("jenkins", 85),
+        ("grafana", 75),
+        ("kibana", 75),
     ):
         if kw in v:
             score = max(score, s)

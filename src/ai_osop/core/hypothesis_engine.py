@@ -78,30 +78,20 @@ class HypothesisEngine:
             tech_counter.update(self._normalize_strings(ep.get("path", "")))
 
         hypotheses: List[Hypothesis] = []
-        hypotheses.extend(
-            self._authz_hypotheses(engagement_id, endpoints, seen_titles, focus)
-        )
-        hypotheses.extend(
-            self._graphql_hypotheses(engagement_id, endpoints, seen_titles, focus)
-        )
+        hypotheses.extend(self._authz_hypotheses(engagement_id, endpoints, seen_titles, focus))
+        hypotheses.extend(self._graphql_hypotheses(engagement_id, endpoints, seen_titles, focus))
         hypotheses.extend(
             self._client_side_hypotheses(engagement_id, endpoints, seen_titles, focus)
         )
         hypotheses.extend(
             self._redirect_ssrf_hypotheses(engagement_id, endpoints, seen_titles, focus)
         )
-        hypotheses.extend(
-            self._workflow_hypotheses(engagement_id, endpoints, seen_titles, focus)
-        )
+        hypotheses.extend(self._workflow_hypotheses(engagement_id, endpoints, seen_titles, focus))
         hypotheses.extend(
             self._file_upload_hypotheses(engagement_id, endpoints, seen_titles, focus)
         )
-        hypotheses.extend(
-            self._saml_hypotheses(engagement_id, endpoints, seen_titles, focus)
-        )
-        hypotheses.extend(
-            self._websocket_hypotheses(engagement_id, endpoints, seen_titles, focus)
-        )
+        hypotheses.extend(self._saml_hypotheses(engagement_id, endpoints, seen_titles, focus))
+        hypotheses.extend(self._websocket_hypotheses(engagement_id, endpoints, seen_titles, focus))
         hypotheses.extend(
             self._prototype_pollution_hypotheses(engagement_id, endpoints, seen_titles, focus)
         )
@@ -111,9 +101,7 @@ class HypothesisEngine:
 
         if tech_counter:
             hypotheses.extend(
-                self._technology_summary_hypotheses(
-                    engagement_id, tech_counter, seen_titles, focus
-                )
+                self._technology_summary_hypotheses(engagement_id, tech_counter, seen_titles, focus)
             )
 
         await self._calibrate(hypotheses)
@@ -155,7 +143,9 @@ class HypothesisEngine:
                     )
             except Exception as e:  # noqa: BLE001 - advisory; keep raw confidence
                 logger.warning(
-                    "hypothesis_calibration_failed", category=getattr(h, "category", "?"), error=str(e)
+                    "hypothesis_calibration_failed",
+                    category=getattr(h, "category", "?"),
+                    error=str(e),
                 )
                 continue
 
@@ -181,7 +171,9 @@ class HypothesisEngine:
             path = self._path(ep)
             if not (auth_required or auth_class in {"bearer", "cookie", "mixed"}):
                 continue
-            if not self._contains_any(path, ["admin", "account", "profile", "tenant", "billing", "role"]):
+            if not self._contains_any(
+                path, ["admin", "account", "profile", "tenant", "billing", "role"]
+            ):
                 continue
             title = "Authorization bypass or IDOR across authenticated surface"
             if title.lower() in seen_titles:
@@ -245,7 +237,11 @@ class HypothesisEngine:
                         "Probe for alias batching and per-request rate-limit bypass",
                         "Replay mutations under alternate identities",
                     ],
-                    recommended_skills=["gql_discover_schema", "gql_test_authorization", "gql_batch_abuse"],
+                    recommended_skills=[
+                        "gql_discover_schema",
+                        "gql_test_authorization",
+                        "gql_batch_abuse",
+                    ],
                     engagement_id=engagement_id,
                 )
             )
@@ -285,7 +281,11 @@ class HypothesisEngine:
                         "Scan bundles for secrets and admin route references",
                         "Compare JS-discovered endpoints against graph inventory",
                     ],
-                    recommended_skills=["extract_har_api_inventory", "detect_secrets_in_js", "extract_endpoints_from_js"],
+                    recommended_skills=[
+                        "extract_har_api_inventory",
+                        "detect_secrets_in_js",
+                        "extract_endpoints_from_js",
+                    ],
                     engagement_id=engagement_id,
                 )
             )
@@ -346,7 +346,10 @@ class HypothesisEngine:
         out: List[Hypothesis] = []
         for ep in endpoints:
             path = self._path(ep)
-            if not self._contains_any(path, ["checkout", "cart", "order", "coupon", "pay", "invoice", "refund", "transfer"]):
+            if not self._contains_any(
+                path,
+                ["checkout", "cart", "order", "coupon", "pay", "invoice", "refund", "transfer"],
+            ):
                 continue
             title = "Business-logic or race-condition abuse may bypass workflow invariants"
             if title.lower() in seen_titles:
@@ -369,7 +372,11 @@ class HypothesisEngine:
                         "Skip intermediate workflow states",
                         "Check idempotency-key and coupon reuse handling",
                     ],
-                    recommended_skills=["map_business_process", "violate_invariant", "test_race_condition"],
+                    recommended_skills=[
+                        "map_business_process",
+                        "violate_invariant",
+                        "test_race_condition",
+                    ],
                     engagement_id=engagement_id,
                 )
             )
@@ -384,7 +391,16 @@ class HypothesisEngine:
         focus: str,
     ) -> List[Hypothesis]:
         out: List[Hypothesis] = []
-        keywords = ["upload", "attachment", "avatar", "import", "media", "document", "photo", "profile-image"]
+        keywords = [
+            "upload",
+            "attachment",
+            "avatar",
+            "import",
+            "media",
+            "document",
+            "photo",
+            "profile-image",
+        ]
         for ep in endpoints:
             path = self._path(ep)
             query_keys = self._normalize_strings(ep.get("query_keys", []))
@@ -428,7 +444,16 @@ class HypothesisEngine:
         focus: str,
     ) -> List[Hypothesis]:
         out: List[Hypothesis] = []
-        keywords = ["saml", "samlresponse", "/acs", "acs", "sso", "assertion", "idp", "single-sign-on"]
+        keywords = [
+            "saml",
+            "samlresponse",
+            "/acs",
+            "acs",
+            "sso",
+            "assertion",
+            "idp",
+            "single-sign-on",
+        ]
         for ep in endpoints:
             path = self._path(ep)
             query_keys = self._normalize_strings(ep.get("query_keys", []))
@@ -519,7 +544,18 @@ class HypothesisEngine:
     ) -> List[Hypothesis]:
         out: List[Hypothesis] = []
         node_stack = ["node", "nodejs", "node.js", "express", "koa", "hapi", "fastify", "nest"]
-        merge_keywords = ["merge", "assign", "extend", "deepmerge", "clone", "__proto__", "constructor", "settings", "config", "options"]
+        merge_keywords = [
+            "merge",
+            "assign",
+            "extend",
+            "deepmerge",
+            "clone",
+            "__proto__",
+            "constructor",
+            "settings",
+            "config",
+            "options",
+        ]
         for ep in endpoints:
             path = self._path(ep)
             query_keys = self._normalize_strings(ep.get("query_keys", []))
@@ -533,7 +569,9 @@ class HypothesisEngine:
             # A JSON-merge/object-assign surface, or a Node/Express stack, warrants it.
             if not (node_stack_hit or merge_surface_hit):
                 continue
-            title = "JSON-merge surface on a Node/JS stack may enable server-side prototype pollution"
+            title = (
+                "JSON-merge surface on a Node/JS stack may enable server-side prototype pollution"
+            )
             if title.lower() in seen_titles:
                 continue
             out.append(
@@ -547,7 +585,8 @@ class HypothesisEngine:
                     category="prototype_pollution",
                     target_id=str(ep.get("id") or ""),
                     confidence=0.75,
-                    supporting_entities=[str(ep.get("id") or ""), path] + (techs[:2] + sorted(signal_keys)[:2]),
+                    supporting_entities=[str(ep.get("id") or ""), path]
+                    + (techs[:2] + sorted(signal_keys)[:2]),
                     evidence=[{"signal": "json_merge_surface", "focus": focus}],
                     recommended_tests=[
                         "Submit a __proto__ gadget then observe a payload-free probe",
@@ -570,19 +609,39 @@ class HypothesisEngine:
         focus: str,
     ) -> List[Hypothesis]:
         out: List[Hypothesis] = []
-        cloud_keywords = ["aws", "s3", "gcp", "azure", "cloudfront", "lambda", "k8s", "kubernetes", "bucket", "iam"]
+        cloud_keywords = [
+            "aws",
+            "s3",
+            "gcp",
+            "azure",
+            "cloudfront",
+            "lambda",
+            "k8s",
+            "kubernetes",
+            "bucket",
+            "iam",
+        ]
         asset_text = " ".join(
-            " ".join(self._normalize_strings([a.get("value", ""), a.get("source", ""), a.get("type", "")]))
+            " ".join(
+                self._normalize_strings(
+                    [a.get("value", ""), a.get("source", ""), a.get("type", "")]
+                )
+            )
             for a in assets
         ).lower()
         if not any(k in asset_text for k in cloud_keywords) and not any(
-            any(k in " ".join(self._normalize_strings(ep.get("technologies", []))) for k in cloud_keywords)
+            any(
+                k in " ".join(self._normalize_strings(ep.get("technologies", [])))
+                for k in cloud_keywords
+            )
             for ep in endpoints
         ):
             return out
         title = "Cloud exposure or trust-relationship abuse may be reachable from the discovered surface"
         if title.lower() not in seen_titles:
-            target = str(endpoints[0].get("id") if endpoints else (assets[0].get("id") if assets else ""))
+            target = str(
+                endpoints[0].get("id") if endpoints else (assets[0].get("id") if assets else "")
+            )
             out.append(
                 Hypothesis(
                     title=title,

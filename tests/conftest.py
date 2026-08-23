@@ -1,4 +1,5 @@
 import sys
+
 import pytest
 
 # Increase recursion limit to prevent AST recursion depth mismatches
@@ -9,6 +10,7 @@ sys.setrecursionlimit(50000)
 import ast as _ast_module
 
 _original_ast_parse = _ast_module.parse
+
 
 def _safe_ast_parse(source, filename="<unknown>", mode="exec", **kwargs):
     try:
@@ -22,19 +24,25 @@ def _safe_ast_parse(source, filename="<unknown>", mode="exec", **kwargs):
             return _ast_module.parse("pass")
         raise
 
+
 _ast_module.parse = _safe_ast_parse
+
 
 @pytest.fixture(autouse=True)
 def clean_global_orchestrator_state():
     """Ensure global orchestrator state is cleaned up after every test to prevent test pollution."""
     from ai_osop.api.deps import state
+
     state.pop("orchestrator", None)
     yield
     state.pop("orchestrator", None)
-from ai_osop.memory.session_memory import SessionMemory
-from ai_osop.memory.graph_memory import GraphMemory
+
+
 from ai_osop.mcp.protocol import MCPRegistry
+from ai_osop.memory.graph_memory import GraphMemory
+from ai_osop.memory.session_memory import SessionMemory
 from ai_osop.orchestrator.orchestrator import Orchestrator
+
 
 @pytest.fixture
 async def session_memory():
@@ -44,6 +52,7 @@ async def session_memory():
     await sm._pg_engine.dispose()
     if sm._redis:
         await sm._redis.close()
+
 
 @pytest.fixture
 async def orchestrator(session_memory):
