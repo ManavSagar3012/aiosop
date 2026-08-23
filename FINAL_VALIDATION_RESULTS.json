@@ -1,0 +1,101 @@
+{
+  "timestamp": "2026-08-23T16:53:15Z",
+  "total": 23,
+  "passed": 21,
+  "failed": 0,
+  "score": "9.5/10",
+  "results": [
+    {
+      "name": "redis_agent_connect",
+      "status": "PASS"
+    },
+    {
+      "name": "redis_agent_write",
+      "status": "PASS"
+    },
+    {
+      "name": "redis_agent_flushall",
+      "status": "PASS"
+    },
+    {
+      "name": "redis_agent_isolation",
+      "status": "PASS"
+    },
+    {
+      "name": "redis_orch_connect",
+      "status": "PASS"
+    },
+    {
+      "name": "redis_orch_access",
+      "status": "PASS"
+    },
+    {
+      "name": "redis_tls_connect",
+      "status": "PASS"
+    },
+    {
+      "name": "redis_tls_version",
+      "status": "TLSv1.3"
+    },
+    {
+      "name": "redis_tls_cipher",
+      "status": "TLS_AES_256_GCM_SHA384"
+    },
+    {
+      "name": "neo4j_acl_authorized",
+      "status": "PASS"
+    },
+    {
+      "name": "neo4j_acl_unauthorized",
+      "status": "PASS"
+    },
+    {
+      "name": "neo4j_acl_scope",
+      "status": "PASS"
+    },
+    {
+      "name": "rbac_viewer_POST__engagements",
+      "status": "PASS"
+    },
+    {
+      "name": "rbac_operator_POST__engagements",
+      "status": "PASS"
+    },
+    {
+      "name": "rbac_admin_POST__engagements_eng-1_halt",
+      "status": "PASS"
+    },
+    {
+      "name": "rbac_viewer_POST__engagements_eng-1_halt",
+      "status": "PASS"
+    },
+    {
+      "name": "rbac_operator_GET__tasks",
+      "status": "PASS"
+    },
+    {
+      "name": "rbac_viewer_DELETE__engagements_eng-1",
+      "status": "PASS"
+    },
+    {
+      "name": "audit_chain_valid",
+      "status": "PASS"
+    },
+    {
+      "name": "audit_tamper_detection",
+      "status": "PASS"
+    },
+    {
+      "name": "rate_burst",
+      "status": "PASS"
+    },
+    {
+      "name": "rate_penalty",
+      "status": "PASS"
+    },
+    {
+      "name": "cost_tracking",
+      "status": "PASS"
+    }
+  ]
+}
