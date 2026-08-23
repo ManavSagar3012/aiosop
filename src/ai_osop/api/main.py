@@ -14,23 +14,25 @@ REFACTOR (2026-06-19): Decomposed from 1,539-line monolith into router modules:
 """
 
 import asyncio
-import logging
 import json
+import logging
 import os
 import time
+import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ai_osop.adapters.threat_intel_mcp import ThreatIntelAdapter
 from ai_osop.api.deps import require_role, state, verify_token
-import traceback
-from ai_osop.api.health import router as health_router, run_startup_self_test
+from ai_osop.api.health import router as health_router
+from ai_osop.api.health import run_startup_self_test
 
 # Router imports
 from ai_osop.api.routers import (
@@ -44,13 +46,11 @@ from ai_osop.api.routers import (
     system,
     tasks,
 )
-
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import settings
 from ai_osop.core.llm_client import LiteLLMClient
+from ai_osop.core.metrics import BUILD_INFO, ERRORS_TOTAL, REQUEST_DURATION, REQUESTS_TOTAL
 from ai_osop.core.observability import render_prometheus, update_active_agents
-from ai_osop.core.metrics import BUILD_INFO, REQUESTS_TOTAL, REQUEST_DURATION, ERRORS_TOTAL
-from prometheus_client import CONTENT_TYPE_LATEST
 from ai_osop.core.tracing import init_tracing, trace_span
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
@@ -73,7 +73,6 @@ logger = logging.getLogger("ai_osop.api")
 
 
 from ai_osop.reliability.retry import retry_with_backoff
-
 
 logger = logging.getLogger("ai_osop.api")
 
@@ -117,7 +116,12 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
         ("security-bridge", settings.security_bridge_host, settings.security_bridge_port, None),
         ("threat-intel-mcp", settings.threat_intel_mcp_host, settings.threat_intel_mcp_port, None),
         ("cloud-mcp", settings.cloud_mcp_host, settings.cloud_mcp_port, None),
-        ("turbo-intruder-mcp", settings.turbo_intruder_mcp_host, settings.turbo_intruder_mcp_port, None),
+        (
+            "turbo-intruder-mcp",
+            settings.turbo_intruder_mcp_host,
+            settings.turbo_intruder_mcp_port,
+            None,
+        ),
     ]
     # Critical MCPs whose ABSENCE is logged loudly. NOTE: this set only governs
     # log severity on failure — it must NOT gate whether a server is initialized.
@@ -194,8 +198,14 @@ async def lifespan(app: FastAPI):
     init_tracing()
 
     # 0a. Sentry — only when SENTRY_DSN is set and not in development
-    if settings.sentry_dsn and settings.environment.lower() not in ("development", "dev", "local", "test"):
+    if settings.sentry_dsn and settings.environment.lower() not in (
+        "development",
+        "dev",
+        "local",
+        "test",
+    ):
         import sentry_sdk
+
         sentry_sdk.init(
             dsn=settings.sentry_dsn,
             environment=settings.environment,
@@ -215,9 +225,7 @@ async def lifespan(app: FastAPI):
         threat_intel_adapter = ThreatIntelAdapter()
 
         # 1. Redis (critical)
-        redis_ok = await connect_with_retry(
-            session_memory.connect, "redis", max_retries=10
-        )
+        redis_ok = await connect_with_retry(session_memory.connect, "redis", max_retries=10)
         if redis_ok:
             try:
                 await session_memory._redis.ping()
@@ -230,9 +238,7 @@ async def lifespan(app: FastAPI):
             logger.critical("Redis unavailable after retries — proceeding in degraded mode")
 
         # 2. Neo4j (critical)
-        neo4j_ok = await connect_with_retry(
-            graph_memory.connect, "neo4j", max_retries=10
-        )
+        neo4j_ok = await connect_with_retry(graph_memory.connect, "neo4j", max_retries=10)
         if neo4j_ok:
             health_status["neo4j"] = "healthy"
         else:
@@ -264,10 +270,7 @@ async def lifespan(app: FastAPI):
         # persisted vulnerability auto-populates the knowledge base and can be
         # recalled on future engagements. Best-effort — never blocks startup.
         try:
-            from ai_osop.core.findings_knowledge import (
-                FindingsKnowledge,
-                VectorMemoryFindingsStore,
-            )
+            from ai_osop.core.findings_knowledge import FindingsKnowledge, VectorMemoryFindingsStore
 
             graph_memory.findings_knowledge = FindingsKnowledge(
                 embed_fn=llm_client.get_embedding,
@@ -340,25 +343,25 @@ async def lifespan(app: FastAPI):
             # Instantiate and register the 11 core agents + 9 experimental agents
             from ai_osop.agents.attack_chain_agent import AttackChainAgent
             from ai_osop.agents.base import AgentContext
+            from ai_osop.agents.cloud_agent import CloudSpecialistAgent
+            from ai_osop.agents.codeql_agent import CodeQLAgent
             from ai_osop.agents.concurrency_agent import ConcurrencyAgent
             from ai_osop.agents.context_manager_agent import ContextManagerAgent
             from ai_osop.agents.exploit_agent import ExploitValidationAgent
-            from ai_osop.agents.human_oversight_agent import HumanOversightAgent
-            from ai_osop.agents.payload_agent import PayloadMutationAgent
-            from ai_osop.agents.recon_agent import ReconAgent
-            from ai_osop.agents.reporting_agent import ReportingAgent
-            from ai_osop.agents.stack_profiler_agent import StackProfilerAgent
-            from ai_osop.agents.vuln_agent import VulnAnalysisAgent
-            from ai_osop.agents.workflow_agent import PlaywrightAgent
-            from ai_osop.agents.cloud_agent import CloudSpecialistAgent
-            from ai_osop.agents.codeql_agent import CodeQLAgent
             from ai_osop.agents.graphql_agent import GraphQLAgent
+            from ai_osop.agents.human_oversight_agent import HumanOversightAgent
             from ai_osop.agents.js_analyzer_agent import JSAnalyzerAgent
             from ai_osop.agents.mobile_agent import MobileAnalysisAgent
             from ai_osop.agents.nextjs_agent import NextJSSpecialistAgent
+            from ai_osop.agents.payload_agent import PayloadMutationAgent
             from ai_osop.agents.react_agent import ReactSpecialistAgent
+            from ai_osop.agents.recon_agent import ReconAgent
+            from ai_osop.agents.reporting_agent import ReportingAgent
+            from ai_osop.agents.stack_profiler_agent import StackProfilerAgent
             from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
             from ai_osop.agents.visual_agent import VisualContextAgent
+            from ai_osop.agents.vuln_agent import VulnAnalysisAgent
+            from ai_osop.agents.workflow_agent import PlaywrightAgent
             from ai_osop.core.config import AgentType
 
             bootstrap_session_id = "api-bootstrap"
@@ -366,7 +369,11 @@ async def lifespan(app: FastAPI):
                 (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
                 (ReconAgent, AgentType.RECON, "recon-agent-001"),
                 (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, "vuln-agent-001"),
-                (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, "vuln-agent-002"),  # Second worker to prevent nuclei scan queueing
+                (
+                    VulnAnalysisAgent,
+                    AgentType.VULN_ANALYSIS,
+                    "vuln-agent-002",
+                ),  # Second worker to prevent nuclei scan queueing
                 (HumanOversightAgent, AgentType.HUMAN_OVERSIGHT, "human-oversight-agent-001"),
                 (ExploitValidationAgent, AgentType.EXPLOIT_VALIDATION, "exploit-agent-001"),
                 (PayloadMutationAgent, AgentType.PAYLOAD_MUTATION, "payload-agent-001"),
@@ -408,7 +415,12 @@ async def lifespan(app: FastAPI):
             logger.error(f"Orchestrator initialization/agent registration failed: {e}")
 
         # 10. Bind to shared state dict so routers see the live values
-        logger.info("ORCHESTRATOR BIND: orch=%s id=%s state_before=%s", type(orch).__name__, id(orch), state.get("orchestrator") is not None)
+        logger.info(
+            "ORCHESTRATOR BIND: orch=%s id=%s state_before=%s",
+            type(orch).__name__,
+            id(orch),
+            state.get("orchestrator") is not None,
+        )
         state["orchestrator"] = orch
         logger.info("ORCHESTRATOR BOUND: state_orch=%s", state["orchestrator"] is not None)
 
@@ -439,7 +451,7 @@ app = FastAPI(
 # ============== Middleware Stack ==============
 #
 # FIX (2026-06-28): All custom middlewares use pure ASGI middleware classes
-# instead of BaseHTTPMiddleware or @app.middleware("http"). 
+# instead of BaseHTTPMiddleware or @app.middleware("http").
 # BaseHTTPMiddleware has a known Starlette 0.37.x bug where nested instances
 # cause EndOfStream errors (anyio stream consumed by inner middleware before
 # outer can read it). @app.middleware("http") also uses BaseHTTPMiddleware
@@ -480,27 +492,34 @@ class CatchAllErrorMiddleware:
             await self.app(scope, receive, send)
         except Exception as exc:
             import traceback as _tb
+
             try:
                 _tb_text = _tb.format_exc()
                 logger.error("catch_all_error_handler: %s\n%s", exc, _tb_text)
             except Exception:
                 pass
             try:
-                body = json.dumps({
-                    "detail": f"Internal server error: {type(exc).__name__}: {exc}",
-                    "error_type": type(exc).__name__,
-                }).encode("utf-8")
-                await send({
-                    "type": "http.response.start",
-                    "status": 500,
-                    "headers": [
-                        (b"content-type", b"application/json"),
-                    ],
-                })
-                await send({
-                    "type": "http.response.body",
-                    "body": body,
-                })
+                body = json.dumps(
+                    {
+                        "detail": f"Internal server error: {type(exc).__name__}: {exc}",
+                        "error_type": type(exc).__name__,
+                    }
+                ).encode("utf-8")
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 500,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                        ],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": body,
+                    }
+                )
             except Exception:
                 pass  # Can't do anything if the connection is already dead
 
@@ -525,6 +544,7 @@ async def correlation_id_middleware(request: Request, call_next):
         request_id = f"req-{trace_id[:16]}"
     else:
         import uuid
+
         request_id = str(uuid.uuid4())
     request.state.request_id = request_id
 
@@ -576,8 +596,9 @@ async def prometheus_metrics_middleware(request: Request, call_next):
         response = await call_next(request)
     except Exception:
         ERRORS_TOTAL.labels(status_code="500", path=path).inc()
-        import traceback as _tb
         import sys as _sys
+        import traceback as _tb
+
         _tb_content = _tb.format_exc()
         _exc_type = _sys.exc_info()[0].__name__ if _sys.exc_info()[0] else "Exception"
         logger.error("unhandled_500: %s %s\n%s", method, path, _tb_content)
@@ -835,9 +856,12 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
                 await websocket.send_json({"type": "error", "message": "Unknown action"})
     except Exception as exc:
         import logging as _logging
+
         _logging.getLogger("ai_osop.api.websocket").warning(
             "websocket_handler_exception: %s - %s (engagement_id=%s)",
-            type(exc).__name__, str(exc), engagement_id
+            type(exc).__name__,
+            str(exc),
+            engagement_id,
         )
         try:
             await websocket.close(code=1011, reason="Internal server error")

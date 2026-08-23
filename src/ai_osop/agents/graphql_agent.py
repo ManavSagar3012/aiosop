@@ -109,7 +109,8 @@ class GraphQLAgent(BaseAgent):
         """POST a raw GraphQL query and return the parsed JSON (or {})."""
         try:
             async with httpx.AsyncClient(
-                follow_redirects=True, timeout=self.INTROSPECTION_TIMEOUT_SECONDS,
+                follow_redirects=True,
+                timeout=self.INTROSPECTION_TIMEOUT_SECONDS,
                 headers={"Content-Type": "application/json", "User-Agent": "AI-OSOP-GraphQL/1.0"},
             ) as client:
                 resp = await client.post(url, json={"query": query})
@@ -157,8 +158,14 @@ class GraphQLAgent(BaseAgent):
         # Confirmed only if the server executed (nearly) all aliased ops in one request.
         if executed < max(2, int(n * 0.9)):
             logger.info("graphql_batch_clean", url=url, executed=executed, requested=n)
-            return {"status": "success", "tool": "gql_batch_abuse", "target": url,
-                    "confirmed": False, "executed": executed, "findings_count": 0}
+            return {
+                "status": "success",
+                "tool": "gql_batch_abuse",
+                "target": url,
+                "confirmed": False,
+                "executed": executed,
+                "findings_count": 0,
+            }
 
         vuln = Vulnerability(
             cwe="CWE-799",  # Improper Control of Interaction Frequency
@@ -171,14 +178,16 @@ class GraphQLAgent(BaseAgent):
                 f"redemption) can be bypassed by batching N attempts into one request, "
                 f"enabling efficient brute-force."
             ),
-            evidence=[{
-                "type": "graphql_batch_abuse",
-                "provenance": "http",
-                "url": url,
-                "aliases_executed": executed,
-                "aliases_requested": n,
-                "sample_field": field,
-            }],
+            evidence=[
+                {
+                    "type": "graphql_batch_abuse",
+                    "provenance": "http",
+                    "url": url,
+                    "aliases_executed": executed,
+                    "aliases_requested": n,
+                    "sample_field": field,
+                }
+            ],
             tool_source="gql_batch_abuse",
             confidence=0.92,
             validated=True,
@@ -192,9 +201,15 @@ class GraphQLAgent(BaseAgent):
             logger.error("graphql_batch_persist_failed", error=str(e))
 
         logger.info("graphql_batch_abuse_confirmed", url=url, executed=executed)
-        return {"status": "success", "tool": "gql_batch_abuse", "target": url,
-                "confirmed": True, "executed": executed, "findings_count": 1,
-                "findings": [vuln.model_dump()]}
+        return {
+            "status": "success",
+            "tool": "gql_batch_abuse",
+            "target": url,
+            "confirmed": True,
+            "executed": executed,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
 
     async def _run_introspection(self, url: str) -> Optional[Dict[str, Any]]:
         """POST the introspection query. Returns the __schema dict, or None if

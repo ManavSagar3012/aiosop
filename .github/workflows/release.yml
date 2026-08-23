@@ -89,6 +89,20 @@ jobs:
   migration:
     name: Migration Check
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: osop
+          POSTGRES_PASSWORD: osop
+          POSTGRES_DB: osop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -97,6 +111,8 @@ jobs:
       - run: pip install poetry
       - run: poetry install
       - run: poetry run alembic check
+        env:
+          OSOP_POSTGRES_URI: postgresql+asyncpg://osop:osop@localhost:5432/osop
 
   release_certificate:
     name: Generate Release Certificate

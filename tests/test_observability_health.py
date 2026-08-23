@@ -4,20 +4,22 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
+import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-import pytest
 
 from ai_osop.api.health import router as health_router
-
 
 
 @pytest.fixture(autouse=True)
 def clean_state():
     from ai_osop.api.deps import state
+
     state.pop("orchestrator", None)
     yield
     state.pop("orchestrator", None)
+
+
 class TestHealthEndpoints:
     @pytest.fixture
     def app(self) -> FastAPI:
@@ -51,7 +53,9 @@ class TestHealthEndpoints:
         assert "postgres" in data["checks"]
         assert "mcp_registry" in data["checks"]
 
-    async def test_ready_fails_when_redis_unhealthy(self, client: AsyncClient, app: FastAPI) -> None:
+    async def test_ready_fails_when_redis_unhealthy(
+        self, client: AsyncClient, app: FastAPI
+    ) -> None:
         """/ready returns 503 when Redis is unhealthy."""
         # Mock the orchestrator state with a failing Redis check
         mock_orchestrator = MagicMock()
@@ -64,6 +68,7 @@ class TestHealthEndpoints:
         mock_orchestrator.mcp_registry = None
 
         from ai_osop.api.deps import state
+
         state["orchestrator"] = mock_orchestrator
 
         response = await client.get("/ready")
@@ -72,7 +77,9 @@ class TestHealthEndpoints:
         assert data["detail"]["status"] == "not_ready"
         assert data["detail"]["checks"]["redis"]["status"] == "unhealthy"
 
-    async def test_ready_fails_when_neo4j_unhealthy(self, client: AsyncClient, app: FastAPI) -> None:
+    async def test_ready_fails_when_neo4j_unhealthy(
+        self, client: AsyncClient, app: FastAPI
+    ) -> None:
         """/ready returns 503 when Neo4j is unhealthy."""
         mock_orchestrator = MagicMock()
         mock_orchestrator.session_memory = None
@@ -83,6 +90,7 @@ class TestHealthEndpoints:
         mock_orchestrator.mcp_registry = None
 
         from ai_osop.api.deps import state
+
         state["orchestrator"] = mock_orchestrator
 
         response = await client.get("/ready")

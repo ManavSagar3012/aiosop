@@ -19,47 +19,137 @@ Key ideas
   or ``?file=`` (LFI) instead of fuzzing everything blindly.
 * ``mine_urls`` aggregates a URL set into a compact report.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from typing import Dict, Iterable, List, Set, Tuple
 from urllib.parse import parse_qsl, urlsplit
-from html.parser import HTMLParser
 
 # Parameter name -> the bug class it most commonly enables. Used to prioritise
 # which discovered parameters the vuln/exploit agents should probe first.
 INTERESTING_PARAMS: Dict[str, str] = {
-    "redirect": "open_redirect", "redirect_uri": "open_redirect", "redir": "open_redirect",
-    "return": "open_redirect", "returnurl": "open_redirect", "return_url": "open_redirect",
-    "next": "open_redirect", "dest": "open_redirect", "destination": "open_redirect",
-    "continue": "open_redirect", "url": "ssrf", "uri": "ssrf", "u": "ssrf",
-    "link": "ssrf", "domain": "ssrf", "callback": "ssrf", "webhook": "ssrf",
-    "file": "lfi", "filename": "lfi", "path": "path_traversal", "dir": "path_traversal",
-    "folder": "path_traversal", "download": "lfi", "template": "ssti", "lang": "lfi",
-    "include": "lfi", "page": "lfi", "cmd": "rce", "exec": "rce", "command": "rce",
-    "id": "idor", "user": "idor", "user_id": "idor", "uid": "idor", "account": "idor",
-    "order": "idor", "doc": "idor", "debug": "debug_exposure", "test": "debug_exposure",
-    "admin": "authz", "role": "authz", "token": "secret_leak", "api_key": "secret_leak",
-    "apikey": "secret_leak", "access_token": "secret_leak", "key": "secret_leak",
-    "q": "injection", "s": "injection", "search": "injection", "query": "injection",
-    "sort": "sqli", "filter": "sqli", "jsonp": "jsonp",
+    "redirect": "open_redirect",
+    "redirect_uri": "open_redirect",
+    "redir": "open_redirect",
+    "return": "open_redirect",
+    "returnurl": "open_redirect",
+    "return_url": "open_redirect",
+    "next": "open_redirect",
+    "dest": "open_redirect",
+    "destination": "open_redirect",
+    "continue": "open_redirect",
+    "url": "ssrf",
+    "uri": "ssrf",
+    "u": "ssrf",
+    "link": "ssrf",
+    "domain": "ssrf",
+    "callback": "ssrf",
+    "webhook": "ssrf",
+    "file": "lfi",
+    "filename": "lfi",
+    "path": "path_traversal",
+    "dir": "path_traversal",
+    "folder": "path_traversal",
+    "download": "lfi",
+    "template": "ssti",
+    "lang": "lfi",
+    "include": "lfi",
+    "page": "lfi",
+    "cmd": "rce",
+    "exec": "rce",
+    "command": "rce",
+    "id": "idor",
+    "user": "idor",
+    "user_id": "idor",
+    "uid": "idor",
+    "account": "idor",
+    "order": "idor",
+    "doc": "idor",
+    "debug": "debug_exposure",
+    "test": "debug_exposure",
+    "admin": "authz",
+    "role": "authz",
+    "token": "secret_leak",
+    "api_key": "secret_leak",
+    "apikey": "secret_leak",
+    "access_token": "secret_leak",
+    "key": "secret_leak",
+    "q": "injection",
+    "s": "injection",
+    "search": "injection",
+    "query": "injection",
+    "sort": "sqli",
+    "filter": "sqli",
+    "jsonp": "jsonp",
 }
 
 # File extensions that frequently indicate exposed backups/secrets/source.
 INTERESTING_EXTS: Set[str] = {
-    ".json", ".xml", ".bak", ".old", ".orig", ".sql", ".db", ".sqlite", ".config",
-    ".conf", ".ini", ".env", ".log", ".yml", ".yaml", ".zip", ".tar", ".gz", ".rar",
-    ".7z", ".git", ".swp", ".pem", ".key", ".p12", ".pfx", ".crt", ".cer",
-    ".properties", ".tpl", ".inc", ".sh", ".ps1", ".dockerfile",
+    ".json",
+    ".xml",
+    ".bak",
+    ".old",
+    ".orig",
+    ".sql",
+    ".db",
+    ".sqlite",
+    ".config",
+    ".conf",
+    ".ini",
+    ".env",
+    ".log",
+    ".yml",
+    ".yaml",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".rar",
+    ".7z",
+    ".git",
+    ".swp",
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".crt",
+    ".cer",
+    ".properties",
+    ".tpl",
+    ".inc",
+    ".sh",
+    ".ps1",
+    ".dockerfile",
 }
 
 # Path fragments that point at management/introspection/exposed surface.
 INTERESTING_PATHS: Tuple[str, ...] = (
-    "/api/", "/api.", "/admin", "/debug", "/actuator", "/graphql", "/graphiql",
-    "/.git", "/swagger", "/openapi", "/api-docs", "/internal", "/private",
-    "/backup", "/.env", "/wp-json", "/console", "/metrics", "/phpinfo",
-    "/.well-known", "/server-status", "/jolokia", "/.aws", "/config",
+    "/api/",
+    "/api.",
+    "/admin",
+    "/debug",
+    "/actuator",
+    "/graphql",
+    "/graphiql",
+    "/.git",
+    "/swagger",
+    "/openapi",
+    "/api-docs",
+    "/internal",
+    "/private",
+    "/backup",
+    "/.env",
+    "/wp-json",
+    "/console",
+    "/metrics",
+    "/phpinfo",
+    "/.well-known",
+    "/server-status",
+    "/jolokia",
+    "/.aws",
+    "/config",
 )
 
 # A path segment is "id-like" if it is numeric, a long hex/uuid, or a hash.
@@ -68,7 +158,7 @@ _ID_SEG = re.compile(r"^(\d+|[0-9a-fA-F]{8,}|[0-9a-fA-F-]{16,})$")
 
 def extract_params(url: str) -> List[str]:
     """Return the sorted unique query-parameter names present in *url*.
-    
+
     Extracts:
     - Query-string parameters (e.g. ?id=123&name=abc)
     - Path parameters (e.g. /user/{id} or /product/123)
@@ -77,21 +167,44 @@ def extract_params(url: str) -> List[str]:
         parts = urlsplit(url)
     except (ValueError, AttributeError):
         return []
-    
+
     params = set()
-    
+
     # Extract query-string parameters
     qs = parts.query
     params.update(k for k, _ in parse_qsl(qs, keep_blank_values=True))
-    
+
     # Extract path parameters (including numeric IDs and resource names)
     path = parts.path.lower()
     segs = [s for s in path.split("/") if s]
-    
+
     # Add common path parameter patterns: numeric IDs, UUIDs, resource names
-    resource_types = {"product", "catalog", "user", "account", "order", "post", "item", "doc", "api", "service", "stock", "inventory", "pricing"}
-    sub_resources = {"stock", "inventory", "pricing", "reviews", "comments", "history", "settings", "details"}
-    
+    resource_types = {
+        "product",
+        "catalog",
+        "user",
+        "account",
+        "order",
+        "post",
+        "item",
+        "doc",
+        "api",
+        "service",
+        "stock",
+        "inventory",
+        "pricing",
+    }
+    sub_resources = {
+        "stock",
+        "inventory",
+        "pricing",
+        "reviews",
+        "comments",
+        "history",
+        "settings",
+        "details",
+    }
+
     for i, seg in enumerate(segs):
         # Numeric ID (e.g. 123, 456)
         if seg.isdigit():
@@ -114,26 +227,27 @@ def extract_params(url: str) -> List[str]:
         # Trailing resource endpoints (e.g. /product or /user) - infer likely param
         elif i == len(segs) - 1 and any(seg.startswith(p) for p in resource_types):
             params.add(f"{seg}Id")  # Last segment is a resource type
-    
+
     return sorted(params)
 
 
 def extract_form_fields(html_content: str) -> List[str]:
     """Extract form field names from HTML content.
-    
+
     Parses HTML and extracts all <input>, <textarea>, <select> field names.
     Returns sorted unique field names.
     """
+
     class FormFieldParser(HTMLParser):
         def __init__(self):
             super().__init__()
             self.fields = set()
-            
+
         def handle_starttag(self, tag, attrs):
             attrs_dict = dict(attrs)
             if tag in ("input", "textarea", "select") and "name" in attrs_dict:
                 self.fields.add(attrs_dict["name"])
-    
+
     try:
         parser = FormFieldParser()
         parser.feed(html_content)
@@ -185,6 +299,7 @@ def classify_url(url: str) -> List[str]:
 @dataclass
 class UrlIntel:
     """Aggregated intelligence over a set of URLs."""
+
     total_urls: int = 0
     unique_endpoints: List[str] = field(default_factory=list)
     param_frequency: Dict[str, int] = field(default_factory=dict)

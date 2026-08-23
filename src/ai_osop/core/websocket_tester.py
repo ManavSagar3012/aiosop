@@ -24,6 +24,7 @@ All confirmation is an objective server-behaviour differential. The connect / re
 layer is injectable (``connector=``) so tests need no live server, and every
 network wait is bounded by a short timeout so a run can never hang.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -34,7 +35,7 @@ from urllib.parse import urlsplit
 
 @dataclass
 class WSFinding:
-    technique: str              # cswsh | missing_auth | unencrypted_transport
+    technique: str  # cswsh | missing_auth | unencrypted_transport
     confirmed: bool
     detail: str
     evidence: Dict[str, Any] = field(default_factory=dict)
@@ -195,24 +196,35 @@ class WebSocketTester:
         """
         ev: Dict[str, Any] = {"foreign_origin": self.foreign_origin}
         if not self.auth_markers:
-            return WSFinding("cswsh", False,
-                             "No auth_markers supplied; cannot distinguish private from public data.",
-                             ev)
+            return WSFinding(
+                "cswsh",
+                False,
+                "No auth_markers supplied; cannot distinguish private from public data.",
+                ev,
+            )
 
         hs_ok, authed_text = await self._exchange(
             origin=self.foreign_origin, cookies=self.cookies, message=self.probe
         )
         ev["handshake_completed"] = hs_ok
         if not hs_ok:
-            return WSFinding("cswsh", False,
-                             "Server rejected the cross-origin handshake — Origin appears enforced.", ev)
+            return WSFinding(
+                "cswsh",
+                False,
+                "Server rejected the cross-origin handshake — Origin appears enforced.",
+                ev,
+            )
 
         has_auth = self._has_auth_data(authed_text)
         ev["returned_auth_data"] = has_auth
         ev["response_snippet"] = authed_text[:200]
         if not has_auth:
-            return WSFinding("cswsh", False,
-                             "Cross-origin handshake completed but returned no authenticated data.", ev)
+            return WSFinding(
+                "cswsh",
+                False,
+                "Cross-origin handshake completed but returned no authenticated data.",
+                ev,
+            )
 
         # Control: same foreign origin, no cookies -> should be public-only.
         _, anon_text = await self._exchange(
@@ -221,12 +233,17 @@ class WebSocketTester:
         anon_has_auth = self._has_auth_data(anon_text)
         ev["anon_control_returned_auth_data"] = anon_has_auth
         if anon_has_auth:
-            return WSFinding("cswsh", False,
-                             "Authed data is served even without cookies — it is public, not cookie-scoped; "
-                             "not a hijack.", ev)
+            return WSFinding(
+                "cswsh",
+                False,
+                "Authed data is served even without cookies — it is public, not cookie-scoped; "
+                "not a hijack.",
+                ev,
+            )
 
         return WSFinding(
-            "cswsh", True,
+            "cswsh",
+            True,
             "Cross-origin WebSocket handshake completed and returned the victim's authenticated, "
             "cookie-scoped data with a foreign Origin — no Origin enforcement (CSWSH).",
             ev,
@@ -236,8 +253,12 @@ class WebSocketTester:
         """Privileged message accepted on a token-less / cookie-less socket."""
         ev: Dict[str, Any] = {}
         if not self.privileged_message or not self.privileged_success_markers:
-            return WSFinding("missing_auth", False,
-                             "No privileged_message/success markers supplied; nothing to assert.", ev)
+            return WSFinding(
+                "missing_auth",
+                False,
+                "No privileged_message/success markers supplied; nothing to assert.",
+                ev,
+            )
 
         hs_ok, text = await self._exchange(
             origin=self.origin, cookies=None, message=self.privileged_message
@@ -245,16 +266,25 @@ class WebSocketTester:
         ev["handshake_completed"] = hs_ok
         ev["response_snippet"] = text[:200]
         if not hs_ok:
-            return WSFinding("missing_auth", False,
-                             "Unauthenticated handshake rejected — socket requires credentials.", ev)
+            return WSFinding(
+                "missing_auth",
+                False,
+                "Unauthenticated handshake rejected — socket requires credentials.",
+                ev,
+            )
 
         success = any(m in text for m in self.privileged_success_markers)
         ev["privileged_action_succeeded"] = success
         if not success:
-            return WSFinding("missing_auth", False,
-                             "Privileged message did not succeed on the unauthenticated socket.", ev)
+            return WSFinding(
+                "missing_auth",
+                False,
+                "Privileged message did not succeed on the unauthenticated socket.",
+                ev,
+            )
         return WSFinding(
-            "missing_auth", True,
+            "missing_auth",
+            True,
             "A privileged WebSocket action succeeded on a socket carrying no token or cookie — "
             "missing authentication.",
             ev,
@@ -271,19 +301,31 @@ class WebSocketTester:
         origin_scheme = urlsplit(self.origin).scheme.lower() if self.origin else ""
         ev: Dict[str, Any] = {"ws_scheme": scheme, "origin_scheme": origin_scheme}
         if scheme != "ws":
-            return WSFinding("unencrypted_transport", False,
-                             "Endpoint already uses encrypted wss://.", ev)
+            return WSFinding(
+                "unencrypted_transport", False, "Endpoint already uses encrypted wss://.", ev
+            )
         if origin_scheme and origin_scheme != "https":
-            return WSFinding("unencrypted_transport", False,
-                             "Origin is not https:// — plaintext ws:// is not a downgrade here.", ev)
+            return WSFinding(
+                "unencrypted_transport",
+                False,
+                "Origin is not https:// — plaintext ws:// is not a downgrade here.",
+                ev,
+            )
 
-        hs_ok, _ = await self._exchange(origin=self.origin, cookies=self.cookies, message=self.probe)
+        hs_ok, _ = await self._exchange(
+            origin=self.origin, cookies=self.cookies, message=self.probe
+        )
         ev["handshake_completed"] = hs_ok
         if not hs_ok:
-            return WSFinding("unencrypted_transport", False,
-                             "ws:// endpoint did not accept a handshake; not confirmed live.", ev)
+            return WSFinding(
+                "unencrypted_transport",
+                False,
+                "ws:// endpoint did not accept a handshake; not confirmed live.",
+                ev,
+            )
         return WSFinding(
-            "unencrypted_transport", True,
+            "unencrypted_transport",
+            True,
             "An https:// origin offers a live plaintext ws:// WebSocket — authenticated/sensitive "
             "traffic can traverse an unencrypted channel.",
             ev,

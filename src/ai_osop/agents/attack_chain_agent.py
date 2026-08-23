@@ -10,10 +10,17 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.core.chain_composer import ChainComposer
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import AgentException, OutOfScopeError, ScopeValidationError
-from ai_osop.core.chain_composer import ChainComposer
-from ai_osop.core.models import AttackPath, Exploit, PrimitiveLedger, PrimitiveType, Task, Vulnerability
+from ai_osop.core.models import (
+    AttackPath,
+    Exploit,
+    PrimitiveLedger,
+    PrimitiveType,
+    Task,
+    Vulnerability,
+)
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)
@@ -175,9 +182,16 @@ class AttackChainAgent(BaseAgent):
                     severity=Severity.CRITICAL,
                     title=f"JWT forgery enabling impersonation ({f.technique})",
                     description=f"{f.detail} Used as the takeover primitive for {victim_email}.",
-                    evidence=[{"type": "jwt_forgery", "provenance": "jwt_tester",
-                               "technique": f.technique, "verify_url": verify_url,
-                               "victim": victim_email, **f.evidence}],
+                    evidence=[
+                        {
+                            "type": "jwt_forgery",
+                            "provenance": "jwt_tester",
+                            "technique": f.technique,
+                            "verify_url": verify_url,
+                            "victim": victim_email,
+                            **f.evidence,
+                        }
+                    ],
                     tool_source="jwt_tester",
                     confidence=0.98,
                     validated=True,
@@ -199,8 +213,10 @@ class AttackChainAgent(BaseAgent):
 
             try:
                 async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15) as c:
-                    r = await c.get(idor_url, headers={"Authorization": f"Bearer {token}",
-                                                       "Cookie": f"token={token}"})
+                    r = await c.get(
+                        idor_url,
+                        headers={"Authorization": f"Bearer {token}", "Cookie": f"token={token}"},
+                    )
                     if r.status_code == 200 and idor_marker in r.text:
                         primitive_vulns.append(
                             Vulnerability(
@@ -209,9 +225,15 @@ class AttackChainAgent(BaseAgent):
                                 severity=Severity.HIGH,
                                 title="IDOR exposing victim account object",
                                 description=f"Attacker token read {victim_email}'s object at {idor_url}.",
-                                evidence=[{"type": "idor_read", "provenance": "http",
-                                           "url": idor_url, "victim": victim_email,
-                                           "status": r.status_code}],
+                                evidence=[
+                                    {
+                                        "type": "idor_read",
+                                        "provenance": "http",
+                                        "url": idor_url,
+                                        "victim": victim_email,
+                                        "status": r.status_code,
+                                    }
+                                ],
                                 tool_source="ato_orchestrator",
                                 confidence=0.93,
                                 validated=True,
@@ -252,14 +274,16 @@ class AttackChainAgent(BaseAgent):
                 f"{', '.join(c['primitive'] for c in chain)}. The server granted access "
                 f"under the victim's identity."
             ),
-            evidence=[{
-                "type": "account_takeover_chain",
-                "provenance": "ato_orchestrator",
-                "victim": victim_email,
-                "verify_url": verify_url,
-                "chain": chain,
-                "primitive_vuln_ids": [pv.id for pv in primitive_vulns],
-            }],
+            evidence=[
+                {
+                    "type": "account_takeover_chain",
+                    "provenance": "ato_orchestrator",
+                    "victim": victim_email,
+                    "verify_url": verify_url,
+                    "chain": chain,
+                    "primitive_vuln_ids": [pv.id for pv in primitive_vulns],
+                }
+            ],
             tool_source="ato_orchestrator",
             confidence=0.97,
             validated=True,
@@ -290,7 +314,8 @@ class AttackChainAgent(BaseAgent):
             logger.warning("ato_attack_path_persist_failed", error=str(e))
 
         logger.info(
-            "ato_confirmed", victim=victim_email,
+            "ato_confirmed",
+            victim=victim_email,
             primitives=[c["primitive"] for c in chain],
         )
         return {

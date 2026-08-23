@@ -3,7 +3,7 @@ Stateful Logic Agent (V6 Prototype)
 Analyzes business process state machines and identifies invalid transition paths.
 """
 
-
+import logging
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -12,15 +12,9 @@ from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import OutOfScopeError, ScopeValidationError
 from ai_osop.core.governance import BusinessLogicEngine
-from ai_osop.core.models import (
-    AuditEvent,
-    BusinessInvariant,
-    ProcessState,
-    Task,
-    Vulnerability,
-)
+from ai_osop.core.models import AuditEvent, BusinessInvariant, ProcessState, Task, Vulnerability
 from ai_osop.safety.scope import ScopeEnforcer
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -282,9 +276,7 @@ class StatefulLogicAgent(BaseAgent):
                 try:
                     await self.ctx.graph_memory.mark_invariant_violated(invariant_id)
                 except Exception as e:
-                    logger.warning(
-                        f"WARN: failed to mark invariant {invariant_id} violated: {e}"
-                    )
+                    logger.warning(f"WARN: failed to mark invariant {invariant_id} violated: {e}")
 
         return result
 

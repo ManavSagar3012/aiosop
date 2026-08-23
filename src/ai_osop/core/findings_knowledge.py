@@ -20,6 +20,7 @@ Design goals
 - **Never learn from fiction.** Simulated/mock findings (``is_simulated``) are
   refused, so the corpus can never poison future reasoning with fabricated data.
 """
+
 from __future__ import annotations
 
 import math
@@ -100,7 +101,9 @@ class VectorStore(Protocol):
     """Minimal backend contract so production (pgvector) and tests (in-memory)
     are interchangeable."""
 
-    async def add(self, embedding: List[float], document: str, metadata: Dict[str, Any]) -> None: ...
+    async def add(
+        self, embedding: List[float], document: str, metadata: Dict[str, Any]
+    ) -> None: ...
 
     async def search(self, embedding: List[float], limit: int) -> List[KnowledgeHit]: ...
 
@@ -116,7 +119,9 @@ class InMemoryVectorIndex:
     _rows: List[Dict[str, Any]] = field(default_factory=list)
 
     async def add(self, embedding: List[float], document: str, metadata: Dict[str, Any]) -> None:
-        self._rows.append({"embedding": list(embedding), "document": document, "metadata": dict(metadata)})
+        self._rows.append(
+            {"embedding": list(embedding), "document": document, "metadata": dict(metadata)}
+        )
 
     async def search(self, embedding: List[float], limit: int) -> List[KnowledgeHit]:
         scored = [

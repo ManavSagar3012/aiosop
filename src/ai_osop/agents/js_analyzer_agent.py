@@ -21,12 +21,8 @@ import structlog
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import OutOfScopeError, ScopeValidationError
-from ai_osop.core.secret_verifier import (
-    STATUS_CONFIRMED_LIVE,
-    STATUS_NOT_A_SECRET,
-    assess_secret,
-)
 from ai_osop.core.models import Task, Vulnerability
+from ai_osop.core.secret_verifier import STATUS_CONFIRMED_LIVE, STATUS_NOT_A_SECRET, assess_secret
 from ai_osop.safety.scope import ScopeEnforcer
 
 logger = structlog.get_logger(__name__)
@@ -45,9 +41,7 @@ SECRET_RULES: List[Tuple[str, Pattern[str], Severity, float]] = [
     ("AWS Access Key ID", re.compile(r"\b(AKIA[0-9A-Z]{16})\b"), Severity.CRITICAL, 0.90),
     (
         "AWS Secret Access Key",
-        re.compile(
-            r"(?i)aws_?secret_?access_?key['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9/+=]{40})\b"
-        ),
+        re.compile(r"(?i)aws_?secret_?access_?key['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9/+=]{40})\b"),
         Severity.CRITICAL,
         0.85,
     ),
@@ -120,8 +114,20 @@ SECRET_RULES: List[Tuple[str, Pattern[str], Severity, float]] = [
 
 # Obvious placeholders that should never be reported as live secrets.
 _PLACEHOLDER_TOKENS = (
-    "your_", "example", "changeme", "change-me", "placeholder", "xxxxxx",
-    "<", "{{", "test_key", "dummy", "sample", "redacted", "insert", "todo",
+    "your_",
+    "example",
+    "changeme",
+    "change-me",
+    "placeholder",
+    "xxxxxx",
+    "<",
+    "{{",
+    "test_key",
+    "dummy",
+    "sample",
+    "redacted",
+    "insert",
+    "todo",
 )
 
 # Endpoint extraction: relative paths, absolute URLs, and template-literal routes.
@@ -151,9 +157,20 @@ def _looks_like_placeholder(value: str) -> bool:
 # Flagging these as "secrets" is a false positive — they grant no privileged
 # access on their own and bounty programs treat them as informational.
 _PUBLIC_KEY_MARKERS = (
-    "public-api-key", "public_api_key", "publicapikey", "data-public",
-    "publishable", "public-key", "public_key", "publickey", "client-id",
-    "client_id", "clientid", "measurement-id", "measurement_id", "app-id",
+    "public-api-key",
+    "public_api_key",
+    "publicapikey",
+    "data-public",
+    "publishable",
+    "public-key",
+    "public_key",
+    "publickey",
+    "client-id",
+    "client_id",
+    "clientid",
+    "measurement-id",
+    "measurement_id",
+    "app-id",
 )
 
 
@@ -252,9 +269,7 @@ class JSAnalyzerAgent(BaseAgent):
             ) as client:
                 resp = await client.get(url)
                 if resp.status_code != 200:
-                    logger.info(
-                        "js_analyzer_fetch_non200", url=url, status=resp.status_code
-                    )
+                    logger.info("js_analyzer_fetch_non200", url=url, status=resp.status_code)
                     return None
                 content = resp.text
                 if len(content.encode("utf-8", "ignore")) > self.MAX_FETCH_BYTES:
@@ -381,7 +396,9 @@ class JSAnalyzerAgent(BaseAgent):
             return None
         confirmed_live = verdict.get("status") == STATUS_CONFIRMED_LIVE
         # Unverified static exposure: cap confidence so it can't masquerade as validated.
-        effective_conf = finding["confidence"] if confirmed_live else min(finding["confidence"], 0.5)
+        effective_conf = (
+            finding["confidence"] if confirmed_live else min(finding["confidence"], 0.5)
+        )
 
         vuln = Vulnerability(
             id=f"vuln-js-{uuid.uuid4().hex[:8]}",
@@ -391,7 +408,11 @@ class JSAnalyzerAgent(BaseAgent):
                 f"client-side JavaScript at {source_url}. Hardcoded secrets in "
                 f"shipped JS are retrievable by any user and frequently grant "
                 f"access to backend services. Liveness: {verdict.get('status')}"
-                + ("" if confirmed_live else " — run secret_liveness_scan to confirm the credential is live before reporting.")
+                + (
+                    ""
+                    if confirmed_live
+                    else " — run secret_liveness_scan to confirm the credential is live before reporting."
+                )
             ),
             severity=finding["severity"],
             vuln_type=VulnClass.OSINT_LEAK,
@@ -462,9 +483,11 @@ class JSAnalyzerAgent(BaseAgent):
                             {
                                 "rule": finding["rule"],
                                 "masked": finding["masked"],
-                                "severity": finding["severity"].value
-                                if hasattr(finding["severity"], "value")
-                                else str(finding["severity"]),
+                                "severity": (
+                                    finding["severity"].value
+                                    if hasattr(finding["severity"], "value")
+                                    else str(finding["severity"])
+                                ),
                                 "source_url": source_url,
                             }
                         )

@@ -5,6 +5,7 @@ orchestrator now folds real submission outcomes into the corpus for every active
 engagement. Exercised hermetically via Orchestrator.__new__ (no real construction,
 no DB), so we test only the ingestion-tick logic in isolation.
 """
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 

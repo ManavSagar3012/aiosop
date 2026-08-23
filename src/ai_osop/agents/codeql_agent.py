@@ -3,7 +3,6 @@ CodeQL Intelligence Agent
 Integrates static analysis findings (SARIF) into the Attack Graph.
 """
 
-
 import json
 from typing import Any, Dict, List, Optional
 
@@ -128,9 +127,7 @@ class CodeQLAgent(BaseAgent):
                     title=f"SAST: {finding['rule_id']} in {finding['file_path']}",
                     description=finding["message"],
                     vuln_type="sast_sink",
-                    severity=(
-                        Severity.HIGH if finding["severity"] == "error" else Severity.MEDIUM
-                    ),
+                    severity=(Severity.HIGH if finding["severity"] == "error" else Severity.MEDIUM),
                     confidence=0.9,
                     endpoint_id=endpoint_id,
                     tool_source="CodeQL",

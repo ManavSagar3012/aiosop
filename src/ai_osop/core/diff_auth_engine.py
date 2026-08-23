@@ -219,10 +219,24 @@ class DifferentialAuthEngine:
                 return True
         return False
 
-    _ID_KEYS = frozenset({
-        "id", "email", "account_id", "user_id", "userid", "owner", "owner_id",
-        "ownerid", "ref", "uuid", "bid", "basketid", "orderid", "order_id",
-    })
+    _ID_KEYS = frozenset(
+        {
+            "id",
+            "email",
+            "account_id",
+            "user_id",
+            "userid",
+            "owner",
+            "owner_id",
+            "ownerid",
+            "ref",
+            "uuid",
+            "bid",
+            "basketid",
+            "orderid",
+            "order_id",
+        }
+    )
 
     @classmethod
     def _collect_id_fields(cls, body: Any, _depth: int = 0) -> Dict[str, Any]:

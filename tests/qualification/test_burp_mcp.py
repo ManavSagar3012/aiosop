@@ -24,10 +24,13 @@ def test_send_http_request_proxies_live_response(local_target):
     base = require_server("burp")
     host, open_port, _ = local_target
     res = mcp_execute(
-        base, "send_http_request",
+        base,
+        "send_http_request",
         {"url": f"http://{host}:{open_port}", "method": "GET"},
         timeout=20.0,
     )
     # Real Burp proxies the request and returns a real status code.
     assert res.get("status") == "success", res
-    assert res.get("status_code") == 200, f"expected live 200 via Burp, got {res.get('status_code')}"
+    assert (
+        res.get("status_code") == 200
+    ), f"expected live 200 via Burp, got {res.get('status_code')}"

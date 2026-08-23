@@ -6,6 +6,7 @@ front-end on message length, the back-end blocks waiting for chunk data that nev
 arrives — producing a large response delay versus a fast baseline. A timing
 differential is the signal; nothing is smuggled into another connection.
 """
+
 import socket
 import ssl
 import time
@@ -42,11 +43,7 @@ def build_te_cl_probe(host: str, path: str = "/") -> bytes:
 
 
 def _build_baseline(host: str, path: str = "/") -> bytes:
-    return (
-        f"GET {path} HTTP/1.1\r\n"
-        f"Host: {host}\r\n"
-        f"Connection: close\r\n\r\n"
-    ).encode()
+    return (f"GET {path} HTTP/1.1\r\n" f"Host: {host}\r\n" f"Connection: close\r\n\r\n").encode()
 
 
 def classify_timing(baseline_ms: float, probe_ms: float, threshold_ms: float = 4000.0) -> bool:
@@ -83,8 +80,14 @@ def _send_and_time(host: str, port: int, use_tls: bool, raw: bytes, recv_timeout
 
 
 def probe_desync(
-    host: str, port: int, *, path: str = "/", technique: str = "cl.te",
-    use_tls: bool = False, recv_timeout: float = 8.0, threshold_ms: float = 4000.0,
+    host: str,
+    port: int,
+    *,
+    path: str = "/",
+    technique: str = "cl.te",
+    use_tls: bool = False,
+    recv_timeout: float = 8.0,
+    threshold_ms: float = 4000.0,
 ) -> Dict[str, Any]:
     """Run a baseline + desync timing probe. Returns {technique, vulnerable,
     baseline_ms, probe_ms}."""
@@ -92,8 +95,11 @@ def probe_desync(
     builder = build_te_cl_probe if technique == "te.cl" else build_cl_te_probe
     probe_ms = _send_and_time(host, port, use_tls, builder(host, path), recv_timeout)
     vulnerable = (
-        baseline_ms >= 0 and probe_ms >= 0
-        and classify_timing(baseline_ms, probe_ms, threshold_ms)
+        baseline_ms >= 0 and probe_ms >= 0 and classify_timing(baseline_ms, probe_ms, threshold_ms)
     )
-    return {"technique": technique, "vulnerable": vulnerable,
-            "baseline_ms": round(baseline_ms, 1), "probe_ms": round(probe_ms, 1)}
+    return {
+        "technique": technique,
+        "vulnerable": vulnerable,
+        "baseline_ms": round(baseline_ms, 1),
+        "probe_ms": round(probe_ms, 1),
+    }

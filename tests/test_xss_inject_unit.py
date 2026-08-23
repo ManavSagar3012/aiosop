@@ -1,4 +1,5 @@
 """Offline unit tests for the xss_scan payload injector (pure, no network)."""
+
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent as V
 
 

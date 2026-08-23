@@ -5,6 +5,7 @@ class of (mis)configuration. There is no network and no crypto — the fake ACS
 makes an objective accept/deny decision so we can prove the tester confirms a
 flaw ONLY on a real accept-vs-reject differential and never false-positives.
 """
+
 from __future__ import annotations
 
 import base64
@@ -33,10 +34,11 @@ _DIGEST_RE = re.compile(r"<(?:\w+:)?DigestValue\b[^>]*>(.*?)</(?:\w+:)?DigestVal
 def saml_xml(nameid: str, digest: str, *, with_sig: bool = True, aid: str = "_a1") -> str:
     sig = (
         f'<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">'
-        f"<ds:SignedInfo><ds:Reference URI=\"#{aid}\">"
+        f'<ds:SignedInfo><ds:Reference URI="#{aid}">'
         f"<ds:DigestValue>{digest}</ds:DigestValue></ds:Reference></ds:SignedInfo>"
         f"<ds:SignatureValue>SIG</ds:SignatureValue></ds:Signature>"
-        if with_sig else ""
+        if with_sig
+        else ""
     )
     return (
         '<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">'
@@ -112,7 +114,7 @@ def _xsw_vulnerable_acs():
         # BUG: identity is read from the FIRST assertion, not the signed one.
         identity = _canonical(_nameid(assertions[0]))
         signed_digest = next(_digest(a) for a in assertions if _has_valid_sig(a))
-        if signed_digest in seen:            # one-time-use replay cache
+        if signed_digest in seen:  # one-time-use replay cache
             return _deny()
         seen.add(signed_digest)
         return _grant(identity)
@@ -125,8 +127,12 @@ async def test_xsw_accepted_confirms():
     base = saml_xml(VICTIM, VICTIM)  # legitimately signed for the victim
     async with _client(_xsw_vulnerable_acs()) as c:
         findings = await SAMLTester(
-            ACS_URL, base, victim_nameid=VICTIM, attacker_nameid=ATTACKER,
-            comment_suffix=SUFFIX, client=c,
+            ACS_URL,
+            base,
+            victim_nameid=VICTIM,
+            attacker_nameid=ATTACKER,
+            comment_suffix=SUFFIX,
+            client=c,
         ).run()
 
     xsw = [f for f in findings if f.technique == "xml_signature_wrapping"]
@@ -167,7 +173,10 @@ async def test_unsigned_accepted_confirms():
     base = saml_xml(VICTIM, VICTIM)
     async with _client(_unsigned_trusting_acs()) as c:
         findings = await SAMLTester(
-            ACS_URL, base, attacker_nameid=ATTACKER, client=c,
+            ACS_URL,
+            base,
+            attacker_nameid=ATTACKER,
+            client=c,
         ).run()
     uns = [f for f in findings if f.technique == "unsigned_assertion"]
     assert len(uns) == 1 and uns[0].confirmed and uns[0].attacker_identity == ATTACKER
@@ -176,6 +185,7 @@ async def test_unsigned_accepted_confirms():
 def _comment_confusion_acs():
     """Signature valid over canonical (comment-stripped) NameID, but SP reads
     only the text before the first comment => victim impersonation."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         xml = _xml_from_request(request)
         a = next((m.group(0) for m in _ASSERTION_RE.finditer(xml)), "")
@@ -196,8 +206,12 @@ async def test_comment_injection_confirms():
     base = saml_xml(VICTIM, signed_full)
     async with _client(_comment_confusion_acs()) as c:
         findings = await SAMLTester(
-            ACS_URL, base, victim_nameid=VICTIM, attacker_nameid=ATTACKER,
-            comment_suffix=SUFFIX, client=c,
+            ACS_URL,
+            base,
+            victim_nameid=VICTIM,
+            attacker_nameid=ATTACKER,
+            comment_suffix=SUFFIX,
+            client=c,
         ).run()
     cmt = [f for f in findings if f.technique == "comment_injection"]
     assert len(cmt) == 1 and cmt[0].confirmed
@@ -207,6 +221,7 @@ async def test_comment_injection_confirms():
 def _replay_open_acs():
     """Validates signatures and reads the SIGNED identity (XSW-safe), but keeps
     NO replay cache."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         xml = _xml_from_request(request)
         assertions = [m.group(0) for m in _ASSERTION_RE.finditer(xml)]
@@ -223,7 +238,10 @@ async def test_replay_accepted_confirms():
     base = saml_xml(VICTIM, VICTIM)
     async with _client(_replay_open_acs()) as c:
         findings = await SAMLTester(
-            ACS_URL, base, attacker_nameid=ATTACKER, client=c,
+            ACS_URL,
+            base,
+            attacker_nameid=ATTACKER,
+            client=c,
         ).run()
     rep = [f for f in findings if f.technique == "assertion_replay"]
     assert len(rep) == 1 and rep[0].confirmed
@@ -241,11 +259,11 @@ def _secure_acs():
         xml = _xml_from_request(request)
         assertions = [m.group(0) for m in _ASSERTION_RE.finditer(xml)]
         signed = [a for a in assertions if _has_valid_sig(a)]
-        if not signed:                       # rejects unsigned & broken-sig tamper
+        if not signed:  # rejects unsigned & broken-sig tamper
             return _deny()
         a = signed[0]
         d = _digest(a)
-        if d in seen:                        # rejects replay
+        if d in seen:  # rejects replay
             return _deny()
         seen.add(d)
         return _grant(_canonical(_nameid(a)))  # identity from the SIGNED assertion
@@ -258,8 +276,12 @@ async def test_secure_acs_no_false_positive():
     base = saml_xml(VICTIM, VICTIM)
     async with _client(_secure_acs()) as c:
         findings = await SAMLTester(
-            ACS_URL, base, victim_nameid=VICTIM, attacker_nameid=ATTACKER,
-            comment_suffix=SUFFIX, client=c,
+            ACS_URL,
+            base,
+            victim_nameid=VICTIM,
+            attacker_nameid=ATTACKER,
+            comment_suffix=SUFFIX,
+            client=c,
         ).run()
     assert findings == []
 

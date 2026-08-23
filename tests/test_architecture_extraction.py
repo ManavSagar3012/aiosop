@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
-import asyncio
 
 from ai_osop.core.config import AgentType, EngagementPhase
 from ai_osop.core.models import ApprovalRequest, SessionState, Task
@@ -77,6 +77,7 @@ class TestTaskScheduler:
         result = await scheduler._find_available_agent(AgentType.RECON)
         assert result is mock_agent
         scheduler._orch.session_memory.add_busy_agent.assert_awaited_with("agent-1")
+
     async def test_release_agent_removes_claim(self, scheduler):
         """_release_agent should remove the agent from busy set."""
         await scheduler._release_agent("agent-1")
@@ -84,7 +85,13 @@ class TestTaskScheduler:
 
     async def test_maybe_retry_increments_retry_count(self, scheduler):
         """_maybe_retry should increment retry_count and requeue."""
-        task = Task(type="test", agent_type=AgentType.RECON, engagement_id="eng-1", retry_count=0, max_retries=3)
+        task = Task(
+            type="test",
+            agent_type=AgentType.RECON,
+            engagement_id="eng-1",
+            retry_count=0,
+            max_retries=3,
+        )
         scheduler._orch._tasks[task.id] = task
         scheduler._orch.graph_memory.upsert_task = AsyncMock()
         scheduler._orch.session_memory.store_task = AsyncMock()
@@ -97,7 +104,13 @@ class TestTaskScheduler:
 
     async def test_maybe_retry_exhausted_sends_to_dlq(self, scheduler):
         """_maybe_retry should send to DLQ when retries exhausted."""
-        task = Task(type="test", agent_type=AgentType.RECON, engagement_id="eng-1", retry_count=3, max_retries=3)
+        task = Task(
+            type="test",
+            agent_type=AgentType.RECON,
+            engagement_id="eng-1",
+            retry_count=3,
+            max_retries=3,
+        )
         scheduler._orch.dlq.enqueue = AsyncMock()
         result = await scheduler._maybe_retry(task, {"error": "test"})
         assert result is False
@@ -123,8 +136,13 @@ class TestApprovalCoordinator:
     async def test_register_approval_adds_to_dict(self, coordinator):
         """_register_approval should add request to orchestrator's approval dict."""
         request = ApprovalRequest(
-            task_id="task-1", agent_id="agent-1", action_type="test", target="http://test.com", engagement_id="eng-1",
-            payload_summary="summary", risk_assessment="low"
+            task_id="task-1",
+            agent_id="agent-1",
+            action_type="test",
+            target="http://test.com",
+            engagement_id="eng-1",
+            payload_summary="summary",
+            risk_assessment="low",
         )
         coordinator._orch.session_memory.store_approval_request = AsyncMock()
         await coordinator._register_approval(request)
@@ -149,6 +167,7 @@ class TestEngagementManager:
     async def test_create_engagement_adds_to_sessions(self, manager):
         """create_engagement should add session to orchestrator's sessions dict."""
         from ai_osop.core.models import ScopeDefinition
+
         scope = ScopeDefinition(engagement_id="test-eng", domains=["example.com"])
         manager._orch.session_memory.store_session_state = AsyncMock()
         manager._orch.session_memory.persist_session_state = AsyncMock()
@@ -158,7 +177,9 @@ class TestEngagementManager:
 
     async def test_halt_engagement_cancels_tasks(self, manager):
         """halt_engagement should cancel pending tasks."""
-        task = Task(type="test", agent_type=AgentType.RECON, engagement_id="eng-1", status="pending")
+        task = Task(
+            type="test", agent_type=AgentType.RECON, engagement_id="eng-1", status="pending"
+        )
         manager._orch._tasks[task.id] = task
         manager._orch._sessions["eng-1"] = MagicMock()
         manager._orch._sessions["eng-1"].scope.engagement_id = "eng-1"
@@ -179,6 +200,7 @@ class TestPhaseMonitor:
     async def test_on_phase_enter_recon_creates_tasks(self, monitor):
         """_on_phase_enter should create recon tasks for RECONNAISSANCE phase."""
         from ai_osop.core.models import ScopeDefinition
+
         scope = ScopeDefinition(engagement_id="test-eng", domains=["example.com"])
         session = SessionState(session_id="eng-1", scope=scope, roe={}, phase="initialized")
         monitor._orch.engagement_manager = MagicMock()
@@ -198,10 +220,14 @@ class TestRecoveryService:
     async def test_reap_stuck_tasks_fails_expired_pending(self, service):
         """_reap_stuck_tasks should fail tasks that have exceeded their timeout."""
         from datetime import datetime, timedelta
+
         task = Task(
-            type="test", agent_type=AgentType.RECON, engagement_id="eng-1",
-            status="pending", created_at=datetime.utcnow() - timedelta(seconds=400),
-            timeout_seconds=300
+            type="test",
+            agent_type=AgentType.RECON,
+            engagement_id="eng-1",
+            status="pending",
+            created_at=datetime.utcnow() - timedelta(seconds=400),
+            timeout_seconds=300,
         )
         service._orch._tasks[task.id] = task
         service._orch.graph_memory.upsert_task = AsyncMock()

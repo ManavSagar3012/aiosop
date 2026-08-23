@@ -9,6 +9,8 @@ import ipaddress
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
+import structlog
+
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import (
     ApprovalDeniedError,
@@ -17,7 +19,6 @@ from ai_osop.core.exceptions import (
     ScopeValidationError,
 )
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition
-import structlog
 
 logger = structlog.get_logger()
 
@@ -215,7 +216,9 @@ class ApprovalGate:
 
         # Store in hot memory
         await self.session_memory.store_hot(
-            f"approval:{request.id}", request.model_dump(), ttl=settings.approval_timeout_seconds + 300
+            f"approval:{request.id}",
+            request.model_dump(),
+            ttl=settings.approval_timeout_seconds + 300,
         )
 
         return request

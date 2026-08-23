@@ -11,6 +11,7 @@ All offline and deterministic: a fake store implements the same public methods
 the real ``SessionMemory`` exposes, so recording accepts/rejects for a class and
 then calibrating exercises the whole loop with no Postgres and no network.
 """
+
 import pytest
 
 from ai_osop.core.calibration_engine import (
@@ -112,8 +113,7 @@ def test_monotonic_in_accept_count_fixed_total():
     engine = ConfidenceCalibrationEngine(session_memory=_FakeStore())
     base, total = 0.5, 20
     confs = [
-        engine.calibrate_with_evidence(base, n_valid=k, n_total=total)
-        for k in range(0, total + 1)
+        engine.calibrate_with_evidence(base, n_valid=k, n_total=total) for k in range(0, total + 1)
     ]
     assert confs == sorted(confs)
     assert len(set(confs)) > 1  # actually varies, not clamped flat

@@ -63,7 +63,7 @@ class DeadLetterQueue:
             agent_type=task.agent_type.value,
             reason=reason,
             final_error=final_error[:2000],  # truncate to avoid huge payloads
-            task_payload=task.model_dump(mode='json'),
+            task_payload=task.model_dump(mode="json"),
             retry_count=getattr(task, "retry_count", 0),
         )
 
@@ -154,7 +154,9 @@ class DeadLetterQueue:
         if hasattr(self._session_memory, "store_dlq_entry"):
             await self._session_memory.store_dlq_entry(entry)
         else:
-            await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+            await self._session_memory.store_hot(
+                f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7
+            )
 
         return task
 
@@ -177,7 +179,9 @@ class DeadLetterQueue:
         if hasattr(self._session_memory, "store_dlq_entry"):
             await self._session_memory.store_dlq_entry(entry)
         else:
-            await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+            await self._session_memory.store_hot(
+                f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7
+            )
 
     @trace_span("dlq.get_stats")
     async def get_stats(self) -> Dict[str, int]:

@@ -9,8 +9,9 @@ Hermetic: no DB, no network. session_memory and graph_memory are mocked.
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from ai_osop.core.hypothesis_engine import HypothesisEngine
 from ai_osop.core.models import Hypothesis

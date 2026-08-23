@@ -324,6 +324,7 @@ class ReconMCPAdapter:
             params = extract_params(url) if url else []
             tags = classify_url(url) if url else []
             from urllib.parse import urlsplit as _urlsplit
+
             _p = _urlsplit(url) if url else None
             ep = Endpoint(
                 url=url,

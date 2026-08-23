@@ -24,6 +24,7 @@ SAFETY: short per-request timeouts (so a wedged endpoint can never hang), and
 every network call is wrapped so the tester degrades to "not confirmed" instead
 of raising.
 """
+
 from __future__ import annotations
 
 import os
@@ -50,14 +51,24 @@ EXPLOITABLE_CONTENT_TYPES = (
 # Extensions an upload policy is normally expected to reject on an image/doc
 # upload. Retrieving a file with one of these is itself a bypass proof.
 DISALLOWED_EXTENSIONS = (
-    ".html", ".htm", ".svg", ".php", ".phtml", ".php5",
-    ".jsp", ".jspx", ".asp", ".aspx", ".xhtml", ".shtml",
+    ".html",
+    ".htm",
+    ".svg",
+    ".php",
+    ".phtml",
+    ".php5",
+    ".jsp",
+    ".jspx",
+    ".asp",
+    ".aspx",
+    ".xhtml",
+    ".shtml",
 )
 
 
 @dataclass
 class UploadFinding:
-    technique: str            # html_ext | svg_ext | php_ext | double_ext | ct_mismatch | path_traversal
+    technique: str  # html_ext | svg_ext | php_ext | double_ext | ct_mismatch | path_traversal
     confirmed: bool
     detail: str
     marker: str
@@ -106,21 +117,44 @@ class FileUploadTester:
         h = os.urandom(4).hex()
         m = self.marker
         return [
-            {"technique": "html_ext", "filename": f"osop_{h}.html",
-             "content": f"<!doctype html><h1>{m}</h1>", "content_type": "text/html"},
-            {"technique": "svg_ext", "filename": f"osop_{h}.svg",
-             "content": f'<svg xmlns="http://www.w3.org/2000/svg"><text>{m}</text></svg>',
-             "content_type": "image/svg+xml"},
+            {
+                "technique": "html_ext",
+                "filename": f"osop_{h}.html",
+                "content": f"<!doctype html><h1>{m}</h1>",
+                "content_type": "text/html",
+            },
+            {
+                "technique": "svg_ext",
+                "filename": f"osop_{h}.svg",
+                "content": f'<svg xmlns="http://www.w3.org/2000/svg"><text>{m}</text></svg>',
+                "content_type": "image/svg+xml",
+            },
             # PHP payload is a COMMENT only — inert, never executes anything.
-            {"technique": "php_ext", "filename": f"osop_{h}.php",
-             "content": f"<?php /* {m} */ ?>", "content_type": "application/x-httpd-php"},
-            {"technique": "double_ext", "filename": f"osop_{h}.jpg.php",
-             "content": f"<?php /* {m} */ ?>", "content_type": "image/jpeg"},
+            {
+                "technique": "php_ext",
+                "filename": f"osop_{h}.php",
+                "content": f"<?php /* {m} */ ?>",
+                "content_type": "application/x-httpd-php",
+            },
+            {
+                "technique": "double_ext",
+                "filename": f"osop_{h}.jpg.php",
+                "content": f"<?php /* {m} */ ?>",
+                "content_type": "image/jpeg",
+            },
             # Extension says .jpg, but bytes+declared type are HTML (content sniff bypass).
-            {"technique": "ct_mismatch", "filename": f"osop_{h}.jpg",
-             "content": f"<!doctype html><h1>{m}</h1>", "content_type": "text/html"},
-            {"technique": "path_traversal", "filename": f"../../osop_{h}.html",
-             "content": f"<!doctype html><h1>{m}</h1>", "content_type": "text/html"},
+            {
+                "technique": "ct_mismatch",
+                "filename": f"osop_{h}.jpg",
+                "content": f"<!doctype html><h1>{m}</h1>",
+                "content_type": "text/html",
+            },
+            {
+                "technique": "path_traversal",
+                "filename": f"../../osop_{h}.html",
+                "content": f"<!doctype html><h1>{m}</h1>",
+                "content_type": "text/html",
+            },
         ]
 
     # ---- helpers ------------------------------------------------------------
@@ -141,10 +175,14 @@ class FileUploadTester:
             text = ""
 
         # 1) Response echoes a URL/path that references our file (JSON or text).
-        for m in re.finditer(r'["\']?((?:https?://|/)[^\s"\'<>]*?%s[^\s"\'<>]*)' % re.escape(base), text):
+        for m in re.finditer(
+            r'["\']?((?:https?://|/)[^\s"\'<>]*?%s[^\s"\'<>]*)' % re.escape(base), text
+        ):
             candidates.append(m.group(1))
         # Also match any echoed path that references the marker directly.
-        for m in re.finditer(r'((?:https?://|/)[^\s"\'<>]*?%s[^\s"\'<>]*)' % re.escape(self.marker), text):
+        for m in re.finditer(
+            r'((?:https?://|/)[^\s"\'<>]*?%s[^\s"\'<>]*)' % re.escape(self.marker), text
+        ):
             candidates.append(m.group(1))
 
         # 2) Predictable fallback: retrieval_base + basename.
@@ -170,7 +208,9 @@ class FileUploadTester:
         except Exception:
             return None
 
-    async def _upload(self, client: httpx.AsyncClient, p: Dict[str, str]) -> Optional[httpx.Response]:
+    async def _upload(
+        self, client: httpx.AsyncClient, p: Dict[str, str]
+    ) -> Optional[httpx.Response]:
         files = {self.file_field: (p["filename"], p["content"].encode(), p["content_type"])}
         try:
             return await client.post(
@@ -207,9 +247,12 @@ class FileUploadTester:
             if disallowed_ext:
                 reason.append(f"retrievable at disallowed extension '{disallowed_ext}'")
             return UploadFinding(
-                technique=technique, confirmed=True,
+                technique=technique,
+                confirmed=True,
                 detail=("Uploaded marker file is retrievable and " + " and ".join(reason) + "."),
-                marker=self.marker, filename=p["filename"], retrieval_url=url,
+                marker=self.marker,
+                filename=p["filename"],
+                retrieval_url=url,
                 served_content_type=served_ct,
                 evidence={
                     "retrieval_status": 200,
@@ -232,10 +275,16 @@ class FileUploadTester:
             for p in self._payloads():
                 up = await self._upload(client, p)
                 if up is None:
-                    findings.append(UploadFinding(
-                        technique=p["technique"], confirmed=False,
-                        detail="upload request failed or timed out", marker=self.marker,
-                        filename=p["filename"], evidence={"upload_error": True}))
+                    findings.append(
+                        UploadFinding(
+                            technique=p["technique"],
+                            confirmed=False,
+                            detail="upload request failed or timed out",
+                            marker=self.marker,
+                            filename=p["filename"],
+                            evidence={"upload_error": True},
+                        )
+                    )
                     continue
 
                 confirmed_here = False
@@ -255,11 +304,16 @@ class FileUploadTester:
                         break
 
                 if not confirmed_here:
-                    findings.append(UploadFinding(
-                        technique=p["technique"], confirmed=False,
-                        detail="marker not retrievable with an exploitable type; not confirmed",
-                        marker=self.marker, filename=p["filename"],
-                        evidence={"upload_status": up.status_code, "retrieval_attempts": tried}))
+                    findings.append(
+                        UploadFinding(
+                            technique=p["technique"],
+                            confirmed=False,
+                            detail="marker not retrievable with an exploitable type; not confirmed",
+                            marker=self.marker,
+                            filename=p["filename"],
+                            evidence={"upload_status": up.status_code, "retrieval_attempts": tried},
+                        )
+                    )
         finally:
             if own:
                 await client.aclose()

@@ -27,6 +27,7 @@ SAFETY: pollution values are inert markers / a benign HTTP status; short
 per-request timeouts guarantee the tester cannot hang; every request is wrapped so
 failures degrade to "not confirmed" instead of raising.
 """
+
 from __future__ import annotations
 
 import os
@@ -42,10 +43,10 @@ SENTINEL_STATUS = 510
 
 @dataclass
 class PollutionFinding:
-    technique: str            # reflected_property | status_override
+    technique: str  # reflected_property | status_override
     confirmed: bool
     detail: str
-    gadget: str               # the payload shape that worked (__proto__ / constructor.prototype)
+    gadget: str  # the payload shape that worked (__proto__ / constructor.prototype)
     evidence: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -87,23 +88,36 @@ class PrototypePollutionTester:
     def _reflect_payloads(self) -> List[Dict[str, Any]]:
         return [
             {"gadget": "__proto__", "body": {"__proto__": {self.marker_key: self.marker_val}}},
-            {"gadget": "constructor.prototype",
-             "body": {"constructor": {"prototype": {self.marker_key: self.marker_val}}}},
+            {
+                "gadget": "constructor.prototype",
+                "body": {"constructor": {"prototype": {self.marker_key: self.marker_val}}},
+            },
         ]
 
     def _status_payloads(self) -> List[Dict[str, Any]]:
         return [
-            {"gadget": "__proto__",
-             "body": {"__proto__": {"status": SENTINEL_STATUS, "statusCode": SENTINEL_STATUS}}},
-            {"gadget": "constructor.prototype",
-             "body": {"constructor": {"prototype": {"status": SENTINEL_STATUS,
-                                                    "statusCode": SENTINEL_STATUS}}}},
+            {
+                "gadget": "__proto__",
+                "body": {"__proto__": {"status": SENTINEL_STATUS, "statusCode": SENTINEL_STATUS}},
+            },
+            {
+                "gadget": "constructor.prototype",
+                "body": {
+                    "constructor": {
+                        "prototype": {"status": SENTINEL_STATUS, "statusCode": SENTINEL_STATUS}
+                    }
+                },
+            },
         ]
 
     # ---- request wrappers (never raise) -------------------------------------
     async def _send(
-        self, client: httpx.AsyncClient, method: str, url: str,
-        *, json_body: Optional[dict] = None,
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        json_body: Optional[dict] = None,
     ) -> Optional[httpx.Response]:
         try:
             return await client.request(method, url, json=json_body, timeout=self.timeout)
@@ -128,19 +142,24 @@ class PrototypePollutionTester:
             return None  # marker already present -> can't attribute to pollution
 
         for pl in self._reflect_payloads():
-            pollute = await self._send(client, self.pollute_method, self.pollute_url,
-                                       json_body=pl["body"])
+            pollute = await self._send(
+                client, self.pollute_method, self.pollute_url, json_body=pl["body"]
+            )
             # Probe with NO payload; if the marker now appears it was inherited.
             probe = await self._send(client, self.probe_method, self.probe_url)
             probe_body = self._body(probe)
             if probe is not None and self.marker_val in probe_body:
                 return PollutionFinding(
-                    technique="reflected_property", confirmed=True,
-                    detail=("Polluted property surfaced in a payload-free probe response, "
-                            "proving Object.prototype was mutated (inherited, not reflected)."),
+                    technique="reflected_property",
+                    confirmed=True,
+                    detail=(
+                        "Polluted property surfaced in a payload-free probe response, "
+                        "proving Object.prototype was mutated (inherited, not reflected)."
+                    ),
                     gadget=pl["gadget"],
                     evidence={
-                        "marker_key": self.marker_key, "marker_val": self.marker_val,
+                        "marker_key": self.marker_key,
+                        "marker_val": self.marker_val,
                         "baseline_contained_marker": False,
                         "probe_contained_marker": True,
                         "pollute_status": getattr(pollute, "status_code", None),
@@ -158,15 +177,19 @@ class PrototypePollutionTester:
             return None  # already returns sentinel -> not a usable oracle
 
         for pl in self._status_payloads():
-            pollute = await self._send(client, self.pollute_method, self.pollute_url,
-                                       json_body=pl["body"])
+            pollute = await self._send(
+                client, self.pollute_method, self.pollute_url, json_body=pl["body"]
+            )
             probe = await self._send(client, self.probe_method, self.probe_url)
             probe_status = getattr(probe, "status_code", None)
             if probe_status == SENTINEL_STATUS and baseline_status != SENTINEL_STATUS:
                 return PollutionFinding(
-                    technique="status_override", confirmed=True,
-                    detail=(f"Follow-up request returned the injected status {SENTINEL_STATUS} "
-                            f"(baseline {baseline_status}), proving prototype mutation."),
+                    technique="status_override",
+                    confirmed=True,
+                    detail=(
+                        f"Follow-up request returned the injected status {SENTINEL_STATUS} "
+                        f"(baseline {baseline_status}), proving prototype mutation."
+                    ),
                     gadget=pl["gadget"],
                     evidence={
                         "baseline_status": baseline_status,
@@ -185,17 +208,28 @@ class PrototypePollutionTester:
         )
         try:
             reflected = await self._run_reflected(client)
-            findings.append(reflected or PollutionFinding(
-                technique="reflected_property", confirmed=False,
-                detail="no inherited property observed in a payload-free probe; not confirmed",
-                gadget="__proto__",
-                evidence={"marker_key": self.marker_key, "marker_val": self.marker_val}))
+            findings.append(
+                reflected
+                or PollutionFinding(
+                    technique="reflected_property",
+                    confirmed=False,
+                    detail="no inherited property observed in a payload-free probe; not confirmed",
+                    gadget="__proto__",
+                    evidence={"marker_key": self.marker_key, "marker_val": self.marker_val},
+                )
+            )
 
             status = await self._run_status(client)
-            findings.append(status or PollutionFinding(
-                technique="status_override", confirmed=False,
-                detail="follow-up status unchanged after pollution; not confirmed",
-                gadget="__proto__", evidence={"injected_status": SENTINEL_STATUS}))
+            findings.append(
+                status
+                or PollutionFinding(
+                    technique="status_override",
+                    confirmed=False,
+                    detail="follow-up status unchanged after pollution; not confirmed",
+                    gadget="__proto__",
+                    evidence={"injected_status": SENTINEL_STATUS},
+                )
+            )
         finally:
             if own:
                 await client.aclose()

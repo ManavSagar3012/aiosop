@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI, Request
 from httpx import AsyncClient
 from starlette.middleware.base import BaseHTTPMiddleware
-
-import pytest
 
 from ai_osop.api.middleware import CorrelationIdMiddleware
 from ai_osop.core.telemetry import RequestContext

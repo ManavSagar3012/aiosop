@@ -3,7 +3,9 @@ import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
 import structlog
+
 from ai_osop.core.models import DiffAuthFinding
 
 logger = structlog.get_logger("ai_osop.findings_quality")
@@ -44,11 +46,31 @@ _RECON_PATTERNS = re.compile(
 # Real exploit/vulnerability classes that, when demonstrated with a PoC, are
 # genuinely reportable.
 _EXPLOIT_CLASSES = (
-    "sqli", "sql_injection", "xss", "cross_site_scripting", "idor", "bola",
-    "ssrf", "rce", "command_injection", "exec", "xxe", "lfi", "ssti",
-    "broken_access_control", "broken_object", "privilege_escalation", "csrf",
-    "deserialization", "business_logic", "business-logic", "auth_bypass",
-    "authentication_bypass", "jwt_abuse", "mass_assignment", "open_redirect",
+    "sqli",
+    "sql_injection",
+    "xss",
+    "cross_site_scripting",
+    "idor",
+    "bola",
+    "ssrf",
+    "rce",
+    "command_injection",
+    "exec",
+    "xxe",
+    "lfi",
+    "ssti",
+    "broken_access_control",
+    "broken_object",
+    "privilege_escalation",
+    "csrf",
+    "deserialization",
+    "business_logic",
+    "business-logic",
+    "auth_bypass",
+    "authentication_bypass",
+    "jwt_abuse",
+    "mass_assignment",
+    "open_redirect",
 )
 
 
@@ -125,11 +147,7 @@ class FindingQualityEngine:
                         break
 
             # Suppress empty or trivial dicts
-            if (
-                not body_b
-                or list(body_b.keys()) == ["success"]
-                and body_b.get("success") is False
-            ):
+            if not body_b or list(body_b.keys()) == ["success"] and body_b.get("success") is False:
                 suppressed = True
                 reasons.append("empty_or_failed_status_body")
 
@@ -195,9 +213,7 @@ class FindingQualityEngine:
         body_keys = []
         if isinstance(body_b, dict):
             body_keys = list(body_b.keys())
-        elif (
-            isinstance(body_b, list) and len(body_b) > 0 and isinstance(body_b[0], dict)
-        ):
+        elif isinstance(body_b, list) and len(body_b) > 0 and isinstance(body_b[0], dict):
             body_keys = list(body_b[0].keys())
 
         # Evaluate exposed keys sensitivity
@@ -231,9 +247,7 @@ class FindingCertificationEngine:
     """
 
     @classmethod
-    def certify_vulnerability(
-        cls, vuln: Any, evidence: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def certify_vulnerability(cls, vuln: Any, evidence: Optional[str] = None) -> Dict[str, Any]:
         """
         Score a single vulnerability finding on multiple quality dimensions:
         - Confidence
@@ -248,9 +262,7 @@ class FindingCertificationEngine:
         if evidence:
             ev_lower = evidence.lower()
             # Check for request/payload details
-            has_request = (
-                "request" in ev_lower or "payload" in ev_lower or "http" in ev_lower
-            )
+            has_request = "request" in ev_lower or "payload" in ev_lower or "http" in ev_lower
             # Check for response/behavior details
             has_response = (
                 "response" in ev_lower
@@ -287,21 +299,16 @@ class FindingCertificationEngine:
         impact = "medium"
 
         # Determine score based on vuln type / title
-        if any(
-            x in vuln_type or x in title for x in ["rce", "command_injection", "exec"]
-        ):
+        if any(x in vuln_type or x in title for x in ["rce", "command_injection", "exec"]):
             exploitability = 0.95
             impact = "critical"
             reasons.append("rce_high_exploitability")
-        elif any(
-            x in vuln_type or x in title for x in ["sqli", "sql_injection", "database"]
-        ):
+        elif any(x in vuln_type or x in title for x in ["sqli", "sql_injection", "database"]):
             exploitability = 0.85
             impact = "high"
             reasons.append("sqli_high_exploitability")
         elif any(
-            x in vuln_type or x in title
-            for x in ["idor", "broken_object", "privilege_escalation"]
+            x in vuln_type or x in title for x in ["idor", "broken_object", "privilege_escalation"]
         ):
             exploitability = 0.80
             impact = "high"
@@ -311,8 +318,7 @@ class FindingCertificationEngine:
             impact = "medium"
             reasons.append("xss_medium_exploitability")
         elif any(
-            x in vuln_type or x in title
-            for x in ["header", "missing_security_headers", "ssl"]
+            x in vuln_type or x in title for x in ["header", "missing_security_headers", "ssl"]
         ):
             exploitability = 0.15
             impact = "low"
@@ -341,9 +347,7 @@ class FindingCertificationEngine:
 
         # Bug-bounty classification: is this a real vulnerability, a candidate
         # needing validation, or just reconnaissance?
-        classification = cls.classify_finding(
-            vuln, evidence, exploitability, evidence_score
-        )
+        classification = cls.classify_finding(vuln, evidence, exploitability, evidence_score)
         reasons.append(f"classified_{classification}")
 
         # A finding is only genuinely reportable to a bounty program when it is
@@ -353,9 +357,7 @@ class FindingCertificationEngine:
         # detections can no longer be labeled actionable on score alone.
         reportable = classification == FindingClass.CONFIRMED
         actionable = (
-            classification != FindingClass.RECON
-            and confidence >= 0.75
-            and exploitability >= 0.5
+            classification != FindingClass.RECON and confidence >= 0.75 and exploitability >= 0.5
         )
 
         return {
@@ -407,7 +409,11 @@ class FindingCertificationEngine:
         if validated:
             return FindingClass.CONFIRMED
         demonstrated = tool in (
-            "stateful_logic", "diff_auth", "diffauth", "exploit_validation", "concurrency"
+            "stateful_logic",
+            "diff_auth",
+            "diffauth",
+            "exploit_validation",
+            "concurrency",
         ) and any(t in ev for t in ("violation", "replay", "bypass", "demonstrated"))
         if demonstrated and exploitability >= 0.6 and severity != "INFO":
             return FindingClass.CONFIRMED
@@ -479,22 +485,21 @@ class FindingCertificationEngine:
 
         # Bucket findings by bug-bounty classification for honest reporting.
         recon_count = sum(
-            1 for f in certified_findings
+            1
+            for f in certified_findings
             if f["certification"].get("classification") == FindingClass.RECON
         )
         potential_count = sum(
-            1 for f in certified_findings
+            1
+            for f in certified_findings
             if f["certification"].get("classification") == FindingClass.POTENTIAL
         )
         reportable_count = sum(
-            1 for f in certified_findings
-            if f["certification"].get("reportable")
+            1 for f in certified_findings if f["certification"].get("reportable")
         )
 
         avg_evidence_completeness = (
-            total_evidence_completeness / len(vulnerabilities)
-            if vulnerabilities
-            else 1.0
+            total_evidence_completeness / len(vulnerabilities) if vulnerabilities else 1.0
         )
 
         # Determine overall Mission Quality Verdict
@@ -511,10 +516,7 @@ class FindingCertificationEngine:
         unconfirmed_serious = 0
         for f in certified_findings:
             cert = f["certification"]
-            if (
-                f["severity"] in ("CRITICAL", "HIGH")
-                and cert["confidence_score"] < 0.75
-            ):
+            if f["severity"] in ("CRITICAL", "HIGH") and cert["confidence_score"] < 0.75:
                 unconfirmed_serious += 1
 
         if unconfirmed_serious > 0:
@@ -562,9 +564,7 @@ This certificate verifies the overall quality, operational validity, and finding
 
 """
         if not certified_findings:
-            md_content += (
-                "_No vulnerabilities were identified during this engagement._\n"
-            )
+            md_content += "_No vulnerabilities were identified during this engagement._\n"
         else:
             md_content += "| Finding ID | Title | Severity | Class | Confidence | Reportable? |\n"
             md_content += "|---|---|---|---|---|---|\n"
@@ -575,7 +575,9 @@ This certificate verifies the overall quality, operational validity, and finding
             }
             for f in certified_findings:
                 cert = f["certification"]
-                cls_str = _class_label.get(cert.get("classification"), cert.get("classification", "?"))
+                cls_str = _class_label.get(
+                    cert.get("classification"), cert.get("classification", "?")
+                )
                 rep_str = "✅ YES" if cert.get("reportable") else "❌ NO"
                 md_content += f"| `{f['id']}` | {f['title']} | **{f['severity']}** | {cls_str} | {cert['confidence_score']:.1%} | {rep_str} |\n"
 
@@ -616,9 +618,7 @@ This certificate verifies the overall quality, operational validity, and finding
                 with open("scratch_live_eid.txt", "r") as f:
                     live_eid = f.read().strip()
                 if live_eid == engagement_id:
-                    with open(
-                        "MISSION_QUALITY_CERTIFICATE.md", "w", encoding="utf-8"
-                    ) as fh:
+                    with open("MISSION_QUALITY_CERTIFICATE.md", "w", encoding="utf-8") as fh:
                         fh.write(md_content)
             except Exception as e:
                 logger.warning("broad_exception_caught", error=str(e))
@@ -678,9 +678,7 @@ class AttackSurfaceCertifier:
 
         # Fallback: raw crawled count is at least the persisted count
         if raw_crawled_count == 0:
-            raw_crawled_count = (
-                endpoints_count * 5 if endpoints_count > 1 else endpoints_count
-            )
+            raw_crawled_count = endpoints_count * 5 if endpoints_count > 1 else endpoints_count
 
         # Query Neo4j for detailed assets and endpoints breakdown (Sprint 12/13)
         subdomains = []
@@ -716,7 +714,7 @@ class AttackSurfaceCertifier:
                 query_keys = e.get("query_keys", []) or []
                 body_keys = e.get("body_schema_keys", []) or []
 
-                    # Check for API endpoint
+                # Check for API endpoint
                 if any(
                     x in url.lower() or x in path.lower()
                     for x in [
@@ -732,8 +730,7 @@ class AttackSurfaceCertifier:
 
                     # Check for JS file
                 if url.lower().endswith(".js") or any(
-                    x in url.lower()
-                    for x in ["/chunks/", "/webpack/", "/static/js/"]
+                    x in url.lower() for x in ["/chunks/", "/webpack/", "/static/js/"]
                 ):
                     js_endpoints.append(url)
 
@@ -783,10 +780,7 @@ class AttackSurfaceCertifier:
 
         # Calculate Attack Surface Expansion Score
         expansion_score = (
-            endpoints_count
-            + len(parameter_endpoints)
-            + len(api_endpoints)
-            + len(js_endpoints)
+            endpoints_count + len(parameter_endpoints) + len(api_endpoints) + len(js_endpoints)
         )
         expansion_ratio = f"{expansion_score}x"
 
@@ -860,16 +854,12 @@ The platform achieved an estimated **{coverage_percent:.1%}** coverage density o
 ### Discovery Verdict
 """
         if not subdomains:
-            md_content += (
-                "_No subdomains discovered (recon was limited to the seed target)._\n"
-            )
+            md_content += "_No subdomains discovered (recon was limited to the seed target)._\n"
         else:
             for sub in subdomains[:15]:
                 md_content += f"{{chr(45)}} `{sub}`\n"
             if len(subdomains) > 15:
-                md_content += (
-                    f"{{chr(45)}} ... and {len(subdomains) - 15} more subdomains.\n"
-                )
+                md_content += f"{{chr(45)}} ... and {len(subdomains) - 15} more subdomains.\n"
 
         md_content += f"""
 ---
@@ -959,12 +949,8 @@ class FindingConversionEngine:
                 identity_stats[identity]["accepted"] += 1
 
         return {
-            "tool_ays": {
-                k: (v["accepted"] / v["total"]) for k, v in tool_stats.items()
-            },
-            "identity_ays": {
-                k: (v["accepted"] / v["total"]) for k, v in identity_stats.items()
-            },
+            "tool_ays": {k: (v["accepted"] / v["total"]) for k, v in tool_stats.items()},
+            "identity_ays": {k: (v["accepted"] / v["total"]) for k, v in identity_stats.items()},
         }
 
     @classmethod

@@ -6,18 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.models import (
-    AttackChain,
-    ChainStatus,
-    PrimitiveLedger,
-    PrimitiveType,
-)
+from ai_osop.core.models import AttackChain, ChainStatus, PrimitiveLedger, PrimitiveType
 from ai_osop.memory.primitive_ledger import PrimitiveLedgerStore
-
 
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
+
 
 def _prim(**kw) -> PrimitiveLedger:
     defaults = dict(
@@ -61,6 +56,7 @@ def _fake_driver(single_record=None):
 # --------------------------------------------------------------------------
 # Model tests
 # --------------------------------------------------------------------------
+
 
 class TestPrimitiveLedgerModel:
     def test_default_id_prefix(self):
@@ -111,6 +107,7 @@ class TestAttackChainModel:
 # Store tests (all Neo4j calls mocked)
 # --------------------------------------------------------------------------
 
+
 class TestPrimitiveLedgerStore:
     @pytest.mark.asyncio
     async def test_upsert_primitive_calls_merge(self):
@@ -145,6 +142,7 @@ class TestPrimitiveLedgerStore:
     async def test_setup_schema_ignores_already_exists(self):
         """DDL errors for 'already exists' must be swallowed."""
         from neo4j.exceptions import ClientError
+
         driver = MagicMock()
         session_ctx = MagicMock()
         session_ctx.__aenter__ = AsyncMock(return_value=session_ctx)

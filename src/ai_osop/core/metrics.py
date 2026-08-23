@@ -4,7 +4,7 @@ Provides counters, histograms, and gauges for API, tasks, agents, MCPs,
 graph operations, and LLM calls. Imported by api/main.py and key modules.
 """
 
-from prometheus_client import Counter, Histogram, Gauge, Info, REGISTRY
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram, Info
 
 # Clean up any previously registered metrics starting with 'ai_osop_' to allow clean reloading
 for collector in list(REGISTRY._collector_to_names.keys()):
@@ -334,6 +334,7 @@ SLO_LATENCY_P95 = Gauge(
 )
 
 from prometheus_client import Counter
+
 AGENT_RECOVERIES_TOTAL = Counter("ai_osop_agent_recoveries_total", "Total agent recoveries")
 AGENT_TIMEOUTS_TOTAL = Counter("ai_osop_agent_timeouts_total", "Total agent timeouts")
 TASK_REQUEUES_TOTAL = Counter("ai_osop_task_requeues_total", "Total task requeues")

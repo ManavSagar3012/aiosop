@@ -1,14 +1,18 @@
 from typing import Any, Dict, List, Optional
+
 import structlog
-from ai_osop.memory.graph_memory import GraphMemory
+
 from ai_osop.core.models import DiffAuthFinding
+from ai_osop.memory.graph_memory import GraphMemory
 
 logger = structlog.get_logger("ai_osop.attack_graph_prioritizer")
+
 
 class AttackGraphChainPrioritizer:
     """
     Sprint 7: Prioritizes findings based on reachable attack graph paths.
     """
+
     def __init__(self, graph_memory: GraphMemory):
         self.graph_memory = graph_memory
 
@@ -38,16 +42,16 @@ class AttackGraphChainPrioritizer:
     async def prioritize_finding(self, finding: DiffAuthFinding) -> Dict[str, Any]:
         """Compute the prioritized risk score."""
         path_impact = await self.get_path_impact_score(finding.id)
-        
+
         # Combine confidence, business impact, and path impact
         final_priority = "medium"
         if path_impact > 0.7 or finding.confidence > 0.9:
             final_priority = "critical"
         elif path_impact > 0.4:
             final_priority = "high"
-            
+
         return {
             "finding_id": finding.id,
             "path_impact": round(path_impact, 2),
-            "priority": final_priority
+            "priority": final_priority,
         }

@@ -21,8 +21,8 @@ from uuid import uuid4
 
 import httpx
 
-from ai_osop.core.models import DiffAuthFinding, Vulnerability
 from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.models import DiffAuthFinding, Vulnerability
 
 # Confidence at/above which a differential-authorization finding is treated as a
 # demonstrated (validated) cross-identity access — i.e. CONFIRMED / reportable.

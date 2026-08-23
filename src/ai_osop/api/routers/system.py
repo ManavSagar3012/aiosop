@@ -17,7 +17,9 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 
 @router.get("/skills/stats")
-async def get_skill_stats(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
+async def get_skill_stats(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
+):
     """SkillEngine reputation/usage stats, shaped for the UI skill store."""
     if state["skill_engine"] is None:
         return {
@@ -33,7 +35,9 @@ async def get_skill_stats(operator: Dict[str, Any] = Depends(require_role("opera
 
 
 @router.get("/config")
-async def get_system_config(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
+async def get_system_config(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
+):
     """Get non-sensitive system configuration."""
     return {
         "env": settings.environment,
@@ -47,7 +51,9 @@ async def get_system_config(operator: Dict[str, Any] = Depends(require_role("ope
 
 
 @router.get("/sandbox/status")
-async def get_sandbox_status(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
+async def get_sandbox_status(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
+):
     """Get execution sandbox health and guard status."""
     return {
         "runtime": settings.sandbox_runtime,
@@ -61,7 +67,9 @@ async def get_sandbox_status(operator: Dict[str, Any] = Depends(require_role("op
 
 
 @router.get("/mcp/health")
-async def get_mcp_health(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
+async def get_mcp_health(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
+):
     """Get MCP server health: circuit breaker state, failure counts, recovery attempts.
 
     Sprint 7: Exposes circuit breaker v2 state so operators can diagnose
@@ -70,24 +78,32 @@ async def get_mcp_health(operator: Dict[str, Any] = Depends(require_role("operat
     mcp_registry = state["orchestrator"].mcp_registry
     servers: List[Dict[str, Any]] = []
     for server_id, conn in mcp_registry._servers.items():
-        servers.append({
-            "server_id": server_id,
-            "host": conn.host,
-            "port": conn.port,
-            "circuit_state": conn.get_circuit_state(),
-            "failure_count": conn._failure_count,
-            "success_count": conn._success_count,
-            "last_success_at": conn._last_success_at.isoformat() if conn._last_success_at else None,
-            "last_failure_at": conn._last_failure_at.isoformat() if conn._last_failure_at else None,
-            "recovery_attempts": conn._recovery_attempts,
-            "consecutive_successes": conn._consecutive_successes,
-            "initialized": conn._initialized,
-        })
+        servers.append(
+            {
+                "server_id": server_id,
+                "host": conn.host,
+                "port": conn.port,
+                "circuit_state": conn.get_circuit_state(),
+                "failure_count": conn._failure_count,
+                "success_count": conn._success_count,
+                "last_success_at": (
+                    conn._last_success_at.isoformat() if conn._last_success_at else None
+                ),
+                "last_failure_at": (
+                    conn._last_failure_at.isoformat() if conn._last_failure_at else None
+                ),
+                "recovery_attempts": conn._recovery_attempts,
+                "consecutive_successes": conn._consecutive_successes,
+                "initialized": conn._initialized,
+            }
+        )
     return {"servers": servers}
 
 
 @router.get("/dlq/stats")
-async def get_dlq_stats(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
+async def get_dlq_stats(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
+):
     """Get Dead Letter Queue statistics for operator review.
 
     Sprint 7: Exposes DLQ counts so operators know when failed tasks
@@ -135,8 +151,11 @@ async def discard_dlq_entry(
     await dlq.discard(dlq_entry_id, operator_notes)
     return {"status": "discarded", "dlq_entry_id": dlq_entry_id}
 
+
 @router.get("/readiness/trust-score")
-async def get_trust_score(operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))):
+async def get_trust_score(
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator"))
+):
     """Compute a LIVE trust/readiness score from real subsystem health.
 
     AIOSOP-TRUST-001 (2026-07-03): this endpoint previously returned a hardcoded
@@ -148,12 +167,7 @@ async def get_trust_score(operator: Dict[str, Any] = Depends(require_role("opera
     weighted meaningfully (the platform cannot produce real findings without tools).
     ``last_audited`` is the actual time this score was computed.
     """
-    from ai_osop.api.health import (
-        _check_redis,
-        _check_neo4j,
-        _check_postgres,
-        _check_mcp_registry,
-    )
+    from ai_osop.api.health import _check_mcp_registry, _check_neo4j, _check_postgres, _check_redis
 
     redis = await _check_redis()
     neo4j = await _check_neo4j()

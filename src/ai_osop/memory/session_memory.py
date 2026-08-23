@@ -7,26 +7,24 @@ Manages session state, agent working memory, and checkpoints.
 import hashlib
 import json
 import pickle
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
+import structlog
 from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import MemoryException
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.observability import record_postgres_latency, record_redis_latency
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
-from ai_osop.core.observability import record_redis_latency, record_postgres_latency
 from ai_osop.reliability.retry import retry_with_backoff
-
-import time
-import structlog
 
 logger = structlog.get_logger("ai_osop.memory.session_memory")
 
@@ -126,6 +124,7 @@ class DLQEntryORM(Base):
     created_at = Column(DateTime)
     updated_at = Column(DateTime, nullable=True)
 
+
 class FindingCorpusORM(Base):
     __tablename__ = "finding_corpus"
 
@@ -137,7 +136,7 @@ class FindingCorpusORM(Base):
     original_finding_id = Column(String(64), unique=True, index=True)
     category = Column(String(64), index=True)
     severity = Column(String(16))
-    outcome = Column(String(32), index=True) # accepted, duplicate, etc.
+    outcome = Column(String(32), index=True)  # accepted, duplicate, etc.
     payload = Column(JSON)
     engagement_id = Column(String(64), index=True)
     created_at = Column(DateTime)
@@ -146,6 +145,7 @@ class FindingCorpusORM(Base):
 
 class _TimedPostgresSession:
     """Wraps an async session context manager to record Postgres latency."""
+
     def __init__(self, session, operation_name: str = "transaction"):
         self._session = session
         self._operation_name = operation_name
@@ -164,6 +164,7 @@ class _TimedPostgresSession:
 
 class _TimedPostgresSessionMaker:
     """Wraps sessionmaker to return timed sessions."""
+
     def __init__(self, sessionmaker, operation_name: str = "transaction"):
         self._sm = sessionmaker
         self._operation_name = operation_name
@@ -175,29 +176,62 @@ class _TimedPostgresSessionMaker:
 def _wrap_redis_for_metrics(redis_client):
     """Monkey-patch common Redis async methods to record latency metrics."""
     import time as _time
+
     methods = [
-        "get", "set", "rpush", "lrange", "keys", "lrem", "delete", "ping",
-        "setnx", "eval", "hset", "hgetall", "hincrby", "publish", "zadd",
-        "zrange", "zrem", "hget", "hdel", "sadd", "sismember", "smembers",
+        "get",
+        "set",
+        "rpush",
+        "lrange",
+        "keys",
+        "lrem",
+        "delete",
+        "ping",
+        "setnx",
+        "eval",
+        "hset",
+        "hgetall",
+        "hincrby",
+        "publish",
+        "zadd",
+        "zrange",
+        "zrem",
+        "hget",
+        "hdel",
+        "sadd",
+        "sismember",
+        "smembers",
     ]
-    write_methods = {"set", "rpush", "lrem", "delete", "setnx", "hset", "hincrby",
-                     "publish", "zadd", "zrem", "hdel", "sadd"}
+    write_methods = {
+        "set",
+        "rpush",
+        "lrem",
+        "delete",
+        "setnx",
+        "hset",
+        "hincrby",
+        "publish",
+        "zadd",
+        "zrem",
+        "hdel",
+        "sadd",
+    }
     for method_name in methods:
         original = getattr(redis_client, method_name, None)
         if original is None:
             continue
+
         async def _timed_wrapper(*args, __original=original, __name=method_name, **kwargs):
             start = _time.perf_counter()
             result = await __original(*args, **kwargs)
             op_type = "write" if __name in write_methods else "read"
             record_redis_latency(op_type, _time.perf_counter() - start)
             return result
+
         setattr(redis_client, method_name, _timed_wrapper)
     return redis_client
 
 
 class SessionMemory:
-
     """
     Multi-tier session memory with hot/warm/cold storage.
 
@@ -241,9 +275,7 @@ class SessionMemory:
                 settings.postgres_uri, pool_size=20, max_overflow=10, echo=False
             )
             self._async_session = _TimedPostgresSessionMaker(
-                sessionmaker(
-                    self._pg_engine, class_=AsyncSession, expire_on_commit=False
-                )
+                sessionmaker(self._pg_engine, class_=AsyncSession, expire_on_commit=False)
             )
             # Verify connection by creating tables
             async with self._pg_engine.begin() as conn:
@@ -304,7 +336,13 @@ class SessionMemory:
             r = await self._ensure_redis()
             await r.delete(key)
 
-    async def acquire_lock(self, lock_key: str, lock_value: str = "locked", ttl_seconds: int = 30, ttl: Optional[int] = None) -> bool:
+    async def acquire_lock(
+        self,
+        lock_key: str,
+        lock_value: str = "locked",
+        ttl_seconds: int = 30,
+        ttl: Optional[int] = None,
+    ) -> bool:
         """Acquire a distributed Redis lock."""
         actual_ttl = ttl if ttl is not None else ttl_seconds
         r = await self._ensure_redis()
@@ -681,7 +719,11 @@ class SessionMemory:
     async def store_dlq_entry(self, entry: Any) -> None:
         """Persist DLQ entry to hot (Redis) + warm (Postgres) tier."""
         from ai_osop.reliability.dlq import DLQEntry
-        with trace_span("postgres.store_dlq_entry", attributes={"ai_osop.dlq_id": entry.id, "ai_osop.engagement_id": entry.engagement_id}):
+
+        with trace_span(
+            "postgres.store_dlq_entry",
+            attributes={"ai_osop.dlq_id": entry.id, "ai_osop.engagement_id": entry.engagement_id},
+        ):
             # Hot tier (Redis cache)
             await self.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
             # Warm tier (Postgres)
@@ -719,6 +761,7 @@ class SessionMemory:
     async def get_dlq_entry(self, entry_id: str) -> Optional[Any]:
         """Retrieve DLQ entry from hot (Redis) falling back to warm (Postgres) tier."""
         from ai_osop.reliability.dlq import DLQEntry
+
         with trace_span("postgres.get_dlq_entry", attributes={"ai_osop.dlq_id": entry_id}):
             # 1. Hot tier check
             data = await self.retrieve_hot(f"dlq:{entry_id}")
@@ -727,7 +770,9 @@ class SessionMemory:
 
             # 2. Warm tier fallback
             async with self._async_session() as session:
-                result = await session.execute(select(DLQEntryORM).where(DLQEntryORM.id == entry_id))
+                result = await session.execute(
+                    select(DLQEntryORM).where(DLQEntryORM.id == entry_id)
+                )
                 orm = result.scalar_one_or_none()
                 if orm:
                     entry = DLQEntry(
@@ -755,6 +800,7 @@ class SessionMemory:
     ) -> List[Any]:
         """List DLQ entries from warm tier (Postgres)."""
         from ai_osop.reliability.dlq import DLQEntry
+
         with trace_span("postgres.list_dlq_entries"):
             async with self._async_session() as session:
                 query = select(DLQEntryORM)
@@ -792,7 +838,10 @@ class SessionMemory:
             async with self._async_session() as session:
                 # Group by status to compute stats
                 from sqlalchemy import func
-                query = select(DLQEntryORM.status, func.count(DLQEntryORM.id)).group_by(DLQEntryORM.status)
+
+                query = select(DLQEntryORM.status, func.count(DLQEntryORM.id)).group_by(
+                    DLQEntryORM.status
+                )
                 result = await session.execute(query)
                 stats = {"pending": 0, "requeued": 0, "discarded": 0}
                 for status, count in result.all():
@@ -882,9 +931,7 @@ class SessionMemory:
                     from sqlalchemy import func
 
                     query = (
-                        select(
-                            FindingCorpusORM.outcome, func.count(FindingCorpusORM.id)
-                        )
+                        select(FindingCorpusORM.outcome, func.count(FindingCorpusORM.id))
                         .where(FindingCorpusORM.category == finding_type)
                         .group_by(FindingCorpusORM.outcome)
                     )
@@ -904,14 +951,10 @@ class SessionMemory:
                         return 0.5
                     return valid / decided
         except Exception as e:  # noqa: BLE001 - calibration signal is advisory
-            logger.warning(
-                "get_historical_success_rate failed for %s: %s", finding_type, e
-            )
+            logger.warning("get_historical_success_rate failed for %s: %s", finding_type, e)
             return 0.5
 
-    async def get_historical_outcome_counts(
-        self, finding_type: str
-    ) -> tuple[int, int]:
+    async def get_historical_outcome_counts(self, finding_type: str) -> tuple[int, int]:
         """Return ``(n_valid, n_total)`` decided outcomes for a finding type.
 
         The count-aware companion to :meth:`get_historical_success_rate`: the
@@ -936,9 +979,7 @@ class SessionMemory:
                     from sqlalchemy import func
 
                     query = (
-                        select(
-                            FindingCorpusORM.outcome, func.count(FindingCorpusORM.id)
-                        )
+                        select(FindingCorpusORM.outcome, func.count(FindingCorpusORM.id))
                         .where(FindingCorpusORM.category == finding_type)
                         .group_by(FindingCorpusORM.outcome)
                     )
@@ -954,16 +995,17 @@ class SessionMemory:
                             total += count
                     return (valid, total)
         except Exception as e:  # noqa: BLE001 - calibration signal is advisory
-            logger.warning(
-                "get_historical_outcome_counts failed for %s: %s", finding_type, e
-            )
+            logger.warning("get_historical_outcome_counts failed for %s: %s", finding_type, e)
             return (0, 0)
 
     # ============== TASKS ==============
 
     async def store_task(self, task: Task) -> None:
         """Persist task to hot + warm tier."""
-        with trace_span("postgres.store_task", attributes={"ai_osop.task_id": task.id, "ai_osop.engagement_id": task.engagement_id}):
+        with trace_span(
+            "postgres.store_task",
+            attributes={"ai_osop.task_id": task.id, "ai_osop.engagement_id": task.engagement_id},
+        ):
             # Hot tier (Redis)
             await self.store_hot(f"task:{task.id}", task.model_dump(), ttl=86400 * 7)
             # Warm tier (Postgres)
@@ -975,14 +1017,22 @@ class SessionMemory:
                         type=task.type,
                         priority=task.priority,
                         agent_type=task.agent_type.value,
-                        payload=json.loads(json.dumps(task.payload, default=str)) if task.payload else {},
+                        payload=(
+                            json.loads(json.dumps(task.payload, default=str))
+                            if task.payload
+                            else {}
+                        ),
                         dependencies=task.dependencies,
                         max_retries=task.max_retries,
                         timeout_seconds=task.timeout_seconds,
                         scope_check=task.scope_check,
                         approval_required=task.approval_required,
                         status=task.status,
-                        result=json.loads(json.dumps(task.result, default=str)) if task.result else None,
+                        result=(
+                            json.loads(json.dumps(task.result, default=str))
+                            if task.result
+                            else None
+                        ),
                         retry_count=task.retry_count,
                         created_at=task.created_at,
                         started_at=task.started_at,
@@ -994,7 +1044,11 @@ class SessionMemory:
                         index_elements=["id"],
                         set_={
                             "status": task.status,
-                            "result": json.loads(json.dumps(task.result, default=str)) if task.result else None,
+                            "result": (
+                                json.loads(json.dumps(task.result, default=str))
+                                if task.result
+                                else None
+                            ),
                             "retry_count": task.retry_count,
                             "started_at": task.started_at,
                             "completed_at": task.completed_at,
@@ -1110,11 +1164,9 @@ class SessionMemory:
         await self.store_session_state(state)
         return state
 
-
     async def list_all_sessions(self) -> List[str]:
         r = await self._ensure_redis()
         return await r.keys("session:*")
-
 
     async def list_all_tasks(self) -> List[str]:
         r = await self._ensure_redis()
@@ -1126,7 +1178,6 @@ class SessionMemory:
         if self._pg_engine:
             await self._pg_engine.dispose()
 
-
     async def update_agent_heartbeat(self, agent_id: str, data: Dict[str, Any]) -> None:
         """Update agent heartbeat with ownership and state."""
         if "last_seen" not in data:
@@ -1136,7 +1187,6 @@ class SessionMemory:
     async def get_agent_heartbeat(self, agent_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve agent heartbeat."""
         return await self.retrieve_hot(f"agent:heartbeat:{agent_id}")
-
 
     async def update_agent_heartbeat(self, agent_id: str, data: Dict[str, Any]) -> None:
         """Update agent heartbeat with ownership and state."""
@@ -1167,7 +1217,6 @@ class SessionMemory:
             if task.get("assigned_agent_id") == agent_id:
                 tasks.append(task)
         return tasks
-
 
     async def update_agent_status(self, agent_id: str, status: str) -> None:
         """Update agent status in Redis."""

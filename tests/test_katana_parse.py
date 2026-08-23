@@ -3,17 +3,20 @@
 The Go server returns katana's raw JSONL under 'raw' (its whole-output
 json.Unmarshal fails on multi-line JSONL), so the adapter must parse it.
 """
+
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 
 _parse = SecurityBridgeAdapter._parse_katana_output
 
 
 def test_parse_jsonl_raw():
-    raw = "\n".join([
-        '{"timestamp":"t","request":{"endpoint":"https://x.com/a?id=1"}}',
-        '{"request":{"endpoint":"https://x.com/app.js"}}',
-        '{"endpoint":"https://x.com/api/users"}',
-    ])
+    raw = "\n".join(
+        [
+            '{"timestamp":"t","request":{"endpoint":"https://x.com/a?id=1"}}',
+            '{"request":{"endpoint":"https://x.com/app.js"}}',
+            '{"endpoint":"https://x.com/api/users"}',
+        ]
+    )
     eps, js = _parse({"data": None, "raw": raw})
     assert "https://x.com/a?id=1" in eps
     assert "https://x.com/api/users" in eps

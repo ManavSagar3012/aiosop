@@ -2,6 +2,8 @@
 
 import pytest
 
+from ai_osop.core.chain_composer import ChainComposer
+from ai_osop.core.escalation_engine import EscalationEngine
 from ai_osop.core.models import (
     AttackChain,
     ChainStatus,
@@ -9,13 +11,11 @@ from ai_osop.core.models import (
     PrimitiveLedger,
     PrimitiveType,
 )
-from ai_osop.core.escalation_engine import EscalationEngine
-from ai_osop.core.chain_composer import ChainComposer
-
 
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
+
 
 def _prim(
     primitive_type=PrimitiveType.NUCLEI_SIGNAL,
@@ -44,6 +44,7 @@ def _prim(
 # Escalation Engine Tests
 # --------------------------------------------------------------------------
 
+
 class TestEscalationEngine:
     def test_nuclei_signal_produces_escalation(self):
         engine = EscalationEngine()
@@ -57,8 +58,10 @@ class TestEscalationEngine:
         engine = EscalationEngine()
         prim = _prim(PrimitiveType.AUTH_SIGNAL)
         paths = engine.escalate(prim)
-        assert any("diff" in p.suggested_technique.lower() or "auth" in p.suggested_technique.lower()
-                   for p in paths)
+        assert any(
+            "diff" in p.suggested_technique.lower() or "auth" in p.suggested_technique.lower()
+            for p in paths
+        )
 
     def test_ssrf_hint_routes_to_oast(self):
         engine = EscalationEngine()
@@ -71,15 +74,19 @@ class TestEscalationEngine:
         engine = EscalationEngine()
         prim = _prim(PrimitiveType.IDOR_HINT)
         paths = engine.escalate(prim)
-        assert any("idor" in p.suggested_technique.lower() or "cross" in p.suggested_technique.lower()
-                   for p in paths)
+        assert any(
+            "idor" in p.suggested_technique.lower() or "cross" in p.suggested_technique.lower()
+            for p in paths
+        )
 
     def test_js_secret_routes_to_liveness(self):
         engine = EscalationEngine()
         prim = _prim(PrimitiveType.JS_SECRET)
         paths = engine.escalate(prim)
-        assert any("secret" in p.suggested_technique.lower() or "liveness" in p.suggested_technique.lower()
-                   for p in paths)
+        assert any(
+            "secret" in p.suggested_technique.lower() or "liveness" in p.suggested_technique.lower()
+            for p in paths
+        )
 
     def test_never_returns_empty_paths(self):
         """Principle: never stop at a signal — always at least one path."""
@@ -111,6 +118,7 @@ class TestEscalationEngine:
 # --------------------------------------------------------------------------
 # Chain Composer Tests
 # --------------------------------------------------------------------------
+
 
 class TestChainComposer:
     def test_compose_basic_chain(self):
@@ -228,11 +236,12 @@ class TestChainComposer:
 # Integration: Escalate → Compose → Gate
 # --------------------------------------------------------------------------
 
+
 class TestEndToEndChainPipeline:
     def test_nuclei_signal_full_pipeline(self):
         """Integration test: signal → escalate → compose → PoC → triage."""
-        from ai_osop.core.triager_gate import TriagerGate
         from ai_osop.core.models import TriageVerdict
+        from ai_osop.core.triager_gate import TriagerGate
 
         engine = EscalationEngine()
         composer = ChainComposer()
