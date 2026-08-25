@@ -21,382 +21,649 @@ import {
 } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 
-// React Flow sets node/edge colors as raw SVG/DOM style props (stroke=,
-// fill=, background-color=), so a bare var(--x) string or Tailwind class
-// will NOT resolve there — we need a resolved color STRING. Read the design
-// tokens straight off the root element (single source of truth = styles.css)
-// and fall back to the historical neon literals only if computed styles are
-// unavailable (same pattern established in LearningAnalytics.tsx / Task 19).
+/**
+ * Read a CSS custom property from the root element.
+ * Falls back to the provided literal if the variable is empty or unavailable.
+ */
 const cssVar = (name: string, fallback: string) => {
   if (typeof document === 'undefined') return fallback;
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 };
 
-
-const GRAPH_FILTERS = {
-  attack: ['Asset', 'Endpoint', 'Vulnerability', 'Exploit', 'Payload'],
-  workflow: ['Workflow', 'Step', 'Transition', 'Intent', 'SemanticElement', 'Endpoint'],
+const GRAPH_FILTERS: Record<string, string[]> = {
+  attack: ['Asset', 'Endpoint', 'Vulnerability', 'Exploit', 'Payload', 'Primitive', 'Task'],
+  workflow: ['Workflow', 'Step', 'Transition', 'Intent', 'SemanticElement', 'Endpoint', 'Task'],
   cloud: ['CloudResource', 'Asset', 'Endpoint'],
-  learning: ['State', 'OutcomeRecord', 'Endpoint']
+  learning: ['State', 'OutcomeRecord', 'Endpoint', 'Task'],
 };
 
-// --- Custom Node Component ---
+// ─── Custom Node ─────────────────────────────────────────────────────────────
 const CustomNode = ({ data }: any) => {
   const Icon = data.icon || Box;
-  const isHighlighted = data.isHighlighted;
-  
+
   return (
-    <div className={`w-64 rounded-sm border bg-surface-container flex flex-col overflow-hidden shadow-lg transition-all hover:scale-105 ${data.borderClass} ${data.glowClass} ${isHighlighted ? 'ring-2 ring-primary-fixed !border-primary-fixed scale-110 z-50' : 'opacity-60'}`}>
-      <Handle type="target" position={Position.Top} className="w-3 h-1 !bg-outline-variant !rounded-none !border-none" />
-      
-      <div className={`px-3 py-2 border-b flex items-center justify-between ${data.headerClass} ${data.borderClass}`}>
-         <div className="flex items-center gap-2">
-            <Icon size={14} className={data.iconClass} />
-            <span className={`font-label-caps text-[10px] tracking-widest ${data.iconClass}`}>{data.type}</span>
-         </div>
-         {data.confidence > 0 && (
-            <span className="font-code-sm text-label-xs opacity-70">{(data.confidence * 100).toFixed(0)}%</span>
-         )}
-      </div>
-      
-      <div className="p-4 font-code-sm text-[11px] text-on-surface break-all line-clamp-3 leading-relaxed min-h-[60px] flex items-center">
-         {data.label}
+    <div
+      style={{
+        width: 256,
+        background: 'var(--surface-1)',
+        border: `1px solid ${data.borderColor || 'var(--border)'}`,
+        borderRadius: 'var(--radius-md)',
+        overflow: 'hidden',
+        boxShadow: 'var(--shadow-md)',
+        transition: 'all 200ms ease',
+      }}
+    >
+      <Handle type="target" position={Position.Top} />
+
+      {/* Header */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 12px',
+          borderBottom: `1px solid ${data.borderColor || 'var(--border)'}`,
+          background: data.headerBg || 'var(--surface-2)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icon size={14} style={{ color: data.iconColor || 'var(--text-secondary)' }} />
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: data.iconColor || 'var(--text-secondary)',
+            }}
+          >
+            {data.type}
+          </span>
+        </div>
+        {data.confidence > 0 && (
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10,
+              color: 'var(--text-tertiary)',
+            }}
+          >
+            {(data.confidence * 100).toFixed(0)}%
+          </span>
+        )}
       </div>
 
-      <Handle type="source" position={Position.Bottom} className="w-3 h-1 !bg-outline-variant !rounded-none !border-none" />
+      {/* Label */}
+      <div
+        style={{
+          padding: '12px',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 11,
+          color: 'var(--text-primary)',
+          wordBreak: 'break-all',
+          lineHeight: 1.5,
+          minHeight: 60,
+          display: 'flex',
+          alignItems: 'center',
+        }}
+      >
+        {data.label}
+      </div>
+
+      <Handle type="source" position={Position.Bottom} />
     </div>
   );
 };
 
 const nodeTypes = { custom: CustomNode };
 
+// ─── Main Component ──────────────────────────────────────────────────────────
 export const KnowledgeGraphs: React.FC = () => {
   const [activeGraph, setActiveGraph] = useState<'attack' | 'workflow' | 'cloud' | 'learning'>('attack');
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
   const { graphData } = useIntelligenceStore();
   const [selectedNode, setSelectedNode] = useState<any>(null);
   const [isRelayouting, setIsRelayouting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // React Flow color tokens — identical hexes as before, now sourced from styles.css.
+  // Read CSS tokens at mount — these won't change without a theme toggle.
   const flowColors = useMemo(() => ({
-    edgeStroke:     cssVar('--on-surface-variant', '#baccb0'),
-    edgeLabelFill:  cssVar('--on-surface', '#e5e2e3'),
-    edgeLabelBg:    cssVar('--surface-container-low', '#0a0a0b'),
-    bgGrid:         cssVar('--surface-container-high', '#1a1a1d'),
-    vuln:           cssVar('--error', '#ff3131'),
-    cloudResource:  cssVar('--primary', '#39ff14'),
-    asset:          cssVar('--secondary', '#00f1fd'),
-    miniMapDefault: cssVar('--surface-container-highest', '#2a2a2d'),
+    edgeStroke:    cssVar('--text-secondary', '#a0a3ab'),
+    edgeLabelFill: cssVar('--text-primary', '#f0f0f2'),
+    edgeLabelBg:   cssVar('--surface-1', '#111114'),
+    bgGrid:        cssVar('--surface-2', '#18181b'),
+    vuln:          cssVar('--danger', '#ef4444'),
+    cloudResource: cssVar('--accent', '#39ff14'),
+    asset:         cssVar('--interactive', '#00e5f0'),
+    endpoint:      cssVar('--text-secondary', '#a0a3ab'),
+    miniMap:       cssVar('--surface-3', '#1f1f23'),
   }), []);
 
-  // 1. Graph Highlighting Logic
+  // ── Search highlighting ────────────────────────────────────────────
   const highlightedNodes = useMemo(() => {
-     if (!searchQuery) return new Set();
-     const query = searchQuery.toLowerCase();
-     return new Set(
-        (graphData.nodes || [])
-           .filter(n => 
-              n.id.toLowerCase().includes(query) || 
-              (n.properties?.name || '').toLowerCase().includes(query) ||
-              (n.properties?.url || '').toLowerCase().includes(query)
-           )
-           .map(n => n.id)
-     );
+    if (!searchQuery) return new Set<string>();
+    const q = searchQuery.toLowerCase();
+    return new Set(
+      (graphData.nodes || [])
+        .filter((n: any) =>
+          n.id.toLowerCase().includes(q) ||
+          (n.properties?.name || '').toLowerCase().includes(q) ||
+          (n.properties?.url || '').toLowerCase().includes(q)
+        )
+        .map((n: any) => n.id)
+    );
   }, [searchQuery, graphData]);
 
-  // Filter and layout nodes
+  // ── Layout & render ────────────────────────────────────────────────
   useEffect(() => {
     if (!graphData.nodes || graphData.nodes.length === 0) return;
     setIsRelayouting(true);
 
-    const allowedLabels = GRAPH_FILTERS[activeGraph];
-    
-    const filteredNodes = (graphData.nodes || []).filter(n => {
-        if (!n.labels) return true; 
-        return n.labels.some((l: string) => allowedLabels.includes(l));
+    const allowedLabels = GRAPH_FILTERS[activeGraph] || [];
+
+    const filteredNodes = (graphData.nodes || []).filter((n: any) => {
+      if (!n.labels || n.labels.length === 0) return true;
+      return n.labels.some((l: string) => allowedLabels.includes(l));
     });
 
-    const nodeIds = new Set(filteredNodes.map(n => n.id));
-    const filteredEdges = (graphData.edges || []).filter(e => nodeIds.has(e.from) && nodeIds.has(e.to));
+    const nodeIds = new Set(filteredNodes.map((n: any) => n.id));
+    const filteredEdges = (graphData.edges || []).filter(
+      (e: any) => nodeIds.has(e.from) && nodeIds.has(e.to)
+    );
 
-    // Smart Layout Engine
-    // 1. Identify connected vs disconnected nodes
+    // Identify connected vs disconnected nodes
     const connectedNodeIds = new Set<string>();
-    filteredEdges.forEach(e => {
-        connectedNodeIds.add(e.from);
-        connectedNodeIds.add(e.to);
+    filteredEdges.forEach((e: any) => {
+      connectedNodeIds.add(e.from);
+      connectedNodeIds.add(e.to);
     });
 
-    const connectedNodes = filteredNodes.filter(n => connectedNodeIds.has(n.id));
-    const disconnectedNodes = filteredNodes.filter(n => !connectedNodeIds.has(n.id));
+    const connectedNodes = filteredNodes.filter((n: any) => connectedNodeIds.has(n.id));
+    const disconnectedNodes = filteredNodes.filter((n: any) => !connectedNodeIds.has(n.id));
 
     const NODE_WIDTH = 256;
     const NODE_HEIGHT = 100;
 
-    // 2. Layout connected nodes with Dagre
+    // Layout connected nodes with Dagre
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
     dagreGraph.setGraph({ rankdir: 'TB', ranksep: 100, nodesep: 60 });
 
-    connectedNodes.forEach(n => {
-        dagreGraph.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT }); 
+    connectedNodes.forEach((n: any) => {
+      dagreGraph.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
     });
-
-    filteredEdges.forEach(e => {
-        dagreGraph.setEdge(e.from, e.to);
+    filteredEdges.forEach((e: any) => {
+      dagreGraph.setEdge(e.from, e.to);
     });
-
     dagre.layout(dagreGraph);
 
-    // 3. Layout disconnected nodes in a grid
+    // Grid for disconnected nodes
     let gridStartY = 0;
     if (connectedNodes.length > 0) {
-        const maxY = Math.max(0, ...connectedNodes.map(n => dagreGraph.node(n.id)?.y || 0));
-        gridStartY = maxY + 200;
+      const maxY = Math.max(0, ...connectedNodes.map((n: any) => dagreGraph.node(n.id)?.y || 0));
+      gridStartY = maxY + 200;
     }
 
     const GRID_COLS = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(disconnectedNodes.length))));
     const GRID_X_SPACING = NODE_WIDTH + 40;
     const GRID_Y_SPACING = NODE_HEIGHT + 40;
 
+    // Map to ReactFlow nodes
     const mappedNodes = filteredNodes.map((n: any) => {
-        const type = n.labels?.[0] || 'Unknown';
-        const labelText = n.properties?.name || n.properties?.value || n.properties?.url || n.id;
-        const confidence = n.properties?.confidence || 0;
-        const isHighlighted = highlightedNodes.has(n.id) || highlightedNodes.size === 0;
+      const type = n.labels?.[0] || 'Unknown';
+      const labelText = n.properties?.name || n.properties?.value || n.properties?.url || n.id;
+      const confidence = n.properties?.confidence || 0;
+      const isHighlighted = highlightedNodes.has(n.id) || highlightedNodes.size === 0;
 
-        let icon = Box;
-        let borderClass = 'border-outline-variant';
-        let headerClass = 'bg-black/40';
-        let iconClass = 'text-on-surface-variant';
-        let glowClass = '';
+      // Type-specific styling
+      let icon = Box;
+      let borderColor = 'var(--border)';
+      let headerBg = 'var(--surface-2)';
+      let iconColor = 'var(--text-secondary)';
 
-        if (type === 'Asset') {
-            icon = Server;
-            borderClass = 'border-secondary/30';
-            iconClass = 'text-secondary';
-        } else if (type === 'Endpoint') {
-            icon = Globe;
-            borderClass = 'border-on-surface-variant/30';
-            iconClass = 'text-on-surface-variant';
-        } else if (type === 'Vulnerability') {
-            icon = ShieldAlert;
-            borderClass = 'border-error/50';
-            headerClass = 'bg-error/10';
-            iconClass = 'text-error';
-            glowClass = 'glow-red';
-        } else if (type === 'CloudResource') {
-            icon = Cloud;
-            borderClass = 'border-primary-fixed/50';
-            headerClass = 'bg-primary-fixed/10';
-            iconClass = 'text-primary-fixed';
-            glowClass = 'glow-cyan';
-        } else if (type === 'Workflow') {
-            icon = Activity;
-            borderClass = 'border-secondary-container/50';
-            iconClass = 'text-secondary-container';
-        } else if (type === 'SemanticElement') {
-            icon = FileJson;
-            iconClass = 'text-primary';
-        } else if (type === 'CriticalOperation') {
-            icon = AlertTriangle;
-            borderClass = 'border-error/80';
-            headerClass = 'bg-error/20';
-            iconClass = 'text-error';
-            glowClass = 'glow-red';
-        }
+      switch (type) {
+        case 'Asset':
+          icon = Server;
+          borderColor = flowColors.asset;
+          iconColor = flowColors.asset;
+          break;
+        case 'Endpoint':
+          icon = Globe;
+          borderColor = flowColors.endpoint;
+          iconColor = flowColors.endpoint;
+          break;
+        case 'Vulnerability':
+          icon = ShieldAlert;
+          borderColor = flowColors.vuln;
+          headerBg = 'var(--danger-bg)';
+          iconColor = flowColors.vuln;
+          break;
+        case 'CloudResource':
+          icon = Cloud;
+          borderColor = flowColors.cloudResource;
+          headerBg = 'var(--accent-bg)';
+          iconColor = flowColors.cloudResource;
+          break;
+        case 'Workflow':
+          icon = Activity;
+          borderColor = 'var(--info-border)';
+          iconColor = 'var(--info)';
+          break;
+        case 'SemanticElement':
+          icon = FileJson;
+          iconColor = 'var(--accent)';
+          break;
+        case 'CriticalOperation':
+          icon = AlertTriangle;
+          borderColor = flowColors.vuln;
+          headerBg = 'var(--danger-bg)';
+          iconColor = flowColors.vuln;
+          break;
+      }
 
-        // Apply Layout Positions
-        let pos = { x: 0, y: 0 };
-        if (connectedNodeIds.has(n.id)) {
-            const dNode = dagreGraph.node(n.id);
-            pos = { x: (dNode?.x || 0) - NODE_WIDTH / 2, y: (dNode?.y || 0) - NODE_HEIGHT / 2 };
-        } else {
-            const idx = disconnectedNodes.findIndex(dn => dn.id === n.id);
-            pos = {
-                x: (idx % GRID_COLS) * GRID_X_SPACING,
-                y: gridStartY + Math.floor(idx / GRID_COLS) * GRID_Y_SPACING
-            };
-        }
-
-        return {
-            id: n.id,
-            position: pos,
-            type: 'custom',
-            data: { 
-                label: labelText, 
-                type: type?.toUpperCase() || 'UNKNOWN',
-                icon,
-                borderClass,
-                headerClass,
-                iconClass,
-                glowClass,
-                confidence,
-                isHighlighted
-            },
-            __raw: n
+      // Position
+      let pos = { x: 0, y: 0 };
+      if (connectedNodeIds.has(n.id)) {
+        const dNode = dagreGraph.node(n.id);
+        pos = {
+          x: (dNode?.x || 0) - NODE_WIDTH / 2,
+          y: (dNode?.y || 0) - NODE_HEIGHT / 2,
         };
+      } else {
+        const idx = disconnectedNodes.findIndex((dn: any) => dn.id === n.id);
+        pos = {
+          x: (idx % GRID_COLS) * GRID_X_SPACING,
+          y: gridStartY + Math.floor(idx / GRID_COLS) * GRID_Y_SPACING,
+        };
+      }
+
+      return {
+        id: n.id,
+        position: pos,
+        type: 'custom',
+        data: {
+          label: labelText,
+          type: type?.toUpperCase() || 'UNKNOWN',
+          icon,
+          borderColor,
+          headerBg,
+          iconColor,
+          confidence,
+          isHighlighted,
+        },
+        style: isHighlighted
+          ? { opacity: 1, zIndex: 10 }
+          : { opacity: 0.5, zIndex: 1 },
+        __raw: n,
+      };
     });
 
-    const mappedEdges = filteredEdges.map((e: any) => {
-        return {
-            id: e.id || `edge-${e.from}-${e.to}-${Math.random()}`,
-            source: e.from,
-            target: e.to,
-            label: e.type,
-            animated: true,
-            style: { stroke: flowColors.edgeStroke, strokeWidth: 1.5, opacity: 0.4 },
-            labelStyle: { fill: flowColors.edgeLabelFill, fontSize: 10, fontFamily: 'JetBrains Mono' },
-            labelBgStyle: { fill: flowColors.edgeLabelBg, fillOpacity: 0.9 },
-            labelBgPadding: [6, 4],
-            labelBgBorderRadius: 2
-        };
-    });
+    // Map to ReactFlow edges
+    const mappedEdges = filteredEdges.map((e: any) => ({
+      id: e.id || `edge-${e.from}-${e.to}-${Math.random().toString(36).slice(2, 8)}`,
+      source: e.from,
+      target: e.to,
+      label: e.type,
+      animated: true,
+      style: {
+        stroke: flowColors.edgeStroke,
+        strokeWidth: 1.5,
+        opacity: 0.4,
+      },
+      labelStyle: {
+        fill: flowColors.edgeLabelFill,
+        fontSize: 10,
+        fontFamily: "'JetBrains Mono', monospace",
+      },
+      labelBgStyle: {
+        fill: flowColors.edgeLabelBg,
+        fillOpacity: 0.9,
+      },
+      labelBgPadding: [6, 4] as [number, number],
+      labelBgBorderRadius: 4,
+    }));
 
     setNodes(mappedNodes);
     setEdges(mappedEdges);
-    
-    // Tiny delay to allow ReactFlow to render before we hide the loading screen
-    setTimeout(() => setIsRelayouting(false), 100);
+
+    setTimeout(() => setIsRelayouting(false), 150);
   }, [graphData, activeGraph, setNodes, setEdges, highlightedNodes, flowColors]);
 
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
-      setSelectedNode((node as any).__raw);
+    setSelectedNode((node as any).__raw);
   }, []);
 
   const inspectorData = useMemo(() => {
-      if (!selectedNode) return null;
-      return {
-          title: selectedNode.labels?.[0] || 'Node',
-          label: selectedNode.properties?.name || selectedNode.properties?.value || selectedNode.properties?.url || selectedNode.id,
-          confidence: selectedNode.properties?.confidence || 0,
-          status: selectedNode.properties?.status || 'DISCOVERED',
-          isVuln: selectedNode.labels?.includes('Vulnerability')
-      };
+    if (!selectedNode) return null;
+    return {
+      title: selectedNode.labels?.[0] || 'Node',
+      label: selectedNode.properties?.name || selectedNode.properties?.value || selectedNode.properties?.url || selectedNode.id,
+      confidence: selectedNode.properties?.confidence || 0,
+      status: selectedNode.properties?.status || 'DISCOVERED',
+      isVuln: selectedNode.labels?.includes('Vulnerability'),
+    };
   }, [selectedNode]);
 
+  const hasData = (graphData.nodes || []).length > 0;
+
   return (
-    <div className="flex flex-col h-full gap-6">
-      <div className="flex gap-4 items-center">
-        {['attack', 'workflow', 'cloud', 'learning'].map(g => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 16 }}>
+      {/* Graph type tabs */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        {(['attack', 'workflow', 'cloud', 'learning'] as const).map(g => (
           <button
             key={g}
-            onClick={() => setActiveGraph(g as any)}
-            className={`px-8 py-2.5 font-label-caps text-[11px] border transition-all ${
-              activeGraph === g 
-                ? 'bg-primary-container/10 border-primary-fixed text-primary-fixed glow-cyan shadow-[inset_0_0_10px_rgba(57,255,20,0.1)]' 
-                : 'bg-surface-container border-outline-variant text-on-surface-variant hover:bg-surface-variant hover:text-on-surface'
-            }`}
+            onClick={() => setActiveGraph(g)}
+            className={activeGraph === g ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
           >
-            {g?.toUpperCase()} GRAPH
+            {g.toUpperCase()} GRAPH
           </button>
         ))}
-        <div className="ml-auto text-on-surface-variant font-code-sm text-[11px] bg-black px-4 py-2 border border-outline-variant">
-           <span className="text-primary">{nodes.length}</span> NODES | <span className="text-secondary">{edges.length}</span> EDGES
+        <div
+          style={{
+            marginLeft: 'auto',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 11,
+            color: 'var(--text-tertiary)',
+            padding: '6px 12px',
+            background: 'var(--surface-1)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-md)',
+          }}
+        >
+          <span style={{ color: 'var(--accent)' }}>{nodes.length}</span> NODES |{' '}
+          <span style={{ color: 'var(--interactive)' }}>{edges.length}</span> EDGES
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 bg-surface border border-outline-variant relative overflow-hidden terminal-grid rounded-sm">
+      {/* Graph canvas */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: 'relative',
+          background: 'var(--surface-1)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg)',
+          overflow: 'hidden',
+        }}
+      >
         {isRelayouting ? (
-           <div className="absolute inset-0 flex flex-col items-center justify-center text-primary-fixed font-code-sm text-code-sm bg-black/80 z-50 backdrop-blur-sm">
-              <Activity className="animate-spin mb-4" size={32} />
-              CALCULATING HIERARCHICAL LAYOUT...
-           </div>
-        ) : nodes.length === 0 ? (
-           <div className="absolute inset-0 flex items-center justify-center">
-              <EmptyState
-                 message="No nodes in this graph view"
-                 hint="Awaiting knowledge graph ingestion for this engagement"
-                 icon={<Box size={28} />}
-              />
-           </div>
-        ) : (
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onNodeClick={onNodeClick}
-              colorMode="dark"
-              fitView
-              minZoom={0.05}
-              maxZoom={1.5}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'var(--surface-overlay)',
+              zIndex: 50,
+            }}
+          >
+            <Activity
+              size={32}
+              style={{
+                color: 'var(--accent)',
+                animation: 'spin 1s linear infinite',
+                marginBottom: 16,
+              }}
+            />
+            <span
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 12,
+                color: 'var(--accent)',
+              }}
             >
-              <Background color={flowColors.bgGrid} gap={30} size={1} className="opacity-0" />
-              <Controls className="bg-surface-container border-outline-variant text-on-surface fill-on-surface rounded-none shadow-xl" />
-              <MiniMap
-                 className="bg-surface-container border border-outline-variant rounded-none shadow-xl"
-                 nodeColor={(n: any) => {
-                    if (n.data?.type === 'VULNERABILITY') return flowColors.vuln;
-                    if (n.data?.type === 'CLOUDRESOURCE') return flowColors.cloudResource;
-                    if (n.data?.type === 'ASSET') return flowColors.asset;
-                    return flowColors.miniMapDefault;
-                 }}
-                 maskColor="rgba(0, 0, 0, 0.7)"
-              />
+              Calculating hierarchical layout...
+            </span>
+          </div>
+        ) : !hasData ? (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <EmptyState
+              message="No graph data available for this engagement"
+              hint="Start a mission to populate the knowledge graph"
+              icon={<Box size={28} />}
+            />
+          </div>
+        ) : nodes.length === 0 ? (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <EmptyState
+              message={`No ${activeGraph} graph nodes found`}
+              hint="Try a different graph view or wait for data ingestion"
+              icon={<Box size={28} />}
+            />
+          </div>
+        ) : (
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={onNodeClick}
+            fitView
+            minZoom={0.05}
+            maxZoom={1.5}
+            style={{ width: '100%', height: '100%' }}
+          >
+            <Background
+              color={flowColors.bgGrid}
+              gap={30}
+              size={1}
+              style={{ opacity: 0.3 }}
+            />
+            <Controls />
+            <MiniMap
+              nodeColor={(n: any) => {
+                if (n.data?.type === 'VULNERABILITY') return flowColors.vuln;
+                if (n.data?.type === 'CLOUDRESOURCE') return flowColors.cloudResource;
+                if (n.data?.type === 'ASSET') return flowColors.asset;
+                return flowColors.miniMap;
+              }}
+              maskColor="rgba(0, 0, 0, 0.6)"
+              style={{
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+              }}
+            />
 
-              <Panel position="top-left" className="ml-4 mt-4 w-72">
-                 <div className="bg-surface-container border border-outline-variant p-2 shadow-2xl">
-                    <div className="flex items-center gap-3 bg-black/40 border border-outline-variant px-3 py-2">
-                       <Search size={14} className="text-on-surface-variant" />
-                       <input 
-                          type="text" 
-                          placeholder="SEARCH GRAPH..." 
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="bg-transparent border-none outline-none font-code-sm text-[11px] text-primary w-full placeholder:text-on-surface-variant/30"
-                       />
+            {/* Search panel */}
+            <Panel position="top-left" style={{ marginLeft: 16, marginTop: 16 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  background: 'var(--surface-1)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '8px 12px',
+                  boxShadow: 'var(--shadow-lg)',
+                }}
+              >
+                <Search size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+                <input
+                  type="text"
+                  placeholder="Search graph nodes..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 12,
+                    color: 'var(--text-primary)',
+                    width: 200,
+                  }}
+                />
+              </div>
+            </Panel>
+
+            {/* Inspector panel */}
+            <Panel position="top-right" style={{ marginRight: 16, marginTop: 16, width: 280 }}>
+              <Card
+                title="Graph Inspector"
+                accent={inspectorData?.isVuln ? 'danger' : 'info'}
+              >
+                {inspectorData ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div
+                      style={{
+                        padding: 12,
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-md)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          letterSpacing: '0.1em',
+                          textTransform: 'uppercase',
+                          color: 'var(--text-tertiary)',
+                          marginBottom: 4,
+                          paddingBottom: 4,
+                          borderBottom: '1px solid var(--border)',
+                        }}
+                      >
+                        {inspectorData.title}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 12,
+                          color: 'var(--accent)',
+                          wordBreak: 'break-all',
+                          lineHeight: 1.5,
+                        }}
+                        title={inspectorData.label}
+                      >
+                        {inspectorData.label}
+                      </div>
                     </div>
-                 </div>
-              </Panel>
-              
-              <Panel position="top-right" className="w-80 mt-4 mr-4">
-                 <Card title="Graph Inspector" accent={inspectorData?.isVuln ? 'danger' : 'info'}>
-                    {inspectorData ? (
-                       <div className="font-code-sm text-[11px] space-y-5">
-                          <div className="bg-black/40 p-3 border border-outline-variant">
-                             <div className="text-on-surface-variant text-label-xs mb-2 uppercase tracking-widest border-b border-outline-variant/30 pb-1">{inspectorData.title}</div>
-                             <div className="text-primary break-all leading-relaxed" title={inspectorData.label}>{inspectorData.label}</div>
-                          </div>
-                          
-                          {inspectorData.confidence > 0 && (
-                              <div>
-                                 <div className="text-on-surface-variant text-label-xs mb-2 uppercase tracking-widest">Confidence</div>
-                                 <div className="flex items-center gap-3">
-                                    <div className="flex-1 h-1.5 bg-surface-variant">
-                                       <div className={`h-full ${inspectorData.isVuln ? 'bg-error glow-red' : 'bg-primary-fixed glow-cyan'}`} style={{ width: `${inspectorData.confidence * 100}%` }}></div>
-                                    </div>
-                                    <span className={inspectorData.isVuln ? 'text-error' : 'text-primary-fixed'}>{(inspectorData.confidence * 100).toFixed(0)}%</span>
-                                 </div>
-                              </div>
-                          )}
-                          
-                          <div className="flex justify-between items-center bg-black/40 p-3 border border-outline-variant">
-                             <div className="text-on-surface-variant text-label-xs uppercase tracking-widest">Status</div>
-                             <div className={`${inspectorData.isVuln ? 'text-error glow-red' : 'text-primary-fixed glow-cyan'} font-bold tracking-widest px-2 py-0.5 border ${inspectorData.isVuln ? 'border-error/30' : 'border-primary-fixed/30'}`}>
-                                {inspectorData.status?.toUpperCase()}
-                             </div>
-                          </div>
-                          
-                          <button 
-                            onClick={() => alert(`Showing evidence for ${inspectorData.label}... (Not implemented in demo)`)}
-                            className="w-full py-3 bg-surface-container-high border border-outline-variant text-on-surface font-label-caps text-[10px] hover:bg-surface-variant transition-all mt-4"
-                          >
-                             VIEW EVIDENCE TIMELINE
-                          </button>
-                       </div>
-                    ) : (
-                        <div className="text-on-surface-variant text-[11px] font-code-sm italic text-center py-8 opacity-60">
-                            Select a node in the graph to inspect properties.
+
+                    {inspectorData.confidence > 0 && (
+                      <div>
+                        <div
+                          style={{
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontSize: 9,
+                            fontWeight: 700,
+                            letterSpacing: '0.1em',
+                            textTransform: 'uppercase',
+                            color: 'var(--text-tertiary)',
+                            marginBottom: 6,
+                          }}
+                        >
+                          Confidence
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div className="progress" style={{ flex: 1 }}>
+                            <div
+                              className="progress-bar"
+                              style={{
+                                width: `${inspectorData.confidence * 100}%`,
+                                background: inspectorData.isVuln ? 'var(--danger)' : 'var(--accent)',
+                              }}
+                            />
+                          </div>
+                          <span
+                            style={{
+                              fontFamily: "'JetBrains Mono', monospace",
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: inspectorData.isVuln ? 'var(--danger)' : 'var(--accent)',
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            {(inspectorData.confidence * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
                     )}
-                 </Card>
-              </Panel>
-            </ReactFlow>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '8px 12px',
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-md)',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          letterSpacing: '0.1em',
+                          textTransform: 'uppercase',
+                          color: 'var(--text-tertiary)',
+                        }}
+                      >
+                        Status
+                      </span>
+                      <span
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: '0.08em',
+                          color: inspectorData.isVuln ? 'var(--danger)' : 'var(--accent)',
+                          padding: '2px 8px',
+                          background: inspectorData.isVuln ? 'var(--danger-bg)' : 'var(--accent-bg)',
+                          border: `1px solid ${inspectorData.isVuln ? 'var(--danger-border)' : 'var(--accent-border)'}`,
+                          borderRadius: 'var(--radius-full)',
+                        }}
+                      >
+                        {inspectorData.status?.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      padding: '32px 16px',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 12,
+                      color: 'var(--text-tertiary)',
+                      fontStyle: 'italic',
+                    }}
+                  >
+                    Select a node to inspect its properties
+                  </div>
+                )}
+              </Card>
+            </Panel>
+          </ReactFlow>
         )}
       </div>
     </div>

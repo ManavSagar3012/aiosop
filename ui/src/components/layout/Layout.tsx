@@ -19,13 +19,16 @@ export const Layout: React.FC = () => {
       <div className="flex flex-col flex-1 overflow-hidden" style={{ zIndex: 1 }}>
         <Header />
         <main
-          className="flex-1 overflow-y-auto custom-scrollbar"
+          className="flex-1 overflow-y-auto custom-scrollbar flex flex-col"
           style={{
             padding: 24,
             background: 'var(--bg-page)',
           }}
         >
-          <div className="mx-auto" style={{ maxWidth: 'var(--container-max, 1440px)' }}>
+          <div
+            className="mx-auto flex-1 flex flex-col"
+            style={{ maxWidth: 'var(--container-max, 1440px)', width: '100%' }}
+          >
             <Outlet />
           </div>
         </main>
