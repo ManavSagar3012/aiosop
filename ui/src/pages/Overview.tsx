@@ -4,6 +4,9 @@ import { StatTile } from '../components/shared/StatTile';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { DataTable, Column } from '../components/shared/DataTable';
 import { EmptyState } from '../components/shared/EmptyState';
+import { MissionBriefing } from '../components/shared/MissionBriefing';
+import { FindingDetail } from '../components/shared/FindingDetail';
+import { AttackTimeline } from '../components/shared/AttackTimeline';
 import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore, Finding } from '../store/useIntelligenceStore';
 import {
@@ -64,50 +67,14 @@ export const Overview: React.FC = () => {
   const total = (findings || []).length;
   const conversion = total > 0 ? ((verifiedCount / total) * 100).toFixed(0) : '0';
   const fpr = total > 0 ? ((rejectedCount / total) * 100).toFixed(1) : '0.0';
-  const spent = budget?.spent || 0;
-  const cap = budget?.total || 0;
+  const spent = (budget?.spent || 0) + (agents || []).reduce((acc, a) => acc + (a.cost_incurred || 0), 0);
+  const cap = budget?.total || 1000;
   const spendPct = Math.min(100, (spent / (cap || 1)) * 100);
 
   return (
     <div className="flex flex-col gap-gutter">
-      {/* ── Command bar ─────────────────────────────────────────────── */}
-      <header className="reveal-up hud-corners relative bg-surface-container-low border border-outline-variant overflow-hidden">
-        <div className="absolute inset-0 terminal-grid opacity-[0.06] pointer-events-none" />
-        {/* ambient sweep */}
-        <div className="absolute top-0 left-0 h-px w-1/4 bg-gradient-to-r from-transparent via-primary-fixed to-transparent sweep-line pointer-events-none" />
-        <div className="relative flex items-center justify-between p-5">
-          <div className="flex items-center gap-4">
-            <div className="relative p-2.5 bg-primary-fixed/10 border border-primary-fixed/30 text-primary-fixed">
-              <Terminal size={20} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-display-lg text-display-lg text-on-surface tracking-tight">
-                  COMMAND CORE
-                </h1>
-                <span className="w-1.5 h-1.5 rounded-full bg-primary-fixed live-dot" />
-              </div>
-              {sessionId ? (
-                <div className="font-code-sm text-[11px] text-on-surface-variant mt-0.5">
-                  ACTIVE SESSION <span className="text-primary-fixed">{sessionId}</span>
-                </div>
-              ) : (
-                <div className="font-code-sm text-[11px] text-on-surface-variant/60 mt-0.5 italic">
-                  Standing by — no active research session
-                </div>
-              )}
-            </div>
-          </div>
-          {sessionId && (
-            <Link
-              to={`/report/${sessionId}`}
-              className="flex items-center gap-2 px-4 py-2 bg-primary-fixed text-black font-label-caps text-[11px] font-bold hover:brightness-110 active:scale-95 transition-all glow-cyan"
-            >
-              <FileText size={14} /> MISSION REPORT <ArrowUpRight size={13} />
-            </Link>
-          )}
-        </div>
-      </header>
+      {/* ── Mission Briefing ───────────────────────────────────────── */}
+      <MissionBriefing />
 
       {/* ── KPI grid ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-4 gap-gutter">
@@ -129,18 +96,42 @@ export const Overview: React.FC = () => {
         />
       </div>
 
-      {/* ── Ledger + Health ─────────────────────────────────────────── */}
+      {/* ── Timeline + Findings ────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-6">
         <div className="reveal-up col-span-2" style={{ animationDelay: '300ms' }}>
-          <Card title="Swarm Activity Ledger" className="min-h-[400px] overflow-hidden">
-            <div className="max-h-[420px]">
+          <Card title="Findings" className="min-h-[400px] overflow-hidden">
+            <div className="max-h-[420px] space-y-3">
+              {(findings || []).length > 0 ? (
+                (findings || []).slice(0, 10).map((f) => (
+                  <FindingDetail key={f.id} finding={f} />
+                ))
+              ) : (
+                <EmptyState
+                  message="No findings yet — swarm is scanning the attack surface…"
+                  icon={<Radar size={28} />}
+                />
+              )}
+            </div>
+          </Card>
+        </div>
+
+        <div className="reveal-up" style={{ animationDelay: '360ms' }}>
+          <AttackTimeline />
+        </div>
+      </div>
+
+      {/* ── Ledger + Health ─────────────────────────────────────────── */}
+      <div className="grid grid-cols-3 gap-6">
+        <div className="reveal-up col-span-2" style={{ animationDelay: '400ms' }}>
+          <Card title="Swarm Activity Ledger" className="min-h-[300px] overflow-hidden">
+            <div className="max-h-[320px]">
               <DataTable<Finding>
                 columns={ledgerColumns}
                 rows={findings || []}
                 rowKey={(f) => f.id}
                 empty={
                   <EmptyState
-                    message="No findings yet — swarm is scanning the attack surface…"
+                    message="No findings yet"
                     icon={<Radar size={28} />}
                   />
                 }
@@ -149,10 +140,9 @@ export const Overview: React.FC = () => {
           </Card>
         </div>
 
-        <div className="reveal-up" style={{ animationDelay: '360ms' }}>
+        <div className="reveal-up" style={{ animationDelay: '460ms' }}>
           <Card title="System Health Monitoring">
             <div className="space-y-5 py-1">
-              {/* Active swarm */}
               <div className="hud-corners bg-black/40 border border-outline-variant p-4">
                 <div className="font-label-caps text-label-caps text-on-surface-variant mb-3 uppercase">
                   Active Swarm Engine
@@ -168,7 +158,6 @@ export const Overview: React.FC = () => {
                 </div>
               </div>
 
-              {/* Spend */}
               <div className="bg-black/40 border border-outline-variant p-4">
                 <div className="font-label-caps text-label-caps text-on-surface-variant mb-3 uppercase">
                   Operational Spend
@@ -185,7 +174,6 @@ export const Overview: React.FC = () => {
                 </div>
               </div>
 
-              {/* Telemetry */}
               <div className="flex items-center gap-2 pt-1 text-on-surface-variant/50">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary-fixed live-dot" />
                 <p className="font-code-sm text-label-xs italic">Monitoring live swarm telemetry…</p>
