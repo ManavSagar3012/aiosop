@@ -3,7 +3,6 @@ Security Bridge MCP Adapter
 Standardized interface for high-performance offensive tools (sqlmap, nmap, ffuf).
 """
 
-import logging
 from typing import Any, Dict, List, Optional
 
 from ai_osop.core.exceptions import MCPException
@@ -21,12 +20,15 @@ class SecurityBridgeAdapter:
 
     async def initialize(self, scope: Dict[str, Any], session_id: str) -> None:
         """Initialize the connection to the security-bridge server."""
+        # FIX (scope-gate-2026-08-24): retain scope for client-side registry
+        # validation of every subsequent tool call (defense-in-depth).
+        self._scope: Optional[Dict[str, Any]] = scope
         await self.registry.initialize_server(self.SERVER_ID, scope, {}, session_id)
 
     async def run_nmap(self, target: str, fast: bool = False) -> List[Asset]:
         """Run Nmap scan against target."""
         params = {"target": target, "fast": fast}
-        response = await self.registry.execute_tool(self.SERVER_ID, "nmap", params)
+        response = await self.registry.execute_tool(self.SERVER_ID, "nmap", params, scope=self._scope)
 
         if response.status != "success":
             raise MCPException(f"Nmap execution failed: {response.error}")
@@ -80,7 +82,7 @@ class SecurityBridgeAdapter:
         if dump:
             params["dump"] = True
 
-        response = await self.registry.execute_tool(self.SERVER_ID, "sqlmap", params)
+        response = await self.registry.execute_tool(self.SERVER_ID, "sqlmap", params, scope=self._scope)
 
         if response.status != "success":
             raise MCPException(f"SQLMap execution failed: {response.error}")
@@ -93,7 +95,7 @@ class SecurityBridgeAdapter:
             url = url.rstrip("/") + "/FUZZ"
 
         params = {"url": url}
-        response = await self.registry.execute_tool(self.SERVER_ID, "ffuf", params)
+        response = await self.registry.execute_tool(self.SERVER_ID, "ffuf", params, scope=self._scope)
 
         if response.status != "success":
             raise MCPException(f"FFUF execution failed: {response.error}")
@@ -123,7 +125,9 @@ class SecurityBridgeAdapter:
         discovery previously returned nothing even when katana found URLs.
         """
         params = {"url": url, "depth": depth, "js_crawl": True}
-        response = await self.registry.execute_tool(self.SERVER_ID, "katana_crawl", params)
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "katana_crawl", params, scope=self._scope
+        )
 
         if response.status != "success":
             raise MCPException(f"Katana crawl failed: {response.error}")
@@ -191,7 +195,9 @@ class SecurityBridgeAdapter:
     async def run_js_analyze(self, js_url: str) -> Dict[str, Any]:
         """Analyze JS file for routes and secrets."""
         params = {"js_url": js_url}
-        response = await self.registry.execute_tool(self.SERVER_ID, "js_analyze", params)
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "js_analyze", params, scope=self._scope
+        )
 
         if response.status != "success":
             raise MCPException(f"JS analysis failed: {response.error}")

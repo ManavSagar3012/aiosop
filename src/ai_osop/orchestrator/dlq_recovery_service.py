@@ -12,12 +12,13 @@ Features:
 """
 
 import asyncio
-import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import redis.asyncio as redis
+
+from ai_osop.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +39,16 @@ class DLQRecoveryService:
 
     def __init__(
         self,
-        redis_url: str = "redis://localhost:6379",
+        # FIX (redis-url-settings-2026-08-23): default was hardcoded to 6379 and
+        # ignored OSOP_REDIS_URI. Resolve from settings so deployments on a
+        # non-default Redis port (e.g. the compose remap to 6381) are honored.
+        redis_url: Optional[str] = None,
         engagement_id: str = "default",
         max_retries: int = 3,
         min_idle_time_ms: int = 5000,  # 5 seconds
         check_interval_sec: int = 10,
     ):
-        self.redis_url = redis_url
+        self.redis_url = redis_url or settings.redis_uri
         self.engagement_id = engagement_id
         self.stream_name = f"aiosop:{engagement_id}:events"
         self.dlq_stream = f"aiosop:{engagement_id}:dlq"
@@ -75,7 +79,8 @@ class DLQRecoveryService:
     async def disconnect(self):
         """Close Redis connection."""
         if self.redis:
-            await self.redis.close()
+            # FIX (redis-aclose-2026-08-24): deprecated close() -> aclose().
+            await self.redis.aclose()
             logger.info("DLQ Recovery Service disconnected")
 
     async def start(self):

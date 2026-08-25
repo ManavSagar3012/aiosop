@@ -4,18 +4,16 @@ Multi-step exploitation reasoning, privilege escalation mapping,
 and attack graph path discovery.
 """
 
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import structlog
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.chain_composer import ChainComposer
 from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import AgentException, OutOfScopeError, ScopeValidationError
 from ai_osop.core.models import (
     AttackPath,
-    Exploit,
     PrimitiveLedger,
     PrimitiveType,
     Task,

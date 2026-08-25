@@ -45,7 +45,7 @@ from ai_osop.core.config import settings
 from ai_osop.memory.session_memory import Base, SessionMemory
 
 if TYPE_CHECKING:  # avoid circular import at runtime
-    from ai_osop.auth.session_client import SessionClient
+    pass
 
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ class SessionEncryption:
                 b64_key = base64.urlsafe_b64encode(key_bytes)
                 self._fernet = Fernet(b64_key)
             except Exception as exc:
-                logger.warning("session_encryption_init_failed", error=str(exc))
+                logger.warning(f"session_encryption_init_failed error={exc}")
         else:
             # P1: fail hard in production when session encryption key is missing
             if settings.environment != "development":
@@ -107,7 +107,7 @@ class SessionEncryption:
         try:
             return self._fernet.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
         except Exception as exc:
-            logger.warning("session_decryption_failed", error=str(exc))
+            logger.warning(f"session_decryption_failed error={exc}")
             return ciphertext
 
     def encrypt_dict(self, d: Dict[str, Any]) -> Dict[str, Any]:

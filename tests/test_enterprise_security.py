@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ai_osop.core.config import settings
 from ai_osop.core.config import scope_signing_key
 
 
@@ -651,7 +652,7 @@ class TestSelfPentestAgent:
         from ai_osop.agents.self_pentest_agent import SelfPentestAgent
 
         agent = SelfPentestAgent(
-            redis_url="redis://localhost:6379",
+            redis_url=settings.redis_uri,
             neo4j_uri="bolt://localhost:7687",
         )
         report = await agent.run_full_pentest()

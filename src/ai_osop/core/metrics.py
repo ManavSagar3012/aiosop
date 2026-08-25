@@ -66,6 +66,14 @@ TASKS_FAILED_TOTAL = Counter(
     "Total failed tasks",
     ["agent_type"],
 )
+# FIX (scope-gate-2026-08-24): observability for the client-side scope gate.
+# Every denied MCP tool call increments this so operators can see attempted
+# out-of-scope activity (agent hallucination or compromise) at a glance.
+SCOPE_DENIED_TOTAL = Counter(
+    "ai_osop_scope_denied_total",
+    "MCP tool calls rejected by the scope gate",
+    ["server_id"],
+)
 TASK_DURATION_SECONDS = Histogram(
     "ai_osop_task_duration_seconds",
     "Task execution duration",

@@ -51,7 +51,7 @@ async def session_memory():
     yield sm
     await sm._pg_engine.dispose()
     if sm._redis:
-        await sm._redis.close()
+        await sm._redis.aclose()  # FIX (redis-aclose-2026-08-24)
 
 
 @pytest.fixture

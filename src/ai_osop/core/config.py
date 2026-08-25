@@ -243,6 +243,11 @@ class Settings(BaseSettings):
     #   2. warm-up at startup (LiteLLMClient.warm_up) so the first real engagement call
     #      hits an already-resident model.
     llm_keep_alive: str = Field(default="30m", validation_alias="OSOP_LLM_KEEP_ALIVE")
+    # FIX (llm-ollama-numctx-2026-08-23): explicit context window for local Ollama
+    # models. Hosts with OLLAMA_CONTEXT_LENGTH set very high (e.g. 262144) otherwise
+    # attempt multi-GB KV-cache allocations on every load and fail. 0 disables the
+    # override (use the server default).
+    llm_ollama_num_ctx: int = Field(default=8192, validation_alias="OSOP_LLM_OLLAMA_NUM_CTX")
     # Advisory reasoning (agent think()) does not need the full 4096-token budget, and
     # on a reasoning model like qwen3 a large budget means a long <think> trace that
     # blows the latency bound. Cap think() generation separately.
@@ -440,7 +445,9 @@ class Settings(BaseSettings):
     mtls_enabled: bool = Field(default=False, validation_alias="OSOP_MTLS_ENABLED")
     mtls_cert_path: Optional[str] = Field(default=None, validation_alias="OSOP_MTLS_CERT_PATH")
     mtls_key_path: Optional[str] = Field(default=None, validation_alias="OSOP_MTLS_KEY_PATH")
-    mtls_ca_cert_path: Optional[str] = Field(default=None, validation_alias="OSOP_MTLS_CA_CERT_PATH")
+    mtls_ca_cert_path: Optional[str] = Field(
+        default=None, validation_alias="OSOP_MTLS_CA_CERT_PATH"
+    )
     redis_tls_enabled: bool = Field(default=False, validation_alias="OSOP_REDIS_TLS_ENABLED")
     neo4j_tls_enabled: bool = Field(default=False, validation_alias="OSOP_NEO4J_TLS_ENABLED")
 

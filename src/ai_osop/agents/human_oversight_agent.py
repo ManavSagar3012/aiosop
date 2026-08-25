@@ -3,8 +3,7 @@ Human Oversight Agent
 Manages approval flows, risk translation, and operator communication.
 """
 
-from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType

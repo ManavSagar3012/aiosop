@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from ai_osop.adapters.payload_mcp import PayloadMCPAdapter
-from ai_osop.core.config import VulnClass, settings
+from ai_osop.core.config import VulnClass
 from ai_osop.core.models import Payload
 
 

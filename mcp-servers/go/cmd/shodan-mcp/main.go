@@ -37,5 +37,12 @@ func main() {
 			return body
 		},
 	})
-	_ = server.Run(":8085")
+		// FIX (mcp-port-env-2026-08-23): port was hardcoded, so the binary could not
+	// be moved off a conflicting host port without a rebuild-by-edit. Read the
+	// platform env (same var the Python settings use); fall back to the default.
+	port := os.Getenv("OSOP_SHODAN_MCP_PORT")
+	if port == "" {
+		port = "8085"
+	}
+	_ = server.Run(":" + port)
 }

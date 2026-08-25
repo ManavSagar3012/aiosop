@@ -3,8 +3,7 @@
 All engagement lifecycle endpoints: create, list, get, transition, halt.
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 

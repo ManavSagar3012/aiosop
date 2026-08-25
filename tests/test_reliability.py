@@ -234,8 +234,23 @@ class TestDeadLetterQueue:
         mem, store, _ = mock_session_memory
         dlq = DeadLetterQueue(mem)
 
-        e1 = await dlq.enqueue(sample_task, reason="retry_exhausted", final_error="e1")
-        e2 = await dlq.enqueue(sample_task, reason="retry_exhausted", final_error="e2")
+        # FIX (dlq-stats-dedup-2026-08-23): enqueueing the SAME task twice now
+        # returns a dedup stub ("dlq-dedup-...") without storing a second entry
+        # (Phase 6 replay protection), so discard(e2) was a silent no-op and
+        # stats["discarded"] stayed 0. Use distinct tasks to exercise both paths.
+        task_a = sample_task
+        from ai_osop.core.models import Task as _Task
+
+        task_b = _Task(
+            type="test_task",
+            agent_type=sample_task.agent_type,
+            engagement_id="eng-123",
+            payload={"url": "https://example.org"},
+            max_retries=3,
+        )
+        e1 = await dlq.enqueue(task_a, reason="retry_exhausted", final_error="e1")
+        e2 = await dlq.enqueue(task_b, reason="retry_exhausted", final_error="e2")
+        assert e1 != e2, "distinct tasks must produce distinct DLQ entries"
         await dlq.requeue(e1)
         await dlq.discard(e2, "discarded")
 

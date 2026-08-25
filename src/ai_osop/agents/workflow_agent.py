@@ -3,20 +3,18 @@ Playwright Intelligence Agent
 Orchestrates real browser journeys, handles authentication, and maps workflows.
 """
 
-import hashlib
-import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.adapters.browser_mcp import BrowserMCPAdapter
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.auth.api_inventory import HARExtractor, persist_endpoints
 from ai_osop.auth.session_store import SessionStore
-from ai_osop.core.config import AgentType, settings
+from ai_osop.core.config import AgentType
 from ai_osop.core.diff_auth_analyzer import DiffAuthAnalyzer
 from ai_osop.core.diff_auth_engine import DifferentialAuthEngine
-from ai_osop.core.models import Observation, Task, Workflow, WorkflowStep, WorkflowTransition
+from ai_osop.core.models import Task, Workflow, WorkflowStep, WorkflowTransition
 
 logger = logging.getLogger(__name__)
 

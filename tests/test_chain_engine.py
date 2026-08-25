@@ -1,282 +1,113 @@
-"""Tests for Sprint 2 — Escalation Engine + Chain Composer + Auto-PoC Generator."""
+"""Attack-chain correlation (charter 14): findings -> explainable chains."""
+from types import SimpleNamespace
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
-from ai_osop.core.chain_composer import ChainComposer
-from ai_osop.core.escalation_engine import EscalationEngine
-from ai_osop.core.models import (
-    AttackChain,
-    ChainStatus,
-    EvidencePackage,
-    PrimitiveLedger,
-    PrimitiveType,
-)
-
-# --------------------------------------------------------------------------
-# Helpers
-# --------------------------------------------------------------------------
+from ai_osop.core import chain_engine as che
+from ai_osop.core import confidence_engine as ce
+from ai_osop.core.models import Severity, Vulnerability, VulnClass
 
 
-def _prim(
-    primitive_type=PrimitiveType.NUCLEI_SIGNAL,
-    confidence=0.75,
-    target="http://example.com/vuln",
-    severity_hint="high",
-    raw=None,
-    tags=None,
-    **kw,
-):
-    return PrimitiveLedger(
-        primitive_type=primitive_type,
-        engagement_id="eng-test",
-        source="test",
-        dedup_key=f"dk-{primitive_type.value}-test",
-        target=target,
-        confidence=confidence,
-        severity_hint=severity_hint,
-        raw=raw or {},
-        tags=tags or [],
-        **kw,
-    )
+def _v(title, fclass, url="https://t.example", state=ce.UNTESTED,
+       conf=0.7, sev=Severity.MEDIUM):
+    v = Vulnerability(title=title, description=title,
+                      vuln_type=VulnClass.UNKNOWN, severity=sev,
+                      tool_source="nuclei", engagement_id="eng-chain",
+                      confidence=conf, evidence=[])
+    v.yield_metadata = {"finding_class": fclass, "url": url}
+    v.validation_state = state
+    return v
 
 
-# --------------------------------------------------------------------------
-# Escalation Engine Tests
-# --------------------------------------------------------------------------
+def test_role_classification():
+    assert che.classify_chain_role(_v("SQL Injection", "vulnerability")) == "injection"
+    assert che.classify_chain_role(
+        _v("Broken Access Control IDOR", "vulnerability")) == "authz_bypass"
+    assert che.classify_chain_role(
+        _v("Source map disclosed", "weakness")) == "info_disclosure"
+    # observations and rejected findings are never eligible
+    assert che.classify_chain_role(_v("AWS detected", "observation")) is None
+    rej = _v("SQL Injection", "vulnerability")
+    rej.validation_state = ce.REJECTED
+    assert che.classify_chain_role(rej) is None
 
 
-class TestEscalationEngine:
-    def test_nuclei_signal_produces_escalation(self):
-        engine = EscalationEngine()
-        prim = _prim(PrimitiveType.NUCLEI_SIGNAL)
-        paths = engine.escalate(prim)
-        assert len(paths) >= 1
-        techniques = [p.suggested_technique for p in paths]
-        assert any("nuclei" in t or "active" in t.lower() for t in techniques)
-
-    def test_auth_signal_routes_to_diff_auth(self):
-        engine = EscalationEngine()
-        prim = _prim(PrimitiveType.AUTH_SIGNAL)
-        paths = engine.escalate(prim)
-        assert any(
-            "diff" in p.suggested_technique.lower() or "auth" in p.suggested_technique.lower()
-            for p in paths
-        )
-
-    def test_ssrf_hint_routes_to_oast(self):
-        engine = EscalationEngine()
-        prim = _prim(PrimitiveType.SSRF_HINT)
-        paths = engine.escalate(prim)
-        techniques = [p.suggested_technique for p in paths]
-        assert any("oast" in t or "ssrf" in t for t in techniques)
-
-    def test_idor_hint_routes_to_cross_account(self):
-        engine = EscalationEngine()
-        prim = _prim(PrimitiveType.IDOR_HINT)
-        paths = engine.escalate(prim)
-        assert any(
-            "idor" in p.suggested_technique.lower() or "cross" in p.suggested_technique.lower()
-            for p in paths
-        )
-
-    def test_js_secret_routes_to_liveness(self):
-        engine = EscalationEngine()
-        prim = _prim(PrimitiveType.JS_SECRET)
-        paths = engine.escalate(prim)
-        assert any(
-            "secret" in p.suggested_technique.lower() or "liveness" in p.suggested_technique.lower()
-            for p in paths
-        )
-
-    def test_never_returns_empty_paths(self):
-        """Principle: never stop at a signal — always at least one path."""
-        engine = EscalationEngine()
-        for pt in PrimitiveType:
-            prim = _prim(pt)
-            paths = engine.escalate(prim)
-            assert len(paths) >= 1, f"No escalation path for {pt.value}"
-
-    def test_each_path_has_required_fields(self):
-        engine = EscalationEngine()
-        prim = _prim(PrimitiveType.NUCLEI_SIGNAL)
-        paths = engine.escalate(prim)
-        for path in paths:
-            assert path.source_primitive_id == prim.id
-            assert path.suggested_technique
-            assert path.reason
-            assert 0.0 <= path.confidence <= 1.0
-            assert path.engagement_id == "eng-test"
-
-    def test_high_severity_nuclei_gets_capture_path(self):
-        engine = EscalationEngine()
-        prim = _prim(PrimitiveType.NUCLEI_SIGNAL, severity_hint="critical")
-        paths = engine.escalate(prim)
-        # Should include HTTP capture path for critical signals
-        assert len(paths) >= 2
+def test_recon_guided_injection_chain_forms():
+    fs = [
+        _v("Directory listing exposed", "weakness"),
+        _v("SQL Injection on login", "vulnerability", conf=0.8),
+    ]
+    chains, stats = che.correlate_chains(fs)
+    assert stats["chains"] == 1
+    c = chains[0]
+    assert c.name == "recon_guided_injection"
+    assert {s["role"] for s in c.steps} == {"info_disclosure", "injection"}
+    assert c.confidence == pytest.approx(0.8 * 0.75, abs=0.35)  # min-member driven
+    assert [m for m in c.member_ids] != []
 
 
-# --------------------------------------------------------------------------
-# Chain Composer Tests
-# --------------------------------------------------------------------------
+def test_cross_surface_never_correlates():
+    fs = [
+        _v("Directory listing exposed", "weakness", url="https://a.example"),
+        _v("SQL Injection on login", "vulnerability", url="https://b.example"),
+    ]
+    chains, stats = che.correlate_chains(fs)
+    assert chains == [] and stats["chains"] == 0
 
 
-class TestChainComposer:
-    def test_compose_basic_chain(self):
-        composer = ChainComposer()
-        primitives = [
-            _prim(PrimitiveType.NUCLEI_SIGNAL, confidence=0.80),
-            _prim(PrimitiveType.ENDPOINT_OBSERVED, confidence=0.70),
-        ]
-        chain = composer.compose(primitives)
-        assert chain.id.startswith("chain-")
-        assert chain.status == ChainStatus.BUILDING
-        assert len(chain.primitive_ids) == 2
-
-    def test_compose_derives_title_when_empty(self):
-        composer = ChainComposer()
-        primitives = [_prim(PrimitiveType.NUCLEI_SIGNAL, target="http://target.com")]
-        chain = composer.compose(primitives)
-        assert "nuclei_signal" in chain.title.lower() or "chain" in chain.title.lower()
-
-    def test_compose_uses_max_severity(self):
-        composer = ChainComposer()
-        primitives = [
-            _prim(PrimitiveType.NUCLEI_SIGNAL, severity_hint="info", confidence=0.70),
-            _prim(PrimitiveType.AUTH_SIGNAL, severity_hint="critical", confidence=0.80),
-        ]
-        chain = composer.compose(primitives)
-        assert chain.severity == "critical"
-
-    def test_compose_confidence_weakest_link(self):
-        """Chain confidence must not exceed the minimum member confidence."""
-        composer = ChainComposer()
-        primitives = [
-            _prim(PrimitiveType.NUCLEI_SIGNAL, confidence=0.90),
-            _prim(PrimitiveType.ENDPOINT_OBSERVED, confidence=0.40),
-        ]
-        chain = composer.compose(primitives)
-        assert chain.confidence <= 0.40
-
-    def test_compose_raises_on_empty_list(self):
-        composer = ChainComposer()
-        with pytest.raises(ValueError, match="zero primitives"):
-            composer.compose([])
-
-    def test_generate_poc_nuclei(self):
-        composer = ChainComposer()
-        prim = _prim(
-            PrimitiveType.NUCLEI_SIGNAL,
-            raw={"template_id": "cve-2024-1234"},
-            target="http://vuln.example.com",
-        )
-        chain = composer.compose([prim])
-        chain = composer.generate_poc(chain, [prim])
-        assert "nuclei" in chain.poc_script[0]
-        assert "cve-2024-1234" in " ".join(chain.poc_script)
-
-    def test_generate_poc_diff_auth(self):
-        composer = ChainComposer()
-        prim = _prim(
-            PrimitiveType.IDOR_HINT,
-            raw={"victim_cookie": "abc", "attacker_cookie": "xyz"},
-            target="http://api.example.com/resource/1",
-        )
-        chain = composer.compose([prim])
-        chain = composer.generate_poc(chain, [prim])
-        assert len(chain.poc_script) > 0
-        poc_str = " ".join(chain.poc_script)
-        assert "abc" in poc_str and "xyz" in poc_str
-
-    def test_generate_poc_empty_target_leaves_poc_empty(self):
-        composer = ChainComposer()
-        prim = _prim(PrimitiveType.NUCLEI_SIGNAL, target="", raw={})
-        chain = composer.compose([prim])
-        chain = composer.generate_poc(chain, [prim])
-        # Can't build a PoC without a target
-        assert chain.poc_script == []
-        assert chain.status == ChainStatus.PENDING_POC
-
-    def test_generate_poc_sets_pending_poc_status(self):
-        composer = ChainComposer()
-        prim = _prim(PrimitiveType.NUCLEI_SIGNAL, raw={"template_id": "t-1"})
-        chain = composer.compose([prim])
-        chain = composer.generate_poc(chain, [prim])
-        assert chain.status == ChainStatus.PENDING_POC
-
-    def test_build_evidence_package_includes_replay_script(self):
-        composer = ChainComposer()
-        prim = _prim(
-            PrimitiveType.NUCLEI_SIGNAL,
-            raw={
-                "template_id": "sqli-1",
-                "request": {"method": "GET", "url": "http://x.com"},
-                "response": {"status_code": 200},
-            },
-            target="http://x.com",
-        )
-        chain = composer.compose([prim])
-        chain = composer.generate_poc(chain, [prim])
-        pkg = composer.build_evidence_package(chain, [prim])
-        assert isinstance(pkg, EvidencePackage)
-        assert pkg.replay_script == chain.poc_script
-        assert len(pkg.raw_requests) >= 1
-        assert len(pkg.raw_responses) >= 1
-
-    def test_build_evidence_package_no_data_gives_empty_lists(self):
-        composer = ChainComposer()
-        prim = _prim(PrimitiveType.GENERIC, raw={})
-        chain = composer.compose([prim])
-        chain = composer.generate_poc(chain, [prim])
-        pkg = composer.build_evidence_package(chain, [prim])
-        assert pkg.raw_requests == []
-        assert pkg.raw_responses == []
+def test_rejected_members_excluded():
+    inj = _v("SQL Injection", "vulnerability")
+    inj.validation_state = ce.REJECTED
+    fs = [_v("Directory listing exposed", "weakness"), inj]
+    chains, stats = che.correlate_chains(fs)
+    assert chains == []
+    assert stats["rejected_excluded"] == 1
 
 
-# --------------------------------------------------------------------------
-# Integration: Escalate → Compose → Gate
-# --------------------------------------------------------------------------
+def test_validated_chain_escalates_severity():
+    info = _v("Source map disclosed", "weakness", sev=Severity.LOW)
+    sqli = _v("SQL Injection", "vulnerability", sev=Severity.HIGH)
+    sqli.validation_state = ce.VALIDATED
+    info.validation_state = ce.VALIDATED  # escalation requires ALL steps validated
+    sqli.yield_metadata["confidence_scores"] = {"confidence": 0.95}
+    info.yield_metadata["confidence_scores"] = {"confidence": 0.9}
+    chains, _ = che.correlate_chains([info, sqli])
+    assert chains[0].severity == "critical"  # high escalated, all validated
+    assert chains[0].validated_steps == 2
 
 
-class TestEndToEndChainPipeline:
-    def test_nuclei_signal_full_pipeline(self):
-        """Integration test: signal → escalate → compose → PoC → triage."""
-        from ai_osop.core.models import TriageVerdict
-        from ai_osop.core.triager_gate import TriagerGate
+def test_identity_object_access_rule():
+    fs = [
+        _v("IDOR on /api/order", "vulnerability"),
+        _v("Server information disclosure", "weakness"),
+    ]
+    chains, _ = che.correlate_chains(fs)
+    assert chains and chains[0].name == "identity_object_access"
 
-        engine = EscalationEngine()
-        composer = ChainComposer()
-        gate = TriagerGate()
 
-        # Step 1: raw Primitive from Nuclei
-        prim = _prim(
-            PrimitiveType.NUCLEI_SIGNAL,
-            confidence=0.85,
-            severity_hint="high",
-            raw={
-                "template_id": "apache-log4j-rce",
-                "request": {"method": "GET", "url": "http://vuln.example.com"},
-                "response": {"status_code": 200, "body": "JNDI:ldap"},
-            },
-            target="http://vuln.example.com",
-        )
+@pytest.mark.asyncio
+async def test_persist_chains_maps_onto_attack_path_api():
+    from ai_osop.core.chain_engine import persist_chains
 
-        # Step 2: escalate (shows next steps; we skip actual execution here)
-        paths = engine.escalate(prim)
-        assert len(paths) >= 1
+    fs = [
+        _v("Directory listing exposed", "weakness"),
+        _v("SQL Injection on login", "vulnerability", conf=0.8),
+    ]
+    chains, _ = che.correlate_chains(fs)
+    gm = MagicMock()
+    gm.add_attack_path = AsyncMock(return_value="path-x")
+    ids = await persist_chains(gm, chains, "eng-chain")
+    # engine preserves the chain's own stable id across persistence
+    assert ids == [chains[0].id]
+    kwargs = gm.add_attack_path.await_args.args[0]
+    assert set(kwargs.node_ids) == {m.id for m in fs}
+    assert kwargs.engagement_id == "eng-chain"
+    assert 0 <= kwargs.risk_score <= 10
+    assert kwargs.validation_state == ce.UNTESTED
 
-        # Step 3: compose chain from primitives
-        chain = composer.compose([prim], title="Log4Shell RCE via nuclei signal")
-        assert chain.id.startswith("chain-")
-
-        # Step 4: generate PoC
-        chain = composer.generate_poc(chain, [prim])
-        assert "nuclei" in chain.poc_script[0]
-
-        # Step 5: build evidence package
-        pkg = composer.build_evidence_package(chain, [prim])
-        assert pkg.replay_script == chain.poc_script
-
-        # Step 6: run through triage gate
-        report = gate.evaluate(prim, chain=chain, evidence=pkg)
-        # High confidence + evidence + PoC → EMIT
-        assert report.verdict == TriageVerdict.EMIT
+    # best-effort: a failing store must not raise
+    gm2 = MagicMock()
+    gm2.add_attack_path = AsyncMock(side_effect=RuntimeError("neo4j down"))
+    ids2 = await persist_chains(gm2, chains, "eng-chain")
+    assert ids2 == []

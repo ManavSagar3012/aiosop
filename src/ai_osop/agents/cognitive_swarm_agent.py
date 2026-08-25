@@ -10,6 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from ai_osop.core.config import settings
 from ai_osop.orchestrator.distributed_bus import (
     CoordinationEvent,
     DistributedCoordinationBus,
@@ -35,12 +36,14 @@ class CognitiveSwarmAgent(ABC):
         self,
         agent_id: str,
         agent_type: str,
-        redis_url: str = "redis://localhost:6379",
+        # FIX (redis-url-settings-2026-08-23): honor OSOP_REDIS_URI instead of a
+        # hardcoded localhost:6379.
+        redis_url: Optional[str] = None,
         engagement_id: str = "default",
     ):
         self.agent_id = agent_id
         self.agent_type = agent_type
-        self.redis_url = redis_url
+        self.redis_url = redis_url or settings.redis_uri
         self.engagement_id = engagement_id
         self.bus: Optional[DistributedCoordinationBus] = None
         self._running = False

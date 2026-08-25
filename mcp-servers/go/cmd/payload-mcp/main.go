@@ -13,10 +13,10 @@
 package main
 
 import (
+	"os"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -483,7 +483,7 @@ func main() {
 						case "attribute":
 							mutatedContent = "\"" + content + "\""
 						case "js_string":
-							mutatedContent = "'+" + content "+'"
+							mutatedContent = "'+" + content + "+'"
 						case "url_parameter":
 							mutatedContent = applyEncoding(content, "url")
 						}
@@ -689,5 +689,12 @@ func main() {
 	})
 
 	fmt.Println("Payload MCP server starting with real payload generation engine...")
-	_ = server.Run(":8083")
+		// FIX (mcp-port-env-2026-08-23): port was hardcoded, so the binary could not
+	// be moved off a conflicting host port without a rebuild-by-edit. Read the
+	// platform env (same var the Python settings use); fall back to the default.
+	port := os.Getenv("OSOP_PAYLOAD_MCP_PORT")
+	if port == "" {
+		port = "8083"
+	}
+	_ = server.Run(":" + port)
 }

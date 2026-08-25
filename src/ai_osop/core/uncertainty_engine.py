@@ -4,10 +4,9 @@ Identifies knowledge gaps, blocked execution paths, and latent boundaries in the
 """
 
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from ai_osop.core.models import Observation, Task, UncertaintyRecord
+from ai_osop.core.models import Task, UncertaintyRecord
 from ai_osop.memory.graph_memory import GraphMemory
 
 logger = logging.getLogger(__name__)

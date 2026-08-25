@@ -4,10 +4,8 @@ Deterministic Finding Validator
 Replaces probabilistic LLM validation with deterministic proof-of-concept (PoC) execution.
 Ensures 0% false positives by requiring cryptographic or execution proof.
 """
-import asyncio
 import hashlib
 import logging
-from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)

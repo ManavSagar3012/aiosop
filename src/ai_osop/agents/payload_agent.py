@@ -5,14 +5,13 @@ and adaptive intelligence.
 """
 
 import asyncio
-import hashlib
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from ai_osop.adapters.payload_mcp import PayloadMCPAdapter
 from ai_osop.agents.base import BaseAgent
-from ai_osop.core.config import AgentType, VulnClass, settings
+from ai_osop.core.config import AgentType, VulnClass
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Payload, Task
 from ai_osop.payload_engine.engine import AdaptivePayloadEngine
@@ -143,9 +142,24 @@ class PayloadMutationAgent(BaseAgent):
         asyncio.create_task(self._listen_for_feedback())
 
     async def _listen_for_feedback(self) -> None:
-        """Listen for exploit validation feedback."""
-        async for event in self.ctx.coordination_bus.subscribe("feedback.payload_validated"):
-            await self._process_feedback(event.payload)
+        """Listen for exploit validation feedback.
+
+        FIX (payload-feedback-bus-2026-08-23): used the legacy in-memory bus API
+        `async for ev in bus.subscribe(topic)`; against DistributedCoordinationBus
+        that raises TypeError (missing consumer_id/group_name/callback) and the
+        feedback listener died at startup. Route through subscribe_iter().
+        """
+        bus = self.ctx.coordination_bus
+        if hasattr(bus, "subscribe_iter"):
+            async for event in bus.subscribe_iter(
+                ["feedback.payload_validated"],
+                f"{self.ctx.agent_id}-feedback",
+                f"payload-feedback-{self.ctx.session_id}",
+            ):
+                await self._process_feedback(event.payload)
+        else:  # legacy in-memory bus
+            async for event in bus.subscribe("feedback.payload_validated"):
+                await self._process_feedback(event.payload)
 
     async def _process_feedback(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Process results from ExploitValidationAgent to update memory."""

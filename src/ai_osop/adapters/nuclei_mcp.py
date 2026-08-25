@@ -15,6 +15,9 @@ class NucleiMCPAdapter:
         self.registry = registry
 
     async def initialize(self, scope: Dict[str, Any], session_id: str) -> None:
+        # FIX (scope-gate-2026-08-24): retain scope for client-side registry
+        # validation of every subsequent tool call (defense-in-depth).
+        self._scope: Optional[Dict[str, Any]] = scope
         await self.registry.initialize_server(
             self.SERVER_ID, scope=scope, credentials={}, session_id=session_id
         )
@@ -32,7 +35,8 @@ class NucleiMCPAdapter:
             "rate_limit": rate_limit,
         }
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "scan", params, timeout_override=timeout_seconds
+            self.SERVER_ID, "scan", params, timeout_override=timeout_seconds,
+            scope=self._scope
         )
         if response.status != "success":
             raise MCPException(f"nuclei scan failed: {response.error}")

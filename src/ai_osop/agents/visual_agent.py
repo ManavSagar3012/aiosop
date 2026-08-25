@@ -4,16 +4,14 @@ Performs multi-layer context fusion (Screenshot + DOM + Semantics + Workflow) to
 """
 
 import base64
-import hashlib
 import json
 import logging
 import os
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from ai_osop.agents.base import AgentContext, BaseAgent
-from ai_osop.core.config import AgentType, settings
-from ai_osop.core.models import CriticalOperation, Observation, Task, VisualAnalysis
+from ai_osop.agents.base import BaseAgent
+from ai_osop.core.config import AgentType
+from ai_osop.core.models import CriticalOperation, Task, VisualAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +104,7 @@ class VisualContextAgent(BaseAgent):
 
         except Exception as e:
             logger.warning(
-                "vision_model_failed_fallback",
-                error=str(e),
-                message="Falling back to heuristic extraction.",
+                f"vision_model_failed_fallback error={e} message=Falling back to heuristic extraction."
             )
             # Fallback heuristic if API fails or no real image exists in testing
             visible_actions = [

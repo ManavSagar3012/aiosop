@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 
 from ai_osop.core.config import AgentType, Severity, VulnClass
 
@@ -112,6 +112,10 @@ class Vulnerability(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     entry_point: bool = False  # Can be reached from unauthenticated position
     requires_auth: bool = False
+    # FIX (confidence-engine-2026-08-24): explicit lifecycle per charter 12.
+    # Transitions governed by core.confidence_engine.assert_transition;
+    # only the Validation Engine may set VALIDATED/REJECTED.
+    validation_state: str = "UNTESTED"
     validated: bool = False
     exploitability: str = "unknown"  # high, medium, low, unknown
     impact: str = "unknown"
@@ -147,6 +151,10 @@ class Payload(BaseModel):
     parent_id: Optional[str] = None
     fitness_score: float = Field(0.0, ge=0.0, le=1.0)
     strategy: str = "template"  # template, llm, genetic, manual
+    # FIX (confidence-engine-2026-08-24): explicit lifecycle per charter 12.
+    # Transitions governed by core.confidence_engine.assert_transition;
+    # only the Validation Engine may set VALIDATED/REJECTED.
+    validation_state: str = "UNTESTED"
     validated: bool = False
     success_indicator: float = Field(0.0, ge=0.0, le=1.0)
     waf_bypassed: Optional[bool] = None
@@ -159,6 +167,10 @@ class Exploit(BaseModel):
     vuln_id: str
     payload_id: str
     type: str
+    # FIX (confidence-engine-2026-08-24): explicit lifecycle per charter 12.
+    # Transitions governed by core.confidence_engine.assert_transition;
+    # only the Validation Engine may set VALIDATED/REJECTED.
+    validation_state: str = "UNTESTED"
     validated: bool = False
     operator_approved: bool = False
     approval_id: Optional[str] = None
@@ -177,10 +189,53 @@ class AttackPath(BaseModel):
     risk_score: float = Field(ge=0.0, le=10.0)
     total_time_estimate: int = 0  # seconds
     detection_risk: float = Field(0.0, ge=0.0, le=1.0)
+    # FIX (confidence-engine-2026-08-24): explicit lifecycle per charter 12.
+    # Transitions governed by core.confidence_engine.assert_transition;
+    # only the Validation Engine may set VALIDATED/REJECTED.
+    validation_state: str = "UNTESTED"
     validated: bool = False
     entry_node_id: str
     goal_node_id: str
     engagement_id: str
+
+
+class HypothesisStatus(str, Enum):
+    OPEN = "open"
+    TESTING = "testing"
+    SUPPORTED = "supported"
+    REFUTED = "refuted"
+    CONFIRMED = "confirmed"
+    ABANDONED = "abandoned"
+
+
+class Hypothesis(BaseModel):
+    id: str = Field(default_factory=lambda: f"hyp-{uuid.uuid4().hex[:12]}")
+    engagement_id: str
+    title: str
+    statement: str
+    status: HypothesisStatus = HypothesisStatus.OPEN
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    supporting_evidence: List[str] = Field(default_factory=list)
+    contradicting_evidence: List[str] = Field(default_factory=list)
+    completed_tests: List[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DecisionRecord(BaseModel):
+    id: str = Field(default_factory=lambda: f"dec-{uuid.uuid4().hex[:12]}")
+    engagement_id: str
+    task_id: str
+    agent_id: str
+    iteration: int
+    action_type: str
+    action_target: str
+    trigger: str
+    hypothesis_id: Optional[str] = None
+    alternatives_considered: List[str] = Field(default_factory=list)
+    reasoning: str
+    expected_gain: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Task(BaseModel):
@@ -194,7 +249,12 @@ class Task(BaseModel):
     timeout_seconds: int = 300
     scope_check: bool = True
     approval_required: bool = False
-    status: str = "pending"  # pending, running, completed, failed, cancelled
+    # Charter task lifecycle:
+    #   pending -> running -> completed | failed | cancelled
+    #                     \-> blocked (required tool unavailable; auto-revives
+    #                         when the tool recovers -- TOOL-REALITY-001)
+    #                     \-> awaiting_approval (operator gate; see ApprovalGate)
+    status: str = "pending"
     result: Optional[Dict[str, Any]] = None
     retry_count: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -413,6 +473,10 @@ class OutcomeRecord(BaseModel):
     engagement_id: str
     stack: List[str] = Field(default_factory=list)
     workflow_intent: Optional[str] = None
+    # FIX (confidence-engine-2026-08-24): explicit lifecycle per charter 12.
+    # Transitions governed by core.confidence_engine.assert_transition;
+    # only the Validation Engine may set VALIDATED/REJECTED.
+    validation_state: str = "UNTESTED"
     validated: bool = False
     initial_confidence: float = 0.0
     time_to_validate_seconds: Optional[int] = None

@@ -20,6 +20,9 @@ class BrowserMCPAdapter:
 
     async def initialize(self, scope: Dict[str, Any], session_id: str) -> None:
         """Initialize the connection to the browser-mcp server."""
+        # FIX (scope-gate-2026-08-24): retain scope for client-side registry
+        # validation of every subsequent tool call (defense-in-depth).
+        self._scope: Optional[Dict[str, Any]] = scope
         await self.registry.initialize_server(self.SERVER_ID, scope, {}, session_id)
 
     async def execute_action(
@@ -46,7 +49,8 @@ class BrowserMCPAdapter:
                 if k not in body:
                     body[k] = v
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "execute", body, timeout_override=settings.browser_mcp_timeout
+            self.SERVER_ID, "execute", body, timeout_override=settings.browser_mcp_timeout,
+            scope=self._scope
         )
         if response.status != "success":
             raise MCPException(f"Browser action '{action}' failed: {response.error}")

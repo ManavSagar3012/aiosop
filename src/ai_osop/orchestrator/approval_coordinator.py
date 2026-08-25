@@ -7,14 +7,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import structlog
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.models import ApprovalRequest, AuditEvent
-from ai_osop.core.observability import record_approval_requested, record_approval_resolved
+from ai_osop.core.observability import record_approval_resolved
 from ai_osop.core.tracing import trace_span
 
 logger = structlog.get_logger("ai_osop.orchestrator.approval_coordinator")

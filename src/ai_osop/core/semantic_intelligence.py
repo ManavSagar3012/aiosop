@@ -5,7 +5,7 @@ Classifies UI actions and maps business intent.
 
 from typing import Any, Dict, List, Optional
 
-from ai_osop.core.models import UISemanticElement, WorkflowIntent
+from ai_osop.core.models import UISemanticElement
 
 
 class SemanticRiskCatalog:

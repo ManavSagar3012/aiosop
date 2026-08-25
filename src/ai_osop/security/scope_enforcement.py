@@ -10,8 +10,7 @@ Phase 6: Enterprise Hardening
 
 import hashlib
 import hmac
-import re
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 import structlog

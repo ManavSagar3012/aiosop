@@ -82,7 +82,15 @@ class LiteLLMClient:
             # instead of cold-loading (~60s) on every call. Only ollama/* accepts
             # keep_alive; passing it to a cloud provider would error, so gate on prefix.
             if str(model_name).startswith("ollama"):
-                return {"keep_alive": settings.llm_keep_alive}
+                extra: Dict[str, Any] = {"keep_alive": settings.llm_keep_alive}
+                if getattr(settings, "llm_ollama_num_ctx", None):
+                    # FIX (llm-ollama-numctx-2026-08-23): pin the context window for
+                    # local Ollama models. Some hosts run OLLAMA_CONTEXT_LENGTH=262144;
+                    # without an explicit num_ctx every load then tries to allocate a
+                    # multi-GB KV cache (observed: ~48GB request -> llama-server OOM)
+                    # and EVERY completion fails regardless of model size.
+                    extra["num_ctx"] = int(settings.llm_ollama_num_ctx)
+                return extra
             return {}
 
         try:

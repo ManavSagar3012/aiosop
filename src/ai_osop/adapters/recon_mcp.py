@@ -36,6 +36,9 @@ class ReconMCPAdapter:
 
     async def initialize(self, scope: Dict[str, Any], session_id: str) -> None:
         """Initialize recon MCP with scope."""
+        # FIX (scope-gate-2026-08-24): retain scope for client-side registry
+        # validation of every subsequent tool call (defense-in-depth).
+        self._scope: Optional[Dict[str, Any]] = scope
         await self.registry.initialize_server(
             self.SERVER_ID, scope=scope, credentials={}, session_id=session_id
         )
@@ -88,7 +91,8 @@ class ReconMCPAdapter:
         }
 
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "nmap_scan", params, timeout_override=3600
+            self.SERVER_ID, "nmap_scan", params, timeout_override=3600,
+            scope=self._scope
         )
 
         if response.status != "success" or not response.result:
@@ -113,7 +117,8 @@ class ReconMCPAdapter:
         }
 
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "httpx_probe", params, timeout_override=600
+            self.SERVER_ID, "httpx_probe", params, timeout_override=600,
+            scope=self._scope
         )
 
         if response.status != "success" or not response.result:
@@ -129,7 +134,8 @@ class ReconMCPAdapter:
         params = {"domain": domain}
 
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "shodan_lookup", params, timeout_override=120
+            self.SERVER_ID, "shodan_lookup", params, timeout_override=120,
+            scope=self._scope
         )
 
         if response.status != "success" or not response.result:
@@ -145,7 +151,8 @@ class ReconMCPAdapter:
         params = {"domain": domain}
 
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "wayback_urls", params, timeout_override=300
+            self.SERVER_ID, "wayback_urls", params, timeout_override=300,
+            scope=self._scope
         )
 
         if response.status != "success" or not response.result:
@@ -172,7 +179,7 @@ class ReconMCPAdapter:
 
     async def _subfinder_enum(self, domain: str) -> List[Dict[str, Any]]:
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "subfinder_enum", {"domain": domain}
+            self.SERVER_ID, "subfinder_enum", {"domain": domain}, scope=self._scope
         )
         if response.status == "success" and response.result:
             return response.result.get("subdomains", [])
@@ -180,7 +187,7 @@ class ReconMCPAdapter:
 
     async def _amass_passive(self, domain: str) -> List[Dict[str, Any]]:
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "amass_passive", {"domain": domain}
+            self.SERVER_ID, "amass_passive", {"domain": domain}, scope=self._scope
         )
         if response.status == "success" and response.result:
             return response.result.get("subdomains", [])
@@ -188,7 +195,8 @@ class ReconMCPAdapter:
 
     async def _amass_active(self, domain: str, depth: int) -> List[Dict[str, Any]]:
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "amass_active", {"domain": domain, "depth": depth}
+            self.SERVER_ID, "amass_active", {"domain": domain, "depth": depth},
+            scope=self._scope
         )
         if response.status == "success" and response.result:
             return response.result.get("subdomains", [])

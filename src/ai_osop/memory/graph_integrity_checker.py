@@ -1,5 +1,4 @@
 import asyncio
-import sys
 
 from ai_osop.memory.graph_memory import GraphMemory
 

@@ -77,9 +77,12 @@ async def test_reporting_stats_keys():
     # Cleanup files written to disk during test
     reports_dir = os.path.join("reports", "eng-test-stats")
     if os.path.exists(reports_dir):
-        for f in os.listdir(reports_dir):
-            os.remove(os.path.join(reports_dir, f))
-        os.rmdir(reports_dir)
+        # FIX (win-rmtree-2026-08-23): manual listdir+remove+rmdir hit transient
+        # WinError 5 (OneDrive/AV briefly holds the directory) on this host.
+        # shutil.rmtree(ignore_errors=True) is robust and preserves intent.
+        import shutil
+
+        shutil.rmtree(reports_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
@@ -134,9 +137,12 @@ async def test_reporting_graph_render():
     # Cleanup files written to disk during test
     reports_dir = os.path.join("reports", "eng-test-graph")
     if os.path.exists(reports_dir):
-        for f in os.listdir(reports_dir):
-            os.remove(os.path.join(reports_dir, f))
-        os.rmdir(reports_dir)
+        # FIX (win-rmtree-2026-08-23): manual listdir+remove+rmdir hit transient
+        # WinError 5 (OneDrive/AV briefly holds the directory) on this host.
+        # shutil.rmtree(ignore_errors=True) is robust and preserves intent.
+        import shutil
+
+        shutil.rmtree(reports_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
@@ -238,9 +244,12 @@ async def test_finding_certification_engine():
     # Clean up files written to disk
     reports_dir = os.path.join("reports", eid)
     if os.path.exists(reports_dir):
-        for f in os.listdir(reports_dir):
-            os.remove(os.path.join(reports_dir, f))
-        os.rmdir(reports_dir)
+        # FIX (win-rmtree-2026-08-23): manual listdir+remove+rmdir hit transient
+        # WinError 5 (OneDrive/AV briefly holds the directory) on this host.
+        # shutil.rmtree(ignore_errors=True) is robust and preserves intent.
+        import shutil
+
+        shutil.rmtree(reports_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
@@ -316,6 +325,9 @@ async def test_attack_surface_certifier():
     # Clean up files written to disk
     reports_dir = os.path.join("reports", eid)
     if os.path.exists(reports_dir):
-        for f in os.listdir(reports_dir):
-            os.remove(os.path.join(reports_dir, f))
-        os.rmdir(reports_dir)
+        # FIX (win-rmtree-2026-08-23): manual listdir+remove+rmdir hit transient
+        # WinError 5 (OneDrive/AV briefly holds the directory) on this host.
+        # shutil.rmtree(ignore_errors=True) is robust and preserves intent.
+        import shutil
+
+        shutil.rmtree(reports_dir, ignore_errors=True)

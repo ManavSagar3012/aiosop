@@ -1,8 +1,6 @@
 # AI-OSOP Distributed Tracing & Observability Module
 # Implements OpenTelemetry-compatible tracing and Prometheus metrics
 
-import asyncio
-import json
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -20,7 +18,7 @@ except ImportError:
     OTEL_AVAILABLE = False
 
 try:
-    from prometheus_client import (
+    from prometheus_client import (  # noqa: F401 - availability probe; CONTENT_TYPE_LATEST re-exported for /metrics handlers
         CONTENT_TYPE_LATEST,
         CollectorRegistry,
         Counter,

@@ -12,7 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from ai_osop.core.config import settings
-from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.models import SessionState
 
 # ============== Pydantic Models for API ==============
 
@@ -55,6 +55,7 @@ class AgentStatusResponse(BaseModel):
     current_task: Optional[str]
     task_queue_depth: int
     last_heartbeat: str
+    cost_incurred: float = 0.0
 
 
 class UserSessionImportRequest(BaseModel):

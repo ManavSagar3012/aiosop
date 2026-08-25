@@ -1,18 +1,15 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from ai_osop.core.config import AgentState
 from ai_osop.core.metrics import (
     AGENT_RECOVERIES_TOTAL,
     AGENT_TIMEOUTS_TOTAL,
-    STALE_LEASES_TOTAL,
     TASK_REQUEUES_TOTAL,
 )
 from ai_osop.core.models import AuditEvent
-from ai_osop.core.tracing import trace_span
-from ai_osop.memory.session_memory import SessionMemory
 
 logger = logging.getLogger("ai_osop.reliability.agent_reaper")
 

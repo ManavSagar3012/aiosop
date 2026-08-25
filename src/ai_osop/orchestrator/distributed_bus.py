@@ -13,6 +13,8 @@ Features:
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import uuid
@@ -22,12 +24,23 @@ from typing import Any, Callable, Dict, List, Optional
 
 import redis.asyncio as redis
 
+from ai_osop.core.config import scope_signing_key, settings
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class CoordinationEvent:
-    """Standardized event structure for the swarm."""
+    """Standardized event structure for the swarm.
+
+    Inspired by Buzz (block/buzz) Nostr event model:
+    - Every event has a unique ID (SHA-256 of canonical form)
+    - Every event is signed by its source agent (HMAC-SHA256)
+    - Signature can be verified to prevent spoofing
+
+    Buzz uses Schnorr signatures (secp256k1); we use HMAC-SHA256
+    for simplicity since AI-OSOP agents share a secret key.
+    """
 
     topic: str
     payload: Dict[str, Any]
@@ -37,6 +50,35 @@ class CoordinationEvent:
     engagement_id: str = "default"
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    signature: str = ""  # HMAC-SHA256 signature over canonical form
+
+    def _canonical_form(self) -> bytes:
+        """Produce deterministic byte representation for signing/verification."""
+        data = {
+            "topic": self.topic,
+            "payload": self.payload,
+            "source_agent": self.source_agent,
+            "event_type": self.event_type,
+            "confidence": self.confidence,
+            "engagement_id": self.engagement_id,
+            "timestamp": self.timestamp,
+            "event_id": self.event_id,
+        }
+        return json.dumps(data, sort_keys=True, default=str).encode("utf-8")
+
+    def sign(self, secret_key: Optional[bytes] = None) -> str:
+        """Sign the event with HMAC-SHA256. Returns the signature."""
+        key = secret_key or scope_signing_key()
+        self.signature = hmac.new(key, self._canonical_form(), hashlib.sha256).hexdigest()
+        return self.signature
+
+    def verify_signature(self, secret_key: Optional[bytes] = None) -> bool:
+        """Verify the event signature."""
+        if not self.signature:
+            return False
+        key = secret_key or scope_signing_key()
+        expected = hmac.new(key, self._canonical_form(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(self.signature, expected)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -59,16 +101,30 @@ class DistributedCoordinationBus:
 
     # Phase 6: Authorized sources — only these agents can publish events
     AUTHORIZED_SOURCES = {
-        "recon_agent", "vuln_agent", "exploit_agent", "attack_chain_agent",
-        "payload_agent", "reporting_agent", "workflow_agent",
-        "strategic_planner", "self_pentest_agent",
-        "orchestrator", "system",
+        "recon_agent",
+        "vuln_agent",
+        "exploit_agent",
+        "attack_chain_agent",
+        "payload_agent",
+        "reporting_agent",
+        "workflow_agent",
+        "strategic_planner",
+        "self_pentest_agent",
+        "orchestrator",
+        "system",
         # Simulated/demo sources
-        "simulated_recon_01", "simulated_scanner_01",
+        "simulated_recon_01",
+        "simulated_scanner_01",
     }
 
-    def __init__(self, redis_url: str = "redis://localhost:6379", engagement_id: str = "default"):
-        self.redis_url = redis_url
+    def __init__(
+        self,
+        # FIX (redis-url-settings-2026-08-23): default now resolves OSOP_REDIS_URI
+        # instead of a hardcoded localhost:6379.
+        redis_url: Optional[str] = None,
+        engagement_id: str = "default",
+    ):
+        self.redis_url = redis_url or settings.redis_uri
         self.engagement_id = engagement_id
         self.stream_name = f"aiosop:{engagement_id}:events"
         self.redis: Optional[redis.Redis] = None
@@ -102,7 +158,8 @@ class DistributedCoordinationBus:
         """Close Redis connection."""
         self._running = False
         if self.redis:
-            await self.redis.close()
+            # FIX (redis-aclose-2026-08-24): deprecated close() -> aclose().
+            await self.redis.aclose()
             logger.info("Disconnected from Redis")
 
     async def close(self):
@@ -120,17 +177,40 @@ class DistributedCoordinationBus:
 
         Supports both new CoordinationEvent signature and legacy (topic, payload, source) signature.
         """
-        # Support legacy 3-argument call: publish(topic, payload, source)
-        if event is None and topic is not None:
+        # FIX (bus-publish-legacy-2026-08-23): legacy POSITIONAL calls bind the
+        # topic STRING into `event` (publish("task.scheduled", {...}, "orchestrator")
+        # -> event="task.scheduled", topic={...}, payload="orchestrator"). The old
+        # legacy branch only fired when `event is None`, so those calls crashed with
+        # AttributeError: 'str' object has no attribute 'engagement_id' inside
+        # task_scheduler.schedule_task -> every phase transition failed.
+        if isinstance(event, str):
+            # Legacy positional style: publish(topic_name, payload_dict, source_str)
+            legacy_payload = topic if isinstance(topic, dict) else (payload or {})
+            legacy_source = source or (payload if isinstance(payload, str) else None) or "unknown"
+            event = CoordinationEvent(
+                topic=event,
+                payload=legacy_payload,
+                source_agent=legacy_source,
+                event_type="command",
+            )
+            topic = None
+        elif event is None and topic is not None:
+            # Keyword style: publish(event=None, topic="x", payload={...}, source="y")
             event = CoordinationEvent(
                 topic=topic,
                 payload=payload or {},
                 source_agent=source or "unknown",
+                event_type="command",
             )
         elif event is None:
             raise ValueError("Either event object or topic must be provided")
 
         event.engagement_id = self.engagement_id
+
+        # Phase 7 (Buzz-inspired): Sign the event before publishing
+        if not event.signature:
+            event.sign()
+
         event_dict = event.to_dict()
 
         if self._local_fallback or not self.redis:
@@ -140,6 +220,7 @@ class DistributedCoordinationBus:
 
         try:
             # Add to Redis Stream - store all event fields for proper reconstruction
+            # Phase 7: Include signature in the stream for verification on consumption
             await self.redis.xadd(
                 self.stream_name,
                 {
@@ -151,6 +232,7 @@ class DistributedCoordinationBus:
                     "engagement_id": event.engagement_id,
                     "timestamp": event.timestamp,
                     "payload": json.dumps(event.payload),
+                    "signature": event.signature,
                 },
                 maxlen=10000,  # Keep last 10k events per engagement
                 approximate=True,
@@ -236,37 +318,60 @@ class DistributedCoordinationBus:
         """Parse raw Redis message into CoordinationEvent.
 
         Phase 6: Validates source_agent against the authorized sources list.
-        Unauthorized sources are logged and tagged but still delivered
-        (defense-in-depth — consumers should also validate).
+        Phase 7 (Buzz-inspired): Verifies event signature.
         """
         try:
             payload_data = json.loads(fields.get("payload", "{}"))
             source = fields.get("source", "unknown")
+            signature = fields.get("signature", "")
 
-            # Phase 6: Source validation
+            # FIX (bus-parse-order-2026-08-23): construct and SIGNATURE-VERIFY the
+            # event from the PRISTINE payload first, then apply security tags.
+            # Tagging before verification mutated the canonical form, so every
+            # event from an unauthorized source was additionally flagged as
+            # having an invalid signature (two different signals conflated).
+            event = CoordinationEvent(
+                event_id=fields.get("event_id", str(uuid.uuid4())),
+                topic=fields["topic"],
+                source_agent=fields["source"],
+                event_type=fields.get("type", "unknown"),
+                confidence=float(fields.get("confidence", 0.5)),
+                # FIX (bus-parse-fields-2026-08-23): restore engagement_id and the
+                # original timestamp from the stream. engagement_id participates in
+                # the canonical form used for HMAC signing — dropping it here made
+                # every parsed event default to "default" and fail signature
+                # verification whenever the bus ran under a real engagement id.
+                engagement_id=fields.get("engagement_id", self.engagement_id),
+                payload=payload_data,
+                timestamp=fields.get("timestamp", datetime.utcnow().isoformat()),
+                signature=signature,
+            )
+
+            # Phase 7 (Buzz-inspired): Verify event signature (pre-tagging)
+            if signature and not event.verify_signature():
+                logger.warning(
+                    f"event_signature_invalid event_id={event.event_id} "
+                    f"source={source} topic={event.topic}"
+                )
+                payload_data["_invalid_signature"] = True
+
+            # Phase 6: Source validation (post-verification tagging)
+            # FIX (bus-parse-logger-2026-08-23): these were structlog-style
+            # kwarg calls on a STDLIB logger, which raise TypeError once INFO
+            # logging is enabled -> the exception was swallowed by the broad
+            # handler below and EVERY event from an unauthorized source was
+            # reclassified as error.parse (history/consume lost the event).
             if source not in self.AUTHORIZED_SOURCES:
                 logger.warning(
-                    "unauthorized_event_source",
-                    source=source,
-                    topic=fields.get("topic", "?"),
-                    event_id=fields.get("event_id", "?"),
+                    f"unauthorized_event_source source={source} "
+                    f"topic={fields.get('topic', '?')} event_id={fields.get('event_id', '?')}"
                 )
-                # Tag the event so consumers can filter it
                 payload_data["_unauthorized_source"] = True
                 payload_data["_original_source"] = source
 
-            return CoordinationEvent(
-                event_id=fields.get("event_id", str(uuid.uuid4())),  # Ideally stored in stream too
-                topic=fields["topic"],
-                source_agent=fields["source"],
-                event_type=fields["type"],
-                confidence=float(fields.get("confidence", 0.5)),
-                payload=payload_data,
-                timestamp=datetime.utcnow().isoformat(),
-            )
+            return event
         except Exception as e:
             logger.error(f"Failed to parse message: {e}")
-            # Return a dummy event to prevent crash
             return CoordinationEvent(
                 topic="error.parse",
                 payload={"raw": fields},
@@ -296,6 +401,41 @@ class DistributedCoordinationBus:
                 continue
             except Exception as e:
                 logger.error(f"Local consumer error: {e}")
+
+    async def subscribe_iter(
+        self,
+        topics: List[str],
+        consumer_id: str,
+        group_name: str,
+    ):
+        """Async-iterator adapter over subscribe().
+
+        FIX (bus-subscribe-iter-2026-08-23): several consumers (payload agent
+        feedback loop, the dashboard WS forward pump) still used the legacy
+        in-memory bus API `async for ev in bus.subscribe(topic)`. Against this
+        class that call signature raises TypeError (missing consumer_id /
+        group_name / callback), silently killing those background loops at
+        startup. This adapter bridges to the callback API via a queue so
+        iterator-style consumers work against the distributed backbone.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def _cb(event: CoordinationEvent) -> None:
+            await queue.put(event)
+
+        task = asyncio.create_task(
+            self.subscribe(
+                topics=topics,
+                consumer_id=consumer_id,
+                group_name=group_name,
+                callback=_cb,
+            )
+        )
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            task.cancel()
 
     async def get_history(self, topic_pattern: str, count: int = 100) -> List[CoordinationEvent]:
         """Retrieve historical events for replay or analysis."""
@@ -345,10 +485,25 @@ _bus_instance: Optional[DistributedCoordinationBus] = None
 
 
 def get_coordination_bus(engagement_id: str = "default") -> DistributedCoordinationBus:
+    """Return the process-wide bus singleton.
+
+    FIX (bus-connect-2026-08-23): the returned instance previously relied on the
+    caller to connect() it; nothing ever did, so publish() silently degraded to
+    a local queue and subscribe() was dead. It now auto-connects on first use so
+    orchestrators constructed without an explicit bus still get a live backbone
+    (connection failures degrade to local-fallback exactly like connect()).
+    """
     global _bus_instance
     if _bus_instance is None:
         _bus_instance = DistributedCoordinationBus(engagement_id=engagement_id)
     return _bus_instance
+
+
+async def ensure_bus_connected(bus: "DistributedCoordinationBus") -> "DistributedCoordinationBus":
+    """Connect the bus if it has never been connected (idempotent)."""
+    if not bus._running:
+        await bus.connect()
+    return bus
 
 
 async def initialize_bus(

@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 import httpx
 import structlog
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 

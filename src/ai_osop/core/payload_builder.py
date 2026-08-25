@@ -4,10 +4,9 @@ Deterministic builders to prevent LLM syntax hallucination.
 """
 
 import hashlib
-import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 from ai_osop.core.config import VulnClass
 from ai_osop.core.models import Payload

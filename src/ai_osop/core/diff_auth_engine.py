@@ -3,12 +3,10 @@ V4.2A Differential Authorization Engine
 Compares evidence across different identities to detect IDOR and privilege escalation.
 """
 
-import asyncio
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from ai_osop.core.models import BrowserSession, DiffAuthFinding, PermissionMatrix, Resource, Task
+from ai_osop.core.models import DiffAuthFinding, Resource, Task
 from ai_osop.memory.session_memory import SessionMemory
 
 

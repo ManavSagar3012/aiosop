@@ -11,7 +11,6 @@ Phase 6: Enterprise Hardening — proves the audit trail is tamper-evident.
 import hashlib
 import hmac
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import structlog

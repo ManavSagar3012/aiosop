@@ -26,7 +26,11 @@ from src.ai_osop.orchestrator.distributed_bus import (
 
 @pytest.fixture
 def redis_url():
-    return "redis://localhost:6379"
+    # FIX (tests-follow-env-2026-08-23): was hardcoded localhost:6379, which on
+    # this host is an unrelated foreign container. Follow OSOP_REDIS_URI.
+    from ai_osop.core.config import settings
+
+    return settings.redis_uri
 
 
 @pytest.fixture
@@ -50,7 +54,7 @@ async def clean_redis(redis_url, engagement_id):
     r = __import__("redis.asyncio", fromlist=["redis"]).from_url(redis_url)
     await r.delete(f"aiosop:{engagement_id}:events")
     await r.delete(f"aiosop:{engagement_id}:dlq")
-    await r.close()
+    await r.aclose()  # FIX (redis-aclose-2026-08-24)
 
     yield
 
@@ -58,7 +62,7 @@ async def clean_redis(redis_url, engagement_id):
     r = __import__("redis.asyncio", fromlist=["redis"]).from_url(redis_url)
     await r.delete(f"aiosop:{engagement_id}:events")
     await r.delete(f"aiosop:{engagement_id}:dlq")
-    await r.close()
+    await r.aclose()  # FIX (redis-aclose-2026-08-24)
 
 
 class TestDistributedCoordinationBusConnection:
@@ -132,10 +136,15 @@ class TestEventPublishing:
     @pytest.mark.asyncio
     async def test_publish_preserves_all_fields(self, bus, clean_redis):
         """Test that all event fields are preserved in Redis."""
+        # FIX (bus-fields-test-2026-08-23): use an AUTHORIZED source. Unauthorized
+        # sources get _unauthorized_source/_original_source tags injected by design
+        # (Phase 6 defense-in-depth), so a strict payload-equality roundtrip check
+        # must exercise the trusted path. "scanner_01" was unauthorized, which also
+        # used to trip the pre-fix signature-verification ordering bug.
         original_event = CoordinationEvent(
             topic="vuln.found",
             payload={"type": "sqli", "severity": "high"},
-            source_agent="scanner_01",
+            source_agent="recon_agent",
             event_type="discovery",
             confidence=0.95,
             engagement_id="test-eng",
@@ -154,6 +163,7 @@ class TestEventPublishing:
         assert retrieved.event_type == original_event.event_type
         assert retrieved.confidence == original_event.confidence
         assert retrieved.payload == original_event.payload
+        assert retrieved.verify_signature(), "signature must survive the Redis roundtrip"
 
 
 class TestEventConsumption:

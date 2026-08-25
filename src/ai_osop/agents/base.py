@@ -1192,7 +1192,7 @@ class BaseAgent(ABC):
             "current_task": self.ctx.current_task.id if self.ctx.current_task else None,
             "task_queue_depth": self._task_queue.qsize(),
             "last_heartbeat": self.ctx.last_heartbeat.isoformat(),
-            "cost_incurred": self.cost_incurred,
+            "cost_incurred": getattr(self, "cost_incurred", 0.0),
             "working_memory_keys": list(self.ctx.working_memory.keys()),
         }
 

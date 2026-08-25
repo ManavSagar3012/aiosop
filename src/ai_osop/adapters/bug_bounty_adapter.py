@@ -4,7 +4,6 @@ Interfaces with external bug bounty platforms (HackerOne, Bugcrowd)
 to sync mission outcomes, triage status, and payouts.
 """
 
-import base64
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional

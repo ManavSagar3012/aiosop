@@ -11,9 +11,7 @@ from typing import Any, Dict
 
 import structlog
 
-from ai_osop.core.config import AgentType
 from ai_osop.core.models import AuditEvent, Task
-from ai_osop.core.tracing import trace_span
 
 logger = structlog.get_logger("ai_osop.orchestrator.recovery_service")
 

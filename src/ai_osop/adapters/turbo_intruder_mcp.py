@@ -15,6 +15,9 @@ class TurboIntruderMCPAdapter:
         self.registry = registry
 
     async def initialize(self, scope: Dict[str, Any], session_id: str) -> None:
+        # FIX (scope-gate-2026-08-24): retain scope for client-side registry
+        # validation of every subsequent tool call (defense-in-depth).
+        self._scope: Optional[Dict[str, Any]] = scope
         await self.registry.initialize_server(
             self.SERVER_ID, scope=scope, credentials={}, session_id=session_id
         )
@@ -36,7 +39,8 @@ class TurboIntruderMCPAdapter:
             "concurrent_requests": concurrent_requests,
         }
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "execute_single_packet_attack", params, timeout_override=timeout_seconds
+            self.SERVER_ID, "execute_single_packet_attack", params,
+            timeout_override=timeout_seconds, scope=self._scope
         )
         if response.status != "success":
             raise MCPException(f"turbo-intruder-mcp attack failed: {response.error}")

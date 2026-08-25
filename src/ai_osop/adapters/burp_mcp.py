@@ -4,14 +4,12 @@ Production-grade adapter for Burp Suite MCP with request/response normalization,
 scanner issue correlation, and proxy history management.
 """
 
-import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.core.config import Severity, VulnClass
-from ai_osop.core.exceptions import MCPException
-from ai_osop.core.models import Asset, Endpoint, ScopeDefinition, Vulnerability
-from ai_osop.mcp.protocol import MCPExecuteRequest, MCPExecuteResponse, MCPRegistry
+from ai_osop.core.models import Endpoint, ScopeDefinition, Vulnerability
+from ai_osop.mcp.protocol import MCPExecuteResponse, MCPRegistry
 
 
 class BurpMCPAdapter:
@@ -75,6 +73,10 @@ class BurpMCPAdapter:
     async def initialize(self, scope: ScopeDefinition, session_id: str) -> None:
         """Initialize Burp MCP with scope and auth."""
         credentials = {}
+        # FIX (scope-gate-2026-08-24): retain scope so every tool call can be
+        # client-side validated by the registry gate (defense-in-depth).
+        self._scope: Optional[ScopeDefinition] = scope
+
         await self.registry.initialize_server(
             self.SERVER_ID,
             scope=scope.model_dump(),
@@ -97,7 +99,7 @@ class BurpMCPAdapter:
             },
         }
         response = await self.registry.execute_tool(
-            self.SERVER_ID, "scan_target", params, timeout_override=3600
+            self.SERVER_ID, "scan_target", params, timeout_override=3600, scope=self._scope
         )
         self._check_response(response, "scan_target")
         return response

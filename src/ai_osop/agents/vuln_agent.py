@@ -20,11 +20,11 @@ from ai_osop.adapters.burp_mcp import BurpMCPAdapter
 from ai_osop.adapters.oast_mcp import OASTAdapter
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
 from ai_osop.adapters.turbo_intruder_mcp import TurboIntruderMCPAdapter
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import NUCLEI_SCAN_PROFILES, AgentType, Severity, VulnClass, settings
 from ai_osop.core.exceptions import AgentException
-from ai_osop.core.models import Asset, Endpoint, Task, Vulnerability
+from ai_osop.core.models import Asset, Task, Vulnerability
 from ai_osop.core.oast_correlation import OASTCorrelationRegistry, OASTProbe
 
 
@@ -506,9 +506,28 @@ class VulnAnalysisAgent(BaseAgent):
                 self._apply_catch_all_fp_downrank(vuln, catch_all)
             if engagement_id:
                 vuln.engagement_id = engagement_id
+            # FIX (finding-intelligence-2026-08-24): persistence DEFERRED until the
+            # intelligence layer below classifies + deduplicates. Previously every
+            # scanner observation was persisted as an independent finding (38 raw
+            # observations -> 38 "findings" on qosmos, incl. duplicate WAF/TLS/
+            # header detections that carried explicit false-positive signals).
+            vulns.append(vuln)
+
+        # ---- Finding Intelligence Layer (charter Phase 1) --------------------
+        from ai_osop.core.finding_intelligence import deduplicate_findings
+
+        canonical_vulns, intel_stats = deduplicate_findings(vulns)
+        for vuln in canonical_vulns:
             await self.ctx.graph_memory.add_vulnerability(vuln)
             self.findings[vuln.id] = vuln
-            vulns.append(vuln)
+        vulns = canonical_vulns
+
+        fp_count = sum(
+            1 for v in vulns
+            if getattr((v.yield_metadata or {}), "get", lambda *_: None)("finding_class")
+            == "observation"
+            or getattr(v, "confidence", 1.0) <= 0.25
+        )
 
         fp_count = sum(1 for v in vulns if getattr(v, "confidence", 1.0) <= 0.25)
         if fp_count:
@@ -526,6 +545,7 @@ class VulnAnalysisAgent(BaseAgent):
             "findings_count": len(vulns),
             "catch_all_host": bool(catch_all.get("is_catch_all")),
             "likely_false_positives": fp_count,
+            "intelligence": intel_stats,
             "findings": [v.model_dump() for v in vulns],
         }
 

@@ -8,7 +8,6 @@ Storage: Redis (hot) + Postgres (warm) for durability.
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional

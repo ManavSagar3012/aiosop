@@ -30,24 +30,83 @@ import pytest
 STRICT = os.environ.get("OSOP_QUALIFICATION_STRICT") == "1"
 
 # Endpoints (override via env to match a non-default deployment).
+# FIX (qual-follow-env-2026-08-24): port defaults were hardcoded (recon at 8082)
+# while the platform resolves them from .env via settings — on this host recon
+# runs on 18082, so the suite skipped against a dead port unless OSOP_RECON_MCP_URL
+# was exported manually. Derive defaults from settings so tests follow .env.
+from ai_osop.core.config import settings as _settings
+
 ENDPOINTS = {
-    "recon": os.environ.get("OSOP_RECON_MCP_URL", "http://127.0.0.1:8082"),
-    "nuclei": os.environ.get("OSOP_NUCLEI_MCP_URL", "http://127.0.0.1:8084"),
-    "browser": os.environ.get("OSOP_BROWSER_MCP_URL", "http://127.0.0.1:8091"),
-    "burp": os.environ.get("OSOP_BURP_MCP_URL", "http://127.0.0.1:8081"),
-    "source_map": os.environ.get("OSOP_SOURCE_MAP_MCP_URL", "http://127.0.0.1:8096"),
-    "turbo_intruder": os.environ.get("OSOP_TURBO_INTRUDER_MCP_URL", "http://127.0.0.1:8098"),
+    "recon": os.environ.get("OSOP_RECON_MCP_URL", f"http://127.0.0.1:{_settings.recon_mcp_port}"),
+    "nuclei": os.environ.get(
+        "OSOP_NUCLEI_MCP_URL", f"http://127.0.0.1:{_settings.nuclei_mcp_port}"
+    ),
+    "browser": os.environ.get(
+        "OSOP_BROWSER_MCP_URL", f"http://127.0.0.1:{_settings.browser_mcp_port}"
+    ),
+    "burp": os.environ.get("OSOP_BURP_MCP_URL", f"http://127.0.0.1:{_settings.burp_mcp_port}"),
+    "source_map": os.environ.get(
+        "OSOP_SOURCE_MAP_MCP_URL", f"http://127.0.0.1:{_settings.source_map_mcp_port}"
+    ),
+    "turbo_intruder": os.environ.get(
+        "OSOP_TURBO_INTRUDER_MCP_URL", f"http://127.0.0.1:{_settings.turbo_intruder_mcp_port}"
+    ),
 }
 
 
+# Expected server identity per endpoint.
+# Identity contract: the Go SDK answers GET /health with
+#   {"status": "ready", "server_id": "<id>"}      (key: server_id)
+# while the Python MCP servers answer with
+#   {"status": "ready", "server": "<name>", ...}  (key: server)
+# FIX (qual-identity-schema-2026-08-23): accepting only `server_id` misflagged
+# every REAL Python server (browser/source-map/turbo-intruder) as a foreign
+# service under STRICT mode even though it was our own tool answering.
+SERVER_IDS = {
+    "recon": "recon-mcp",
+    "nuclei": "nuclei-mcp",
+    "browser": "browser-mcp",
+    "burp": "burp-mcp",
+    "source_map": "source-map-mcp",
+    "turbo_intruder": "turbo-intruder-mcp",
+}
+
+
+def _identity(body: Any) -> Any:
+    if isinstance(body, dict):
+        return body.get("server_id") or body.get("server")
+    return None
+
+
 def require_server(name: str) -> str:
-    """Return the base URL if the server is reachable; else skip (or fail if STRICT)."""
+    """Return the base URL if OUR server is reachable; else skip (or fail if STRICT).
+
+    FIX (qual-identity-2026-08-23): the old check only required HTTP 200 on
+    /health. On this dev host an unrelated project container (buzz-adminer)
+    squats 127.0.0.1:8082 (the recon-mcp port) and answers 200 with an HTML
+    login page, so every recon qualification test failed with JSONDecodeError
+    instead of skipping. Verify the identity payload matches the expected
+    AI-OSOP tool before running reality assertions against it.
+    """
     base = ENDPOINTS[name]
     try:
         r = httpx.get(f"{base}/health", timeout=4.0)
         if r.status_code == 200:
-            return base
-        msg = f"{name}-mcp at {base} returned HTTP {r.status_code} on /health"
+            expected = SERVER_IDS.get(name)
+            if expected is None:
+                return base  # no identity contract for this server; keep old behavior
+            try:
+                body = r.json()
+            except ValueError:
+                body = None
+            if _identity(body) == expected:
+                return base
+            msg = (
+                f"{name}-mcp at {base} answered /health but is NOT {expected} "
+                f"(got: {str(body)[:120]!r}) — foreign service on this port?"
+            )
+        else:
+            msg = f"{name}-mcp at {base} returned HTTP {r.status_code} on /health"
     except Exception as e:  # noqa: BLE001
         msg = f"{name}-mcp at {base} unreachable: {e}"
     if STRICT:

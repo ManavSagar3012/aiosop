@@ -51,13 +51,23 @@ Write-Host "[3/5] Starting REAL MCP servers..."
 # Ensure ffuf binary is discoverable by security-bridge (Go bin provides ffuf.exe)
 $env:PATH = "C:\Users\HP\go\bin;" + (Join-Path $root ".venv\Scripts") + ";" + $env:PATH
 
-# Core Go servers (hardcoded ports in their main.go)
+# Core Go servers (ports read OSOP_*_MCP_PORT env, matching .env defaults).
+# PATCH (mcp-port-env-2026-08-23): binaries are env-configurable now; export the
+# platform's values so this launcher, .env, and the API agree on every port
+# (recon moved to 18082 because buzz-adminer squats 8082 on this dev host).
+$env:OSOP_RECON_MCP_PORT        = "18082"
+$env:OSOP_NUCLEI_MCP_PORT       = "8084"
+$env:OSOP_PAYLOAD_MCP_PORT      = "8084" # unused by the Python payload server below
+$env:OSOP_SECURITY_BRIDGE_PORT  = "8087"
+$env:OSOP_SHODAN_MCP_PORT       = "8085"
+$env:OSOP_THREAT_INTEL_MCP_PORT = "8086"
+
 Start-Process -FilePath (Join-Path $goDir "recon-mcp.exe")  -WindowStyle Hidden
 Start-Process -FilePath (Join-Path $goDir "nuclei-mcp.exe") -WindowStyle Hidden
-# Real auxiliary Go servers (root .exe built from mcp-servers/go/cmd/*)
-Start-Process -FilePath (Join-Path $root "shodan-mcp.exe") -WindowStyle Hidden
-Start-Process -FilePath (Join-Path $root "threat-intel-mcp.exe") -WindowStyle Hidden
-Start-Process -FilePath (Join-Path $root "security-bridge.exe") -WindowStyle Hidden
+# Real auxiliary Go servers (fresh builds from mcp-servers/go/cmd/*)
+Start-Process -FilePath (Join-Path $goDir "shodan-mcp.exe") -WindowStyle Hidden
+Start-Process -FilePath (Join-Path $goDir "threat-intel-mcp.exe") -WindowStyle Hidden
+Start-Process -FilePath (Join-Path $goDir "security-bridge.exe") -WindowStyle Hidden
 
 # browser-mcp (real Playwright) on :8091
 Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/browser_mcp.py --port 8091" -WindowStyle Hidden

@@ -16,13 +16,12 @@ Key design rules
 """
 
 import json
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import structlog
 
 from ai_osop.core.exceptions import GraphQueryError
-from ai_osop.core.models import AttackChain, ChainStatus, PrimitiveLedger, PrimitiveType
+from ai_osop.core.models import AttackChain, PrimitiveLedger
 
 logger = structlog.get_logger("ai_osop.primitive_ledger")
 

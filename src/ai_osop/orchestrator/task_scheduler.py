@@ -8,6 +8,7 @@ and passes itself as context so the scheduler can access it.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -16,10 +17,9 @@ import structlog
 from ai_osop.core.config import AgentType, EngagementPhase
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.models import ApprovalRequest, AuditEvent, Task
-from ai_osop.core.observability import record_task, update_task_counts
+from ai_osop.core.observability import record_task
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
-from ai_osop.orchestrator.state_machine import EngagementStateMachine
 
 logger = structlog.get_logger("ai_osop.orchestrator.task_scheduler")
 
@@ -30,9 +30,33 @@ class TaskScheduler:
     # Terminal failure statuses that should not trigger retry success path
     _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
 
+    # TOOL-REALITY-001 (charter section 4): task types whose execution REQUIRES a
+    # specific MCP server, mapped server_id. The scheduler consults this before
+    # dispatching so a down tool BLOCKS the task instead of burning retries into
+    # an open circuit breaker (observed live: burp_scan failed 3x against a dead
+    # burp-mcp with the opaque error "circuit breaker is open").
+    # Only verified mappings are listed — unmapped task types are ungated.
+    TASK_TYPE_SERVER_REQUIREMENTS: Dict[str, str] = {
+        "burp_scan": "burp-mcp",
+        "intruder_fuzz": "turbo-intruder-mcp",
+        "nuclei_scan": "nuclei-mcp",
+        "xss_scan": "browser-mcp",
+        "sqli_scan": "security-bridge",
+        "full_recon": "recon-mcp",
+        "dns_enumeration": "recon-mcp",
+        "port_scan": "recon-mcp",
+        "service_probe": "recon-mcp",
+        "technology_fingerprint": "recon-mcp",
+    }
+    BLOCK_RECHECK_INTERVAL_SEC = 10.0
+    BLOCK_MAX_WAIT_SEC = 900.0  # park at most 15 min, then fail with reason
+
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
         self.state_machine = None  # Injected by Orchestrator post-init to break circularity
+        # tool-reality parking lot: task_id -> (task, parked_at_monotonic)
+        self._blocked_tasks: Dict[str, tuple] = {}
+        self._block_reaper_started = False
 
     async def schedule_task(self, task: Task) -> Task:
         """Schedule a task for execution."""
@@ -144,6 +168,101 @@ class TaskScheduler:
 
             await asyncio.sleep(0.5)
 
+    async def _server_ready(self, server_id: str) -> tuple:
+        """Return (ready, detail) for an MCP server using REAL runtime state.
+
+        Tool Reality check: registration alone is not enough — the connection
+        must be initialized, its circuit breaker closed, and /mcp/state ready.
+        """
+        registry = getattr(self._orch, "mcp_registry", None)
+        conn = registry.get_server(server_id) if registry is not None else None
+        if conn is None:
+            return False, f"server {server_id} not registered"
+        if getattr(conn, "_circuit_open", False):
+            return False, f"server {server_id} circuit breaker open"
+        if not getattr(conn, "_initialized", False):
+            return False, f"server {server_id} not initialized"
+        # Tiered liveness probe:
+        #   1) /mcp/state (Python SDK servers) -> authoritative status
+        #   2) /health      (universal; Go SDK servers have no /mcp/state and
+        #      answer 404 there -- FIX (tool-reality-404-2026-08-24): a 404 on
+        #      /mcp/state previously misjudged HEALTHY Go servers as down).
+        try:
+            state = await asyncio.wait_for(conn.get_state(), timeout=3.0)
+            if getattr(state, "status", "") == "ready":
+                return True, "ready"
+        except Exception:  # noqa: BLE001 - fall through to /health
+            pass
+        try:
+            import aiohttp
+
+            session = getattr(conn, "_session", None)
+            if session is None:
+                return False, f"server {server_id} has no active session"
+            async with session.get(
+                f"http://{conn.host}:{conn.port}/health",
+                timeout=aiohttp.ClientTimeout(total=3.0),
+            ) as resp:
+                if resp.status != 200:
+                    return False, f"server {server_id} /health HTTP {resp.status}"
+                body = await resp.json(content_type=None)
+                if str(body.get("status", "")).lower() == "ready":
+                    return True, "ready"
+                return False, f"server {server_id} /health status={body.get('status')}"
+        except Exception as e:  # noqa: BLE001 - any probe failure means not ready
+            return False, f"server {server_id} probe failed: {e}"
+
+    def _start_block_reaper(self) -> None:
+        """Lazily start the background loop that revives/fails parked tasks."""
+        if self._block_reaper_started:
+            return
+        self._block_reaper_started = True
+        asyncio.create_task(self._blocked_task_reaper())
+
+    async def _blocked_task_reaper(self) -> None:
+        while True:
+            await asyncio.sleep(self.BLOCK_RECHECK_INTERVAL_SEC)
+            await self._reap_blocked_once()
+
+    async def _reap_blocked_once(self) -> None:
+        """One revival/timeout pass over parked tasks (unit-testable)."""
+        import time as _time
+
+        for task_id in list(self._blocked_tasks.keys()):
+            task, parked_at = self._blocked_tasks[task_id]
+            server_id = (task.result or {}).get("blocked_on_tool", "")
+            ok, _detail = await self._server_ready(server_id)
+            if ok:
+                del self._blocked_tasks[task_id]
+                task.status = "pending"
+                task.result = None
+                await self._orch.session_memory.store_task(task)
+                await self._orch.graph_memory.upsert_task(task)
+                logger.info(
+                    f"task_unblocked task_id={task.id} server={server_id} "
+                    f"tool_recovered=true"
+                )
+                asyncio.create_task(self._assign_task(task))
+                continue
+            waited = _time.monotonic() - parked_at
+            if waited >= self.BLOCK_MAX_WAIT_SEC:
+                del self._blocked_tasks[task_id]
+                logger.error(
+                    f"task_block_timeout task_id={task.id} server={server_id} "
+                    f"waited_s={int(waited)}"
+                )
+                await self._on_task_failure(
+                    task,
+                    {
+                        "status": "failed",
+                        "error": (
+                            f"required tool '{server_id}' remained unavailable "
+                            f"for {int(waited)}s"
+                        ),
+                        "error_type": "ToolUnavailable",
+                    },
+                )
+
     async def _assign_task(self, task: Task) -> None:
         """Assign task to appropriate agent."""
         with trace_span(
@@ -173,6 +292,44 @@ class TaskScheduler:
                     await self._on_task_failure(
                         task, {"error": str(e), "error_type": "PhaseViolation"}
                     )
+                    return
+
+            # TOOL-REALITY-001: refuse to dispatch tasks whose required MCP server
+            # is down. Park as 'blocked' (charter lifecycle) with automatic revival
+            # when the tool recovers, or fail with an actionable reason on timeout.
+            required_server = self.TASK_TYPE_SERVER_REQUIREMENTS.get(task.type)
+            if required_server is not None:
+                ok, detail = await self._server_ready(required_server)
+                if not ok:
+                    already = task.status == "blocked"
+                    task.status = "blocked"
+                    task.result = {
+                        "status": "blocked",
+                        "blocked_on_tool": required_server,
+                        "reason": detail,
+                    }
+                    await self._orch.session_memory.store_task(task)
+                    await self._orch.graph_memory.upsert_task(task)
+                    if not already:
+                        logger.warning(
+                            f"task_blocked_on_tool task_id={task.id} type={task.type} "
+                            f"server={required_server} reason='{detail}'"
+                        )
+                        await self._orch.coordination_bus.publish(
+                            "task.blocked",
+                            {
+                                "task_id": task.id,
+                                "task_type": task.type,
+                                "agent_type": task.agent_type.value,
+                                "engagement_id": task.engagement_id,
+                                "blocked_on_tool": required_server,
+                                "reason": detail,
+                            },
+                            "orchestrator",
+                        )
+                    import time as _time
+                    self._blocked_tasks[task.id] = (task, _time.monotonic())
+                    self._start_block_reaper()
                     return
 
             # GAP-2-4: tamper detection for exploit-class tasks. If the engagement's
@@ -548,6 +705,23 @@ class TaskScheduler:
             task.completed_at = datetime.utcnow()
             await self._orch.graph_memory.upsert_task(task, result_summary=result)
             await self._orch.session_memory.store_task(task)
+            # AUTONOMY-LOOP-001 (charter 22): scan-completing tasks trigger
+            # hypothesis regeneration automatically — previously this only ran
+            # when an operator hit the /intelligence API endpoint, so the
+            # cognitive layer never advanced on its own.
+            if task.type in ("nuclei_scan", "burp_scan", "full_recon",
+                             "assess_services"):
+                asyncio.create_task(self._regenerate_hypotheses(task.engagement_id))
+
+            # JS-DISCOVERY-LOOP (charter section 11): after recon completes,
+            # automatically schedule JS analysis for any discovered JavaScript
+            # bundles so newly found endpoints feed back into the attack graph
+            # and hypothesis engine. Closes the loop: recon -> JS -> endpoints
+            # -> hypotheses -> testing.
+            if task.type == "full_recon":
+                asyncio.create_task(
+                    self._auto_schedule_js_analysis(task.engagement_id, result))
+
             await self._orch.coordination_bus.publish(
                 "task.completed",
                 {
@@ -574,6 +748,95 @@ class TaskScheduler:
                 task, result_summary={"downstream_triggered": True}
             )
             await self._orch.session_memory.store_task(task)
+
+    async def _auto_schedule_js_analysis(self, engagement_id: str,
+                                          scan_result: Dict[str, Any]) -> None:
+        """Discover JS bundles from scan results and schedule analyze_js tasks.
+
+        Looks for .js URLs in the scan result endpoints/assets. For each unique
+        bundle found, schedules an analyze_js task through the normal pipeline
+        (which applies scope gating and tool-reality checks automatically).
+        """
+        try:
+            js_urls = set()
+
+            def _harvest(obj: Any) -> None:
+                if isinstance(obj, dict):
+                    for v_ in obj.values():
+                        _harvest(v_)
+                elif isinstance(obj, (list, tuple)):
+                    for item in obj:
+                        _harvest(item)
+                elif isinstance(obj, str) and obj.rstrip("?").endswith(".js")                         and "http" in obj.lower():
+                    js_urls.add(obj.strip())
+
+            _harvest(scan_result)
+
+            # Also query the graph for known JS endpoints from this engagement
+            try:
+                rows = await self._orch.graph_memory.run_read_query(
+                    "MATCH (e:Endpoint {engagement_id: $eid}) "
+                    "WHERE e.url =~ '.*\.js(\?.*)?$' "
+                    "RETURN e.url AS url LIMIT 20",
+                    {"eid": engagement_id},
+                )
+                for r in rows or []:
+                    u = r.get("url", "")
+                    if u:
+                        js_urls.add(u)
+            except Exception:  # noqa: BLE001 - graph query is best-effort
+                pass
+
+            if not js_urls:
+                return
+
+            scheduled = 0
+            for js_url in list(js_urls)[:10]:  # cap to avoid flooding
+                task_id = f"task-js-{hashlib.md5(js_url.encode()).hexdigest()[:10]}"
+                # Skip if already scheduled (idempotent re-runs)
+                if task_id in self._orch._tasks:
+                    continue
+
+                from ai_osop.core.models import Task
+
+                js_task = Task(
+                    id=task_id,
+                    type="analyze_js",
+                    agent_type=AgentType.RECON,
+                    engagement_id=engagement_id,
+                    payload={"url": js_url},
+                    priority=6,
+                    scope_check=True,
+                )
+                await self.schedule_task(js_task)
+                scheduled += 1
+
+            if scheduled:
+                logger.info(
+                    f"js_discovery_scheduled engagement_id={engagement_id} "
+                    f"bundles={scheduled}"
+                )
+        except Exception as e:  # noqa: BLE001 - feedback loop is best-effort
+            logger.warning(
+                f"js_discovery_scheduling_failed engagement_id={engagement_id} error={e}"
+            )
+
+    async def _regenerate_hypotheses(self, engagement_id: str) -> None:
+        """Fire-and-forget cognitive refresh; failures never affect the task."""
+        try:
+            from ai_osop.core.hypothesis_engine import HypothesisEngine
+
+            engine = HypothesisEngine(
+                self._orch.graph_memory,
+                getattr(self._orch, "skill_engine", None),
+                session_memory=getattr(self._orch, "session_memory", None),
+            )
+            hyps = await engine.generate_and_persist(engagement_id)
+            logger.info(
+                f"hypotheses_regenerated engagement_id={engagement_id} count={len(hyps)}"
+            )
+        except Exception as e:  # noqa: BLE001 - cognitive loop is best-effort
+            logger.warning(f"hypothesis_regeneration_failed engagement_id={engagement_id} error={e}")
 
     async def _on_task_failure(self, task: Task, result: Dict[str, Any]) -> None:
         """Handle task failure."""

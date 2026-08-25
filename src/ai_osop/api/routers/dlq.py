@@ -5,13 +5,12 @@ Dead Letter Queue endpoints for operator review and management.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ai_osop.api.deps import require_role, state, verify_token
+from ai_osop.api.deps import require_role, state
 from ai_osop.core.models import AuditEvent
 from ai_osop.core.tracing import trace_span
 from ai_osop.reliability.dlq import DLQEntry

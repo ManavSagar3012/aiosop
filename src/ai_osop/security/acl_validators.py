@@ -10,7 +10,6 @@ Validates that:
 Phase 5/6: Runtime Validation + Enterprise Hardening
 """
 
-import json
 from typing import Any, Dict, List, Optional, Set
 
 import structlog

@@ -4,11 +4,10 @@ Identifies and maps the target's technology stack (Frontend, Backend, DB, Auth, 
 Enables contextual reasoning based on historical bug bounty patterns.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
-from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Task
 
 

@@ -5,20 +5,20 @@ Implements the core MCP spec with async support and structured I/O.
 """
 
 import asyncio
-import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import websockets
 from pydantic import BaseModel, Field
 
 from ai_osop.core.config import settings
-from ai_osop.core.exceptions import MCPConnectionError, MCPException, MCPTimeoutError
-from ai_osop.core.models import AuditEvent
-from ai_osop.core.telemetry import RequestContext
-from ai_osop.core.tracing import trace_span, trace_span_with_parent
+
+logger = logging.getLogger("ai_osop.mcp")
+from ai_osop.core.exceptions import MCPConnectionError, MCPException
+from ai_osop.core.tracing import trace_span
 
 
 class MCPToolParameter(BaseModel):
@@ -172,11 +172,13 @@ class MCPConnection:
                 # Permanent failure: transition to a terminal state that blocks further probes
                 self._circuit_open = True
                 self._circuit_opened_at = None  # disables recovery via _circuit_breaker_check
-                logger = structlog.get_logger("ai_osop.mcp")
+                # FIX (mcp-logger-nameerror-2026-08-24): this line called
+                # structlog.get_logger() but structlog was never imported in this
+                # module -> NameError on the circuit PERMANENT-FAILURE path,
+                # crashing recovery instead of recording it.
                 logger.error(
-                    "mcp_circuit_permanent_failure",
-                    server_id=self.server_id,
-                    recovery_attempts=self._recovery_attempts,
+                    f"mcp_circuit_permanent_failure server_id={self.server_id} "
+                    f"recovery_attempts={self._recovery_attempts}"
                 )
         elif self._failure_count >= self.CIRCUIT_THRESHOLD:
             self._circuit_open = True
@@ -399,8 +401,19 @@ class MCPRegistry:
         tool_name: str,
         parameters: Dict[str, Any],
         timeout_override: Optional[int] = None,
+        scope: Optional[Any] = None,
     ) -> MCPExecuteResponse:
-        """Execute a tool on a specific server with tracing."""
+        """Execute a tool on a specific server with tracing.
+
+        FIX (scope-gate-2026-08-24): this is THE choke point every adapter uses
+        (19 adapters funnel here). Before dispatching, candidate attack targets
+        are extracted from `parameters` and validated against the engagement
+        scope. Active servers called with target-bearing parameters and NO bound
+        scope are refused outright — the previous behavior trusted each remote
+        server's optional scope_check flag and let fail-open agent checks decide,
+        so a hallucinating agent could fire live traffic at unauthorized hosts.
+        Denials raise OutOfScopeError (fail closed, loud).
+        """
         with trace_span(
             f"mcp_registry.execute_tool",
             attributes={
@@ -412,11 +425,29 @@ class MCPRegistry:
             if not conn:
                 raise MCPConnectionError(f"Server {server_id} not registered")
 
+            from ai_osop.core.exceptions import OutOfScopeError
+            from ai_osop.safety.scope_gate import check_tool_call
+
+            decision = check_tool_call(server_id, tool_name, parameters, scope)
+            if not decision.allowed:
+                logger.error(f"scope_gate_denied {decision.denial_detail()}")
+                self._record_scope_denial(server_id)
+                raise OutOfScopeError(f"[scope-gate] {decision.denial_detail()}")
+
             self.call_counts[server_id] = self.call_counts.get(server_id, 0) + 1
             request = MCPExecuteRequest(
                 tool_name=tool_name, parameters=parameters, timeout_override=timeout_override
             )
             return await conn.execute(request)
+
+    def _record_scope_denial(self, server_id: str) -> None:
+        """Increment the Prometheus scope-denial counter if metrics are wired."""
+        try:
+            from ai_osop.core.metrics import SCOPE_DENIED_TOTAL
+
+            SCOPE_DENIED_TOTAL.labels(server_id=server_id).inc()
+        except Exception:  # noqa: BLE001 - metrics are best-effort
+            pass
 
     async def broadcast_execute(
         self,

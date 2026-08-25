@@ -35,6 +35,12 @@ def client():
         patch("ai_osop.api.main.MCPRegistry") as mock_mcp_registry,
         patch("ai_osop.api.main.register_optional_mcp_servers", new_callable=AsyncMock),
         patch("ai_osop.api.main.Orchestrator") as mock_orch,
+        # FIX (api-v2-auth-fixture-2026-08-23): verify_token prefers JWT when
+        # settings.jwt_secret is set. The developer .env sets OSOP_JWT_SECRET,
+        # so patching only api_token left JWT validation active and "dev-test-token"
+        # was rejected with 401 / websocket 1008. Clear jwt_secret so this
+        # unit-level suite exercises the api_token path it was written for.
+        patch("ai_osop.api.deps.settings.jwt_secret", None),
         patch("ai_osop.api.deps.settings.api_token", "dev-test-token"),
         # Hermetic startup: the lifespan's run_startup_self_test does real
         # dependency probes. With backends mocked those probes are meaningless,
@@ -48,7 +54,6 @@ def client():
             return_value={"status": "healthy", "checks": {}, "summary": {"passed": 0, "failed": 0}},
         ),
     ):
-
         # --- SessionMemory: Redis ping + Postgres session-recovery query ---
         sess = mock_session.return_value
         sess.connect = AsyncMock()
@@ -121,12 +126,30 @@ def test_api_startup_registers_agents(client):
     # main.py lifespan registers 11 core agents + 10 specialist agents (total 21;
     # visual_context was added post-migration).
     # Note: the "experimental" designation was removed post-migration.
-    assert client.orch.register_agent.call_count == 21
+    # FIX (service-agent-2026-08-24): ServiceAssessmentAgent added as 22nd
+    # registered agent (Tier-1 TLS/SSH service assessment specialist).
+    assert client.orch.register_agent.call_count == 22
 
 
 def test_root_not_found(client):
     response = client.get("/")
     assert response.status_code == 404
+
+
+def _recv_response(websocket, expected_type: str, max_frames: int = 25):
+    """Receive frames until one of `expected_type` arrives.
+
+    FIX (ws-push-interleave-2026-08-23): AIOSOP-WS-PUSH-001 added background
+    push loops (heartbeat / phase_transition / agent_observation) on every
+    engagement socket, so a client's request/response frames legitimately
+    interleave with pushed events. The dashboard filters by event_type; this
+    test now does the same instead of assuming pong is the very first frame.
+    """
+    for _ in range(max_frames):
+        data = websocket.receive_json()
+        if isinstance(data, dict) and data.get("type") == expected_type:
+            return data
+    raise AssertionError(f"no {expected_type!r} frame within {max_frames} frames")
 
 
 def test_websocket_endpoint(client):
@@ -141,10 +164,10 @@ def test_websocket_endpoint(client):
     )
     with client.websocket_connect("/ws/engagements/test-session?token=dev-test-token") as websocket:
         websocket.send_json({"action": "ping"})
-        data = websocket.receive_json()
+        data = _recv_response(websocket, "pong")
         assert data == {"type": "pong"}
 
         websocket.send_json({"action": "status"})
-        data = websocket.receive_json()
+        data = _recv_response(websocket, "status")
         assert data["type"] == "status"
         assert data["session_id"] == "test-session"

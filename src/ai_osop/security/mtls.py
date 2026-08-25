@@ -10,7 +10,6 @@ encrypted, authenticated connections between all components.
 """
 
 import ssl
-from pathlib import Path
 from typing import Optional
 
 import structlog

@@ -26,9 +26,30 @@ class MockAgentContext:
         self.current_task = None
 
 
+def _uri_port(uri: str, default: int) -> int:
+    """Best-effort port extraction from a DB URI."""
+    try:
+        from urllib.parse import urlparse
+
+        return urlparse(uri).port or default
+    except Exception:
+        return default
+
+
 def is_db_available():
-    """Helper to check if local databases are running."""
-    for port in [5432, 7687, 6379]:
+    """Helper to check if local databases are running.
+
+    FIX (e2e-db-probe-2026-08-23): probed hardcoded 5432/6379 while the platform
+    actually runs Postgres on OSOP_POSTGRES_URI (15432 here) and Redis on
+    OSOP_REDIS_URI — so this gate returned True against FOREIGN services on
+    5432/6379 and then failed connecting to the real ones. Probe configured URIs.
+    """
+    for uri, default in [
+        (settings.postgres_uri, 5432),
+        ("bolt://127.0.0.1:7687", 7687),
+        (settings.redis_uri, 6379),
+    ]:
+        port = _uri_port(uri, default)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1.0)
         try:
@@ -54,6 +75,18 @@ async def test_e2e_recon_to_reporting_pipeline():
     5. Clean up.
     """
     engagement_id = "eng-test-e2e-integration-run"
+
+    # FIX (e2e-llm-warm-2026-08-23): the API lifespan warms the primary model at
+    # startup (main.py -> llm_client.warm_up), so production never pays the
+    # cold-load cost mid-mission. This bare test doesn't run lifespan; under a
+    # fully loaded suite, phi3's ~60s CPU cold load + generation exceeded even
+    # the 240s bound. Mirror production: warm once (keep_alive pins residency).
+    from ai_osop.core.llm_client import LiteLLMClient
+
+    try:
+        await LiteLLMClient().warm_up()
+    except Exception as e:  # noqa: BLE001 - report still works without LLM polish
+        print(f"[e2e] LLM warm-up skipped: {e}")
 
     # 1. Connect to memories
     sm = SessionMemory()

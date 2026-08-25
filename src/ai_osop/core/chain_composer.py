@@ -26,9 +26,8 @@ Design rules
 from __future__ import annotations
 
 import math
-import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 import structlog
 

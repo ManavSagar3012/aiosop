@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ai_osop.core.config import settings
 from ai_osop.core.config import AgentType, EngagementPhase
 from ai_osop.core.models import (
     AuditEvent,
@@ -217,7 +218,7 @@ class TestGoldenPath:
         from ai_osop.agents.self_pentest_agent import SelfPentestAgent
 
         agent = SelfPentestAgent(
-            redis_url="redis://localhost:6379",
+            redis_url=settings.redis_uri,
             neo4j_uri="bolt://localhost:7687",
             neo4j_user="neo4j",
             neo4j_password="test",
@@ -319,7 +320,7 @@ class TestGoldenPath:
         )
 
         agent = SelfPentestAgent(
-            redis_url="redis://localhost:6379",
+            redis_url=settings.redis_uri,
             neo4j_uri="bolt://localhost:7687",
             neo4j_user="neo4j",
             neo4j_password="test",
@@ -334,7 +335,7 @@ class TestGoldenPath:
         from ai_osop.agents.self_pentest_agent import SelfPentestAgent
 
         agent = SelfPentestAgent(
-            redis_url="redis://localhost:6379",
+            redis_url=settings.redis_uri,
             neo4j_uri="bolt://localhost:7687",
             neo4j_user="neo4j",
             neo4j_password="test",

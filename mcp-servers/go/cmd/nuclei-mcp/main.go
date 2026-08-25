@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"context"
 	"os/exec"
 	"strconv"
@@ -128,7 +129,14 @@ func main() {
 		},
 	})
 
-	_ = server.Run(":8084")
+		// FIX (mcp-port-env-2026-08-23): port was hardcoded, so the binary could not
+	// be moved off a conflicting host port without a rebuild-by-edit. Read the
+	// platform env (same var the Python settings use); fall back to the default.
+	port := os.Getenv("OSOP_NUCLEI_MCP_PORT")
+	if port == "" {
+		port = "8084"
+	}
+	_ = server.Run(":" + port)
 }
 
 func stringSlice(value any) []string {

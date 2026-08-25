@@ -8,16 +8,14 @@ import hashlib
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
-from neo4j.graph import Node, Path, Relationship
 
 from ai_osop.core.config import settings
-from ai_osop.core.exceptions import GraphQueryError, MemoryException
 from ai_osop.core.models import (
     Asset,
     AttackPath,
@@ -26,7 +24,6 @@ from ai_osop.core.models import (
     Endpoint,
     Exploit,
     Hypothesis,
-    Payload,
     Vulnerability,
     Workflow,
     WorkflowStep,
@@ -1208,7 +1205,7 @@ class GraphMemory:
                 rec = await res.single()
                 return bool(rec and rec["c"] > 0)
         except Exception as e:
-            logger.debug("task_has_spawned_failed", error=str(e))
+            logger.debug(f"task_has_spawned_failed error={e}")
             return False
 
     async def claim_auto_discovery(self, engagement_id: str) -> bool:
@@ -1230,7 +1227,7 @@ class GraphMemory:
                 rec = await res.single()
                 return bool(rec and rec["is_new"])
         except Exception as e:
-            logger.debug("claim_auto_discovery_failed", error=str(e))
+            logger.debug(f"claim_auto_discovery_failed error={e}")
             return False
 
     async def reset_interrupted_tasks(self) -> List[Dict[str, Any]]:
@@ -1254,7 +1251,7 @@ class GraphMemory:
                 async for rec in res:
                     out.append(dict(rec))
         except Exception as e:
-            logger.debug("reset_interrupted_tasks_failed", error=str(e))
+            logger.debug(f"reset_interrupted_tasks_failed error={e}")
         return out
 
     async def mark_task_status(self, task_id: str, status: str) -> None:
@@ -1271,7 +1268,7 @@ class GraphMemory:
                     },
                 )
         except Exception as e:
-            logger.debug("mark_task_status_failed", error=str(e))
+            logger.debug(f"mark_task_status_failed error={e}")
 
     async def find_incomplete_chains(self) -> List[Dict[str, Any]]:
         """Completed chain parents missing their next SPAWNED child — candidates to resume."""
@@ -1289,7 +1286,7 @@ class GraphMemory:
                 async for rec in res:
                     out.append(dict(rec))
         except Exception as e:
-            logger.debug("find_incomplete_chains_failed", error=str(e))
+            logger.debug(f"find_incomplete_chains_failed error={e}")
         return out
 
     async def attach_evidence_to_step(
@@ -1473,7 +1470,7 @@ class GraphMemory:
                 res = await s.run(cypher, {"pid": parent_id})
                 return [rec["id"] async for rec in res]
         except Exception as e:
-            logger.debug("get_task_dependents_failed", error=str(e))
+            logger.debug(f"get_task_dependents_failed error={e}")
             return []
 
     async def close(self) -> None:

@@ -13,7 +13,6 @@ import structlog
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import (
-    ApprovalDeniedError,
     OutOfScopeError,
     SandboxException,
     ScopeValidationError,

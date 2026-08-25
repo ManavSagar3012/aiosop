@@ -9,7 +9,7 @@ Phase 6: Enterprise Hardening
 """
 
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any, Dict, Set
 
 import structlog
 

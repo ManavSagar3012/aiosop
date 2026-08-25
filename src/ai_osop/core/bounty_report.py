@@ -8,7 +8,6 @@ reason good bugs pay $0).
 
 import hashlib
 import json
-import re
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 
