@@ -355,7 +355,7 @@ export const KnowledgeGraphs: React.FC = () => {
               </Panel>
               
               <Panel position="top-right" className="w-80 mt-4 mr-4">
-                 <Card title="Graph Inspector" glow={inspectorData?.isVuln ? 'red' : 'cyan'}>
+                 <Card title="Graph Inspector" accent={inspectorData?.isVuln ? 'danger' : 'info'}>
                     {inspectorData ? (
                        <div className="font-code-sm text-[11px] space-y-5">
                           <div className="bg-black/40 p-3 border border-outline-variant">

@@ -78,7 +78,7 @@ export const MissionReport: React.FC = () => {
   if (!report) {
     return (
       <div className="h-full flex items-center justify-center">
-        <Card title="ERROR" glow="red">
+        <Card title="ERROR" accent="danger">
           <div className="p-6 text-center">
             <EmptyState
               icon={<Shield size={48} />}

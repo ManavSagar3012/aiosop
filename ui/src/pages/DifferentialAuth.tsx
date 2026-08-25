@@ -97,7 +97,7 @@ export const DifferentialAuth: React.FC = () => {
         </Card>
 
         {/* Comparison (Active Identity) */}
-        <Card title={`Test Observation (${activeIdentity?.toUpperCase()})`} glow={activeIdentity === 'user_b' ? 'red' : 'none'} className="flex flex-col overflow-hidden">
+        <Card title={`Test Observation (${activeIdentity?.toUpperCase()})`} accent={activeIdentity === 'user_b' ? 'danger' : 'none'} className="flex flex-col overflow-hidden">
            <div className="flex-1 overflow-y-auto space-y-4 font-code-sm text-[11px]">
               <div className={`p-3 border ${activeIdentity === 'user_b' && currentFinding ? 'bg-error-container/10 border-error animate-pulse' : 'bg-black/40 border-outline-variant'}`}>
                  <div className={`${activeIdentity === 'user_b' && currentFinding ? 'text-error' : 'text-primary-fixed'} mb-2 font-bold uppercase tracking-widest text-label-xs`}>HTTP Response</div>

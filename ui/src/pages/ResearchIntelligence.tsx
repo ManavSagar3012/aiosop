@@ -207,7 +207,7 @@ export const ResearchIntelligence: React.FC = () => {
         </Card>
 
         {/* Outcome Ledger */}
-        <Card title="Bug Bounty Outcome Ledger (OQR-009)" glow="green">
+        <Card title="Bug Bounty Outcome Ledger (OQR-009)" accent="success">
           {loading ? (
             <div className="space-y-2">
               <Skeleton className="h-8 w-full" />

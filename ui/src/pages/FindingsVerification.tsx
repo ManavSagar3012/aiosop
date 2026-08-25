@@ -222,7 +222,7 @@ export const FindingsVerification: React.FC = () => {
         </Card>
 
         {/* Verification Board Sidebar */}
-        <Card title="Pending Verifications" glow="cyan">
+        <Card title="Pending Verifications" accent="info">
            {verifications.length === 0 ? (
              <EmptyState
                message="No pending verifications — the swarm has not escalated any findings for consensus review."
