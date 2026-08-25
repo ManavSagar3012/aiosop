@@ -444,6 +444,119 @@ async def lifespan(app: FastAPI):
         # 11. Set build info for metrics
         BUILD_INFO.info({"version": "3.0", "git_sha": "2bb4379"})
 
+        # 12. Start auto-dispatch loop — ensures queued tasks get assigned to
+        # idle agents without requiring a separate orchestrator CLI process.
+        async def _auto_dispatch_loop() -> None:
+            """Background loop that polls task queues and dispatches to agents.
+
+            The orchestrator's _scheduler_loop already does this, but tasks
+            scheduled via the REST API sometimes land in the Redis queue before
+            the scheduler tick picks them up. This loop acts as a safety net:
+            it runs every 3 seconds, drains pending tasks from all active
+            engagement queues, and calls _assign_task for each.
+
+            It also recovers stale agent locks — if an agent's status is
+            "running" but has no current task, it gets reset to "idle" so
+            the dispatcher can claim it for new work.
+            """
+            _logger = logging.getLogger("ai_osop.api.dispatch")
+            _logger.info("auto_dispatch_loop started")
+            tick = 0
+            while True:
+                try:
+                    await asyncio.sleep(3)
+                    tick += 1
+                    orch_ref = state.get("orchestrator")
+                    if orch_ref is None or not getattr(orch_ref, "_running", False):
+                        continue
+
+                    # 0. Recover stale agent locks — agents stuck "running" with
+                    #    no current task get reset to "idle" so they can be claimed.
+                    for agent in list(orch_ref._agents.values()):
+                        if agent.ctx.status == "running":
+                            has_task = any(
+                                t.status == "running" and t.assigned_agent_id == agent.ctx.agent_id
+                                for t in orch_ref.state.get_all_tasks().values()
+                            )
+                            if not has_task:
+                                agent.ctx.status = "idle"
+                                await orch_ref.session_memory.remove_busy_agent(
+                                    agent.ctx.agent_id
+                                )
+                                lock_key = f"lock:agent:{agent.ctx.agent_id}"
+                                await orch_ref.session_memory.release_lock(
+                                    lock_key, "locked"
+                                )
+                                _logger.info(
+                                    "auto_dispatch: recovered stale agent %s",
+                                    agent.ctx.agent_id,
+                                )
+
+                    # 1. Pick up pending in-memory tasks that the scheduler missed
+                    dispatched = 0
+                    for task in list(orch_ref.state.get_all_tasks().values()):
+                        if task.status == "pending":
+                            try:
+                                await orch_ref.task_scheduler._assign_task(task)
+                                dispatched += 1
+                            except Exception as dispatch_err:
+                                _logger.warning(
+                                    "auto_dispatch: failed to dispatch %s: %s",
+                                    task.id,
+                                    dispatch_err,
+                                )
+                    if dispatched > 0 and tick % 5 == 1:
+                        _logger.info("auto_dispatch: dispatched %d tasks this cycle", dispatched)
+
+                    # 2. Drain Redis queues for active engagements
+                    for sid, session in list(orch_ref._sessions.items()):
+                        if getattr(session, "phase", "") == "halted":
+                            continue
+                        try:
+                            while True:
+                                task_data = (
+                                    await orch_ref.session_memory.pop_task_queue(
+                                        f"tasks:{session.session_id}"
+                                    )
+                                )
+                                if not task_data:
+                                    break
+                                from ai_osop.core.models import Task
+
+                                task = Task(**task_data)
+                                if orch_ref.state.get_task(task.id):
+                                    existing = orch_ref.state.get_task(task.id)
+                                    if existing.status in (
+                                        "running",
+                                        "completed",
+                                        "failed",
+                                        "blocked",
+                                    ):
+                                        continue
+                                orch_ref.state.add_task(task)
+                                await orch_ref.task_scheduler.ingest_queued_task(task)
+                                _logger.info(
+                                    "auto_dispatch: ingested queued task %s type=%s",
+                                    task.id,
+                                    task.type,
+                                )
+                        except Exception as drain_err:
+                            _logger.warning(
+                                "auto_dispatch: queue drain error for %s: %s",
+                                sid,
+                                drain_err,
+                            )
+
+                except asyncio.CancelledError:
+                    break
+                except Exception as loop_err:
+                    logging.getLogger("ai_osop.api.dispatch").error(
+                        "auto_dispatch_loop error: %s", loop_err
+                    )
+                    await asyncio.sleep(10)
+
+        _dispatch_task = asyncio.create_task(_auto_dispatch_loop())
+
     logger.info("AI-OSOP API startup complete.")
     yield
 

@@ -6,7 +6,6 @@ and asset inventory maintenance.
 
 import hashlib
 import re
-from datetime import datetime
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -16,11 +15,11 @@ import structlog
 
 from ai_osop.adapters.recon_mcp import ReconMCPAdapter
 from ai_osop.adapters.security_bridge_mcp import SecurityBridgeAdapter
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.agents.retrieval_agent import RetrievalAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
-from ai_osop.core.models import Asset, Endpoint, Task, make_asset_id
+from ai_osop.core.models import Asset, Endpoint, Task
 from ai_osop.core.openapi_ingest import is_spec, parse_spec, spec_candidate_urls
 from ai_osop.core.url_intelligence import (
     classify_url,
@@ -76,6 +75,8 @@ class ReconAgent(BaseAgent):
         return task_type in [
             "full_recon",
             "dns_enumeration",
+            "subdomain_enumeration",
+            "subdomain_enum",
             "port_scan",
             "service_probe",
             "osint_lookup",
@@ -151,34 +152,15 @@ class ReconAgent(BaseAgent):
             return ""
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
-        """Execute reconnaissance task."""
-        task_type = task.type
-        payload = task.payload
-
-        # Initialize adapter if scope is provided in payload (Issue 12)
-        if "scope" in payload:
-            await self.recon_adapter.initialize(payload["scope"], task.engagement_id)
-
-        if task_type == "dns_enumeration":
-            return await self._execute_dns_enum(payload)
-        elif task_type == "port_scan":
-            return await self._execute_port_scan(payload)
-        elif task_type == "service_probe":
-            return await self._execute_service_probe(payload)
-        elif task_type == "osint_lookup":
-            return await self._execute_osint(payload)
-        elif task_type == "technology_fingerprint":
-            return await self._execute_tech_fingerprint(payload)
-        elif task_type == "full_recon":
-            return await self._execute_full_recon(payload)
-        elif task_type == "expand_subdomains":
-            return await self._execute_expand_subdomains(payload)
-        elif task_type == "content_discovery":
-            return await self._execute_content_discovery(payload)
-        elif task_type == "openapi_ingest":
-            return await self._execute_openapi_ingest(payload)
-        else:
-            raise AgentException(f"Unknown recon task type: {task_type}")
+        """
+        Task execution is now delegated to the BaseAgent's autonomous cognitive loop.
+        This method is maintained to satisfy the abstract base class requirement,
+        but all logic is now handled dynamically by the LLM in execute_task.
+        """
+        logger.warning(
+            f"ReconAgent._execute called directly for task {task.type}. This should be intercepted by BaseAgent.execute_task."
+        )
+        return {"status": "success", "note": "Delegated to cognitive loop."}
 
     def _mk_endpoint(self, url: str, engagement_id: str, source: str, **extra: Any) -> Endpoint:
         """Build an enriched Endpoint from a raw URL (params, tags, template).

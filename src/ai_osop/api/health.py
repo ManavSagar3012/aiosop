@@ -20,11 +20,10 @@ from collections import deque
 from datetime import datetime
 from typing import Any, Deque, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
 from ai_osop.api.deps import state
 from ai_osop.core.metrics import READY_STATUS
-from ai_osop.core.telemetry import RequestContext
 
 router = APIRouter(tags=["health"])
 
@@ -475,9 +474,36 @@ async def health() -> Dict[str, Any]:
     import ai_osop.api.main as _m
 
     _mods = [k for k in _sys.modules if "ai_osop.api.main" in k]
+
+    # Orchestrator dispatch status
+    _orch = state.get("orchestrator")
+    _dispatch = {}
+    if _orch is not None:
+        _tasks = _orch.state.get_all_tasks()
+        _pending = sum(1 for t in _tasks.values() if t.status == "pending")
+        _running = sum(1 for t in _tasks.values() if t.status == "running")
+        _completed = sum(1 for t in _tasks.values() if t.status == "completed")
+        _failed = sum(1 for t in _tasks.values() if t.status == "failed")
+        _blocked = sum(1 for t in _tasks.values() if t.status == "blocked")
+        _awaiting = sum(1 for t in _tasks.values() if t.status == "awaiting_approval")
+        _dispatch = {
+            "orchestrator_running": getattr(_orch, "_running", False),
+            "sessions": len(_orch._sessions),
+            "tasks": {
+                "total": len(_tasks),
+                "pending": _pending,
+                "running": _running,
+                "completed": _completed,
+                "failed": _failed,
+                "blocked": _blocked,
+                "awaiting_approval": _awaiting,
+            },
+        }
+
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
+        "dispatch": _dispatch,
         "diag": {
             "loaded_from": getattr(_m, "__file__", "unknown"),
             "modules_keys": _mods,
