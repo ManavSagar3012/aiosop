@@ -311,6 +311,37 @@ class BaseAgent(ABC):
                     task.engagement_id, {"decision_record": decision.model_dump()}
                 )
 
+                # T2.1: Stagnation detection — check if agent is going in circles
+                try:
+                    _detector = getattr(self.ctx, '_stagnation_detector', None)
+                    if _detector is None:
+                        # Try to get from orchestrator via the task's engagement
+                        pass  # detector is attached per-agent, skip if not set
+                    else:
+                        _conf = reasoning.get('confidence', 0.0)
+                        _tool = action_plan.get('tool_call', {}).get('name', 'complete')
+                        _detector.record_observation(
+                            self.ctx.agent_id, task.id, _tool, action_plan, _conf, iteration
+                        )
+                        _stagnation = _detector.check_stagnation(
+                            self.ctx.agent_id, task.id, iteration, _conf
+                        )
+                        if _stagnation and _stagnation.severity == 'high':
+                            agent_logger.warning(
+                                "stagnation_detected agent=%s type=%s recommendation=%s",
+                                self.ctx.agent_id,
+                                _stagnation.stagnation_type,
+                                _stagnation.recommendation,
+                            )
+                            # Auto-complete if severely stagnated
+                            if iteration >= 10:
+                                final_result["status"] = "partial"
+                                final_result["conclusion"] = f"Completed early: {_stagnation.recommendation}"
+                                objective_met = True
+                                break
+                except Exception:
+                    pass  # stagnation detection is advisory, never fatal
+
                 if action_plan.get("action") == "complete":
                     objective_met = True
                     final_result["conclusion"] = action_plan.get("conclusion", "Task completed.")
@@ -321,6 +352,38 @@ class BaseAgent(ABC):
                     server_id = tool_call.get("server")
                     tool_name = tool_call.get("name")
                     tool_params = tool_call.get("parameters", {})
+
+                    # T1.1: Validate tool call before execution
+                    try:
+                        from ai_osop.safety.tool_call_validator import ToolCallValidator
+                        _validator = ToolCallValidator(mcp_registry=self.ctx.mcp_registry)
+                        _scope = getattr(self.ctx, 'scope', None)
+                        if _scope is None:
+                            # Load scope from engagement session
+                            try:
+                                _session = await self.ctx.session_memory.load_session_state(task.engagement_id)
+                                _scope = getattr(_session, 'scope', None) if _session else None
+                            except Exception:
+                                _scope = None
+                        _vr = _validator.validate(self.ctx.agent_type, tool_call, _scope)
+                        if not _vr.allowed:
+                            agent_logger.warning(
+                                "tool_call_blocked agent=%s reason=%s",
+                                self.ctx.agent_id, _vr.reason,
+                            )
+                            await self._record_observation(
+                                task.engagement_id,
+                                {"tool_blocked": tool_name, "reason": _vr.reason},
+                            )
+                            continue
+                        # Apply sanitized params
+                        if _vr.sanitized_params:
+                            tool_params = _vr.sanitized_params
+                        if _vr.warnings:
+                            for w in _vr.warnings:
+                                agent_logger.warning("tool_call_warning agent=%s msg=%s", self.ctx.agent_id, w)
+                    except Exception as _v_err:
+                        agent_logger.debug("tool_validation_skip error=%s", _v_err)
 
                     try:
                         # 3. Execute tool
