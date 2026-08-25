@@ -9,20 +9,19 @@ export const Administration: React.FC = () => {
 
   const haltEngagement = () => {
     const id = (document.getElementById('eng-id-input') as HTMLInputElement).value;
-    fetch(`${API_BASE}/engagements/${id}/halt`, { method: 'POST', headers: authHeaders() })
-      .then(() => setActionError(null))
+    fetch(`${API_BASE}/engagements/${id}/halt?reason=admin_action`, { method: 'POST', headers: authHeaders() })
+      .then((res) => { if (!res.ok) throw new Error("Failed"); setActionError(null); })
       .catch(() => setActionError({ message: `Failed to halt engagement "${id}".`, retry: haltEngagement }));
   };
 
   const transitionPhase = () => {
     const id = (document.getElementById('eng-id-input') as HTMLInputElement).value;
     const phase = (document.getElementById('phase-input') as HTMLInputElement).value;
-    fetch(`${API_BASE}/engagements/${id}/transition`, {
+    fetch(`${API_BASE}/engagements/${id}/transition?new_phase=${phase}`, {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ phase }),
     })
-      .then(() => setActionError(null))
+      .then((res) => { if (!res.ok) throw new Error("Failed"); setActionError(null); })
       .catch(() => setActionError({
         message: `Failed to transition engagement "${id}" to phase "${phase}".`,
         retry: transitionPhase,
@@ -30,152 +29,210 @@ export const Administration: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-3 gap-6">
+    <div className="flex flex-col" style={{ gap: 16 }}>
+      {actionError && (
+        <ErrorState message={actionError.message} onRetry={actionError.retry} />
+      )}
+
+      <div className="grid grid-cols-3" style={{ gap: 16 }}>
         <Card title="Swarm Configuration">
-           <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                 <div className="flex items-center gap-2 text-on-surface font-code-sm text-[12px]">
-                    <Cpu size={16} className="text-primary-fixed" /> Max Parallel Agents
-                 </div>
-                 <input type="number" defaultValue={5} className="w-16 bg-black border border-outline-variant text-primary-fixed p-1 text-center font-code-sm text-[12px]" />
+          <div className="flex flex-col" style={{ gap: 16 }}>
+            {[
+              { icon: <Cpu size={16} style={{ color: 'var(--accent)' }} />, label: 'Max Parallel Agents', control: (
+                <input type="number" defaultValue={5} className="input" style={{ width: 64, textAlign: 'center' }} />
+              )},
+              { icon: <Settings size={16} style={{ color: 'var(--danger)' }} />, label: 'Evidence Integrity Mode', control: (
+                <select className="select" style={{ fontSize: 11 }}>
+                  <option>STRICT (100% LIVE)</option>
+                  <option>BALANCED (ALLOW DERIVED)</option>
+                  <option>DEV (ALLOW MOCKS)</option>
+                </select>
+              )},
+              { icon: <Shield size={16} style={{ color: 'var(--accent)' }} />, label: 'Verification Strictness', control: (
+                <select className="select" style={{ fontSize: 11 }}>
+                  <option>Loose (1 Source)</option>
+                  <option selected>Balanced (2 Sources)</option>
+                  <option>Strict (3+ Sources)</option>
+                </select>
+              )},
+            ].map(({ icon, label, control }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--text-primary)' }}>
+                  {icon}
+                  {label}
+                </div>
+                {control}
               </div>
-              <div className="flex items-center justify-between">
-                 <div className="flex items-center gap-2 text-on-surface font-code-sm text-[12px]">
-                    <Settings size={16} className="text-error" /> Evidence Integrity Mode
-                 </div>
-                 <select className="bg-black border border-outline-variant text-error p-1 font-code-sm text-[11px]">
-                    <option selected>STRICT (100% LIVE)</option>
-                    <option>BALANCED (ALLOW DERIVED)</option>
-                    <option className="text-on-surface-variant opacity-50">DEV (ALLOW MOCKS)</option>
-                 </select>
-              </div>
-              <div className="flex items-center justify-between">
-                 <div className="flex items-center gap-2 text-on-surface font-code-sm text-[12px]">
-                    <Shield size={16} className="text-primary-fixed" /> Verification Strictness
-                 </div>
-                 <select className="bg-black border border-outline-variant text-primary-fixed p-1 font-code-sm text-[11px]">
-                    <option>Loose (1 Source)</option>
-                    <option selected>Balanced (2 Sources)</option>
-                    <option>Strict (3+ Sources)</option>
-                 </select>
-              </div>
-           </div>
+            ))}
+          </div>
         </Card>
 
         <Card title="Budget & Limits">
-           <div className="space-y-4">
-              <div className="flex flex-col gap-1">
-                 <span className="text-label-xs font-label-caps text-on-surface-variant">MAX ENGAGEMENT BUDGET (USD)</span>
-                 <input type="text" defaultValue="500.00" className="bg-black border border-outline-variant text-secondary p-2 font-code-sm text-[14px]" />
-              </div>
-              <div className="flex flex-col gap-1">
-                 <span className="text-label-xs font-label-caps text-on-surface-variant">S2 ESCALATION THRESHOLD (EV)</span>
-                 <input type="text" defaultValue="7.5" className="bg-black border border-outline-variant text-secondary p-2 font-code-sm text-[14px]" />
-              </div>
-              <button className="w-full py-2 bg-primary-container text-on-primary-fixed font-label-caps text-[11px] hover:brightness-110 active:scale-95 transition-all">
-                 SAVE GLOBAL POLICIES
-              </button>
-           </div>
+          <div className="flex flex-col" style={{ gap: 16 }}>
+            <div>
+              <label style={{ display: 'block', fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 6 }}>
+                MAX ENGAGEMENT BUDGET (USD)
+              </label>
+              <input type="text" defaultValue="500.00" className="input" style={{ color: 'var(--interactive)' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 6 }}>
+                S2 ESCALATION THRESHOLD (EV)
+              </label>
+              <input type="text" defaultValue="7.5" className="input" style={{ color: 'var(--interactive)' }} />
+            </div>
+            <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+              SAVE GLOBAL POLICIES
+            </button>
+          </div>
         </Card>
 
         <Card title="Provider API Keys">
-           <div className="space-y-3">
-              <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2">
-                 <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-primary-fixed"></div>
-                    <span className="font-code-sm text-[12px] text-on-surface">OPENAI_GPT4O</span>
-                 </div>
-                 <span className="text-[10px] text-on-surface-variant">••••••••sk-4a</span>
+          <div className="flex flex-col" style={{ gap: 10 }}>
+            {[
+              { name: 'OPENAI_GPT4O', masked: '••••••••sk-4a', active: true },
+              { name: 'ANTHROPIC_CLAUDE3', masked: '••••••••key-f2', active: true },
+              { name: 'SHODAN_API_KEY', masked: 'NOT CONFIGURED', active: false },
+            ].map(({ name, masked, active }) => (
+              <div
+                key={name}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '8px 0',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  opacity: active ? 1 : 0.5,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: active ? 'var(--accent)' : 'var(--text-disabled)',
+                    }}
+                  />
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--text-primary)' }}>
+                    {name}
+                  </span>
+                </div>
+                <span
+                  style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 10,
+                    color: active ? 'var(--text-tertiary)' : 'var(--danger)',
+                  }}
+                >
+                  {masked}
+                </span>
               </div>
-              <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2">
-                 <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-primary-fixed"></div>
-                    <span className="font-code-sm text-[12px] text-on-surface">ANTHROPIC_CLAUDE3</span>
-                 </div>
-                 <span className="text-[10px] text-on-surface-variant">••••••••key-f2</span>
-              </div>
-              <div className="flex items-center justify-between opacity-40">
-                 <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-on-surface-variant"></div>
-                    <span className="font-code-sm text-[12px] text-on-surface">SHODAN_API_KEY</span>
-                 </div>
-                 <span className="text-[10px] text-error">NOT CONFIGURED</span>
-              </div>
-              <button className="w-full py-2 border border-outline text-on-surface font-label-caps text-[10px] hover:bg-surface-variant transition-all mt-2">
-                 CONFIGURE VAULT
-              </button>
-           </div>
+            ))}
+            <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}>
+              CONFIGURE VAULT
+            </button>
+          </div>
         </Card>
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-2" style={{ gap: 16 }}>
         <Card title="Operational Stress Testing">
-            <div className="flex items-center justify-between p-4 bg-black/40 border border-outline-variant">
-               <div>
-                  <div className="font-code-sm text-primary text-[14px]">Simulation: High-Velocity Swarm</div>
-                  <div className="text-[10px] text-on-surface-variant italic uppercase mt-1">Target: 1,000 Events / Second</div>
-               </div>
-               <div className="flex gap-4">
-                  <button
-                    onClick={() => {
-                        import('../services/load_test').then(m => m.loadTester.start(1000));
-                    }}
-                    className="px-6 py-2 bg-error text-on-primary font-label-caps text-[11px] glow-red hover:brightness-110"
-                  >
-                    START STRESS TEST
-                  </button>
-                  <button
-                    onClick={() => {
-                        import('../services/load_test').then(m => m.loadTester.stop());
-                    }}
-                    className="px-6 py-2 border border-outline text-on-surface font-label-caps text-[11px] hover:bg-surface-variant"
-                  >
-                    HALT
-                  </button>
-               </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: 16,
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-md)',
+            }}
+          >
+            <div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: 'var(--accent)' }}>
+                Simulation: High-Velocity Swarm
+              </div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                Target: 1,000 Events / Second
+              </div>
             </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => {
+                  import('../services/load_test').then(m => m.loadTester.start(1000));
+                }}
+                className="btn btn-danger btn-sm"
+              >
+                START STRESS TEST
+              </button>
+              <button
+                onClick={() => {
+                  import('../services/load_test').then(m => m.loadTester.stop());
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                HALT
+              </button>
+            </div>
+          </div>
         </Card>
 
         <Card title="Historical Learning Policy">
-         <div className="grid grid-cols-2 gap-8">
+          <div className="grid grid-cols-2" style={{ gap: 24 }}>
             <div>
-               <div className="text-on-surface-variant font-code-sm text-[11px] leading-relaxed">
-                  The Swarm is currently configured to share <span className="text-primary-fixed font-bold underline cursor-help">SEMANTIC MEMORY</span> across all engagements. This means patterns learned in Target A will inform prioritization in Target B.
-               </div>
-               <div className="mt-4 flex items-center gap-2">
-                  <input type="checkbox" defaultChecked className="w-4 h-4 bg-black border border-outline-variant rounded-none accent-primary-fixed" />
-                  <span className="text-[11px] font-label-caps text-on-surface">Enable Cross-Engagement Pattern Learning</span>
-               </div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
+                The Swarm is currently configured to share{' '}
+                <span style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'underline' }}>SEMANTIC MEMORY</span>{' '}
+                across all engagements. This means patterns learned in Target A will inform prioritization in Target B.
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
+                <input
+                  type="checkbox"
+                  defaultChecked
+                  style={{ accentColor: 'var(--accent)' }}
+                />
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text-primary)' }}>
+                  Enable Cross-Engagement Pattern Learning
+                </span>
+              </div>
             </div>
-            <div className="bg-black/40 p-4 border border-outline-variant border-dashed">
-               <div className="text-on-surface-variant font-code-sm text-[10px] uppercase mb-2 tracking-widest">Active Knowledge Base Statistics</div>
-               {/* Removed hardcoded placeholder KPIs (VALIDATED OUTCOMES=1,245,
-                   FAILURE PATTERNS=842, FINGERPRINTED STACKS=52) — they were fabricated
-                   constants with no backend source. Show an honest empty state until a
-                   live KB-stats endpoint is wired. */}
-               <div className="text-on-surface-variant font-code-sm text-[10px] opacity-60">
-                  No live knowledge-base metrics available yet.
-               </div>
+            <div
+              style={{
+                padding: 16,
+                background: 'var(--surface-2)',
+                border: '1px dashed var(--border)',
+                borderRadius: 'var(--radius-md)',
+              }}
+            >
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-disabled)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+                Active Knowledge Base Statistics
+              </div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-tertiary)', opacity: 0.6 }}>
+                No live knowledge-base metrics available yet.
+              </div>
             </div>
-         </div>
+          </div>
         </Card>
+
         <Card title="Dead Letter Queue">
-           <div className="flex flex-col gap-3">
-               <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all">VIEW DLQ ENTRIES</button>
-               <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all">REQUEUE ALL PENDING</button>
-           </div>
+          <div className="flex flex-col" style={{ gap: 8 }}>
+            <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }}>VIEW DLQ ENTRIES</button>
+            <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }}>REQUEUE ALL PENDING</button>
+          </div>
         </Card>
+
         <Card title="Engagement Control Panel">
-           <div className="flex flex-col gap-3">
-               {actionError && (
-                 <ErrorState message={actionError.message} onRetry={actionError.retry} />
-               )}
-               <input type="text" placeholder="Engagement ID" className="w-full p-2 bg-black/40 border border-outline" id="eng-id-input" />
-               <button className="w-full py-2 border border-red-500 text-red-500 hover:bg-red-500/10 transition-all" onClick={haltEngagement}>HALT ENGAGEMENT</button>
-               <input type="text" placeholder="Phase (e.g., exploitation)" className="w-full p-2 bg-black/40 border border-outline" id="phase-input" />
-               <button className="w-full py-2 border border-outline text-on-surface hover:bg-surface-container-high transition-all" onClick={transitionPhase}>TRANSITION PHASE</button>
-           </div>
+          <div className="flex flex-col" style={{ gap: 10 }}>
+            <input type="text" placeholder="Engagement ID" className="input" id="eng-id-input" />
+            <button className="btn btn-danger" style={{ width: '100%', justifyContent: 'center' }} onClick={haltEngagement}>
+              HALT ENGAGEMENT
+            </button>
+            <input type="text" placeholder="Phase (e.g., exploitation)" className="input" id="phase-input" />
+            <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }} onClick={transitionPhase}>
+              TRANSITION PHASE
+            </button>
+          </div>
         </Card>
       </div>
     </div>

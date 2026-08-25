@@ -3,7 +3,7 @@ import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ErrorState } from '../components/shared/ErrorState';
-import { User, Shield, Lock, FileJson, Layout as LayoutIcon, Eye } from 'lucide-react';
+import { Shield, Lock, Eye } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 
 export const DifferentialAuth: React.FC = () => {
@@ -15,158 +15,380 @@ export const DifferentialAuth: React.FC = () => {
   const currentFinding = diffAuthFindings[activeFindingIdx];
 
   const handleValidate = async () => {
-      if (!currentFinding || !sessionId) return;
-      setValidateError(null);
-      try {
-          await fetch(`${API_BASE}/engagements/${sessionId}/findings/${currentFinding.id}/replay`, {
-              method: 'POST',
-              headers: authHeaders()
-          });
-          alert("Exploit validation task queued.");
-      } catch (e) {
-          setValidateError('Failed to queue exploit validation task.');
-      }
+    if (!currentFinding || !sessionId) return;
+    setValidateError(null);
+    try {
+      await fetch(`${API_BASE}/engagements/${sessionId}/findings/${currentFinding.id}/replay`, {
+        method: 'POST',
+        headers: authHeaders()
+      });
+      alert("Exploit validation task queued.");
+    } catch (e) {
+      setValidateError('Failed to queue exploit validation task.');
+    }
   };
 
+  const identities = ['user_a', 'user_b', 'admin'] as const;
+
   return (
-    <div className="flex flex-col h-full gap-6">
-      <div className="flex justify-between items-center bg-surface-container p-4 border border-outline-variant">
-         <div className="flex flex-col">
-            <span className="font-label-caps text-label-xs text-on-surface-variant mb-1 uppercase">Target Resource</span>
-            <span className="font-code-sm text-[14px] text-primary">
-                {currentFinding?.resource_id || "AWAITING ANOMALY..."} // {currentFinding?.category?.toUpperCase()}
-            </span>
-         </div>
-         <div className="flex gap-2">
-            {diffAuthFindings.length > 1 && (
-                <div className="flex gap-1 mr-4">
-                    {diffAuthFindings.map((_, i) => (
-                        <button key={i} onClick={() => setActiveFindingIdx(i)} aria-label={`Show finding ${i + 1}`} className={`w-2 h-2 ${activeFindingIdx === i ? 'bg-primary-fixed' : 'bg-surface-variant'}`}></button>
-                    ))}
-                </div>
-            )}
-            {['user_a', 'user_b', 'admin'].map(id => (
-              <button
-                key={id}
-                onClick={() => setActiveIdentity(id as any)}
-                className={`px-4 py-1.5 font-label-caps text-[10px] border transition-all ${
-                  activeIdentity === id
-                    ? 'bg-primary-container/10 border-primary-fixed text-primary-fixed glow-cyan'
-                    : 'bg-surface-container-high border-outline-variant text-on-surface-variant hover:bg-surface-variant'
-                }`}
-              >
-                {id.replace('_', ' ')?.toUpperCase()}
-              </button>
-            ))}
-         </div>
+    <div className="flex flex-col" style={{ gap: 16, height: '100%' }}>
+      {/* Header bar */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '16px 20px',
+          background: 'var(--surface-1)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg)',
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: 'var(--text-tertiary)',
+              marginBottom: 4,
+            }}
+          >
+            Target Resource
+          </div>
+          <div
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 13,
+              color: 'var(--accent)',
+            }}
+          >
+            {currentFinding?.resource_id || "AWAITING ANOMALY..."} // {currentFinding?.category?.toUpperCase()}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {diffAuthFindings.length > 1 && (
+            <div style={{ display: 'flex', gap: 4, marginRight: 8 }}>
+              {diffAuthFindings.map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setActiveFindingIdx(i)}
+                  aria-label={`Show finding ${i + 1}`}
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: activeFindingIdx === i ? 'var(--accent)' : 'var(--surface-3)',
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                />
+              ))}
+            </div>
+          )}
+          {identities.map(id => (
+            <button
+              key={id}
+              onClick={() => setActiveIdentity(id)}
+              className={activeIdentity === id ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
+            >
+              {id.replace('_', ' ').toUpperCase()}
+            </button>
+          ))}
+        </div>
       </div>
 
       {diffAuthFindings.length === 0 ? (
-        <div className="flex-1 min-h-0">
+        <div style={{ flex: 1 }}>
           <EmptyState
-            message="No differential authorization findings recorded yet."
+            message="No differential authorization findings recorded yet"
             icon={<Shield size={32} />}
-            hint="Awaiting anomaly detection from the active engagement."
+            hint="Awaiting anomaly detection from the active engagement"
           />
         </div>
       ) : (
-      <div className="flex-1 grid grid-cols-2 gap-6 min-h-0">
-        {/* Baseline (User A) */}
-        <Card title="Baseline Observation (Expected Identity)" className="flex flex-col overflow-hidden">
-           <div className="flex-1 overflow-y-auto space-y-4 font-code-sm text-[11px]">
-              <div className="bg-black/40 p-3 border border-outline-variant">
-                 <div className="text-primary-fixed mb-2 font-bold uppercase tracking-widest text-label-xs">HTTP Response</div>
-                 <div className="text-on-surface">HTTP/1.1 200 OK</div>
-                 <div className="text-on-surface-variant opacity-60">Content-Type: application/json</div>
-                 <div className="mt-2 text-on-surface">{`{ "id": "${currentFinding?.resource_id || 'res-123'}", "status": "active" }`}</div>
+        <div className="grid grid-cols-2" style={{ gap: 16, flex: 1, minHeight: 0 }}>
+          {/* Baseline */}
+          <Card title="Baseline Observation (Expected Identity)">
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 11,
+                maxHeight: 500,
+                overflowY: 'auto',
+              }}
+              className="custom-scrollbar"
+            >
+              <div
+                style={{
+                  padding: 12,
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                }}
+              >
+                <div
+                  style={{
+                    color: 'var(--accent)',
+                    fontWeight: 700,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    fontSize: 9,
+                    marginBottom: 8,
+                  }}
+                >
+                  HTTP Response
+                </div>
+                <div style={{ color: 'var(--text-primary)', marginBottom: 4 }}>HTTP/1.1 200 OK</div>
+                <div style={{ color: 'var(--text-tertiary)' }}>Content-Type: application/json</div>
+                <div style={{ color: 'var(--text-primary)', marginTop: 8 }}>
+                  {`{ "id": "${currentFinding?.resource_id || 'res-123'}", "status": "active" }`}
+                </div>
               </div>
 
-              <div className="bg-black/40 p-3 border border-outline-variant">
-                 <div className="text-primary-fixed mb-2 font-bold uppercase tracking-widest text-label-xs">DOM Semantics</div>
-                 <div className="flex flex-wrap gap-2">
-                    <span className="px-2 py-0.5 border border-primary-fixed/30 text-primary-fixed bg-primary-fixed/5">BUTTON: DELETE</span>
-                    <span className="px-2 py-0.5 border border-primary-fixed/30 text-primary-fixed bg-primary-fixed/5">BUTTON: EDIT</span>
-                 </div>
+              <div
+                style={{
+                  padding: 12,
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                }}
+              >
+                <div
+                  style={{
+                    color: 'var(--accent)',
+                    fontWeight: 700,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    fontSize: 9,
+                    marginBottom: 8,
+                  }}
+                >
+                  DOM Semantics
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <span className="badge badge-success">BUTTON: DELETE</span>
+                  <span className="badge badge-success">BUTTON: EDIT</span>
+                </div>
               </div>
 
-              <div className="aspect-video bg-black flex items-center justify-center border border-outline-variant group cursor-zoom-in">
-                 <Eye className="text-on-surface-variant opacity-20 group-hover:opacity-100 transition-opacity" size={48} />
-                 <span className="absolute bottom-2 right-2 font-label-caps text-label-xs text-on-surface-variant">SCREENSHOT: BASELINE_VIEW.PNG</span>
+              <div
+                style={{
+                  height: 200,
+                  background: 'var(--surface-2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  position: 'relative',
+                }}
+              >
+                <Eye size={48} style={{ color: 'var(--text-disabled)' }} />
+                <span
+                  style={{
+                    position: 'absolute',
+                    bottom: 8,
+                    right: 8,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 9,
+                    color: 'var(--text-disabled)',
+                  }}
+                >
+                  SCREENSHOT: BASELINE_VIEW.PNG
+                </span>
               </div>
-           </div>
-        </Card>
+            </div>
+          </Card>
 
-        {/* Comparison (Active Identity) */}
-        <Card title={`Test Observation (${activeIdentity?.toUpperCase()})`} accent={activeIdentity === 'user_b' ? 'danger' : 'none'} className="flex flex-col overflow-hidden">
-           <div className="flex-1 overflow-y-auto space-y-4 font-code-sm text-[11px]">
-              <div className={`p-3 border ${activeIdentity === 'user_b' && currentFinding ? 'bg-error-container/10 border-error animate-pulse' : 'bg-black/40 border-outline-variant'}`}>
-                 <div className={`${activeIdentity === 'user_b' && currentFinding ? 'text-error' : 'text-primary-fixed'} mb-2 font-bold uppercase tracking-widest text-label-xs`}>HTTP Response</div>
-                 <div className="text-on-surface">
-                    {activeIdentity === 'user_b' && currentFinding ? `HTTP/1.1 ${currentFinding.observed_result}` : 'HTTP/1.1 200 OK'}
-                 </div>
-                 <div className="text-on-surface-variant opacity-60 italic">
-                    Expected: {currentFinding?.expected_result || '200 OK'}
-                 </div>
-                 <div className="mt-2 text-on-surface">{`{ "id": "${currentFinding?.resource_id || 'res-123'}", "data": "..." }`}</div>
+          {/* Comparison */}
+          <Card
+            title={`Test Observation (${activeIdentity.replace('_', ' ').toUpperCase()})`}
+            accent={activeIdentity === 'user_b' ? 'danger' : 'none'}
+          >
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 11,
+                maxHeight: 500,
+                overflowY: 'auto',
+              }}
+              className="custom-scrollbar"
+            >
+              <div
+                style={{
+                  padding: 12,
+                  background: activeIdentity === 'user_b' && currentFinding ? 'var(--danger-bg)' : 'var(--surface-2)',
+                  border: `1px solid ${activeIdentity === 'user_b' && currentFinding ? 'var(--danger-border)' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius-md)',
+                }}
+              >
+                <div
+                  style={{
+                    color: activeIdentity === 'user_b' && currentFinding ? 'var(--danger)' : 'var(--accent)',
+                    fontWeight: 700,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    fontSize: 9,
+                    marginBottom: 8,
+                  }}
+                >
+                  HTTP Response
+                </div>
+                <div style={{ color: 'var(--text-primary)', marginBottom: 4 }}>
+                  {activeIdentity === 'user_b' && currentFinding
+                    ? `HTTP/1.1 ${currentFinding.observed_result}`
+                    : 'HTTP/1.1 200 OK'}
+                </div>
+                <div style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                  Expected: {currentFinding?.expected_result || '200 OK'}
+                </div>
+                <div style={{ color: 'var(--text-primary)', marginTop: 8 }}>
+                  {`{ "id": "${currentFinding?.resource_id || 'res-123'}", "data": "..." }`}
+                </div>
               </div>
 
-              <div className="bg-black/40 p-3 border border-outline-variant">
-                 <div className="text-primary-fixed mb-2 font-bold uppercase tracking-widest text-label-xs">DOM Semantics (Diff Detected)</div>
-                 <div className="flex flex-wrap gap-2">
-                    {currentFinding ? (
-                        <span className="px-2 py-0.5 border border-error text-error bg-error-container/5">UNAUTHORIZED VISIBILITY DETECTED</span>
-                    ) : (
-                        <span className="px-2 py-0.5 border border-outline-variant text-on-surface-variant opacity-30">NO DIFF RECORDED</span>
-                    )}
-                 </div>
+              <div
+                style={{
+                  padding: 12,
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                }}
+              >
+                <div
+                  style={{
+                    color: 'var(--accent)',
+                    fontWeight: 700,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    fontSize: 9,
+                    marginBottom: 8,
+                  }}
+                >
+                  DOM Semantics (Diff Detected)
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {currentFinding ? (
+                    <span className="badge badge-danger">UNAUTHORIZED VISIBILITY DETECTED</span>
+                  ) : (
+                    <span className="badge badge-neutral">NO DIFF RECORDED</span>
+                  )}
+                </div>
               </div>
 
-              <div className="aspect-video bg-black flex items-center justify-center border border-outline-variant">
-                 <div className="text-center">
-                    {currentFinding ? (
-                        <>
-                            <Shield className="text-error mx-auto mb-2" size={48} />
-                            <span className="text-[10px] font-label-caps text-error">{currentFinding.category.toUpperCase()}</span>
-                        </>
-                    ) : (
-                        <div className="opacity-20 italic">Awaiting findings...</div>
-                    )}
-                 </div>
+              <div
+                style={{
+                  height: 200,
+                  background: 'var(--surface-2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                }}
+              >
+                {currentFinding ? (
+                  <div style={{ textAlign: 'center' }}>
+                    <Shield size={48} style={{ color: 'var(--danger)', margin: '0 auto 8px' }} />
+                    <span className="badge badge-danger">{currentFinding.category.toUpperCase()}</span>
+                  </div>
+                ) : (
+                  <span style={{ color: 'var(--text-disabled)', fontStyle: 'italic' }}>
+                    Awaiting findings...
+                  </span>
+                )}
               </div>
-           </div>
-        </Card>
-      </div>
-      )}
-
-      {validateError && (
-        <div className="bg-surface-container border border-outline-variant">
-          <ErrorState message={validateError} onRetry={handleValidate} />
+            </div>
+          </Card>
         </div>
       )}
 
-      <div className="h-24 bg-surface-container border border-outline-variant p-4 flex items-center justify-between">
-         <div className="flex items-center gap-4">
-            <div className={`w-12 h-12 ${currentFinding ? 'bg-error-container/20 text-error' : 'bg-surface-variant text-on-surface-variant'} border border-current/40 flex items-center justify-center`}>
-               <Lock size={24} />
+      {validateError && (
+        <ErrorState message={validateError} onRetry={handleValidate} />
+      )}
+
+      {/* Verdict footer */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '16px 20px',
+          background: 'var(--surface-1)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div
+            style={{
+              width: 48,
+              height: 48,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 'var(--radius-md)',
+              background: currentFinding ? 'var(--danger-bg)' : 'var(--surface-2)',
+              color: currentFinding ? 'var(--danger)' : 'var(--text-tertiary)',
+              border: `1px solid ${currentFinding ? 'var(--danger-border)' : 'var(--border)'}`,
+            }}
+          >
+            <Lock size={20} />
+          </div>
+          <div>
+            <div
+              style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 16,
+                fontWeight: 700,
+                color: currentFinding ? 'var(--danger)' : 'var(--text-secondary)',
+              }}
+            >
+              Differential Verdict: {currentFinding ? 'CRITICAL ANOMALY' : 'NO ANOMALIES DETECTED'}
             </div>
-            <div>
-               <div className={`font-headline-md text-headline-md ${currentFinding ? 'text-error' : 'text-on-surface-variant'}`}>
-                   Differential Verdict: {currentFinding ? 'CRITICAL ANOMALY' : 'NO ANOMALIES DETECTED'}
-               </div>
-               <div className="font-code-sm text-on-surface-variant text-[11px]">
-                   {currentFinding ? `Confidence: ${(currentFinding.confidence * 100).toFixed(1)}% // ${currentFinding.test_identity_id} accessed restricted resource.` : 'All observed identities respect baseline authorization boundaries.'}
-                   {currentFinding && <span onClick={handleValidate} className="text-primary underline cursor-pointer ml-2">PROVE EXPLOITABILITY</span>}
-               </div>
+            <div
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 11,
+                color: 'var(--text-tertiary)',
+                marginTop: 4,
+              }}
+            >
+              {currentFinding
+                ? `Confidence: ${(currentFinding.confidence * 100).toFixed(1)}% // ${currentFinding.test_identity_id} accessed restricted resource.`
+                : 'All observed identities respect baseline authorization boundaries.'}
+              {currentFinding && (
+                <span
+                  onClick={handleValidate}
+                  style={{ color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer', marginLeft: 8 }}
+                >
+                  PROVE EXPLOITABILITY
+                </span>
+              )}
             </div>
-         </div>
-         <div className="flex gap-3">
-            <button disabled={!currentFinding} onClick={handleValidate} className="px-6 py-2 bg-error text-on-primary font-label-caps text-[11px] glow-red hover:brightness-110 active:scale-95 transition-all disabled:opacity-30">
-               VALIDATE HYPOTHESIS
-            </button>
-            <button disabled={!currentFinding} className="px-6 py-2 border border-outline text-on-surface font-label-caps text-[11px] hover:bg-surface-variant transition-all disabled:opacity-30">
-               SAVE EVIDENCE
-            </button>
-         </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            disabled={!currentFinding}
+            className="btn btn-danger btn-sm"
+            onClick={handleValidate}
+          >
+            VALIDATE HYPOTHESIS
+          </button>
+          <button disabled={!currentFinding} className="btn btn-ghost btn-sm">
+            SAVE EVIDENCE
+          </button>
+        </div>
       </div>
     </div>
   );
