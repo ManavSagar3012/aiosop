@@ -206,7 +206,7 @@ class BaseAgent(ABC):
 
     # Hard ceiling for any single agent task. Long enough for real browser/scan
     # work, short enough to prevent permanent hangs (Issue 3).
-    DEFAULT_TASK_TIMEOUT_SECONDS = 300
+    DEFAULT_TASK_TIMEOUT_SECONDS = 900
 
     async def execute_task(self, task: Task) -> Dict[str, Any]:
         """

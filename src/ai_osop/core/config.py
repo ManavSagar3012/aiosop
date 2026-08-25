@@ -219,6 +219,11 @@ class Settings(BaseSettings):
     llm_api_key_path: str = Field(
         default="secret/data/llm/openai", validation_alias="OSOP_LLM_KEY_PATH"
     )
+    # Direct API key for LLM providers (OpenRouter, OpenAI, etc.).
+    # When set, passed to litellm.acompletion(api_key=...) so the provider
+    # is authenticated without relying on env-var convention.
+    llm_api_key: Optional[str] = Field(default=None, validation_alias="OPENROUTER_API_KEY")
+    llm_base_url: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_BASE_URL")
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.1  # Low temperature for deterministic security reasoning
     # AIOSOP-LLM-TIMEOUT-001 (2026-07-03): bound every LLM completion HTTP call.
@@ -304,7 +309,7 @@ class Settings(BaseSettings):
     # Orchestration
     max_concurrent_agents: int = 50
     max_tasks_per_second: int = 100
-    task_default_timeout: int = 300
+    task_default_timeout: int = 900
     approval_timeout_seconds: int = 1800  # 30 minutes
     temporal_enabled: bool = Field(default=False, validation_alias="OSOP_TEMPORAL_ENABLED")
     temporal_address: str = Field(
