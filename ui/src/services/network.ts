@@ -21,6 +21,7 @@ export class NetworkService {
   private eventBuffer: SwarmEvent[] = [];
   private lastLatency = 0;
   private eventThroughput = 0;
+  private eventCount = 0;
   private throughputTimer: NodeJS.Timeout | null = null;
 
   constructor(onStatusChange: (status: ConnectionStatus) => void) {
@@ -46,7 +47,19 @@ export class NetworkService {
 
       // 2. Agents
       const agentsRes = await fetch(`${API_BASE}/agents`, { headers });
-      if (agentsRes.ok) useSwarmStore.getState().setAgents(await agentsRes.json());
+      if (agentsRes.ok) {
+        const backendAgents = await agentsRes.json();
+        const frontendAgents = backendAgents.map((a: unknown) => {
+          const b = a as Record<string, unknown>;
+          return {
+            id: b.agent_id as string,
+            type: b.agent_type as string,
+            status: b.status as 'idle' | 'running' | 'error' | 'shutdown',
+            cost_incurred: (b.cost_incurred as number) || 0
+          };
+        });
+        useSwarmStore.getState().setAgents(frontendAgents);
+      }
 
       // 3. Findings
       const findingsRes = await fetch(`${API_BASE}/engagements/${sessionId}/findings`, { headers });
@@ -163,9 +176,35 @@ export class NetworkService {
         .then(data => intel.setGraphData(data))
         .catch(e => console.error("Failed to sync graph on update", e));
         break;
-      case 'agent_observation':
-        // Update specific stores based on observation type
+      case 'agent_observation': {
+        const payloadData = event.data as Record<string, unknown>;
+        if (payloadData.topic === 'task.completed' || payloadData.topic === 'task.failed') {
+          const headers = authHeaders();
+          fetch(`${API_BASE}/agents`, { headers })
+            .then(res => res.json())
+            .then(backendAgents => {
+              const frontendAgents = backendAgents.map((a: unknown) => {
+                const b = a as Record<string, unknown>;
+                return {
+                  id: b.agent_id as string,
+                  type: b.agent_type as string,
+                  status: b.status as 'idle' | 'running' | 'error' | 'shutdown',
+                  cost_incurred: (b.cost_incurred as number) || 0
+                };
+              });
+              useSwarmStore.getState().setAgents(frontendAgents);
+            })
+            .catch(e => console.error("Failed to sync agents on task complete", e));
+          
+          if (event.engagement_id) {
+            fetch(`${API_BASE}/engagements/${event.engagement_id}/findings`, { headers })
+              .then(res => res.json())
+              .then(data => useIntelligenceStore.getState().setFindings(data))
+              .catch(e => console.error("Failed to sync findings on task complete", e));
+          }
+        }
         break;
+      }
       case 'heartbeat':
         this.lastLatency = event.data.latency_ms;
         break;

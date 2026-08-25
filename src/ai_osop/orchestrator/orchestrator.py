@@ -4,41 +4,13 @@ Task scheduling, state management, agent coordination, and workflow enforcement.
 """
 
 import asyncio
-import json
-from datetime import datetime
-from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 import structlog
 
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType, settings
-from ai_osop.core.exceptions import ScopeException, WorkflowException, WorkflowTransitionError
-from ai_osop.core.metrics import (
-    ACTIVE_AGENT_COUNT,
-    ACTIVE_ENGAGEMENTS,
-    AGENT_EXECUTION_DURATION,
-    GRAPH_QUERY_DURATION,
-    LLM_CALL_DURATION,
-    MCP_CALL_DURATION,
-    MCP_CIRCUIT_BREAKER_STATE,
-    MCP_ERRORS_TOTAL,
-    PENDING_APPROVALS,
-    TASK_SCHEDULE_DURATION,
-    TASKS_BY_STATUS,
-)
 from ai_osop.core.models import ApprovalRequest, AuditEvent, ScopeDefinition, SessionState, Task
-from ai_osop.core.observability import (
-    record_approval_requested,
-    record_approval_resolved,
-    record_engagement_completed,
-    record_engagement_halted,
-    record_engagement_started,
-    update_active_agents,
-    update_task_counts,
-)
-from ai_osop.core.telemetry import RequestContext, inject_trace_context
-from ai_osop.core.tracing import trace_span, trace_span_with_parent
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
@@ -60,8 +32,9 @@ from ai_osop.reliability.dlq import DeadLetterQueue
 from ai_osop.safety.rate_limiter import RateLimiter
 
 logger = structlog.get_logger("ai_osop.orchestrator")
+from ai_osop.core.config import PHASE_POLICY as _CONFIG_PHASE_POLICY
 from ai_osop.core.config import VALID_TRANSITIONS as _CONFIG_VALID_TRANSITIONS
-from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.config import EngagementPhase  # AgentType already imported at line 12 (F811 fix)
 from ai_osop.orchestrator.state import OrchestrationState
 
 
@@ -78,37 +51,13 @@ class Orchestrator:
     - Conflict resolution
     """
 
-    # GAP-3-2: single source of truth. Previously this duplicated the dict in
-    # core.config; the copies could drift. Reference the canonical config table.
+    # GAP-3-2 / AIOSOP-PHASEPOLICY-2026-08-25: single source of truth. Previously
+    # this duplicated the dict in core.config with WRONG values (all phases had
+    # manual_approval=False), so exploitation/post-exploitation/reporting auto-
+    # advanced WITHOUT operator approval — a serious safety regression. Reference
+    # the canonical config table which correctly gates high-risk phases.
     VALID_TRANSITIONS = _CONFIG_VALID_TRANSITIONS
-
-    # Transition policy: Phase -> (RequiresManualApproval, AutomaticNextPhase)
-    PHASE_POLICY = {
-        EngagementPhase.INITIALIZED: {
-            "manual_approval": False,
-            "auto_next": EngagementPhase.RECONNAISSANCE,
-        },
-        EngagementPhase.RECONNAISSANCE: {
-            "manual_approval": False,
-            "auto_next": EngagementPhase.VULNERABILITY_DISCOVERY,
-        },
-        EngagementPhase.VULNERABILITY_DISCOVERY: {
-            "manual_approval": False,
-            "auto_next": EngagementPhase.EXPLOITATION,
-        },
-        EngagementPhase.EXPLOITATION: {
-            "manual_approval": False,
-            "auto_next": EngagementPhase.POST_EXPLOITATION,
-        },
-        EngagementPhase.POST_EXPLOITATION: {
-            "manual_approval": False,
-            "auto_next": EngagementPhase.REPORTING,
-        },
-        EngagementPhase.REPORTING: {
-            "manual_approval": False,
-            "auto_next": EngagementPhase.COMPLETED,
-        },
-    }
+    PHASE_POLICY = _CONFIG_PHASE_POLICY
 
     def __init__(
         self,
@@ -120,7 +69,7 @@ class Orchestrator:
         temporal_scheduler: Optional[TemporalTaskScheduler] = None,
         coordination_bus: Optional[AgentCoordinationBus] = None,
         distributed_bus: Optional[DistributedCoordinationBus] = None,
-        redis_url: str = "redis://localhost:6379",
+        redis_url: Optional[str] = None,  # FIX (redis-url-settings): None -> settings.redis_uri
         engagement_id: str = "default",
     ):
         self.state = state or OrchestrationState()
@@ -233,6 +182,15 @@ class Orchestrator:
         """Initialize orchestrator and start scheduler."""
         await self.session_memory.connect()
         await self.graph_memory.connect()
+        # FIX (bus-connect-2026-08-23): guarantee the coordination backbone is
+        # live even when the orchestrator is constructed outside the API lifespan
+        # (scripts, tests). No-op if main.py already connected the singleton.
+        try:
+            from ai_osop.orchestrator.distributed_bus import ensure_bus_connected
+
+            await ensure_bus_connected(self.coordination_bus)
+        except Exception as e:  # noqa: BLE001 - bus degrades to local fallback
+            logger.warning(f"coordination_bus connect failed (local fallback): {e}")
         if self.temporal_enabled:
             if not temporal_available() and self.temporal_scheduler is None:
                 raise TemporalUnavailableError(

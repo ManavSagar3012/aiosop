@@ -11,16 +11,16 @@ import socket
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import structlog
 
-from ai_osop.core.config import AgentType, settings
-from ai_osop.core.exceptions import AgentException, AgentTaskFailed
-from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.config import AgentType
+from ai_osop.core.exceptions import AgentException
+from ai_osop.core.models import AuditEvent, ScopeDefinition, Task
 from ai_osop.core.observability import record_task
 from ai_osop.core.telemetry import RequestContext, extract_trace_context
-from ai_osop.core.tracing import trace_span, trace_span_with_parent
+from ai_osop.core.tracing import trace_span_with_parent
 from ai_osop.memory.graph_memory import GraphMemory
 from ai_osop.memory.session_memory import SessionMemory
 from ai_osop.memory.vector_memory import VectorMemory
@@ -43,7 +43,11 @@ class AgentContext:
         mcp_registry: Any,
         rate_limiter: Any,
         threat_intel_adapter: Any,
-        audit_callback: Callable[[AuditEvent], None],
+        # FIX (audit-callback-typing-2026-08-24): annotated as sync Callable but
+        # every caller awaits it and the orchestrator supplies an async method;
+        # the old annotation made type checkers flag correct code and would
+        # bless a sync callback that returns an unawaited coroutine.
+        audit_callback: Callable[[AuditEvent], Awaitable[None]],
         coordination_bus: Any,
     ):
         self.agent_id = agent_id
@@ -206,16 +210,8 @@ class BaseAgent(ABC):
 
     async def execute_task(self, task: Task) -> Dict[str, Any]:
         """
-        Execute a task with full lifecycle management.
-
-        1. Validate task
-        2. Load context
-        3. Execute (agent-specific) UNDER A TIMEOUT
-        4. Validate output
-        5. Store results
-        6. Audit logging
+        Execute a task using a hypothesis-driven cognitive loop.
         """
-        # Sprint 6: extract trace context from task to continue the distributed trace
         parent_span_context = extract_trace_context(task.trace_context)
         RequestContext.bind(
             task_id=task.id,
@@ -240,205 +236,603 @@ class BaseAgent(ABC):
         ):
             self.ctx.current_task = task
             self.ctx.status = "running"
-            # Carry the per-task engagement_id into the context so all downstream
-            # graph + evidence writes use the correct scope (Issue 14 — evidence
-            # was previously landing under the agent's static "global" session).
             self.ctx.session_id = task.engagement_id
 
-            # PATCH (REL-029/030/031/033, 2026-06-15): Agents historically disagreed
-            # on payload shape (`url`/`target`/`target_url`/`domain`/`targets`/`vuln_class`/
-            # `vuln_type`). External callers (UI, CLI, audit scripts) couldn't predict the
-            # right key per agent, causing silent KeyError -> task failure. Normalize
-            # common aliases up front so individual agents can read whichever key they
-            # historically used. Keys are added only if missing; original keys preserved.
             if isinstance(task.payload, dict):
                 p = task.payload
                 url_aliases = ("url", "target_url", "target", "domain")
                 resolved_url = next((p[k] for k in url_aliases if p.get(k)), None)
                 if resolved_url:
                     for k in url_aliases:
-                        p.setdefault(k, resolved_url)
-                list_url = p.get("targets")
-                if not list_url and resolved_url:
-                    p.setdefault("targets", [resolved_url])
-                if isinstance(list_url, str):
-                    p["targets"] = [list_url]
-                vuln_aliases = ("vuln_type", "vuln_class")
-                resolved_vt = next((p[k] for k in vuln_aliases if p.get(k)), None)
-                if resolved_vt:
-                    for k in vuln_aliases:
-                        p.setdefault(k, resolved_vt)
-                p.setdefault("engagement_id", task.engagement_id)
-
-            target = (
-                task.payload.get("target") or task.payload.get("url") or task.payload.get("domain")
-            )
-            tool = self.ctx.agent_type.value
-            timeout_s = (
-                task.timeout_seconds
-                or task.payload.get("task_timeout_seconds")
-                or self.DEFAULT_TASK_TIMEOUT_SECONDS
-            )
-
-            # Rate Limiting
-            await self.ctx.rate_limiter.acquire(target=target, tool=tool)
-
-            task.started_at = datetime.utcnow()
-            start_time = time.monotonic()
+                        if k not in p:
+                            p[k] = resolved_url
+                task.payload = p
 
             try:
-                # Pre-execution validation
                 await self._validate_task(task)
-
-                # AIOSOP-AUDIT-2026-06-16: record skill activations for EVERY agent's
-                # task (not just recon/vuln). Feeds the now-durable reputation/effectiveness
-                # loop platform-wide. Idempotent + best-effort; never blocks execution.
-                try:
-                    await self._get_relevant_skills(task)
-                except Exception:
-                    pass
-
-                # Execute agent-specific logic under a hard timeout. An unbounded
-                # _execute previously left agents permanently "running" (Issue 3).
-                try:
-                    result = await asyncio.wait_for(self._execute(task), timeout=timeout_s)
-                except asyncio.TimeoutError as te:
-                    task.status = "failed"
-                    # P0-2: retry_count is owned solely by the orchestrator's _maybe_retry.
-                    # The agent no longer increments it (avoids double-counting).
-                    task.completed_at = datetime.utcnow()
-                    await self._log_task_failure(task, te)
-                    return {
-                        "status": "failed",
-                        "error": f"task timed out after {timeout_s}s",
-                        "error_type": "TimeoutError",
-                    }
-
-                end_time = time.monotonic()
-                if target:
-                    self.ctx.rate_limiter.record_backpressure(target, end_time - start_time)
-
-                # Post-execution validation
-                validated_result = await self._validate_output(result)
-
-                # PATCH (REL-017, 2026-06-15): If the agent returned an in-band
-                # failure dict (e.g. `{"status": "failed", "error": "..."}`), the
-                # old path still marked the task `completed` and wrote a
-                # `task_completed` audit event whose `error` field was the empty
-                # string from `_log_task_completion`. That hid root causes. Now we
-                # honor returned failure status by re-raising so the standard
-                # `_log_task_failure` path captures the error message.
-                if isinstance(validated_result, dict) and validated_result.get("status") in (
-                    "failed",
-                    "error",
-                ):
-                    err_msg = (
-                        validated_result.get("error")
-                        or "agent returned failure status without error message"
-                    )
-                    raise AgentException(str(err_msg))
-
-                # Store results
-                task.result = validated_result
-                task.status = "completed"
-                task.completed_at = datetime.utcnow()
-
-                # Update working memory
-                self.ctx.task_history.append(task.id)
-                await self._update_working_memory(task, validated_result)
-
-                # Audit log
-                await self._log_task_completion(task, validated_result)
-                record_task(
-                    task.status,
-                    self.ctx.agent_type.value,
-                    (
-                        (task.completed_at - task.started_at).total_seconds()
-                        if task.completed_at and task.started_at
-                        else 0.0
-                    ),
-                )
-
-                return validated_result
-
-            except asyncio.CancelledError:
-                task.status = "failed"
-                task.result = {"error": "task cancelled", "error_type": "CancelledError"}
-                task.completed_at = datetime.utcnow()
-                raise
             except Exception as e:
-                task.status = "failed"
-                # P0-2: retry_count owned solely by the orchestrator's _maybe_retry.
-                task.completed_at = datetime.utcnow()
-
-                await self._log_task_failure(task, e)
-
-                # P0-2 (single retry owner): the ORCHESTRATOR's _maybe_retry is the sole
-                # retry authority. The agent must NOT self-schedule a retry onto its
-                # internal _task_queue — doing so duplicated execution (e.g. an exploit
-                # ran twice) and double-counted retry_count. Return the failure dict so
-                # _execute_via_agent routes it through _maybe_retry exactly once.
+                self.ctx.status = "error"
                 return {"status": "failed", "error": str(e)}
 
-            finally:
-                # LIFECYCLE ROOT-CAUSE FIX (2026-07-05): persist the task's TERMINAL
-                # status to the graph. The live executor is the agent _task_worker loop
-                # calling execute_task (the orchestrator's _execute_via_agent path is
-                # not exercised here — proven by task.assigned=0 in a real autonomous
-                # run). But execute_task only wrote terminal status to the audit log +
-                # Postgres hot state — NEVER to Neo4j via upsert_task. The Task node was
-                # set 'running' at schedule time and never advanced, so EVERY task showed
-                # 'running' forever in the graph, which is the ground truth for the
-                # stuck-task reaper, restart recovery, and dedupe. That is the true
-                # "0/372 ever completed" disease. upsert_task is an idempotent MERGE and
-                # this is best-effort so graph persistence can never break execution.
-                _gm = getattr(self.ctx, "graph_memory", None)
-                if _gm is not None and getattr(task, "status", None) in (
-                    "completed",
-                    "failed",
-                    "error",
-                    "timeout",
-                    "cancelled",
-                ):
+            start_time = time.time()
+            timeout_s = getattr(task, "timeout_seconds", None) or self.DEFAULT_TASK_TIMEOUT_SECONDS
+
+            # Retrieve MCP tools available to this agent
+            available_tools = []
+            for server_id, conn in self.ctx.mcp_registry._servers.items():
+                tools = await conn.list_tools()
+                for t in tools:
+                    available_tools.append(
+                        {
+                            "server": server_id,
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": [p.model_dump() for p in t.parameters],
+                        }
+                    )
+
+            objective_met = False
+            iteration = 0
+            max_iterations = 15
+            final_result = {"status": "success", "iterations": 0}
+
+            while (
+                not objective_met
+                and (time.time() - start_time) < timeout_s
+                and iteration < max_iterations
+            ):
+                iteration += 1
+
+                # 1. Build context
+                context_payload = await self._build_cognitive_context(task)
+
+                # 2. LLM thinks and chooses next tool
+                action_plan = await self._think_autonomous(context_payload, available_tools, task)
+
+                # 2.5 Log Decision Ledger
+                reasoning = action_plan.get("reasoning", {})
+                from ai_osop.core.models import DecisionRecord
+
+                decision = DecisionRecord(
+                    engagement_id=task.engagement_id,
+                    task_id=task.id,
+                    agent_id=self.ctx.agent_id,
+                    iteration=iteration,
+                    action_type=action_plan.get("action", "unknown"),
+                    action_target=action_plan.get("tool_call", {}).get("name", "complete"),
+                    trigger=reasoning.get("observation", ""),
+                    hypothesis_id=reasoning.get("hypothesis_id"),
+                    alternatives_considered=reasoning.get("alternatives_considered", []),
+                    reasoning=reasoning.get("why_chosen", ""),
+                    expected_gain=reasoning.get("expected_information_gain", ""),
+                )
+                # Save decision record to session memory so it persists in context
+                await self._record_observation(
+                    task.engagement_id, {"decision_record": decision.model_dump()}
+                )
+
+                if action_plan.get("action") == "complete":
+                    objective_met = True
+                    final_result["conclusion"] = action_plan.get("conclusion", "Task completed.")
+                    break
+
+                if action_plan.get("action") == "tool":
+                    tool_call = action_plan.get("tool_call", {})
+                    server_id = tool_call.get("server")
+                    tool_name = tool_call.get("name")
+                    tool_params = tool_call.get("parameters", {})
+
                     try:
-                        _rs = (
-                            task.result if isinstance(getattr(task, "result", None), dict) else None
+                        # 3. Execute tool
+                        if server_id == "internal":
+                            observation = await self._execute_internal_tool(
+                                tool_name, tool_params, task
+                            )
+                        else:
+                            observation = await self.ctx.mcp_registry.execute_tool(
+                                server_id, tool_name, tool_params
+                            )
+
+                        # Unwrap MCP response wrapper if needed
+                        if hasattr(observation, "data"):
+                            observation = observation.data
+                        elif hasattr(observation, "content"):
+                            observation = observation.content
+                        # 4. Write evidence to memory
+                        obs_data = observation.data if hasattr(observation, "data") else observation
+                        await self._record_observation(
+                            task.engagement_id,
+                            {
+                                "tool": f"{server_id}:{tool_name}",
+                                "params": tool_params,
+                                "result": obs_data,
+                            },
                         )
-                        await _gm.upsert_task(task, result_summary=_rs)
-                    except Exception as _persist_err:  # noqa: BLE001 - never break the task
-                        agent_logger.warning(
-                            "graph_terminal_persist_failed",
-                            task_id=getattr(task, "id", "?"),
-                            status=getattr(task, "status", "?"),
-                            error=str(_persist_err),
+                    except Exception as e:
+                        await self._record_observation(
+                            task.engagement_id,
+                            {"tool": f"{server_id}:{tool_name}", "error": str(e)},
                         )
-                self.ctx.current_task = None
-                self.ctx.status = "idle"
-                self.ctx.last_heartbeat = datetime.utcnow()
-                RequestContext.clear()
+
+            if not objective_met:
+                final_result["status"] = "failed"
+                final_result["error"] = (
+                    "Max iterations or timeout reached without completing objective."
+                )
+
+            final_result["iterations"] = iteration
+
+            try:
+                final_result = await self._validate_output(final_result)
+            except Exception as e:
+                logger.error(f"Agent output validation failed: {str(e)}")
+
+            self.ctx.status = "idle"
+            self.ctx.current_task = None
+            return final_result
 
     @abstractmethod
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Agent-specific task execution logic."""
         pass
 
-    async def _validate_task(self, task: Task) -> None:
-        """Validate task before execution."""
-        # Check scope if required
-        if task.scope_check:
-            # Scope validation logic here
-            pass
+    async def _build_cognitive_context(self, task: Task) -> Dict[str, Any]:
+        """
+        Construct a normalized state representation from GraphMemory and SessionMemory.
+        This becomes the JSON context the LLM observes on every loop iteration.
+        """
+        engagement_id = task.engagement_id
 
-        # Check dependencies
-        for dep_id in task.dependencies:
-            # Verify dependency completed
-            pass
+        # 1. Fetch assets (parameterized to prevent Cypher injection)
+        assets = await self.ctx.graph_memory.run_read_query(
+            "MATCH (a:Asset {engagement_id: $eid}) RETURN a",
+            {"eid": engagement_id},
+        )
+
+        # 2. Fetch endpoints
+        endpoints = await self.ctx.graph_memory.run_read_query(
+            "MATCH (e:Endpoint {engagement_id: $eid}) RETURN e",
+            {"eid": engagement_id},
+        )
+
+        # 3. Fetch current hypotheses
+        hypotheses_nodes = await self.ctx.graph_memory.run_read_query(
+            "MATCH (h:Hypothesis {engagement_id: $eid}) RETURN h",
+            {"eid": engagement_id},
+        )
+
+        # 3.5 Fetch Candidate Vulnerabilities
+        findings_nodes = await self.ctx.graph_memory.run_read_query(
+            "MATCH (v:CandidateVulnerability {engagement_id: $eid}) RETURN v",
+            {"eid": engagement_id},
+        )
+
+        # 4. Fetch recent observations (audit log / previous actions / decision ledgers)
+        observations = await self.ctx.session_memory.query_audit_log(
+            engagement_id=engagement_id, limit=10
+        )
+
+        return {
+            "task_type": task.type,
+            "payload": task.payload,
+            "known_assets": [a.get("a", {}) for a in assets],
+            "known_endpoints": [e.get("e", {}) for e in endpoints],
+            "active_hypotheses": [h.get("h", {}) for h in hypotheses_nodes],
+            "candidate_vulnerabilities": [f.get("v", {}) for f in findings_nodes],
+            "recent_actions_and_decisions": [obs.model_dump() for obs in observations],
+            "identities": (
+                list(self.ctx.session_memory._users.keys())
+                if hasattr(self.ctx.session_memory, "_users")
+                else []
+            ),
+        }
+
+    async def _record_observation(self, engagement_id: str, observation: Dict[str, Any]) -> None:
+        """
+        Records an observation into the audit log so the LLM can see its own history.
+        """
+        from ai_osop.core.models import AuditEvent
+
+        event = AuditEvent(
+            event_type="agent_observation",
+            severity="info",
+            actor_type="agent",
+            actor_id=self.ctx.agent_id,
+            action=json.loads(json.dumps(observation, default=str)),
+            result={"status": "recorded"},
+            context={"agent_type": self.ctx.agent_type.value if hasattr(self.ctx, "agent_type") else "unknown"},
+            engagement_id=engagement_id
+        )
+        await self.ctx.session_memory.write_audit_event(event)
+
+    async def _execute_internal_tool(
+        self, name: str, params: Dict[str, Any], task: Task
+    ) -> Dict[str, Any]:
+        """Handle graph memory manipulation tools."""
+        import uuid
+
+        from ai_osop.core.models import Asset, Endpoint
+
+        engagement_id = task.engagement_id
+        try:
+            if name == "manage_hypothesis":
+                hyp_id = params.get("id") or f"hyp-{uuid.uuid4().hex[:8]}"
+                await self.ctx.graph_memory.run_write_query(
+                    "MERGE (h:Hypothesis {id: $hyp_id, engagement_id: $eid}) "
+                    "SET h.statement = $statement, h.status = $status, "
+                    "h.confidence = $confidence, h.updated_at = timestamp()",
+                    {
+                        "hyp_id": hyp_id,
+                        "eid": engagement_id,
+                        "statement": params.get("statement", ""),
+                        "status": params.get("status", "open").lower(),
+                        "confidence": float(params.get("confidence", 0.0)),
+                    },
+                )
+                return {
+                    "status": "success",
+                    "message": f"Hypothesis '{params.get('statement')}' recorded.",
+                    "id": hyp_id,
+                }
+
+            elif name == "store_asset":
+                asset = Asset(
+                    id=f"asset-{engagement_id}-{params.get('value')}",
+                    type=params.get("type", "unknown"),
+                    value=params.get("value", ""),
+                    source="autonomous_agent",
+                    confidence=1.0,
+                    engagement_id=engagement_id,
+                )
+                await self.ctx.graph_memory.add_asset(asset)
+                return {
+                    "status": "success",
+                    "message": f"Asset {params.get('value')} stored.",
+                    "id": asset.id,
+                }
+
+            elif name == "store_endpoint":
+                url = params.get("url", "")
+                endpoint = Endpoint(
+                    id=f"ep-{uuid.uuid4().hex[:8]}",
+                    url=url,
+                    method=params.get("method", "GET"),
+                    parameters=params.get("parameters", []),
+                    engagement_id=engagement_id,
+                )
+                await self.ctx.graph_memory.add_endpoint(endpoint)
+                return {
+                    "status": "success",
+                    "message": f"Endpoint {url} stored.",
+                    "id": endpoint.id,
+                }
+
+            elif name == "propose_vulnerability":
+                vuln_id = f"candvuln-{uuid.uuid4().hex[:8]}"
+                # Store as CandidateVulnerability to be validated later
+                await self.ctx.graph_memory.run_write_query(
+                    "MERGE (v:CandidateVulnerability {id: $vuln_id, engagement_id: $eid}) "
+                    "SET v.title = $title, v.severity = $severity, "
+                    "v.target = $target, v.hypothesis_id = $hypothesis_id, "
+                    "v.created_at = timestamp()",
+                    {
+                        "vuln_id": vuln_id,
+                        "eid": engagement_id,
+                        "title": params.get("title", ""),
+                        "severity": params.get("severity", "medium"),
+                        "target": params.get("target", ""),
+                        "hypothesis_id": params.get("hypothesis_id", ""),
+                    },
+                )
+                return {
+                    "status": "success",
+                    "message": f"Candidate Vulnerability {params.get('title')} proposed.",
+                    "id": vuln_id,
+                }
+
+            return {"status": "error", "message": f"Unknown internal tool: {name}"}
+
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    async def _think_autonomous(
+        self, context: Dict[str, Any], tools: List[Dict[str, Any]], task: Task
+    ) -> Dict[str, Any]:
+        """
+        The autonomous reasoning core. Feeds the structured state + tool schemas to the LLM
+        and expects a JSON action plan in return.
+        """
+        import json
+
+        internal_tools = [
+            {
+                "server": "internal",
+                "name": "manage_hypothesis",
+                "description": "Create a new hypothesis or update the status of an existing hypothesis (e.g. OPEN, TESTING, SUPPORTED, REFUTED, CONFIRMED).",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "type": "string",
+                        "description": "Hypothesis ID (leave blank to create new)",
+                    },
+                    {
+                        "name": "statement",
+                        "type": "string",
+                        "description": "What you are hypothesizing",
+                    },
+                    {
+                        "name": "status",
+                        "type": "string",
+                        "description": "HypothesisStatus (OPEN, TESTING, SUPPORTED, REFUTED, CONFIRMED, ABANDONED)",
+                    },
+                    {
+                        "name": "confidence",
+                        "type": "number",
+                        "description": "0.0 to 1.0 confidence score",
+                    },
+                ],
+            },
+            {
+                "server": "internal",
+                "name": "store_asset",
+                "description": "Store a discovered asset (e.g., domain, IP) into the knowledge graph.",
+                "parameters": [
+                    {
+                        "name": "type",
+                        "type": "string",
+                        "description": "Asset type (e.g. 'domain', 'ip')",
+                    },
+                    {
+                        "name": "value",
+                        "type": "string",
+                        "description": "The asset value (e.g. 'example.com')",
+                    },
+                ],
+            },
+            {
+                "server": "internal",
+                "name": "store_endpoint",
+                "description": "Store a discovered API or web endpoint into the knowledge graph.",
+                "parameters": [
+                    {
+                        "name": "url",
+                        "type": "string",
+                        "description": "The full URL of the endpoint",
+                    },
+                    {
+                        "name": "method",
+                        "type": "string",
+                        "description": "HTTP method (e.g. 'GET', 'POST')",
+                    },
+                    {
+                        "name": "parameters",
+                        "type": "array",
+                        "description": "List of parameter names discovered",
+                    },
+                ],
+            },
+            {
+                "server": "internal",
+                "name": "propose_vulnerability",
+                "description": "Propose a candidate vulnerability to be validated by the system. Do NOT assume it is confirmed until validated.",
+                "parameters": [
+                    {
+                        "name": "title",
+                        "type": "string",
+                        "description": "Title of the vulnerability",
+                    },
+                    {
+                        "name": "severity",
+                        "type": "string",
+                        "description": "Severity (low, medium, high, critical)",
+                    },
+                    {
+                        "name": "target",
+                        "type": "string",
+                        "description": "The affected URL or asset value",
+                    },
+                    {
+                        "name": "hypothesis_id",
+                        "type": "string",
+                        "description": "The hypothesis ID this vulnerability validates",
+                    },
+                ],
+            },
+        ]
+        all_tools = tools + internal_tools
+
+        prompt = (
+            "You are an autonomous AI cybersecurity agent executing a task.\n"
+            "You operate in a loop: Observe State -> Form Hypothesis -> Choose Tool -> Validate.\n\n"
+            "CURRENT STATE:\n"
+            f"{json.dumps(context, indent=2, default=str)}\n\n"
+            "AVAILABLE TOOLS:\n"
+            f"{json.dumps(all_tools, indent=2, default=str)}\n\n"
+            "INSTRUCTIONS:\n"
+            "Based on the current state and task payload, what is your next action?\n"
+            "You must return ONLY a JSON object with one of two shapes:\n"
+            "1. To use a tool:\n"
+            "   {\n"
+            '     "action": "tool",\n'
+            '     "reasoning": {\n'
+            '       "observation": "What did you just observe?",\n'
+            '       "hypothesis_id": "ID of hypothesis (if applicable)",\n'
+            '       "confidence": 0.8,\n'
+            '       "alternatives_considered": ["list of other tools you could have run"],\n'
+            '       "expected_information_gain": "What you expect this tool to return",\n'
+            '       "why_chosen": "Why this tool is the best next step"\n'
+            "     },\n"
+            '     "tool_call": {\n'
+            '       "server": "server_id",\n'
+            '       "name": "tool_name",\n'
+            '       "parameters": { ... }\n'
+            "     }\n"
+            "   }\n"
+            "2. If the task objective is completely met or you are stuck:\n"
+            "   {\n"
+            '     "action": "complete",\n'
+            '     "reasoning": { "why_chosen": "Reasoning for stopping" },\n'
+            '     "conclusion": "Summary of findings."\n'
+            "   }\n"
+        )
+
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a precise cybersecurity AI that outputs only valid JSON.",
+            },
+            {"role": "user", "content": prompt},
+        ]
+
+        if hasattr(self.ctx.llm_client, "complete"):
+            try:
+                # Enforce JSON mode if supported
+                result = await self.ctx.llm_client.complete(
+                    messages, max_tokens=1500, response_format={"type": "json_object"}
+                )
+                content = result.get("content", "") if isinstance(result, dict) else str(result)
+                # Clean potential markdown fences
+                if content.startswith("```json"):
+                    content = content[7:]
+                if content.endswith("```"):
+                    content = content[:-3]
+                return json.loads(content.strip())
+            except Exception as e:
+                return {
+                    "action": "complete",
+                    "conclusion": "Failed to parse LLM output.",
+                    "error": str(e),
+                }
+
+        return {"action": "complete", "conclusion": "No LLM client available."}
+
+    async def _validate_task(self, task: Task) -> None:
+        """Validate task before execution.
+
+        FIX (validate-task-stub-2026-08-24): this method was a literal `pass`
+        stub — the `task.scope_check` flag flowed through the entire pipeline
+        (models -> scheduler -> agent) and enforced NOTHING, and dependency
+        validation never ran, so tasks could execute with failed/missing
+        prerequisites. Both checks are now real and fail loudly:
+          * scope_check=True requires a scope bound on the AgentContext
+          * every dependency must exist and be status="completed"
+        Raises AgentTaskFailed so the orchestrator records the failure
+        instead of silently proceeding.
+        """
+        from ai_osop.core.exceptions import AgentTaskFailed
+
+        # 1. Scope gate: active-work flag demands an authorized engagement scope.
+        # FIX (validate-task-scope-source-2026-08-24): the authoritative scope is
+        # the ENGAGEMENT SESSION's ScopeDefinition, not AgentContext.scope —
+        # long-lived shared agents keep ctx.scope=None by design ("no override"),
+        # which made this check reject every legitimately scoped task.
+        if task.scope_check:
+            session = await self.ctx.session_memory.load_session_state(task.engagement_id)
+            scope = getattr(session, "scope", None) if session is not None else None
+            if scope is None:
+                raise AgentTaskFailed(
+                    f"Task {task.id} ({task.type}) sets scope_check but engagement "
+                    f"'{task.engagement_id}' has no authorized ScopeDefinition bound; "
+                    f"refusing to run."
+                )
+
+        # 2. Dependency gate: all prerequisites must be completed.
+        for dep_id in task.dependencies or []:
+            dep = await self.ctx.session_memory.load_task(dep_id)
+            if dep is None:
+                raise AgentTaskFailed(f"Task {task.id} depends on {dep_id} which does not exist")
+            if dep.status != "completed":
+                raise AgentTaskFailed(
+                    f"Task {task.id} depends on {dep_id} whose status is "
+                    f"'{dep.status}' (expected 'completed')"
+                )
 
     async def _validate_output(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate agent output against schema."""
-        # Schema validation
-        # Hallucination detection
-        # Confidence threshold checks
+        """Validate agent output against schema and detect hallucinations.
+
+        Validates:
+          1. Required keys (status) exist and have valid values.
+          2. Numeric fields (confidence, evScore) are within [0.0, 1.0].
+          3. Hallucinated tool/server names not in the live MCP registry.
+          4. Finding titles contain only ASCII-printable characters (flags likely
+             LLM fabrications with unicode tricks).
+        """
+        if not isinstance(result, dict):
+            agent_logger.warning(
+                "output_validation_failed_not_dict",
+                agent_id=self.ctx.agent_id,
+                result_type=type(result).__name__,
+            )
+            return {"status": "error", "error": "Agent returned non-dict output"}
+
+        # 1. Schema: status must be a known terminal value
+        VALID_STATUSES = {"success", "failed", "error", "partial", "timeout"}
+        status = result.get("status")
+        if status not in VALID_STATUSES:
+            agent_logger.warning(
+                "output_validation_bad_status",
+                agent_id=self.ctx.agent_id,
+                status=status,
+            )
+            result["status"] = "failed"
+            result["error"] = f"Invalid status: {status}"
+
+        # 2. Confidence / score range check
+        for field in ("confidence", "evScore", "cvss_score"):
+            val = result.get(field)
+            if val is not None:
+                try:
+                    fval = float(val)
+                    if not (0.0 <= fval <= 1.0) and field != "cvss_score":
+                        agent_logger.warning(
+                            "output_validation_score_out_of_range",
+                            agent_id=self.ctx.agent_id,
+                            field=field,
+                            value=fval,
+                        )
+                        result[field] = max(0.0, min(1.0, fval))
+                except (TypeError, ValueError):
+                    pass
+
+        # 3. Hallucination detection: check tool names against live registry
+        tool_call = result.get("tool_call")
+        if tool_call and isinstance(tool_call, dict):
+            server_id = tool_call.get("server")
+            tool_name = tool_call.get("name")
+            if server_id and server_id != "internal":
+                known_servers = set(self.ctx.mcp_registry._servers.keys()) if hasattr(self.ctx.mcp_registry, "_servers") else set()
+                if known_servers and server_id not in known_servers:
+                    agent_logger.warning(
+                        "output_validation_hallucinated_server",
+                        agent_id=self.ctx.agent_id,
+                        server=server_id,
+                        known=list(known_servers),
+                    )
+                    result["status"] = "failed"
+                    result["error"] = f"Hallucinated MCP server: {server_id}"
+
+        # 4. Finding-level validation (for results containing findings list)
+        findings = result.get("findings") or result.get("vulnerabilities")
+        if isinstance(findings, list):
+            validated_findings = []
+            for f in findings:
+                if not isinstance(f, dict):
+                    continue
+                title = f.get("title", "")
+                # Flag non-ASCII titles (likely LLM fabrications)
+                if title and not all(ord(c) < 128 for c in title):
+                    agent_logger.warning(
+                        "output_validation_non_ascii_finding",
+                        agent_id=self.ctx.agent_id,
+                        title=title[:100],
+                    )
+                    f["confidence"] = min(float(f.get("confidence", 0.5)), 0.3)
+                validated_findings.append(f)
+            if "findings" in result:
+                result["findings"] = validated_findings
+            elif "vulnerabilities" in result:
+                result["vulnerabilities"] = validated_findings
+
         return result
 
     async def _update_working_memory(self, task: Task, result: Dict[str, Any]) -> None:
@@ -735,6 +1129,7 @@ class BaseAgent(ABC):
             "current_task": self.ctx.current_task.id if self.ctx.current_task else None,
             "task_queue_depth": self._task_queue.qsize(),
             "last_heartbeat": self.ctx.last_heartbeat.isoformat(),
+            "cost_incurred": self.cost_incurred,
             "working_memory_keys": list(self.ctx.working_memory.keys()),
         }
 

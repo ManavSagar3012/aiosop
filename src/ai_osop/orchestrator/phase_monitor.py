@@ -12,7 +12,6 @@ import structlog
 
 from ai_osop.core.config import AgentType, EngagementPhase, settings
 from ai_osop.core.models import SessionState, Task
-from ai_osop.core.tracing import trace_span
 from ai_osop.core.value_engine import batch_endpoints_for_scan
 
 logger = structlog.get_logger("ai_osop.orchestrator.phase_monitor")
@@ -31,11 +30,11 @@ class PhaseMonitor:
         phase = EngagementPhase(session.phase)
         policy = self._orch.PHASE_POLICY.get(phase)
 
-        if policy and policy.get("auto_next"):
+        if policy and policy.get("automatic_next_phase"):
             # Check if all tasks for current phase are complete
             if await self._orch._is_phase_complete(session_id, phase):
                 next_phase = await self._orch._resolve_auto_next(
-                    session_id, phase, policy["auto_next"]
+                    session_id, phase, policy["automatic_next_phase"]
                 )
                 if next_phase is None:
                     return
