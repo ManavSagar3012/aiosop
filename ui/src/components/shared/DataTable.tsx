@@ -6,6 +6,7 @@ export interface Column<T> {
   header: string;
   width?: string;
   align?: 'left' | 'right' | 'center';
+  sortable?: boolean;
   render?: (row: T) => React.ReactNode;
 }
 
@@ -13,39 +14,92 @@ const alignClass = (a?: 'left' | 'right' | 'center') =>
   a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : '';
 
 export function DataTable<T>({
-  columns, rows, rowKey, empty,
+  columns, rows, rowKey, empty, onRowClick,
 }: {
   columns: Column<T>[];
   rows: T[];
   rowKey: (row: T) => string;
   empty?: React.ReactNode;
+  onRowClick?: (row: T) => void;
 }) {
   return (
-    <div className="overflow-y-auto custom-scrollbar -mx-2">
-      <table className="w-full text-left font-code-sm text-code-sm">
-        <thead className="sticky top-0 z-10">
-          <tr className="text-on-surface-variant bg-surface-container-high">
+    <div className="overflow-y-auto custom-scrollbar">
+      <table
+        className="w-full text-left"
+        style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 12,
+          borderCollapse: 'separate',
+          borderSpacing: 0,
+        }}
+      >
+        <thead>
+          <tr
+            style={{
+              background: 'var(--surface-2)',
+              borderBottom: '1px solid var(--border)',
+            }}
+          >
             {columns.map((c) => (
-              <th key={c.key} className={`px-3 py-2.5 font-label-caps text-label-xs uppercase ${alignClass(c.align)} ${c.width || ''}`}>
+              <th
+                key={c.key}
+                className={`${alignClass(c.align)}`}
+                style={{
+                  padding: '10px 14px',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text-tertiary)',
+                  borderBottom: '1px solid var(--border)',
+                  position: 'sticky',
+                  top: 0,
+                  background: 'var(--surface-2)',
+                  zIndex: 10,
+                  ...(c.width ? { width: c.width } : {}),
+                }}
+              >
                 {c.header}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={rowKey(row)} className="border-b border-outline-variant/30 hover:bg-surface-container-high/60 transition-colors group">
-              {columns.map((c) => (
-                <td key={c.key} className={`px-3 py-2.5 ${alignClass(c.align)}`}>
-                  {c.render ? c.render(row) : String((row as any)[c.key] ?? '')}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {rows.map((row, idx) => {
+            const key = rowKey(row);
+            return (
+              <tr
+                key={key || `row-${idx}`}
+                onClick={() => onRowClick?.(row)}
+                className={onRowClick ? 'cursor-pointer' : ''}
+                style={{
+                  borderBottom: '1px solid var(--border-subtle)',
+                  transition: 'background var(--duration-fast)',
+                  background: idx % 2 === 1 ? 'rgba(255,255,255,0.01)' : undefined,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-hover)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = idx % 2 === 1 ? 'rgba(255,255,255,0.01)' : undefined)}
+              >
+                {columns.map((c) => (
+                  <td
+                    key={String(c.key)}
+                    className={`${alignClass(c.align)}`}
+                    style={{ padding: '10px 14px', color: 'var(--text-primary)' }}
+                  >
+                    {c.render ? c.render(row) : String((row as any)[c.key] ?? '')}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={columns.length} className="px-3 py-16 text-center">
-                {empty || <EmptyState message="No data yet." />}
+              <td
+                colSpan={columns.length}
+                style={{ padding: '48px 14px', textAlign: 'center' }}
+              >
+                {empty || <EmptyState message="No data available" />}
               </td>
             </tr>
           )}

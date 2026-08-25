@@ -2,120 +2,199 @@ import React from 'react';
 import { useSwarmStore } from '../../store/useSwarmStore';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
 import {
-  AlertTriangle, CheckCircle, Clock, Shield, Target,
-  TrendingUp, AlertCircle, Crosshair
+  AlertTriangle, CheckCircle, Clock, Target,
 } from 'lucide-react';
 
 export const MissionBriefing: React.FC = () => {
-  const { agents, budget, currentPhase, currentObjective } = useSwarmStore();
+  const { agents, currentPhase } = useSwarmStore();
   const { findings, verifications, sessionId } = useIntelligenceStore();
 
   const verified = (findings || []).filter(f => f.status === 'verified');
   const pending = (verifications || []).length;
   const critical = (findings || []).filter(f => f.severity === 'critical');
-  const rejected = (findings || []).filter(f => f.status === 'rejected');
   const total = (findings || []).length;
 
-  const spent = (budget?.spent || 0) + (agents || []).reduce((acc, a) => acc + (a.cost_incurred || 0), 0);
   const activeAgents = (agents || []).filter(a => a.status === 'running').length;
   const conversionRate = total > 0 ? ((verified.length / total) * 100).toFixed(0) : '0';
 
-  // Build narrative
   const buildNarrative = () => {
     if (!sessionId) {
       return {
-        status: 'standby',
-        icon: <Clock size={20} className="text-on-surface-variant" />,
+        icon: <Clock size={18} style={{ color: 'var(--text-tertiary)' }} />,
         title: 'Standing By',
-        lines: ['No active engagement. Start a mission to begin.'],
+        description: 'No active engagement. Start a mission to begin automated penetration testing.',
+        accent: 'var(--text-tertiary)',
       };
     }
-
     if (critical.length > 0 && pending > 0) {
       return {
-        status: 'critical',
-        icon: <AlertTriangle size={20} className="text-error" />,
+        icon: <AlertTriangle size={18} style={{ color: 'var(--danger)' }} />,
         title: 'Critical Findings Need Attention',
-        lines: [
-          `${critical.length} critical finding${critical.length > 1 ? 's' : ''} confirmed`,
-          `${pending} approval${pending > 1 ? 's' : ''} awaiting your decision`,
-          `Phase: ${currentPhase.replace(/_/g, ' ').toUpperCase()}`,
-        ],
+        description: `${critical.length} critical finding${critical.length > 1 ? 's' : ''} confirmed. ${pending} approval${pending > 1 ? 's' : ''} awaiting your decision.`,
+        accent: 'var(--danger)',
       };
     }
-
     if (verified.length > 0) {
       return {
-        status: 'progress',
-        icon: <CheckCircle size={20} className="text-primary-fixed" />,
+        icon: <CheckCircle size={18} style={{ color: 'var(--accent)' }} />,
         title: 'Mission Progressing',
-        lines: [
-          `${verified.length} verified finding${verified.length > 1 ? 's' : ''} (${conversionRate}% conversion)`,
-          `${activeAgents} agent${activeAgents !== 1 ? 's' : ''} actively scanning`,
-          `$${spent.toFixed(2)} operational spend`,
-        ],
+        description: `${verified.length} verified finding${verified.length > 1 ? 's' : ''} (${conversionRate}% conversion). ${activeAgents} agent${activeAgents !== 1 ? 's' : ''} actively scanning.`,
+        accent: 'var(--accent)',
       };
     }
-
     return {
-      status: 'scanning',
-      icon: <Target size={20} className="text-secondary" />,
+      icon: <Target size={18} style={{ color: 'var(--interactive)' }} />,
       title: 'Scanning Attack Surface',
-      lines: [
-        `${total} candidate${total !== 1 ? 's' : ''} discovered`,
-        `${activeAgents} agent${activeAgents !== 1 ? 's' : ''} working`,
-        `Phase: ${currentPhase.replace(/_/g, ' ').toUpperCase()}`,
-      ],
+      description: `${total} candidate${total !== 1 ? 's' : ''} discovered. ${activeAgents} agent${activeAgents !== 1 ? 's' : ''} working. Phase: ${currentPhase.replace(/_/g, ' ').toUpperCase()}.`,
+      accent: 'var(--interactive)',
     };
   };
 
   const narrative = buildNarrative();
 
   return (
-    <div className="bg-surface-container-low border border-outline-variant p-5 relative overflow-hidden">
-      {/* Ambient sweep */}
-      <div className="absolute top-0 left-0 h-px w-1/3 bg-gradient-to-r from-transparent via-primary-fixed to-transparent sweep-line pointer-events-none" />
-
-      <div className="flex items-start gap-4">
-        <div className="p-2.5 bg-surface-container border border-outline-variant">
+    <div
+      className="card reveal-up"
+      style={{
+        padding: '20px 24px',
+        borderTop: `2px solid ${narrative.accent}`,
+      }}
+    >
+      <div className="flex items-center gap-5">
+        {/* Icon */}
+        <div
+          className="flex items-center justify-center shrink-0"
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 'var(--radius-lg)',
+            background: 'var(--surface-2)',
+            border: '1px solid var(--border)',
+          }}
+        >
           {narrative.icon}
         </div>
-        <div className="flex-1">
-          <h3 className="font-label-caps text-label-caps text-on-surface mb-1">
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          <div
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: 'var(--text-disabled)',
+              marginBottom: 4,
+            }}
+          >
             MISSION BRIEFING
-          </h3>
-          <div className="font-display-lg text-display-lg text-on-surface mb-2">
+          </div>
+          <div
+            style={{
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontSize: 18,
+              fontWeight: 700,
+              color: 'var(--text-primary)',
+              marginBottom: 4,
+            }}
+          >
             {narrative.title}
           </div>
-          <div className="space-y-1">
-            {narrative.lines.map((line, i) => (
-              <div key={i} className="flex items-center gap-2 font-code-sm text-[11px] text-on-surface-variant">
-                <span className="w-1 h-1 rounded-full bg-primary-fixed opacity-60" />
-                {line}
-              </div>
-            ))}
+          <div
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              lineHeight: 1.5,
+            }}
+          >
+            {narrative.description}
           </div>
         </div>
 
         {/* Quick stats */}
-        <div className="flex gap-4 shrink-0">
+        <div className="flex items-center gap-6 shrink-0">
           <div className="text-center">
-            <div className="font-display-lg text-display-lg text-primary-fixed leading-none">
+            <div
+              style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 28,
+                fontWeight: 800,
+                lineHeight: 1,
+                color: 'var(--accent)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
               {verified.length}
             </div>
-            <div className="font-code-sm text-[9px] text-on-surface-variant mt-1">VERIFIED</div>
+            <div
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--text-disabled)',
+                marginTop: 4,
+              }}
+            >
+              VERIFIED
+            </div>
           </div>
           <div className="text-center">
-            <div className="font-display-lg text-display-lg text-error leading-none">
+            <div
+              style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 28,
+                fontWeight: 800,
+                lineHeight: 1,
+                color: 'var(--danger)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
               {critical.length}
             </div>
-            <div className="font-code-sm text-[9px] text-on-surface-variant mt-1">CRITICAL</div>
+            <div
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--text-disabled)',
+                marginTop: 4,
+              }}
+            >
+              CRITICAL
+            </div>
           </div>
           <div className="text-center">
-            <div className="font-display-lg text-display-lg text-secondary leading-none">
+            <div
+              style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 28,
+                fontWeight: 800,
+                lineHeight: 1,
+                color: 'var(--warning)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
               {pending}
             </div>
-            <div className="font-code-sm text-[9px] text-on-surface-variant mt-1">PENDING</div>
+            <div
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--text-disabled)',
+                marginTop: 4,
+              }}
+            >
+              PENDING
+            </div>
           </div>
         </div>
       </div>

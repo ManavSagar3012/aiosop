@@ -1,10 +1,7 @@
 import React from 'react';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
-import { useSwarmStore } from '../../store/useSwarmStore';
-import {
-  Shield, AlertTriangle, CheckCircle, Clock, Target,
-  Zap, ArrowRight, Crosshair
-} from 'lucide-react';
+import { Card } from './Card';
+import { Clock } from 'lucide-react';
 
 interface TimelineEvent {
   id: string;
@@ -16,15 +13,26 @@ interface TimelineEvent {
   status?: string;
 }
 
+const EVENT_COLORS: Record<string, string> = {
+  phase: 'var(--accent)',
+  finding: 'var(--interactive)',
+  agent: 'var(--info)',
+  approval: 'var(--warning)',
+};
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: 'var(--danger)',
+  high: 'var(--warning)',
+  medium: 'var(--interactive)',
+  low: 'var(--text-tertiary)',
+};
+
 export const AttackTimeline: React.FC = () => {
-  const { currentPhase } = useSwarmStore();
   const { findings, auditLog } = useIntelligenceStore();
 
-  // Build timeline events from audit log and findings
   const buildTimeline = (): TimelineEvent[] => {
     const events: TimelineEvent[] = [];
 
-    // Add phase events from audit log
     (auditLog || []).forEach((entry: any) => {
       if (entry.event_type === 'phase_transition' || entry.event_type === 'auto_transition') {
         events.push({
@@ -65,7 +73,6 @@ export const AttackTimeline: React.FC = () => {
       }
     });
 
-    // Add findings as events
     (findings || []).forEach((f: any) => {
       events.push({
         id: f.id,
@@ -78,10 +85,8 @@ export const AttackTimeline: React.FC = () => {
       });
     });
 
-    // Sort by timestamp
     events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-    // Deduplicate by id
     const seen = new Set<string>();
     return events.filter(e => {
       if (seen.has(e.id)) return false;
@@ -92,74 +97,123 @@ export const AttackTimeline: React.FC = () => {
 
   const timeline = buildTimeline();
 
-  const getEventIcon = (event: TimelineEvent) => {
-    switch (event.type) {
-      case 'phase':
-        return <ArrowRight size={14} className="text-primary-fixed" />;
-      case 'finding':
-        if (event.severity === 'critical') return <AlertTriangle size={14} className="text-error" />;
-        if (event.severity === 'high') return <Shield size={14} className="text-warning" />;
-        return <Crosshair size={14} className="text-secondary" />;
-      case 'agent':
-        return event.status === 'success'
-          ? <CheckCircle size={14} className="text-success" />
-          : <Zap size={14} className="text-error" />;
-      case 'approval':
-        return <Target size={14} className="text-primary" />;
-      default:
-        return <Clock size={14} className="text-on-surface-variant" />;
-    }
-  };
-
   return (
-    <div className="bg-surface-container-low border border-outline-variant p-5">
-      <div className="font-label-caps text-label-caps text-on-surface-variant mb-4">
-        ATTACK TIMELINE
-      </div>
-
+    <Card title="Attack Timeline" subtitle={`${timeline.length} events tracked`}>
       {timeline.length === 0 ? (
-        <div className="text-center py-8 text-on-surface-variant/50">
-          <Clock size={24} className="mx-auto mb-2 opacity-30" />
-          <p className="font-code-sm text-[11px]">No events yet — waiting for activity</p>
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <div
+            className="flex items-center justify-center mb-3"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 'var(--radius-lg)',
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-tertiary)',
+            }}
+          >
+            <Clock size={18} />
+          </div>
+          <div
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 12,
+              color: 'var(--text-tertiary)',
+            }}
+          >
+            No events yet — waiting for activity
+          </div>
         </div>
       ) : (
-        <div className="relative">
-          {/* Vertical line */}
-          <div className="absolute left-[11px] top-0 bottom-0 w-px bg-outline-variant" />
-
-          <div className="space-y-3">
-            {timeline.slice(-20).reverse().map((event) => (
-              <div key={event.id} className="flex items-start gap-3 relative">
-                {/* Icon */}
-                <div className="relative z-10 w-6 h-6 flex items-center justify-center bg-background border border-outline-variant shrink-0">
-                  {getEventIcon(event)}
+        <div style={{ maxHeight: 360, overflowY: 'auto' }} className="custom-scrollbar">
+          <div className="flex flex-col" style={{ gap: 2 }}>
+            {timeline.slice(-15).reverse().map((event) => (
+              <div
+                key={event.id}
+                className="flex items-start gap-3"
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-md)',
+                  transition: 'background var(--duration-fast)',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-hover)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                {/* Dot */}
+                <div className="flex items-center justify-center shrink-0" style={{ marginTop: 4 }}>
+                  <div
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: SEVERITY_COLORS[event.severity || ''] || EVENT_COLORS[event.type],
+                      boxShadow: event.severity === 'critical' ? 'var(--shadow-glow-red)' : 'none',
+                    }}
+                  />
                 </div>
 
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-code-sm text-[10px] text-on-surface-variant">
+                    <span
+                      style={{
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: 10,
+                        color: 'var(--text-disabled)',
+                      }}
+                    >
                       {new Date(event.timestamp).toLocaleTimeString()}
                     </span>
-                    {event.type === 'phase' && (
-                      <span className="font-label-caps text-[8px] text-primary-fixed border border-primary-fixed/30 px-1">
-                        PHASE
-                      </span>
-                    )}
+                    <span
+                      style={{
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: 9,
+                        fontWeight: 600,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        color: EVENT_COLORS[event.type],
+                        padding: '1px 6px',
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-full)',
+                      }}
+                    >
+                      {event.type}
+                    </span>
                     {event.severity && (
-                      <span className={`font-label-caps text-[8px] ${
-                        event.severity === 'critical' ? 'text-error' :
-                        event.severity === 'high' ? 'text-warning' : 'text-secondary'
-                      }`}>
+                      <span
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 9,
+                          fontWeight: 600,
+                          color: SEVERITY_COLORS[event.severity] || 'var(--text-tertiary)',
+                        }}
+                      >
                         {event.severity.toUpperCase()}
                       </span>
                     )}
                   </div>
-                  <div className="font-label-sm text-label-sm text-on-surface truncate">
+                  <div
+                    className="truncate"
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 12,
+                      color: 'var(--text-primary)',
+                      marginTop: 2,
+                    }}
+                  >
                     {event.title}
                   </div>
                   {event.description && (
-                    <div className="font-code-sm text-[10px] text-on-surface-variant/60 truncate">
+                    <div
+                      className="truncate"
+                      style={{
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: 10,
+                        color: 'var(--text-tertiary)',
+                        marginTop: 1,
+                      }}
+                    >
                       {event.description}
                     </div>
                   )}
@@ -169,6 +223,6 @@ export const AttackTimeline: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 };

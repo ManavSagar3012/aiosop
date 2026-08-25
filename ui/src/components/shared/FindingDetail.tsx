@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Finding } from '../../store/useIntelligenceStore';
-import { API_BASE, authHeaders } from '../../services/api';
+import { StatusBadge } from './StatusBadge';
 import {
-  Shield, ExternalLink, Copy, Check, X, Eye,
-  AlertTriangle, FileText, ChevronDown, ChevronUp
+  Copy, Check, X,
+  ChevronDown, ChevronUp, Users, FlaskConical
 } from 'lucide-react';
 
 interface FindingDetailProps {
@@ -12,6 +12,14 @@ interface FindingDetailProps {
   onReject?: (id: string) => void;
 }
 
+const SEVERITY_CONFIG: Record<string, { border: string; bg: string }> = {
+  critical: { border: 'var(--danger-border)', bg: 'var(--danger-bg)' },
+  high:     { border: 'var(--warning-border)', bg: 'var(--warning-bg)' },
+  medium:   { border: 'var(--interactive-border)', bg: 'var(--interactive-bg)' },
+  low:      { border: 'var(--border)', bg: 'var(--surface-2)' },
+  info:     { border: 'var(--border)', bg: 'var(--surface-2)' },
+};
+
 export const FindingDetail: React.FC<FindingDetailProps> = ({
   finding,
   onApprove,
@@ -19,15 +27,8 @@ export const FindingDetail: React.FC<FindingDetailProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [replaying, setReplaying] = useState(false);
 
-  const severityColor = {
-    critical: 'text-error border-error/30 bg-error/5',
-    high: 'text-warning border-warning/30 bg-warning/5',
-    medium: 'text-secondary border-secondary/30 bg-secondary/5',
-    low: 'text-on-surface-variant border-outline-variant',
-    info: 'text-on-surface-variant border-outline-variant',
-  }[finding.severity] || 'text-on-surface-variant';
+  const severity = SEVERITY_CONFIG[finding.severity] || SEVERITY_CONFIG.info;
 
   const handleCopyEvidence = () => {
     const evidenceStr = JSON.stringify(finding, null, 2);
@@ -36,128 +37,185 @@ export const FindingDetail: React.FC<FindingDetailProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleReplay = async () => {
-    setReplaying(true);
-    try {
-      const res = await fetch(`${API_BASE}/engagements/${finding.engagement_id}/findings/${finding.id}/replay`, {
-        method: 'POST',
-        headers: authHeaders(),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        alert(`Replay result: ${data.status || 'completed'}`);
-      }
-    } catch (e) {
-      console.error('Replay failed', e);
-    }
-    setReplaying(false);
-  };
-
   return (
-    <div className={`border ${severityColor} p-4 space-y-3`}>
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderLeft: `3px solid ${severity.border}`,
+        borderRadius: 'var(--radius-md)',
+        background: 'var(--surface-1)',
+        overflow: 'hidden',
+        transition: 'border-color var(--duration-fast)',
+      }}
+    >
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-label-caps text-[9px] uppercase tracking-wider px-1.5 py-0.5 border border-current opacity-70">
-              {finding.severity}
-            </span>
-            <span className="font-code-sm text-[10px] opacity-50">
-              {finding.category?.replace(/_/g, ' ')}
-            </span>
-            {finding.evScore !== undefined && (
-              <span className="font-code-sm text-[10px] text-primary">
-                EV: {finding.evScore.toFixed(0)}
-              </span>
-            )}
-          </div>
-          <h4 className="font-label-caps text-label-caps text-on-surface">
+      <div className="flex items-center justify-between" style={{ padding: '12px 16px' }}>
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <StatusBadge value={finding.severity} kind="severity" />
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10,
+              color: 'var(--text-tertiary)',
+              letterSpacing: '0.05em',
+            }}
+          >
+            {finding.category?.replace(/_/g, ' ')}
+          </span>
+          <span className="truncate" style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+          }}>
             {finding.title}
-          </h4>
+          </span>
         </div>
 
-        <div className="flex items-center gap-1">
-          {onApprove && (
-            <button
-              onClick={() => onApprove(finding.id)}
-              className="p-1.5 text-success hover:bg-success/10 transition-colors"
-              title="Approve"
+        <div className="flex items-center gap-2 shrink-0">
+          {finding.evScore !== undefined && (
+            <span
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 10,
+                color: 'var(--accent)',
+                padding: '2px 8px',
+                background: 'var(--accent-bg)',
+                border: '1px solid var(--accent-border)',
+                borderRadius: 'var(--radius-full)',
+              }}
             >
-              <Check size={14} />
-            </button>
+              EV: {finding.evScore.toFixed(0)}
+            </span>
           )}
-          {onReject && (
+          <StatusBadge value={finding.status} />
+
+          <div className="flex items-center gap-0.5" style={{ marginLeft: 4 }}>
+            {onApprove && (
+              <button
+                onClick={() => onApprove(finding.id)}
+                className="btn btn-icon btn-ghost"
+                style={{ width: 26, height: 26, color: 'var(--accent)' }}
+                title="Approve"
+              >
+                <Check size={13} />
+              </button>
+            )}
+            {onReject && (
+              <button
+                onClick={() => onReject(finding.id)}
+                className="btn btn-icon btn-ghost"
+                style={{ width: 26, height: 26, color: 'var(--danger)' }}
+                title="Reject"
+              >
+                <X size={13} />
+              </button>
+            )}
             <button
-              onClick={() => onReject(finding.id)}
-              className="p-1.5 text-error hover:bg-error/10 transition-colors"
-              title="Reject"
+              onClick={handleCopyEvidence}
+              className="btn btn-icon btn-ghost"
+              style={{ width: 26, height: 26 }}
+              title="Copy evidence"
             >
-              <X size={14} />
+              {copied ? <Check size={13} style={{ color: 'var(--accent)' }} /> : <Copy size={13} />}
             </button>
-          )}
-          <button
-            onClick={handleCopyEvidence}
-            className="p-1.5 text-on-surface-variant hover:bg-surface-container-high transition-colors"
-            title="Copy evidence"
-          >
-            {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-          </button>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="p-1.5 text-on-surface-variant hover:bg-surface-container-high transition-colors"
-          >
-            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="btn btn-icon btn-ghost"
+              style={{ width: 26, height: 26 }}
+            >
+              {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Target */}
-      {finding.target && (
-        <div className="flex items-center gap-2 font-code-sm text-[11px] text-on-surface-variant">
-          <ExternalLink size={12} />
-          <span className="truncate">{finding.target}</span>
+      {/* Metrics bar */}
+      <div
+        className="flex items-center gap-4"
+        style={{
+          padding: '6px 16px',
+          background: 'var(--surface-2)',
+          borderTop: '1px solid var(--border-subtle)',
+          borderBottom: expanded ? '1px solid var(--border-subtle)' : 'none',
+        }}
+      >
+        <div className="flex items-center gap-1.5" style={{ color: 'var(--text-tertiary)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>
+          <FlaskConical size={11} />
+          EVIDENCE: {finding.evidenceCount}
         </div>
-      )}
-
-      {/* Description */}
-      {finding.description && (
-        <p className="font-body-sm text-body-sm text-on-surface-variant leading-relaxed">
-          {finding.description}
-        </p>
-      )}
+        <div className="flex items-center gap-1.5" style={{ color: 'var(--text-tertiary)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>
+          <Users size={11} />
+          CONSENSUS: {finding.agentConsensus?.length || 0} AGENTS
+        </div>
+        {finding.provenance && (
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 9,
+              fontWeight: 600,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: finding.provenance === 'live' ? 'var(--accent)' : 'var(--text-secondary)',
+              padding: '1px 6px',
+              background: finding.provenance === 'live' ? 'var(--accent-bg)' : 'var(--surface-3)',
+              border: `1px solid ${finding.provenance === 'live' ? 'var(--accent-border)' : 'var(--border)'}`,
+              borderRadius: 'var(--radius-full)',
+            }}
+          >
+            {finding.provenance}
+          </span>
+        )}
+      </div>
 
       {/* Expanded evidence */}
       {expanded && (
-        <div className="space-y-2 border-t border-outline-variant pt-3">
-          {/* Status */}
-          <div className="flex items-center gap-2">
-            <span className="font-code-sm text-[10px] text-on-surface-variant">STATUS:</span>
-            <span className="font-code-sm text-[10px] uppercase">{finding.status}</span>
-          </div>
-
-          {/* Evidence blocks */}
+        <div style={{ padding: '12px 16px' }}>
           {finding.evidence && finding.evidence.length > 0 && (
             <div>
-              <div className="font-code-sm text-[10px] text-on-surface-variant mb-1">EVIDENCE:</div>
-              <div className="bg-black/40 border border-outline-variant p-3 max-h-60 overflow-y-auto custom-scrollbar">
-                {finding.evidence.map((ev, i) => (
-                  <pre key={i} className="font-code-sm text-[10px] text-on-surface whitespace-pre-wrap break-all">
+              <div
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text-tertiary)',
+                  marginBottom: 8,
+                }}
+              >
+                EVIDENCE
+              </div>
+              <div
+                style={{
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: 12,
+                  maxHeight: 200,
+                  overflowY: 'auto',
+                }}
+                className="custom-scrollbar"
+              >
+                {finding.evidence.map((ev: string | Record<string, unknown>, i: number) => (
+                  <pre
+                    key={i}
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 11,
+                      color: 'var(--text-secondary)',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                      margin: 0,
+                      lineHeight: 1.6,
+                    }}
+                  >
                     {typeof ev === 'string' ? ev : JSON.stringify(ev, null, 2)}
                   </pre>
                 ))}
               </div>
             </div>
           )}
-
-          {/* Replay button */}
-          <button
-            onClick={handleReplay}
-            disabled={replaying}
-            className="flex items-center gap-2 px-3 py-1.5 border border-outline-variant font-label-caps text-[10px] hover:bg-surface-container-high transition-colors disabled:opacity-50"
-          >
-            <Eye size={12} />
-            {replaying ? 'REPLAYING...' : 'REPLAY VERIFICATION'}
-          </button>
         </div>
       )}
     </div>

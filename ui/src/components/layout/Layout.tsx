@@ -5,13 +5,29 @@ import { Header } from './Header';
 
 export const Layout: React.FC = () => {
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden relative">
-      <div className="scanline"></div>
+    <div
+      className="flex h-screen w-full overflow-hidden"
+      style={{ background: 'var(--bg-app)' }}
+    >
+      {/* Subtle scanline overlay */}
+      <div className="scanline-effect" />
+
+      {/* Sidebar */}
       <Sidebar />
-      <div className="flex flex-col flex-1 overflow-hidden z-20">
+
+      {/* Main content area */}
+      <div className="flex flex-col flex-1 overflow-hidden" style={{ zIndex: 1 }}>
         <Header />
-        <main className="flex-1 overflow-y-auto p-8 bg-surface-container-lowest custom-scrollbar">
-          <Outlet />
+        <main
+          className="flex-1 overflow-y-auto custom-scrollbar"
+          style={{
+            padding: 24,
+            background: 'var(--bg-page)',
+          }}
+        >
+          <div className="mx-auto" style={{ maxWidth: 'var(--container-max, 1440px)' }}>
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

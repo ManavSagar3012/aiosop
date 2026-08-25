@@ -1,68 +1,27 @@
 import React from 'react';
 import { Card } from '../components/shared/Card';
 import { StatTile } from '../components/shared/StatTile';
-import { StatusBadge } from '../components/shared/StatusBadge';
-import { DataTable, Column } from '../components/shared/DataTable';
 import { EmptyState } from '../components/shared/EmptyState';
 import { MissionBriefing } from '../components/shared/MissionBriefing';
 import { FindingDetail } from '../components/shared/FindingDetail';
 import { AttackTimeline } from '../components/shared/AttackTimeline';
 import { useSwarmStore } from '../store/useSwarmStore';
-import { useIntelligenceStore, Finding } from '../store/useIntelligenceStore';
+import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import {
-  Activity, ShieldAlert, FileText, Cpu, Crosshair, Radar,
-  ArrowUpRight, Terminal
+  ShieldAlert, Cpu, Crosshair, Radar,
+  Clock, Users, Zap
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-const ledgerColumns: Column<Finding>[] = [
-  {
-    key: 'title',
-    header: 'Finding',
-    render: (f) => (
-      <span className="text-primary font-bold group-hover:text-primary-fixed transition-colors">{f.title}</span>
-    ),
-  },
-  {
-    key: 'category',
-    header: 'Type',
-    render: (f) => (
-      <span className="text-on-surface-variant uppercase text-label-xs tracking-wide">
-        {f.category?.replace(/_/g, ' ')}
-      </span>
-    ),
-  },
-  {
-    key: 'evScore',
-    header: 'EV Score',
-    width: 'w-32',
-    render: (f) => (
-      <div className="flex items-center gap-2">
-        <div className="h-1 w-16 bg-surface-variant overflow-hidden">
-          <div
-            className="h-full bg-secondary"
-            style={{ width: `${Math.min(100, f.evScore || 0)}%` }}
-          />
-        </div>
-        <span className="text-secondary tabular-nums">{(f.evScore || 0).toFixed(0)}</span>
-      </div>
-    ),
-  },
-  {
-    key: 'status',
-    header: 'Status',
-    render: (f) => <StatusBadge value={f.status} />,
-  },
-];
-
 export const Overview: React.FC = () => {
   const { agents, budget } = useSwarmStore();
-  const { findings, verifications, sessionId } = useIntelligenceStore();
+  const { findings, verifications } = useIntelligenceStore();
 
   const verifiedCount = (findings || []).filter(f => f.status === 'verified').length;
   const pendingCount = (verifications || []).length;
   const criticalCount = (findings || []).filter(f => f.severity === 'critical').length;
-  const rejectedCount = (findings || []).filter(f => f.status === 'rejected').length;
+  const rejectedCount = (findings || []).filter(f => f.status === 'validated').length;
+  const activeAgents = (agents || []).filter(a => a.status === 'running').length;
 
   const total = (findings || []).length;
   const conversion = total > 0 ? ((verifiedCount / total) * 100).toFixed(0) : '0';
@@ -72,111 +31,307 @@ export const Overview: React.FC = () => {
   const spendPct = Math.min(100, (spent / (cap || 1)) * 100);
 
   return (
-    <div className="flex flex-col gap-gutter">
+    <div className="flex flex-col" style={{ gap: 20 }}>
       {/* ── Mission Briefing ───────────────────────────────────────── */}
       <MissionBriefing />
 
-      {/* ── KPI grid ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-4 gap-gutter">
+      {/* ── KPI Grid ────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-4" style={{ gap: 16 }}>
         <StatTile
-          label="Operational Success" value={verifiedCount} caption="Verified Findings"
-          accent="primary" icon={<Crosshair size={16} />} meta={`${conversion}% CONV`} delay={60}
+          label="Verified Findings"
+          value={verifiedCount}
+          caption={`${conversion}% conversion rate`}
+          accent="primary"
+          icon={<Crosshair size={16} />}
+          delay={0}
         />
         <StatTile
-          label="Risk Exposure" value={criticalCount} caption="Critical Assets Leaked"
-          accent="error" icon={<ShieldAlert size={16} />} delay={120}
+          label="Critical Findings"
+          value={criticalCount}
+          caption="High-severity confirmed"
+          accent="error"
+          icon={<ShieldAlert size={16} />}
+          delay={60}
         />
         <StatTile
-          label="Pending Triage" value={pendingCount} caption="Awaiting Consensus"
-          accent="secondary" icon={<Radar size={16} />} delay={180}
+          label="Pending Approvals"
+          value={pendingCount}
+          caption="Awaiting operator decision"
+          accent="warning"
+          icon={<Clock size={16} />}
+          delay={120}
         />
         <StatTile
-          label="Precision Audit" value={rejectedCount} caption="Rejected / Duplicates"
-          accent="muted" icon={<Activity size={16} />} meta={`FPR ${fpr}%`} delay={240}
+          label="Active Agents"
+          value={activeAgents}
+          caption={`${(agents || []).length} total persona specialists`}
+          accent="secondary"
+          icon={<Users size={16} />}
+          delay={180}
         />
       </div>
 
-      {/* ── Timeline + Findings ────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-6">
-        <div className="reveal-up col-span-2" style={{ animationDelay: '300ms' }}>
-          <Card title="Findings" className="min-h-[400px] overflow-hidden">
-            <div className="max-h-[420px] space-y-3">
+      {/* ── Findings + Timeline ────────────────────────────────────── */}
+      <div className="grid grid-cols-3" style={{ gap: 16 }}>
+        <div className="col-span-2 reveal-up" style={{ animationDelay: '240ms' }}>
+          <Card title="Recent Findings" subtitle={`${total} total findings discovered`}>
+            <div style={{ maxHeight: 440, overflowY: 'auto' }} className="custom-scrollbar">
               {(findings || []).length > 0 ? (
-                (findings || []).slice(0, 10).map((f) => (
-                  <FindingDetail key={f.id} finding={f} />
-                ))
+                <div className="flex flex-col" style={{ gap: 8 }}>
+                  {(findings || []).slice(0, 8).map((f) => (
+                    <FindingDetail key={f.id} finding={f} />
+                  ))}
+                </div>
               ) : (
                 <EmptyState
-                  message="No findings yet — swarm is scanning the attack surface…"
-                  icon={<Radar size={28} />}
+                  message="No findings yet — swarm is scanning the attack surface"
+                  icon={<Radar size={24} />}
                 />
               )}
             </div>
           </Card>
         </div>
 
-        <div className="reveal-up" style={{ animationDelay: '360ms' }}>
+        <div className="reveal-up" style={{ animationDelay: '300ms' }}>
           <AttackTimeline />
         </div>
       </div>
 
-      {/* ── Ledger + Health ─────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-6">
-        <div className="reveal-up col-span-2" style={{ animationDelay: '400ms' }}>
-          <Card title="Swarm Activity Ledger" className="min-h-[300px] overflow-hidden">
-            <div className="max-h-[320px]">
-              <DataTable<Finding>
-                columns={ledgerColumns}
-                rows={findings || []}
-                rowKey={(f) => f.id}
-                empty={
-                  <EmptyState
-                    message="No findings yet"
-                    icon={<Radar size={28} />}
-                  />
-                }
-              />
+      {/* ── System Health + Budget ──────────────────────────────────── */}
+      <div className="grid grid-cols-3" style={{ gap: 16 }}>
+        <div className="col-span-2 reveal-up" style={{ animationDelay: '360ms' }}>
+          <Card title="Agent Performance" subtitle="Cost allocation across persona specialists">
+            <div className="flex flex-col" style={{ gap: 8 }}>
+              {(agents || []).length > 0 ? (
+                (agents || []).map(agent => (
+                  <div
+                    key={agent.id}
+                    className="flex items-center justify-between"
+                    style={{
+                      padding: '12px 16px',
+                      background: 'var(--surface-2)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-md)',
+                      transition: 'border-color var(--duration-fast)',
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: agent.status === 'running' ? 'var(--accent)' : 'var(--text-disabled)',
+                          boxShadow: agent.status === 'running' ? 'var(--shadow-glow)' : 'none',
+                        }}
+                      />
+                      <div>
+                        <div
+                          style={{
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: 'var(--accent)',
+                          }}
+                        >
+                          {agent.id?.toUpperCase()}
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontSize: 10,
+                            color: 'var(--text-tertiary)',
+                            letterSpacing: '0.08em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {agent.type?.replace(/_/g, ' ')}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: 'var(--interactive)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        ${(agent.cost_incurred || 0).toFixed(2)}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 9,
+                          color: 'var(--text-disabled)',
+                          letterSpacing: '0.1em',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        COST
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <EmptyState
+                  message="No agents active — awaiting swarm initialization"
+                  icon={<Cpu size={24} />}
+                />
+              )}
             </div>
           </Card>
         </div>
 
-        <div className="reveal-up" style={{ animationDelay: '460ms' }}>
-          <Card title="System Health Monitoring">
-            <div className="space-y-5 py-1">
-              <div className="hud-corners bg-black/40 border border-outline-variant p-4">
-                <div className="font-label-caps text-label-caps text-on-surface-variant mb-3 uppercase">
-                  Active Swarm Engine
-                </div>
-                <div className="flex items-center gap-4">
-                  <Cpu size={22} className="text-primary-fixed animate-pulse-neon" />
-                  <div className="font-display-lg text-display-lg text-primary-fixed leading-none">
-                    {(agents || []).length}
+        <div className="reveal-up" style={{ animationDelay: '420ms' }}>
+          <Card title="Budget Utilization" accent={spendPct > 80 ? 'danger' : 'success'}>
+            <div className="flex flex-col" style={{ gap: 16 }}>
+              {/* Spend bar */}
+              <div>
+                <div className="flex justify-between items-end mb-2">
+                  <div
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 11,
+                      color: 'var(--text-tertiary)',
+                    }}
+                  >
+                    SPENT
                   </div>
-                  <div className="font-code-sm text-on-surface-variant text-label-xs uppercase leading-tight">
-                    Persona<br />Specialists Active
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      style={{
+                        fontFamily: "'Space Grotesk', sans-serif",
+                        fontSize: 24,
+                        fontWeight: 800,
+                        color: spendPct > 80 ? 'var(--danger)' : 'var(--accent)',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      ${spent.toFixed(2)}
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: 11,
+                        color: 'var(--text-tertiary)',
+                      }}
+                    >
+                      / ${cap.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+                <div className="progress">
+                  <div
+                    className="progress-bar"
+                    style={{
+                      width: `${spendPct}%`,
+                      background: spendPct > 80 ? 'var(--danger)' : 'var(--accent)',
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 10,
+                      color: 'var(--text-disabled)',
+                    }}
+                  >
+                    {spendPct.toFixed(0)}% UTILIZED
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 10,
+                      color: 'var(--text-disabled)',
+                    }}
+                  >
+                    ${(cap - spent).toFixed(2)} REMAINING
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick stats */}
+              <div className="grid grid-cols-2" style={{ gap: 8 }}>
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-md)',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 9,
+                      color: 'var(--text-disabled)',
+                      letterSpacing: '0.1em',
+                      textTransform: 'uppercase',
+                      marginBottom: 4,
+                    }}
+                  >
+                    FALSE POSITIVE RATE
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 16,
+                      fontWeight: 700,
+                      color: parseFloat(fpr) < 10 ? 'var(--accent)' : 'var(--warning)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {fpr}%
+                  </div>
+                </div>
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-md)',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 9,
+                      color: 'var(--text-disabled)',
+                      letterSpacing: '0.1em',
+                      textTransform: 'uppercase',
+                      marginBottom: 4,
+                    }}
+                  >
+                    TOTAL FINDINGS
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 16,
+                      fontWeight: 700,
+                      color: 'var(--interactive)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {total}
                   </div>
                 </div>
               </div>
 
-              <div className="bg-black/40 border border-outline-variant p-4">
-                <div className="font-label-caps text-label-caps text-on-surface-variant mb-3 uppercase">
-                  Operational Spend
-                </div>
-                <div className="flex items-center justify-between mb-2 font-code-sm text-[11px]">
-                  <span className="text-on-surface-variant">${spent.toFixed(2)} <span className="opacity-50">SPENT</span></span>
-                  <span className="text-primary-fixed">${cap.toFixed(2)} <span className="opacity-50">CAP</span></span>
-                </div>
-                <div className="h-1.5 bg-surface-variant w-full overflow-hidden">
-                  <div className="h-full bg-primary-fixed glow-cyan transition-all duration-500" style={{ width: `${spendPct}%` }} />
-                </div>
-                <div className="mt-1.5 text-right font-code-sm text-label-xs text-on-surface-variant/60 tabular-nums">
-                  {spendPct.toFixed(0)}% UTILIZED
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 pt-1 text-on-surface-variant/50">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary-fixed live-dot" />
-                <p className="font-code-sm text-label-xs italic">Monitoring live swarm telemetry…</p>
+              {/* Quick actions */}
+              <div className="flex gap-2">
+                <Link to="/findings" className="btn btn-secondary btn-sm flex-1" style={{ justifyContent: 'center' }}>
+                  <ShieldAlert size={12} />
+                  View Findings
+                </Link>
+                <Link to="/admin" className="btn btn-ghost btn-sm flex-1" style={{ justifyContent: 'center' }}>
+                  <Zap size={12} />
+                  Admin Panel
+                </Link>
               </div>
             </div>
           </Card>

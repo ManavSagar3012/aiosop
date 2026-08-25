@@ -2,23 +2,24 @@ import React, { useState } from 'react';
 import { API_BASE, AUTH_TOKEN, authHeaders } from '../../services/api';
 import { useSwarmStore } from '../../store/useSwarmStore';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
-import { Bell, Activity, PauseCircle, Rocket } from 'lucide-react';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useToast } from '../../contexts/ToastContext';
+import { Breadcrumbs } from '../shared/Breadcrumbs';
+import {
+  Bell, Moon, Sun, Plus, FileText, AlertTriangle,
+} from 'lucide-react';
 import { NewMissionModal } from '../shared/NewMissionModal';
-
 import { ConnectionManager } from '../shared/ConnectionManager';
+
 export const Header: React.FC = () => {
-  const { currentObjective, currentPhase, setObjective } = useSwarmStore();
+  const { currentPhase } = useSwarmStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  // AIOSOP-UI-ENGAGEMENT-SELECTOR-2026-07-03: the active engagement is the shared
-  // store's sessionId (owned/derived by NetworkHealth). The Header only lists the
-  // available engagements and lets the operator switch which one the dashboard
-  // tracks — selecting a past engagement re-points the socket + hydration to it.
   const currentSessionId = useIntelligenceStore((s) => s.sessionId);
   const setSessionId = useIntelligenceStore((s) => s.setSessionId);
   const [engagements, setEngagements] = useState<any[]>([]);
+  const { theme, toggleTheme } = useTheme();
+  const toast = useToast();
 
-  // Populate the selector's options (does NOT choose the active one — NetworkHealth
-  // derives the initial selection so both components agree on a single source).
   React.useEffect(() => {
     const fetchList = async () => {
       try {
@@ -42,12 +43,12 @@ export const Header: React.FC = () => {
     try {
       const response = await fetch(`${API_BASE}/engagements`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${AUTH_TOKEN}`
         },
         body: JSON.stringify({
-          engagement_id: `dash-mission-${Date.now()}`,
+          engagement_id: `eng-${Date.now()}`,
           domains: [domain],
           approval_required_for: ["rce", "sqli", "tenant_escape"],
           roe: {
@@ -59,92 +60,164 @@ export const Header: React.FC = () => {
       });
 
       if (response.ok) {
-        setObjective(domain);
-        // Refresh the whole UI context to connect to new session
-        window.location.reload(); 
+        toast.success('Mission launched successfully');
+        window.location.reload();
+      } else {
+        toast.error('Failed to launch mission');
       }
     } catch (e) {
-      console.error("Failed to launch mission", e);
+      toast.error('Failed to launch mission');
     }
   };
 
   const handleHalt = async () => {
-     if (!currentSessionId) return;
-     if (!window.confirm("EMERGENCY: Are you sure you want to HALT all agents?")) return;
-     
-     try {
-        await fetch(`${API_BASE}/engagements/${currentSessionId}/halt`, {
-           method: 'POST',
-           headers: authHeaders()
-        });
-        alert("Swarm halted successfully.");
-        window.location.reload();
-     } catch (e) {
-        console.error("Halt failed", e);
-     }
+    if (!currentSessionId) return;
+    if (!window.confirm("EMERGENCY: Are you sure you want to HALT all agents?")) return;
+
+    try {
+      await fetch(`${API_BASE}/engagements/${currentSessionId}/halt`, {
+        method: 'POST',
+        headers: authHeaders()
+      });
+      toast.success("Swarm halted successfully");
+      window.location.reload();
+    } catch (e) {
+      toast.error("Halt failed");
+    }
   };
 
   const handlePrintReport = async () => {
-     if (!currentSessionId) return;
-     window.open(`${API_BASE}/engagements/${currentSessionId}/report?token=${AUTH_TOKEN}`, '_blank');
+    if (!currentSessionId) return;
+    window.open(`${API_BASE}/engagements/${currentSessionId}/report?token=${AUTH_TOKEN}`, '_blank');
   };
 
   return (
-    <header className="h-20 bg-background border-b border-outline-variant flex items-center justify-between px-8 shrink-0 relative z-20">
-      <div className="flex items-center gap-8">
-        <div className="font-display-lg text-display-lg text-primary-fixed tracking-tighter uppercase whitespace-nowrap">
-          AI-OSOP // COMMAND CORE
-        </div>
-        <div className="flex flex-col min-w-[240px]">
-          <div className="flex justify-between items-end mb-1 gap-2">
-            <span className="font-label-caps text-label-caps text-on-surface-variant whitespace-nowrap">TARGET: {currentObjective.toUpperCase()}</span>
-            <span className="font-label-caps text-label-caps text-primary-container whitespace-nowrap">PHASE: {currentPhase.toUpperCase().replace(/_/g, ' ')}</span>
-          </div>
-          <select
-            aria-label="Active engagement"
-            value={currentSessionId ?? ''}
-            onChange={(e) => setSessionId(e.target.value)}
-            className="bg-surface-container-low border border-outline-variant text-primary-container font-code-sm text-[10px] px-2 py-1 focus:outline-none focus:border-primary-container cursor-pointer"
+    <header
+      className="flex items-center justify-between shrink-0"
+      style={{
+        height: 'var(--header-height)',
+        background: 'var(--surface-0)',
+        borderBottom: '1px solid var(--border)',
+        padding: '0 20px',
+        zIndex: 20,
+      }}
+    >
+      {/* Left: Breadcrumbs + Phase */}
+      <div className="flex items-center gap-6">
+        <Breadcrumbs />
+
+        {currentSessionId && (
+          <div
+            className="flex items-center gap-2"
+            style={{
+              padding: '4px 10px',
+              background: 'var(--accent-bg)',
+              border: '1px solid var(--accent-border)',
+              borderRadius: 'var(--radius-full)',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: '0.08em',
+              color: 'var(--accent)',
+              textTransform: 'uppercase',
+            }}
           >
-            {currentSessionId === null && <option value="">NO ACTIVE ENGAGEMENT</option>}
-            {currentSessionId && !engagements.some((s) => s.session_id === currentSessionId) && (
-              <option value={currentSessionId}>{currentSessionId}</option>
-            )}
-            {engagements.map((s) => {
-              const ph = String(s.phase || '').toLowerCase();
-              const live = ph !== 'halted' && ph !== 'completed' && ph !== 'aborted';
-              return (
-                <option key={s.session_id} value={s.session_id}>
-                  {live ? '● ' : '○ '}{s.session_id} · {String(s.phase || 'unknown').toUpperCase().replace(/_/g, ' ')}
-                </option>
-              );
-            })}
-          </select>
-        </div>
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: 'var(--accent)',
+                animation: 'pulse-soft 2s ease-in-out infinite',
+              }}
+            />
+            {currentPhase.replace(/_/g, ' ')}
+          </div>
+        )}
       </div>
-      
-      <div className="flex items-center gap-4">
+
+      {/* Center: Engagement Selector */}
+      <div className="flex items-center gap-3">
+        {currentSessionId && (
+          <div className="flex items-center gap-2">
+            <select
+              aria-label="Active engagement"
+              value={currentSessionId ?? ''}
+              onChange={(e) => setSessionId(e.target.value)}
+              className="select"
+              style={{ fontSize: 11, padding: '5px 28px 5px 10px', minWidth: 200 }}
+            >
+              {currentSessionId && !engagements.some((s) => s.session_id === currentSessionId) && (
+                <option value={currentSessionId}>{currentSessionId}</option>
+              )}
+              {engagements.map((s) => {
+                const ph = String(s.phase || '').toLowerCase();
+                const live = ph !== 'halted' && ph !== 'completed' && ph !== 'aborted';
+                return (
+                  <option key={s.session_id} value={s.session_id}>
+                    {live ? '● ' : '○ '}{s.session_id} · {String(s.phase || 'unknown').toUpperCase().replace(/_/g, ' ')}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* Right: Actions */}
+      <div className="flex items-center gap-2">
         <ConnectionManager />
-        <div className="h-6 w-px bg-outline-variant" />
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-primary-container text-on-primary-fixed px-6 py-2 font-label-caps text-label-caps hover:brightness-110 transition-all active:scale-95 flex items-center gap-2"
+
+        <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
+
+        {/* Theme Toggle */}
+        <button
+          onClick={toggleTheme}
+          className="btn btn-icon btn-ghost"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          <Rocket size={14} />
-          NEW MISSION
+          {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
         </button>
-        <button onClick={handlePrintReport} className="border border-outline text-on-surface px-4 py-2 font-label-caps text-label-caps hover:bg-surface-container-high transition-all">
-          PRINT REPORT
+
+        {/* Notifications */}
+        <button
+          className="btn btn-icon btn-ghost"
+          title="Notifications"
+        >
+          <Bell size={16} />
         </button>
-        <button onClick={handleHalt} className="bg-error text-white px-4 py-2 font-label-caps text-label-caps glow-red hover:brightness-125 transition-all">
-          EMERGENCY HALT
+
+        <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
+
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="btn btn-primary btn-sm"
+        >
+          <Plus size={14} />
+          New Mission
+        </button>
+
+        <button
+          onClick={handlePrintReport}
+          className="btn btn-ghost btn-sm"
+        >
+          <FileText size={14} />
+          Report
+        </button>
+
+        <button
+          onClick={handleHalt}
+          className="btn btn-danger btn-sm"
+        >
+          <AlertTriangle size={14} />
+          HALT
         </button>
       </div>
 
-      <NewMissionModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        onLaunch={handleLaunchMission} 
+      <NewMissionModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onLaunch={handleLaunchMission}
       />
     </header>
   );

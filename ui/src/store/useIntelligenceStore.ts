@@ -14,6 +14,11 @@ export interface Finding {
   engagement_id?: string
   provenance?: string
   replayabilityScore?: number
+  description?: string
+  target?: string
+  evidence?: (string | Record<string, unknown>)[]
+  created_at?: string
+  timestamp?: string
 }
 
 export interface VerificationRequest {

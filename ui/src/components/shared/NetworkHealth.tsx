@@ -2,19 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { API_BASE, AUTH_TOKEN } from '../../services/api';
 import { NetworkService, ConnectionStatus } from '../../services/network';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
-import { Activity, Wifi, WifiOff, RefreshCcw } from 'lucide-react';
+import { Wifi, WifiOff, RefreshCcw } from 'lucide-react';
 
-export const NetworkHealth: React.FC = () => {
+export const NetworkHealth: React.FC<{ collapsed?: boolean }> = ({ collapsed = false }) => {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [metrics, setMetrics] = useState({ latency: 0, throughput: 0 });
-  // AIOSOP-UI-ENGAGEMENT-SELECTOR-2026-07-03: the selected engagement now lives in
-  // the shared store so the Header dropdown can switch it. NetworkHealth remains the
-  // single owner of the socket lifecycle: it derives the initial engagement when none
-  // is selected, and reconnects whenever the selection changes.
   const sessionId = useIntelligenceStore((s) => s.sessionId);
   const setSessionId = useIntelligenceStore((s) => s.setSessionId);
 
-  // Derive the initial engagement once, if the operator hasn't picked one yet.
+  // Derive the initial engagement once
   useEffect(() => {
     if (sessionId) return;
     let cancelled = false;
@@ -26,11 +22,6 @@ export const NetworkHealth: React.FC = () => {
         if (!response.ok) { if (!cancelled) setStatus('disconnected'); return; }
         const sessions = await response.json();
         if (!Array.isArray(sessions)) return;
-        // API returns engagements latest-first. Pick the most recent LIVE engagement
-        // (not halted/completed/aborted) so the dashboard tracks the run actually in
-        // progress; fall back to the latest overall. NOTE: do not exclude ids
-        // containing 'test' — that wrongly hid real engagements like
-        // 'SYFE-approvaltest'. (AIOSOP-UI-ACTIVE-SESSION-2026-06-30)
         const realSessions = sessions.filter((s: any) => s.session_id !== 'global');
         if (realSessions.length === 0) { if (!cancelled) setStatus('disconnected'); return; }
         const isLive = (s: any) => {
@@ -40,14 +31,14 @@ export const NetworkHealth: React.FC = () => {
         const latestId = (realSessions.find(isLive) || realSessions[0]).session_id;
         if (!cancelled) setSessionId(latestId);
       } catch (e) {
-        console.error("Failed to fetch sessions for network health", e);
+        console.error("Failed to fetch sessions", e);
         if (!cancelled) setStatus('disconnected');
       }
     })();
     return () => { cancelled = true; };
   }, [sessionId, setSessionId]);
 
-  // Own the socket lifecycle: (re)connect whenever the selected engagement changes.
+  // Socket lifecycle
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
@@ -62,39 +53,112 @@ export const NetworkHealth: React.FC = () => {
     };
   }, [sessionId]);
 
-  const getStatusColor = () => {
-    switch (status) {
-      case 'connected': return 'text-primary-fixed';
-      case 'reconnecting': return 'text-secondary';
-      case 'error': return 'text-error';
-      default: return 'text-on-surface-variant';
-    }
+  const statusColors: Record<ConnectionStatus, string> = {
+    connected: 'var(--accent)',
+    reconnecting: 'var(--warning)',
+    error: 'var(--danger)',
+    disconnected: 'var(--text-disabled)',
   };
 
-  const getStatusIcon = () => {
-    switch (status) {
-      case 'connected': return <Wifi size={14} />;
-      case 'reconnecting': return <RefreshCcw size={14} className="animate-spin" />;
-      case 'error': return <WifiOff size={14} />;
-      default: return <WifiOff size={14} />;
-    }
+  const statusIcons: Record<ConnectionStatus, React.ReactNode> = {
+    connected: <Wifi size={collapsed ? 14 : 12} />,
+    reconnecting: <RefreshCcw size={collapsed ? 14 : 12} style={{ animation: 'spin 1s linear infinite' }} />,
+    error: <WifiOff size={collapsed ? 14 : 12} />,
+    disconnected: <WifiOff size={collapsed ? 14 : 12} />,
   };
+
+  if (collapsed) {
+    return (
+      <div
+        className="flex items-center justify-center"
+        style={{
+          padding: '8px',
+          color: statusColors[status],
+        }}
+        title={`${status.toUpperCase()} — ${metrics.latency}ms latency`}
+      >
+        {statusIcons[status]}
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-surface-container-low border border-outline-variant p-3 flex items-center justify-between gap-6">
-      <div className={`flex items-center gap-2 font-label-caps text-[10px] ${getStatusColor()}`}>
-        {getStatusIcon()}
-        {status?.toUpperCase()}
+    <div
+      style={{
+        background: 'var(--surface-2)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-md)',
+        padding: '10px 12px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}
+    >
+      <div
+        className="flex items-center gap-2"
+        style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: statusColors[status],
+        }}
+      >
+        {statusIcons[status]}
+        {status}
       </div>
-      
-      <div className="flex gap-4 items-center">
+
+      <div className="flex items-center gap-4">
         <div className="flex flex-col items-end">
-          <span className="text-label-xs font-label-caps text-on-surface-variant">LATENCY</span>
-          <span className="text-[10px] font-code-sm text-primary">{metrics.latency}MS</span>
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 8,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: 'var(--text-disabled)',
+            }}
+          >
+            LATENCY
+          </span>
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 11,
+              fontWeight: 500,
+              color: 'var(--accent)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {metrics.latency}ms
+          </span>
         </div>
-        <div className="flex flex-col items-end border-l border-outline-variant pl-4">
-          <span className="text-label-xs font-label-caps text-on-surface-variant">THROUGHPUT</span>
-          <span className="text-[10px] font-code-sm text-primary">{metrics.throughput} EV/S</span>
+        <div className="flex flex-col items-end" style={{ borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 8,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: 'var(--text-disabled)',
+            }}
+          >
+            THROUGHPUT
+          </span>
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 11,
+              fontWeight: 500,
+              color: 'var(--interactive)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {metrics.throughput} ev/s
+          </span>
         </div>
       </div>
     </div>
