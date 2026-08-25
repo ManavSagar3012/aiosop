@@ -112,6 +112,7 @@ class Orchestrator:
 
         self._running = False
         self._scheduler_task: Optional[asyncio.Task] = None
+        self._agent_reaper_task: Optional[asyncio.Task] = None
         self._reaper_task: Optional[asyncio.Task] = None
         self._phase_monitor_task: Optional[asyncio.Task] = None
         # P2b: background poller that pulls submission outcomes into the corpus.
@@ -883,6 +884,7 @@ class Orchestrator:
 
         for bg in (
             self._scheduler_task,
+            self._agent_reaper_task,
             self._reaper_task,
             self._phase_monitor_task,
             self._outcome_ingestion_task,

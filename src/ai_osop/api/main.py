@@ -18,10 +18,9 @@ import json
 import logging
 import os
 import time
-import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +29,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ai_osop.adapters.threat_intel_mcp import ThreatIntelAdapter
-from ai_osop.api.deps import require_role, state, verify_token
+from ai_osop.api.deps import require_role, state  # verify_token imported at WS section below (F811 fix)
 from ai_osop.api.health import router as health_router
 from ai_osop.api.health import run_startup_self_test
 
@@ -50,7 +49,7 @@ from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import settings
 from ai_osop.core.llm_client import LiteLLMClient
 from ai_osop.core.metrics import BUILD_INFO, ERRORS_TOTAL, REQUEST_DURATION, REQUESTS_TOTAL
-from ai_osop.core.observability import render_prometheus, update_active_agents
+from ai_osop.core.observability import render_prometheus
 from ai_osop.core.tracing import init_tracing, trace_span
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.graph_memory import GraphMemory
@@ -212,7 +211,7 @@ async def lifespan(app: FastAPI):
             traces_sample_rate=settings.sentry_traces_sample_rate,
             profiles_sample_rate=settings.sentry_profiles_sample_rate,
         )
-        logger.info("Sentry SDK initialized", environment=settings.environment)
+        logger.info(f"Sentry SDK initialized environment={settings.environment}")
     else:
         logger.info("Sentry SDK disabled (no SENTRY_DSN or development environment)")
 
@@ -256,6 +255,21 @@ async def lifespan(app: FastAPI):
 
         # 5. Build Orchestrator
         llm_client = LiteLLMClient()
+
+        # FIX (bus-connect-2026-08-23): the DistributedCoordinationBus was NEVER
+        # connected at startup. get_coordination_bus() handed the orchestrator an
+        # unconnected singleton (_running=False, redis=None), so every publish()
+        # silently fell back to a process-local queue and subscribe() returned
+        # immediately — the Redis Streams backbone, event replay, and the
+        # dashboard's live swarm feed were all dead code at runtime. Connect the
+        # bus here so publish/subscribe actually hit Redis.
+        try:
+            from ai_osop.orchestrator.distributed_bus import initialize_bus
+
+            await initialize_bus(settings.redis_uri, engagement_id="default")
+            logger.info("DistributedCoordinationBus connected.")
+        except Exception as e:  # noqa: BLE001 - bus is resilient to being down
+            logger.warning(f"DistributedCoordinationBus connect failed (local fallback): {e}")
 
         # AIOSOP-LLM-WARM-001: pre-load the chat models in the background so the first
         # real agent think() hits an already-resident model instead of a ~60s cold
@@ -358,6 +372,7 @@ async def lifespan(app: FastAPI):
             from ai_osop.agents.recon_agent import ReconAgent
             from ai_osop.agents.reporting_agent import ReportingAgent
             from ai_osop.agents.stack_profiler_agent import StackProfilerAgent
+            from ai_osop.agents.service_agent import ServiceAssessmentAgent
             from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
             from ai_osop.agents.visual_agent import VisualContextAgent
             from ai_osop.agents.vuln_agent import VulnAnalysisAgent
@@ -368,6 +383,8 @@ async def lifespan(app: FastAPI):
             agents_to_register = [
                 (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
                 (ReconAgent, AgentType.RECON, "recon-agent-001"),
+                # TOOL-REALITY Tier-1 service specialist (TLS/SSH probes)
+                (ServiceAssessmentAgent, AgentType.RECON, "service-agent-001"),
                 (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, "vuln-agent-001"),
                 (
                     VulnAnalysisAgent,
@@ -628,15 +645,16 @@ async def audit_log_middleware(request: Request, call_next):
         request_id = getattr(request.state, "request_id", "unknown")
         op = request.scope.get("operator", {})
         operator_id = op.get("sub", "anonymous") if isinstance(op, dict) else "anonymous"
+        # FIX (audit-log-kwargs-2026-08-23): structlog-style kwargs on a stdlib
+        # logger raise TypeError once INFO logging is enabled, which surfaced as
+        # a 500 from CatchAllErrorMiddleware on EVERY state-changing request even
+        # though the route handler had already succeeded. Log plain text instead.
         logger.info(
-            "api_audit",
-            method=method,
-            path=request.url.path,
-            operator_id=operator_id,
-            status_code=response.status_code,
-            user_agent=request.headers.get("user-agent", ""),
-            client_ip=request.client.host if request.client else "",
-            request_id=request_id,
+            f"api_audit method={method} path={request.url.path} "
+            f"operator_id={operator_id} status_code={response.status_code} "
+            f"user_agent={request.headers.get('user-agent', '')} "
+            f"client_ip={request.client.host if request.client else ''} "
+            f"request_id={request_id}"
         )
     return response
 
@@ -789,7 +807,45 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
         full task `result` blob — to keep WS frames small (cf. report-bloat fix)."""
         _TOPICS = ("task.scheduled", "task.assigned", "task.completed", "task.failed")
 
+        async def _forward_distributed() -> None:
+            # FIX (ws-bus-subscribe-2026-08-23): two defects here.
+            # 1) The legacy in-memory bus iterator API raised TypeError against
+            #    DistributedCoordinationBus, so the live swarm feed never delivered
+            #    task lifecycle events at all. subscribe_iter() bridges that gap.
+            # 2) The first revision of this fix ran one pump PER TOPIC but shared a
+            #    single consumer group across them; Redis delivers each stream entry
+            #    to exactly ONE member of a group, so most events landed on a
+            #    wrong-topic pump and were silently filtered. A single subscription
+            #    over all topics with the event's own topic forwarded fixes both.
+            bus = orch.coordination_bus
+            if not hasattr(bus, "subscribe_iter"):
+                return  # legacy in-memory bus handled by per-topic pumps below
+            consumer = f"ws-{engagement_id}-{id(websocket)}"
+            group = f"ws-feed-{engagement_id}-{id(websocket)}"
+            async for ev in bus.subscribe_iter(list(_TOPICS), consumer, group):
+                payload = getattr(ev, "payload", {}) or {}
+                if payload.get("engagement_id") != engagement_id:
+                    continue
+                data = {
+                    "topic": ev.topic,
+                    "task_id": payload.get("task_id"),
+                    "agent_id": payload.get("agent_id"),
+                    "agent_type": payload.get("agent_type"),
+                    "task_type": payload.get("task_type"),
+                }
+                try:
+                    await websocket.send_json(
+                        {
+                            "event_type": "agent_observation",
+                            "engagement_id": engagement_id,
+                            "data": data,
+                        }
+                    )
+                except Exception:  # noqa: BLE001 - socket closed; disconnect handler tears down
+                    return
+
         async def _pump(topic: str) -> None:
+            # Legacy in-memory bus path (per-topic queues, no consumer groups).
             async for ev in orch.coordination_bus.subscribe(topic):
                 payload = getattr(ev, "payload", {}) or {}
                 if payload.get("engagement_id") != engagement_id:
@@ -812,7 +868,10 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
                 except Exception:  # noqa: BLE001 - socket closed; disconnect handler tears down
                     return
 
-        pumps = [_asyncio.create_task(_pump(t)) for t in _TOPICS]
+        if hasattr(orch.coordination_bus, "subscribe_iter"):
+            pumps = [_asyncio.create_task(_forward_distributed())]
+        else:
+            pumps = [_asyncio.create_task(_pump(t)) for t in _TOPICS]
         try:
             await _asyncio.gather(*pumps)
         except _asyncio.CancelledError:
@@ -826,10 +885,37 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
 
     push_task = _asyncio.create_task(_push_loop())
     forward_task = _asyncio.create_task(_forward_bus())
+    # AIOSOP-WS-HARDEN-2026-08-25: rate-limit inbound messages and cap payload
+    # size to prevent flooding and oversized-payload DoS.
+    _WS_MAX_MSG_BYTES = 65536  # 64 KB
+    _WS_RATE_LIMIT = 50  # max messages per second per socket
+    _ws_msg_count = 0
+    _ws_rate_start = _time.monotonic()
     try:
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
+            # Size guard
+            if len(data) > _WS_MAX_MSG_BYTES:
+                await websocket.send_json({"type": "error", "message": "Payload too large"})
+                continue
+            # Rate-limit guard
+            _ws_msg_count += 1
+            _now = _time.monotonic()
+            if _now - _ws_rate_start >= 1.0:
+                _ws_msg_count = 0
+                _ws_rate_start = _now
+            elif _ws_msg_count > _WS_RATE_LIMIT:
+                await websocket.send_json({"type": "error", "message": "Rate limit exceeded"})
+                continue
+            # Parse guard
+            try:
+                message = json.loads(data)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
+                continue
+            if not isinstance(message, dict):
+                await websocket.send_json({"type": "error", "message": "Expected JSON object"})
+                continue
             action = message.get("action")
 
             if action == "ping":
@@ -866,7 +952,7 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
         try:
             await websocket.close(code=1011, reason="Internal server error")
         except Exception as e:
-            logger.warning("broad_exception_caught", error=str(e))
+            logger.warning(f"broad_exception_caught error={e}")
             pass  # connection may already be closed
     finally:
         # AIOSOP-WS-PUSH-001 / WS-STREAM-001: always stop the background tasks when the
