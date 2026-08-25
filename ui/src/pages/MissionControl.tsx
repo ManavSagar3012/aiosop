@@ -4,13 +4,9 @@ import { ApprovalQueue } from '../components/shared/ApprovalQueue';
 import { EmptyState } from '../components/shared/EmptyState';
 import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { Cpu } from 'lucide-react';
 
-// Recharts sets colors as raw SVG attributes (fill=/stroke=), so a bare
-// var(--x) string or Tailwind class won't resolve there — we need a
-// literal color string. Read the design tokens straight off the root
-// element (single source of truth = styles.css) and fall back to the
-// historical literals only if computed styles are unavailable.
 const cssVar = (name: string, fallback: string) => {
   if (typeof document === 'undefined') return fallback;
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -22,16 +18,22 @@ export const MissionControl: React.FC = () => {
   const { auditLog } = useIntelligenceStore();
 
   const palette = useMemo(() => ({
-    primary:      cssVar('--primary', '#39ff14'),                    // success / operational (green)
-    secondary:    cssVar('--secondary', '#00f1fd'),                  // active / interactive (cyan)
-    onSurface:    cssVar('--on-surface', '#e5e2e3'),
-    tooltipBg:    cssVar('--surface-container', '#131314'),
-    tooltipBorder: cssVar('--surface-container-highest', '#2a2a2d'),
+    accent: cssVar('--accent', '#39ff14'),
+    interactive: cssVar('--interactive', '#00e5f0'),
+    danger: cssVar('--danger', '#ef4444'),
+    textPrimary: cssVar('--text-primary', '#f0f0f2'),
+    textSecondary: cssVar('--text-secondary', '#a0a3ab'),
+    surface2: cssVar('--surface-2', '#18181b'),
+    surface3: cssVar('--surface-3', '#1f1f23'),
+    border: cssVar('--border', '#27272a'),
   }), []);
 
   const tooltipStyle = useMemo(() => ({
-    backgroundColor: palette.tooltipBg,
-    border: `1px solid ${palette.tooltipBorder}`,
+    background: palette.surface2,
+    border: `1px solid ${palette.border}`,
+    borderRadius: 'var(--radius-md)',
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: 11,
   }), [palette]);
 
   const costData = [
@@ -39,109 +41,250 @@ export const MissionControl: React.FC = () => {
     { name: 'System 2', value: budget.system2Requests * 0.15 },
   ];
 
-  const COLORS = [palette.primary, palette.secondary];
+  const COLORS = [palette.accent, palette.interactive];
 
-  // Filter for governance-relevant events
-  const governanceEvents = auditLog.filter(e => 
-    e.event_type === 'phase_transition' || 
-    e.event_type === 'budget_update' || 
+  const governanceEvents = auditLog.filter((e: any) =>
+    e.event_type === 'phase_transition' ||
+    e.event_type === 'budget_update' ||
     e.event_type?.includes('approval') ||
     e.severity === 'high' ||
     e.severity === 'critical'
   ).slice(0, 5);
 
   return (
-    <div className="flex flex-col gap-gutter">
+    <div className="flex flex-col" style={{ gap: 16 }}>
       <ApprovalQueue />
 
-      <div className="grid grid-cols-3 gap-gutter">
-        <Card title="Agent Utilization" className="col-span-2">
-          <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
-            {agents.length > 0 ? agents.map(agent => (
-              <div key={agent.id} className="bg-surface-container-high p-4 border border-outline-variant flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full ${agent.status === 'running' ? 'bg-primary-fixed animate-pulse' : 'bg-on-surface-variant'}`}></div>
-                  <div>
-                    <div className="font-code-sm text-primary text-body-md">{agent.id?.toUpperCase()}</div>
-                    <div className="font-label-caps text-on-surface-variant text-label-xs">{agent.type?.replace(/_/g, ' ')?.toUpperCase()}</div>
-                  </div>
+      <div className="grid grid-cols-3" style={{ gap: 16 }}>
+        <div className="col-span-2">
+          <Card title="Agent Utilization" subtitle={`${agents.length} persona specialists registered`}>
+            <div style={{ maxHeight: 384, overflowY: 'auto' }} className="custom-scrollbar">
+              {agents.length > 0 ? (
+                <div className="flex flex-col" style={{ gap: 8 }}>
+                  {agents.map(agent => (
+                    <div
+                      key={agent.id}
+                      className="flex items-center justify-between"
+                      style={{
+                        padding: '12px 16px',
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-md)',
+                        transition: 'border-color var(--duration-fast)',
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            background: agent.status === 'running' ? 'var(--accent)' : 'var(--text-disabled)',
+                            boxShadow: agent.status === 'running' ? 'var(--shadow-glow)' : 'none',
+                          }}
+                        />
+                        <div>
+                          <div
+                            style={{
+                              fontFamily: "'JetBrains Mono', monospace",
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: 'var(--accent)',
+                            }}
+                          >
+                            {agent.id?.toUpperCase()}
+                          </div>
+                          <div
+                            style={{
+                              fontFamily: "'JetBrains Mono', monospace",
+                              fontSize: 10,
+                              color: 'var(--text-tertiary)',
+                              letterSpacing: '0.08em',
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {agent.type?.replace(/_/g, ' ')}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div
+                          style={{
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: 'var(--interactive)',
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          ${(agent.cost_incurred || 0).toFixed(2)}
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "'JetBrains Mono', monospace",
+                            fontSize: 9,
+                            color: 'var(--text-disabled)',
+                            letterSpacing: '0.1em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          COST
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="text-right">
-                  <div className="font-code-sm text-secondary-fixed text-body-md">${(agent.cost_incurred || 0).toFixed(2)}</div>
-                  <div className="font-label-caps text-on-surface-variant text-label-xs">TOTAL SPEND</div>
-                </div>
-              </div>
-            )) : (
-                <EmptyState message="Initializing Swarm Personas..." hint="Awaiting agent telemetry" />
-            )}
-          </div>
-        </Card>
+              ) : (
+                <EmptyState
+                  message="No agents active — awaiting swarm initialization"
+                  icon={<Cpu size={24} />}
+                />
+              )}
+            </div>
+          </Card>
+        </div>
 
-        <Card title="Cost Allocation (System 1 vs 2)">
-          <div className="h-64 w-full">
+        <Card title="Cost Allocation" subtitle="System 1 vs System 2">
+          <div style={{ height: 256 }}>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={costData}
-                  innerRadius={60}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
                   outerRadius={80}
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {costData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  {costData.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
                   ))}
                 </Pie>
                 <Tooltip
                   contentStyle={tooltipStyle}
-                  itemStyle={{ color: palette.onSurface }}
+                  formatter={(value: number) => [`$${value.toFixed(2)}`, '']}
                 />
               </PieChart>
             </ResponsiveContainer>
           </div>
-          <div className="flex justify-center gap-6 font-label-caps text-label-xs">
-            <div className="flex items-center gap-2"><div className="w-2 h-2 bg-primary-fixed"></div> SYSTEM 1</div>
-            <div className="flex items-center gap-2"><div className="w-2 h-2 bg-secondary"></div> SYSTEM 2</div>
+          <div className="flex justify-center" style={{ gap: 20 }}>
+            <div className="flex items-center gap-2">
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: palette.accent }} />
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                SYSTEM 1
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: palette.interactive }} />
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                SYSTEM 2
+              </span>
+            </div>
           </div>
         </Card>
       </div>
-      
-      <div className="grid grid-cols-2 gap-6">
-        <Card title="Resource Consumption Over Time">
-            <div className="h-64 w-full">
-                {agents.length === 0 ? (
-                  <EmptyState message="Awaiting resource telemetry..." hint="No agent cost data yet" />
-                ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                   <BarChart data={agents}>
-                      <XAxis dataKey="id" hide />
-                      <YAxis hide />
-                      <Tooltip
-                         contentStyle={tooltipStyle}
-                         itemStyle={{ color: palette.secondary }}
+
+      <div className="grid grid-cols-2" style={{ gap: 16 }}>
+        <Card title="Resource Consumption" subtitle="Cost per agent over time">
+          <div style={{ height: 256 }}>
+            {agents.length === 0 ? (
+              <EmptyState message="No agent cost data yet" icon={<Cpu size={24} />} />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={agents} margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
+                  <XAxis
+                    dataKey="id"
+                    tick={{ fill: 'var(--text-tertiary)', fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `$${v}`}
+                  />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    formatter={(value: number) => [`$${value.toFixed(2)}`, 'Cost']}
+                    cursor={{ fill: 'var(--surface-hover)' }}
+                  />
+                  <Bar dataKey="cost_incurred" radius={[4, 4, 0, 0]} barSize={24}>
+                    {agents.map((agent) => (
+                      <Cell
+                        key={agent.id}
+                        fill={agent.status === 'running' ? palette.accent : '#45474f'}
                       />
-                      <Bar dataKey="cost_incurred" fill={palette.primary} radius={[2, 2, 0, 0]} />
-                   </BarChart>
-                </ResponsiveContainer>
-                )}
-            </div>
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
         </Card>
 
-        <Card title="Swarm Governance Log">
-            <div className="font-code-sm text-[11px] text-on-surface space-y-3">
-               {governanceEvents.length > 0 ? governanceEvents.map((evt, i) => (
-                 <div key={evt.id || i} className={`border-l-2 pl-3 ${evt.severity === 'critical' || evt.severity === 'high' ? 'border-error' : 'border-primary-fixed'}`}>
-                    <div className="font-label-caps text-on-surface-variant mb-1 uppercase text-label-xs tracking-tighter">
-                        DECISION: {evt.event_type?.toUpperCase().replace(/_/g, ' ')}
+        <Card title="Governance Log" subtitle="Phase transitions and critical events">
+          <div style={{ maxHeight: 280, overflowY: 'auto' }} className="custom-scrollbar">
+            {governanceEvents.length > 0 ? (
+              <div className="flex flex-col" style={{ gap: 10 }}>
+                {governanceEvents.map((evt: any, i: number) => {
+                  const isHigh = evt.severity === 'critical' || evt.severity === 'high';
+                  const borderColor = isHigh ? 'var(--danger)' : 'var(--accent)';
+                  return (
+                    <div
+                      key={evt.id || i}
+                      style={{
+                        borderLeft: `3px solid ${borderColor}`,
+                        paddingLeft: 12,
+                        paddingTop: 4,
+                        paddingBottom: 4,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          letterSpacing: '0.1em',
+                          textTransform: 'uppercase',
+                          color: 'var(--text-tertiary)',
+                          marginBottom: 4,
+                        }}
+                      >
+                        {evt.event_type?.toUpperCase().replace(/_/g, ' ')}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 12,
+                          color: 'var(--text-primary)',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {typeof evt.action === 'string'
+                          ? evt.action
+                          : (evt.details?.reason || evt.result?.summary || `Event by ${evt.actor_id}`)}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 10,
+                          color: 'var(--text-disabled)',
+                          marginTop: 2,
+                        }}
+                      >
+                        {evt.timestamp ? new Date(evt.timestamp).toLocaleString() : ''}
+                      </div>
                     </div>
-                    <div>
-                        {typeof evt.action === 'string' ? evt.action : (evt.details?.reason || evt.result?.summary || `Event triggered by ${evt.actor_id}`)}
-                    </div>
-                 </div>
-               )) : (
-                   <EmptyState message="Awaiting swarm governance decisions..." />
-               )}
-            </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState message="No governance events yet" />
+            )}
+          </div>
         </Card>
       </div>
     </div>
