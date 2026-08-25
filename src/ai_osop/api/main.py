@@ -13,6 +13,15 @@ REFACTOR (2026-06-19): Decomposed from 1,539-line monolith into router modules:
   routers/system.py       — health, config, sandbox status
 """
 
+# FIX: WindowsSelectorEventLoopPolicy is REQUIRED for asyncpg on Windows.
+# Python 3.8+ defaults to ProactorEventLoop on Windows, which is incompatible
+# with asyncpg's protocol-based socket handling (causes connection_lost errors).
+# This must be set BEFORE any asyncio operations or imports that create event loops.
+import sys as _sys
+if _sys.platform == "win32":
+    import asyncio as _asyncio
+    _asyncio.set_event_loop_policy(_asyncio.WindowsSelectorEventLoopPolicy())
+
 import asyncio
 import json
 import logging
@@ -245,10 +254,20 @@ async def lifespan(app: FastAPI):
             logger.critical("Neo4j unavailable after retries — proceeding in degraded mode")
 
         # 3. Vector Memory (pgvector)
+        # FIX: asyncpg.create_pool() hangs indefinitely on Windows ProactorEventLoop.
+        # Wrap with a timeout so vector memory failure doesn't block server startup.
         try:
-            await vector_memory.connect()
+            await asyncio.wait_for(vector_memory.connect(), timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning("Vector memory initialization timed out (15s) — falling back to mock mode")
+            vector_memory._mock_mode = True
+            vector_memory._mock_store = []
+            vector_memory._mock_findings = []
         except Exception as e:
-            logger.warning(f"Vector memory initialization failed: {e}")
+            logger.warning(f"Vector memory initialization failed: {e} — falling back to mock mode")
+            vector_memory._mock_mode = True
+            vector_memory._mock_store = []
+            vector_memory._mock_findings = []
 
         # 4. MCP Servers
         await register_optional_mcp_servers(mcp_registry)
@@ -383,6 +402,9 @@ async def lifespan(app: FastAPI):
             agents_to_register = [
                 (AttackChainAgent, AgentType.ATTACK_CHAIN, "attack-chain-agent-001"),
                 (ReconAgent, AgentType.RECON, "recon-agent-001"),
+                (ReconAgent, AgentType.RECON, "recon-agent-002"),
+                (ReconAgent, AgentType.RECON, "recon-agent-003"),
+                (ReconAgent, AgentType.RECON, "recon-agent-004"),
                 # TOOL-REALITY Tier-1 service specialist (TLS/SSH probes)
                 (ServiceAssessmentAgent, AgentType.RECON, "service-agent-001"),
                 (VulnAnalysisAgent, AgentType.VULN_ANALYSIS, "vuln-agent-001"),
