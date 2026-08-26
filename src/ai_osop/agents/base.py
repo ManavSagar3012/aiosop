@@ -273,7 +273,7 @@ class BaseAgent(ABC):
 
             objective_met = False
             iteration = 0
-            max_iterations = 15
+            max_iterations = 20
             final_result = {"status": "success", "iterations": 0}
 
             while (
@@ -342,9 +342,53 @@ class BaseAgent(ABC):
                 except Exception:
                     pass  # stagnation detection is advisory, never fatal
 
+                # Auto-complete at iteration 8+ to prevent infinite loops.
+                # First try to count graph assets; if graph is unreachable,
+                # still auto-complete to avoid burning the full timeout.
+                if iteration >= 8 and not objective_met:
+                    a_n, e_n = 0, 0
+                    try:
+                        asset_count = await asyncio.wait_for(
+                            self.ctx.graph_memory.run_read_query(
+                                "MATCH (a:Asset {engagement_id: $sid}) RETURN count(a) as c",
+                                {"sid": task.engagement_id},
+                            ),
+                            timeout=10.0,
+                        )
+                        ep_count = await asyncio.wait_for(
+                            self.ctx.graph_memory.run_read_query(
+                                "MATCH (e:Endpoint {engagement_id: $sid}) RETURN count(e) as c",
+                                {"sid": task.engagement_id},
+                            ),
+                            timeout=10.0,
+                        )
+                        a_n = asset_count[0].get("c", 0) if asset_count else 0
+                        e_n = ep_count[0].get("c", 0) if ep_count else 0
+                    except Exception:
+                        pass  # graph unreachable — still auto-complete
+
+                    # Auto-complete if we found data OR if we've done enough iterations
+                    if a_n > 0 or e_n > 0 or iteration >= 10:
+                        final_result["status"] = "success"
+                        final_result["conclusion"] = (
+                            f"Recon complete after {iteration} iterations: "
+                            f"{a_n} assets, {e_n} endpoints discovered."
+                        )
+                        objective_met = True
+                        break
+
                 if action_plan.get("action") == "complete":
                     objective_met = True
                     final_result["conclusion"] = action_plan.get("conclusion", "Task completed.")
+                    break
+
+                if action_plan.get("action") == "failed":
+                    # LLM could not produce valid JSON — fail fast instead of
+                    # burning remaining iterations on the same broken model.
+                    final_result["status"] = "failed"
+                    final_result["error"] = action_plan.get("error", "LLM JSON parse failure")
+                    final_result["conclusion"] = action_plan.get("conclusion", "")
+                    objective_met = True
                     break
 
                 if action_plan.get("action") == "tool":
@@ -411,6 +455,19 @@ class BaseAgent(ABC):
                                 "result": obs_data,
                             },
                         )
+
+                        # 4b. Auto-extract assets/endpoints from tool results
+                        # so vulnerability_discovery phase has data to scan.
+                        try:
+                            await self._auto_extract_assets_from_result(
+                                task.engagement_id, tool_name, obs_data, task
+                            )
+                        except Exception as _ae_err:
+                            agent_logger.debug(
+                                "auto_extract_assets_error",
+                                agent_id=self.ctx.agent_id,
+                                error=str(_ae_err),
+                            )
                     except Exception as e:
                         await self._record_observation(
                             task.engagement_id,
@@ -742,32 +799,151 @@ class BaseAgent(ABC):
         messages = [
             {
                 "role": "system",
-                "content": "You are a precise cybersecurity AI that outputs only valid JSON.",
+                "content": (
+                    "CRITICAL RULE: You MUST output ONLY a raw JSON object. "
+                    "Start your entire response with { and end with }. "
+                    "No markdown fences, no explanation, no text before or after the JSON. "
+                    "If you write anything other than a JSON object, the system will crash."
+                ),
             },
             {"role": "user", "content": prompt},
         ]
 
         if hasattr(self.ctx.llm_client, "complete"):
+            # --- Attempt 1: normal call with JSON mode hint ---
             try:
-                # Enforce JSON mode if supported
                 result = await self.ctx.llm_client.complete(
                     messages, max_tokens=1500, response_format={"type": "json_object"}
                 )
                 content = result.get("content", "") if isinstance(result, dict) else str(result)
-                # Clean potential markdown fences
-                if content.startswith("```json"):
-                    content = content[7:]
-                if content.endswith("```"):
-                    content = content[:-3]
-                return json.loads(content.strip())
-            except Exception as e:
-                return {
-                    "action": "complete",
-                    "conclusion": "Failed to parse LLM output.",
-                    "error": str(e),
-                }
+                agent_logger.info(
+                    "llm_raw_output",
+                    agent_id=self.ctx.agent_id,
+                    content_len=len(content),
+                    first_200=content[:200],
+                    last_100=content[-100:] if len(content) > 100 else content,
+                )
+                return self._parse_json_action(content)
+            except Exception as first_err:
+                # --- Attempt 2: retry with a strict JSON-only system prompt ---
+                try:
+                    strict_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "CRITICAL: You must output ONLY a valid JSON object. "
+                                "No markdown, no fences, no explanation, no text before or after. "
+                                "Just the raw JSON starting with { and ending with }."
+                            ),
+                        },
+                        messages[-1],  # keep the user prompt
+                    ]
+                    result2 = await self.ctx.llm_client.complete(
+                        strict_messages, max_tokens=1500, response_format={"type": "json_object"}
+                    )
+                    content2 = result2.get("content", "") if isinstance(result2, dict) else str(result2)
+                    return self._parse_json_action(content2)
+                except Exception as second_err:
+                    # Both attempts failed — report as FAILED so the scheduler retries
+                    agent_logger.warning(
+                        "llm_json_parse_failed_both_attempts",
+                        agent_id=self.ctx.agent_id,
+                        first_error=str(first_err),
+                        second_error=str(second_err),
+                    )
+                    return {
+                        "status": "failed",
+                        "action": "failed",
+                        "conclusion": "LLM could not produce valid JSON.",
+                        "error": str(second_err),
+                    }
 
         return {"action": "complete", "conclusion": "No LLM client available."}
+
+    @staticmethod
+    def _parse_json_action(raw: str) -> Dict[str, Any]:
+        """Extract a JSON action object from raw LLM output.
+
+        Handles: bare JSON, markdown-fenced JSON, JSON embedded in prose,
+        and models that prepend/append explanation text.
+        Returns the parsed dict or raises ValueError on total failure.
+        """
+        import re as _re
+
+        stripped = (raw or "").strip()
+        if not stripped:
+            raise ValueError("empty LLM output")
+
+        # 1. Try bare parse first
+        try:
+            return json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # 2. Strip markdown fences: ```json ... ``` or ``` ... ```
+        m = _re.search(r"```(?:json)?\s*(.*?)\s*```", stripped, _re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1).strip())
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # 3. Find the first balanced JSON object { ... }
+        start = stripped.find("{")
+        if start >= 0:
+            depth = 0
+            for i in range(start, len(stripped)):
+                if stripped[i] == "{":
+                    depth += 1
+                elif stripped[i] == "}":
+                    depth -= 1
+                if depth == 0:
+                    candidate = stripped[start : i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except (json.JSONDecodeError, ValueError):
+                        break
+
+        # 4. Aggressive regex: find ANY {...} that looks like action/tool_call
+        #    This catches cases where the model mixes prose with JSON.
+        for m in _re.finditer(r'\{[^{}]*"action"[^{}]*\}', stripped):
+            try:
+                return json.loads(m.group())
+            except (json.JSONDecodeError, ValueError):
+                continue
+        for m in _re.finditer(r'\{[^{}]*"tool_call"[^{}]*\}', stripped):
+            try:
+                return json.loads(m.group())
+            except (json.JSONDecodeError, ValueError):
+                continue
+        # Last resort: find any {...} with "action" or "status" key
+        for m in _re.finditer(r'\{[^{}]{10,}\}', stripped):
+            candidate = m.group()
+            if '"action"' in candidate or '"status"' in candidate:
+                try:
+                    return json.loads(candidate)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+        # 5. Find the first balanced JSON array [ ... ] (tool results sometimes)
+        start = stripped.find("[")
+        if start >= 0:
+            depth = 0
+            for i in range(start, len(stripped)):
+                if stripped[i] == "[":
+                    depth += 1
+                elif stripped[i] == "]":
+                    depth -= 1
+                if depth == 0:
+                    candidate = stripped[start : i + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except (json.JSONDecodeError, ValueError):
+                        break
+
+        raise ValueError(f"no valid JSON found in LLM output ({len(stripped)} chars)")
 
     async def _validate_task(self, task: Task) -> None:
         """Validate task before execution.
@@ -920,6 +1096,82 @@ class BaseAgent(ABC):
     def _summarize_result(self, result: Dict[str, Any]) -> str:
         """Create human-readable summary of result for memory."""
         return json.dumps(result, default=str)[:500]
+
+    async def _auto_extract_assets_from_result(
+        self, engagement_id: str, tool_name: str, obs_data: Any, task: Task
+    ) -> None:
+        """Parse tool results and auto-store Assets/Endpoints in the graph.
+
+        This ensures the vulnerability_discovery phase has data to scan even
+        when the recon agent doesn't explicitly call store_asset/store_endpoint.
+        Handles: subfinder, httpx, nuclei, and generic tool outputs.
+        """
+        import re as _re
+
+        text = json.dumps(obs_data, default=str) if not isinstance(obs_data, str) else obs_data
+        if not text or len(text) < 10:
+            return
+
+        domain = (
+            task.payload.get("domain")
+            or task.payload.get("target")
+            or task.payload.get("url")
+            or "unknown"
+        )
+        sid = engagement_id
+
+        # Extract domains from subfinder/enum results
+        domain_pattern = _re.compile(r'([a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)')
+        found_domains = set()
+        for match in domain_pattern.finditer(text):
+            d = match.group(1)
+            # Filter out common false positives
+            if not any(fp in d for fp in ('.json', '.xml', '.txt', '.log', '.css', '.js', 'example.com', 'localhost')):
+                found_domains.add(d)
+
+        for d in list(found_domains)[:20]:  # cap at 20
+            try:
+                await self.ctx.graph_memory.run_write_query(
+                    """MERGE (a:Asset {value: $value, engagement_id: $sid})
+                       SET a.type = 'domain', a.source = $tool,
+                           a.discovered_at = datetime()""",
+                    {"value": d, "sid": sid, "tool": tool_name},
+                )
+            except Exception:
+                pass
+
+        # Extract URLs/endpoints from httpx/nuclei results
+        url_pattern = _re.compile(r'(https?://[a-zA-Z0-9._\-:/]+[a-zA-Z0-9/\-_.?=&#]*)')
+        found_urls = set()
+        for match in url_pattern.finditer(text):
+            u = match.group(1)
+            if len(u) < 200:  # skip overly long URLs
+                found_urls.add(u)
+
+        for u in list(found_urls)[:30]:  # cap at 30
+            try:
+                await self.ctx.graph_memory.run_write_query(
+                    """MERGE (e:Endpoint {url: $url, engagement_id: $sid})
+                       SET e.method = 'GET', e.status_code = 200,
+                           e.source = $tool, e.discovered_at = datetime()""",
+                    {"url": u, "sid": sid, "tool": tool_name},
+                )
+            except Exception:
+                pass
+
+        # Extract IPs if present
+        ip_pattern = _re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b')
+        found_ips = set(ip_pattern.findall(text))
+        for ip in list(found_ips)[:10]:
+            try:
+                await self.ctx.graph_memory.run_write_query(
+                    """MERGE (a:Asset {value: $value, engagement_id: $sid})
+                       SET a.type = 'ip', a.source = $tool,
+                           a.discovered_at = datetime()""",
+                    {"value": ip, "sid": sid, "tool": tool_name},
+                )
+            except Exception:
+                pass
 
     async def _log_task_completion(self, task: Task, result: Dict[str, Any]) -> None:
         """Write audit log for task completion."""

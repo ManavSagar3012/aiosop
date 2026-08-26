@@ -31,6 +31,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict
 
+# Load .env file before any settings import so all OSOP_* vars are available.
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST
@@ -233,7 +237,7 @@ async def lifespan(app: FastAPI):
         threat_intel_adapter = ThreatIntelAdapter()
 
         # 1. Redis (critical)
-        redis_ok = await connect_with_retry(session_memory.connect, "redis", max_retries=10)
+        redis_ok = await connect_with_retry(session_memory.connect, "redis", max_retries=3)
         if redis_ok:
             try:
                 await session_memory._redis.ping()
@@ -246,7 +250,7 @@ async def lifespan(app: FastAPI):
             logger.critical("Redis unavailable after retries — proceeding in degraded mode")
 
         # 2. Neo4j (critical)
-        neo4j_ok = await connect_with_retry(graph_memory.connect, "neo4j", max_retries=10)
+        neo4j_ok = await connect_with_retry(graph_memory.connect, "neo4j", max_retries=3)
         if neo4j_ok:
             health_status["neo4j"] = "healthy"
         else:

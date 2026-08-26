@@ -57,6 +57,7 @@ class PhaseMonitor:
                     agent_type=AgentType.RECON,
                     payload={"domain": domain, "scope": session.scope.model_dump()},
                     engagement_id=session.session_id,
+                    timeout_seconds=900,
                 )
                 await self._orch.task_scheduler.schedule_task(task)
             url_hint = (
@@ -78,14 +79,22 @@ class PhaseMonitor:
 
             # 1) Per-asset Burp scan (Burp crawls from the host root).
             assets: List[str] = []
-            asset_records = await self._orch.graph_memory.run_read_query(
-                "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain",
-                {"sid": session.session_id},
-            )
-            for record in asset_records:
-                domain = record.get("domain")
-                if domain:
-                    assets.append(domain)
+            try:
+                asset_records = await self._orch.graph_memory.run_read_query(
+                    "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain",
+                    {"sid": session.session_id},
+                )
+                for record in asset_records:
+                    domain_val = record.get("domain")
+                    if domain_val:
+                        assets.append(domain_val)
+            except Exception as e:
+                logger.warning("asset_graph_query_failed", error=str(e))
+
+            # Fallback: if no assets in graph, seed from scope domains
+            if not assets and session.scope.domains:
+                assets = list(session.scope.domains)
+                logger.info("vuln_phase_seeded_from_scope", domains=assets)
 
             for domain in assets:
                 burp_task = Task(

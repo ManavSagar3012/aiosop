@@ -5,12 +5,13 @@ Pydantic models for all cross-component communication.
 
 import hashlib
 import hmac
+import json
 import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ai_osop.core.config import AgentType, Severity, VulnClass
 
@@ -228,14 +229,23 @@ class DecisionRecord(BaseModel):
     task_id: str
     agent_id: str
     iteration: int
-    action_type: str
-    action_target: str
+    action_type: str = Field(default="unknown")
+    action_target: str = Field(default="unknown")
     trigger: str
     hypothesis_id: Optional[str] = None
     alternatives_considered: List[str] = Field(default_factory=list)
     reasoning: str
     expected_gain: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    @field_validator("action_type", "action_target", mode="before")
+    @classmethod
+    def _coerce_to_str(cls, v: Any) -> str:
+        if isinstance(v, dict):
+            return json.dumps(v)
+        if v is None:
+            return "unknown"
+        return str(v)
 
 
 class Task(BaseModel):
