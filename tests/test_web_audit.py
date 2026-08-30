@@ -58,14 +58,17 @@ class _FakeResponse:
 
 
 def _patch_http(monkeypatch, responses: Dict[str, _FakeResponse]):
-    """Patch httpx.AsyncClient.get to serve canned responses keyed by URL substring.
+    """Patch httpx.AsyncClient to serve canned responses keyed by URL-DECODED substring.
 
     Keys are matched against the URL-DECODED request line, because probes are
     sent percent-encoded (e.g. "%7B%7B7%2A9%7D%7D" for "{{7*9}}") and the
-    readable probe text only exists after decoding.
+    readable probe text only exists after decoding. GET and POST are both
+    served; POST keys match against decoded form bodies too.
     """
     import ai_osop.agents.vuln_agent as va
     from urllib.parse import unquote_plus
+
+    seen_calls: List[Dict[str, Any]] = []
 
     class _Client:
         def __init__(self, *a, **k):
@@ -77,14 +80,34 @@ def _patch_http(monkeypatch, responses: Dict[str, _FakeResponse]):
         async def __aexit__(self, *a):
             return False
 
-        async def get(self, url: str):
+        def _match(self, url: str, data: Any = None) -> _FakeResponse:
             decoded = unquote_plus(url)
+            form_part = ""
+            if data:
+                try:
+                    form_part = unquote_plus("&".join(f"{k}={v}" for k, v in data.items()))
+                except Exception:  # noqa: BLE001
+                    pass
+            # POSTs match keys against the FORM BODY only (else a URL-substring
+            # key like "/login" swallows every probe); GETs match the URL.
+            target_str = form_part if data is not None else decoded
             for key, resp in responses.items():
-                if key in decoded:
+                if key in target_str:
                     return resp
             return _FakeResponse(200, "benign page")
 
+        async def get(self, url: str, headers: Dict[str, str] = None):
+            seen_calls.append({"method": "GET", "url": url, "headers": headers or {}})
+            return self._match(url)
+
+        async def post(self, url: str, data: Dict[str, str] = None, headers: Dict[str, str] = None):
+            seen_calls.append(
+                {"method": "POST", "url": url, "data": dict(data or {}), "headers": headers or {}}
+            )
+            return self._match(url, data)
+
     monkeypatch.setattr(va.httpx, "AsyncClient", _Client)
+    return seen_calls
 
 
 async def test_web_audit_out_of_scope_host_refused(monkeypatch):
@@ -195,3 +218,167 @@ async def test_web_audit_requires_url():
 
     with pytest.raises(AgentException):
         await agent._execute_web_audit({"engagement_id": "eng-test"})
+
+
+async def test_web_audit_post_form_sqli_confirmed(monkeypatch):
+    """WEB-AUDIT-002: a login form's POST body is discovered and differentially
+    audited — control login fails, tautology payload succeeds -> VALIDATED."""
+    agent = _make_agent()
+    login_page = (
+        "<html><body><form method='POST' action='/login'>"
+        "<input name='username'><input name='password' type='password'>"
+        "<input type='submit' value='go'></form></body></html>"
+    )
+    seen = _patch_http(
+        monkeypatch,
+        {
+            "/login": _FakeResponse(200, login_page),  # page GET (no params on seed)
+            "username=audit_probe_baseline_77": _FakeResponse(401, "Login failed"),
+            "username=%27 OR %271%27%3D%271": _FakeResponse(200, "Welcome, admin!"),
+            "OR '1'='1": _FakeResponse(200, "Welcome, admin!"),
+        },
+    )
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1/login", "engagement_id": "eng-test"}
+    )
+    assert result["status"] == "success"
+    assert result["stats"]["forms_audited"] == 1
+    assert result["findings_count"] == 1
+    finding = result["findings"][0]
+    assert finding["cwe"] == "CWE-89"
+    assert finding["validated"] is True
+    assert finding["evidence"][0]["method"] == "POST"
+    assert finding["evidence"][0]["parameter"] == "username"
+    posts = [c for c in seen if c["method"] == "POST"]
+    assert posts, "engine must POST the discovered form"
+    assert "password" in posts[0]["data"], "other fields ride along with defaults"
+
+
+async def test_web_audit_session_replay_sends_cookies(monkeypatch):
+    """WEB-AUDIT-002: a stored engagement session is replayed on every probe."""
+    agent = _make_agent()
+
+    fake_sess = MagicMock()
+    fake_sess.cookies = [{"name": "sid", "value": "abc123"}]
+    fake_sess.bearer_token = "tok-1"
+    fake_sess.extra_headers = {"X-Custom": "yes"}
+    fake_sess.user_agent = "AIOSOP-Scanner/1.0"
+    fake_sess.is_expired.return_value = False
+
+    import ai_osop.auth.session_store as ss
+
+    monkeypatch.setattr(
+        ss.SessionStore, "get_session_or_none", AsyncMock(return_value=fake_sess)
+    )
+    seen = _patch_http(monkeypatch, {})
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1/search?q=seed", "engagement_id": "eng-test", "session_label": "user1"}
+    )
+    assert result["stats"]["authenticated"] is True
+    assert seen, "engine must have issued requests"
+    for call in seen:
+        h = call["headers"]
+        assert h.get("Cookie") == "sid=abc123"
+        assert h.get("Authorization") == "Bearer tok-1"
+        assert h.get("X-Custom") == "yes"
+        assert h.get("User-Agent") == "AIOSOP-Scanner/1.0"
+
+
+async def test_web_audit_missing_session_degrades_anonymous(monkeypatch):
+    """A missing session label must degrade to an anonymous audit, not fail."""
+    agent = _make_agent()
+    import ai_osop.auth.session_store as ss
+
+    monkeypatch.setattr(ss.SessionStore, "get_session_or_none", AsyncMock(return_value=None))
+    _patch_http(monkeypatch, {})
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1/search?q=seed", "engagement_id": "eng-test", "session_label": "ghost"}
+    )
+    assert result["status"] == "success"
+    assert result["stats"]["authenticated"] is False
+
+
+class _FakeOAST:
+    """Deterministic stand-in for OASTAdapter: captures injected callbacks."""
+
+    def __init__(self, registry):
+        self.hits = []
+
+    async def initialize(self, scope, session_id):
+        return None
+
+    async def register(self, label="", context=None):
+        self.cb_url = "http://127.0.0.1:8099/fake-token-123"
+        return "fake-token-123", self.cb_url
+
+    async def poll(self, token):
+        return list(self.hits)
+
+
+async def test_web_audit_blind_ssrf_oast_confirmed(monkeypatch):
+    """WEB-AUDIT-003: injected callback URL fires -> OAST hit -> VALIDATED SSRF."""
+    agent = _make_agent()
+    import ai_osop.adapters.oast_mcp as om
+    import ai_osop.agents.vuln_agent as va
+
+    fake = _FakeOAST(None)
+    fake.hits = [{"source_ip": "10.0.0.5", "kind": "http", "path": "/fake-token-123"}]
+    monkeypatch.setattr(om, "OASTAdapter", lambda reg: fake)
+    monkeypatch.setattr(va.asyncio, "sleep", AsyncMock(return_value=None))  # skip settle
+    seen = _patch_http(monkeypatch, {})
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1/fetch?url=seed", "engagement_id": "eng-test", "classes": ["ssrf"]}
+    )
+    assert result["status"] == "success"
+    assert result["findings_count"] == 1
+    finding = result["findings"][0]
+    assert finding["cwe"] == "CWE-918"
+    assert finding["validated"] is True
+    ev = finding["evidence"][0]
+    assert ev["type"] == "oast_callback"
+    assert ev["interaction"]["source_ip"] == "10.0.0.5"
+    # the callback URL must actually have been injected into a probe request
+    injected = [c for c in seen if "fake-token-123" in c["url"]]
+    assert injected, "callback URL was never injected"
+
+
+async def test_web_audit_ssrf_no_callback_no_finding(monkeypatch):
+    """The honest-empty rule: no OAST interaction => NO SSRF finding."""
+    agent = _make_agent()
+    import ai_osop.adapters.oast_mcp as om
+    import ai_osop.agents.vuln_agent as va
+
+    fake = _FakeOAST(None)  # zero hits
+    monkeypatch.setattr(om, "OASTAdapter", lambda reg: fake)
+    monkeypatch.setattr(va.asyncio, "sleep", AsyncMock(return_value=None))
+    _patch_http(monkeypatch, {})
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1/fetch?url=seed", "engagement_id": "eng-test", "classes": ["ssrf"]}
+    )
+    assert result["status"] == "success"
+    assert result["findings_count"] == 0
+    assert result["stats"]["oast_hits"] == 0
+
+
+async def test_web_audit_ssrf_skipped_when_oast_unavailable(monkeypatch):
+    """OAST server down => blind-SSRF pass degrades silently, scan still succeeds."""
+    agent = _make_agent()
+    import ai_osop.adapters.oast_mcp as om
+    import ai_osop.agents.vuln_agent as va
+
+    class _Broken:
+        def __init__(self, reg):
+            pass
+
+        async def register(self, label="", context=None):
+            raise RuntimeError("oast-mcp not registered")
+
+    monkeypatch.setattr(om, "OASTAdapter", _Broken)
+    monkeypatch.setattr(va.asyncio, "sleep", AsyncMock(return_value=None))
+    _patch_http(monkeypatch, {})
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1/fetch?url=seed", "engagement_id": "eng-test", "classes": ["ssrf"]}
+    )
+    assert result["status"] == "success"
+    assert result["findings_count"] == 0
+    assert "oast_hits" not in result["stats"] or result["stats"]["oast_hits"] == 0

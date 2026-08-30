@@ -802,15 +802,66 @@ class VulnAnalysisAgent(BaseAgent):
         enforcer = ScopeEnforcer(scope_def)
         enforcer.validate_target(parsed_seed.hostname or "")
 
+        # ---- 1b. Authenticated replay (WEB-AUDIT-002) --------------------
+        # If the operator captured a session for this engagement (HAR import or
+        # session-store PUT), replay its cookies/bearer/headers on every probe
+        # so the audit reaches AUTHENTICATED surface. Missing/expired session
+        # degrades to an anonymous audit (logged), never blocks the scan.
+        auth_headers: Dict[str, str] = {}
+        session_label = payload.get("session_label")
+        if session_label:
+            try:
+                from ai_osop.auth.session_store import SessionStore
+
+                store = SessionStore(self.ctx.session_memory)
+                user_sess = await store.get_session_or_none(engagement_id, session_label)
+                if user_sess is None:
+                    logger.info("web_audit_session_not_found", engagement_id=engagement_id, label=session_label)
+                elif user_sess.is_expired():
+                    logger.warning("web_audit_session_expired", engagement_id=engagement_id, label=session_label)
+                else:
+                    cookie_pairs = [
+                        f"{c.get('name')}={c.get('value', '')}"
+                        for c in (user_sess.cookies or [])
+                        if c.get("name")
+                    ]
+                    if cookie_pairs:
+                        auth_headers["Cookie"] = "; ".join(cookie_pairs)
+                    if user_sess.bearer_token:
+                        auth_headers["Authorization"] = f"Bearer {user_sess.bearer_token}"
+                    for k, v in (user_sess.extra_headers or {}).items():
+                        auth_headers[str(k)] = str(v)
+                    if user_sess.user_agent:
+                        auth_headers["User-Agent"] = user_sess.user_agent
+                    stats_session = len(cookie_pairs)
+                    logger.info(
+                        "web_audit_authenticated",
+                        engagement_id=engagement_id,
+                        label=session_label,
+                        cookies=stats_session,
+                    )
+            except Exception as e:  # noqa: BLE001 - auth replay is best-effort
+                logger.warning("web_audit_session_replay_failed", error=str(e))
+
         # ---- helpers ----------------------------------------------------
-        async def _scoped_get(target_url: str) -> httpx.Response:
+        async def _scoped_get(target_url: str, extra_headers: Optional[Dict[str, str]] = None) -> httpx.Response:
             """GET a target URL after re-validating its host against scope."""
             p = _urlparse(target_url)
             if p.scheme not in ("http", "https"):
                 raise OutOfScopeError(f"web_audit refuses non-HTTP scheme: {target_url}")
             enforcer.validate_target(p.hostname or "")
+            merged = {**auth_headers, **(extra_headers or {})}
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                return await client.get(target_url)
+                return await client.get(target_url, headers=merged)
+
+        async def _scoped_post(target_url: str, data: Dict[str, str]) -> httpx.Response:
+            """POST form data after re-validating the target host against scope."""
+            p = _urlparse(target_url)
+            if p.scheme not in ("http", "https"):
+                raise OutOfScopeError(f"web_audit refuses non-HTTP scheme: {target_url}")
+            enforcer.validate_target(p.hostname or "")
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                return await client.post(target_url, data=data, headers=auth_headers)
 
         def _set_param(target_url: str, param: str, value: str) -> str:
             """Return target_url with `param` replaced by `value` (others kept)."""
@@ -818,6 +869,183 @@ class VulnAnalysisAgent(BaseAgent):
             pairs = [(k, v) for k, v in _parse_qsl(p.query) if k != param]
             pairs.append((param, value))
             return p._replace(query=_urlencode(pairs)).geturl()
+
+        def _discover_forms(html: str, base_url: str) -> List[Dict[str, Any]]:
+            """Parse <form> blocks into {action, method, fields, defaults}.
+
+            Fields exclude submit/button/image inputs (they carry no data).
+            Defaults keep each field's original value attr (CSRF tokens etc).
+            Bounded: 5 forms/page, 12 fields/form.
+            """
+            import re as _re
+            from urllib.parse import urljoin as _urljoin
+
+            forms: List[Dict[str, Any]] = []
+            for attrs, block in _re.findall(
+                r"<form\b([^>]*)>(.*?)</form>", html or "", _re.I | _re.S
+            )[:5]:
+                method_m = _re.search(r'method\s*=\s*["\']?(\w+)', attrs, _re.I)
+                action_m = _re.search(r'action\s*=\s*["\']?([^"\'\s>]+)', attrs, _re.I)
+                if not method_m or method_m.group(1).lower() != "post":
+                    continue  # GET forms are covered by the query-param pass
+                fields: List[str] = []
+                defaults: Dict[str, str] = {}
+                for tag in _re.findall(
+                    r"<(?:input|textarea|select)\b[^>]*>", block, _re.I
+                ):
+                    if _re.search(r'type\s*=\s*["\']?(submit|button|image|reset)', tag, _re.I):
+                        continue
+                    name_m = _re.search(r'name\s*=\s*["\']?([^"\'\s>]+)', tag, _re.I)
+                    if not name_m:
+                        continue
+                    fname = name_m.group(1)
+                    val_m = _re.search(r'value\s*=\s*["\']([^"\']*)["\']', tag, _re.I)
+                    if fname not in defaults:
+                        fields.append(fname)
+                        defaults[fname] = val_m.group(1) if val_m else ""
+                if fields:
+                    action = _urljoin(base_url, (action_m.group(1) if action_m else ""))
+                    forms.append({"action": action, "fields": fields[:12], "defaults": defaults})
+            return forms
+
+        control_value = payload.get("control", "audit_probe_baseline_77")
+
+        async def _audit_fields(
+            send,
+            target_url: str,
+            fields: List[str],
+            baseline: httpx.Response,
+            method: str,
+        ) -> None:
+            """Shared probe/judge/emit loop for one request target's fields.
+
+            `send(field, value)` issues ONE request with `value` in `field`.
+            The baseline response (control request, no probes) is shared.
+            """
+            baseline_body = (baseline.text or "").lower()
+            for pname in fields:
+                stats["params_probed"] += 1
+                for vuln_class, probes in self._AUDIT_PROBES.items():
+                    if payload.get("classes") and vuln_class not in payload["classes"]:
+                        continue
+                    confirmed = None
+                    resp = None
+                    for probe in probes:
+                        try:
+                            resp = await send(pname, probe)
+                            stats["requests"] += 1
+                        except OutOfScopeError:
+                            raise
+                        except Exception as e:  # noqa: BLE001 - transport error
+                            logger.warning(
+                                "web_audit_probe_failed", url=target_url, param=pname, error=str(e)
+                            )
+                            break
+                        body = resp.text or ""
+                        body_l = body.lower()
+                        if vuln_class == "sqli":
+                            sig_hit = any(
+                                sig in body_l and sig not in baseline_body
+                                for sig in self._SQLI_ERROR_SIGNATURES
+                            )
+                            bypass = (
+                                resp.status_code in (200, 302)
+                                and baseline.status_code in (401, 403)
+                                and body_l != baseline_body
+                            )
+                            # Data-leak differential: a tautology probe that
+                            # returns substantially MORE content than the control
+                            # (classic UNION/boolean dump: empty control, rows on
+                            # injection). Conservative thresholds so benign param
+                            # echo noise cannot fire it.
+                            data_leak = (
+                                "or" in probe.lower()
+                                and len(body) > (len(baseline_body) * 3)
+                                and (len(body) - len(baseline_body)) > 40
+                            )
+                            if sig_hit or bypass or data_leak:
+                                confirmed = ("sqli", probe, sig_hit, bypass)
+                                break
+                        elif vuln_class == "xss":
+                            if "probe_xss_marker_9f3a" in body and "probe_xss_marker_9f3a" not in baseline_body:
+                                confirmed = ("xss", probe, True, False)
+                                break
+                        elif vuln_class == "ssti":
+                            if "63" in body and "63" not in baseline_body and "7*9" in probe:
+                                confirmed = ("ssti", probe, True, False)
+                                break
+                    if confirmed is None:
+                        continue
+                    _, probe, sig_hit, bypass = confirmed
+                    cwe, vclass, sev = {
+                        "sqli": ("CWE-89", VulnClass.SQLI, Severity.HIGH),
+                        "xss": ("CWE-79", VulnClass.XSS, Severity.MEDIUM),
+                        "ssti": ("CWE-1336", VulnClass.SSTI, Severity.HIGH),
+                    }[vuln_class]
+                    vuln = Vulnerability(
+                        cwe=cwe,
+                        vuln_type=vclass,
+                        severity=sev,
+                        title=f"{vuln_class.upper()} via {method} parameter '{pname}' (web_audit differential)",
+                        description=(
+                            f"web_audit differential confirmed {vuln_class.upper()} at {target_url}: "
+                            f"{method} parameter '{pname}' with probe {probe!r} produced a behavioral "
+                            f"delta the control request lacked (error_signature={sig_hit}, "
+                            f"auth_bypass={bypass})."
+                        ),
+                        evidence=[
+                            {
+                                "type": "web_audit_differential",
+                                "provenance": "web_audit",
+                                "url": target_url,
+                                "method": method,
+                                "parameter": pname,
+                                "baseline_value": control_value,
+                                "probe": probe,
+                                "baseline_status": baseline.status_code,
+                                "injected_status": resp.status_code,
+                                "error_signature": sig_hit,
+                                "auth_bypass": bypass,
+                                "authenticated": bool(auth_headers),
+                            }
+                        ],
+                        tool_source="web_audit",
+                        confidence=0.85 if not auth_headers else 0.88,
+                        validated=True,
+                        exploitability="medium",
+                        impact="high" if sev == Severity.HIGH else "medium",
+                        entry_point=True,
+                        engagement_id=engagement_id,
+                    )
+                    try:
+                        await self.ctx.graph_memory.add_vulnerability(vuln)
+                        self.findings[vuln.id] = vuln
+                    except Exception as e:  # noqa: BLE001 - persist is advisory
+                        logger.error("web_audit_persist_failed", vuln_id=vuln.id, error=str(e))
+                    try:
+                        from ai_osop.core.findings_ledger import record_finding_event
+
+                        record_finding_event(
+                            engagement_id=engagement_id,
+                            finding_id=vuln.id,
+                            finding_title=vuln.title,
+                            stage="validated",
+                            status="VALIDATED",
+                            reason="web_audit differential (control vs probe behavioral delta)",
+                            evidence={"url": target_url, "parameter": pname, "probe": probe},
+                            actor=self.ctx.agent_id,
+                        )
+                    except Exception:  # noqa: BLE001 - ledger is advisory
+                        pass
+                    findings.append(vuln)
+                    logger.info(
+                        "web_audit_confirmed",
+                        url=target_url,
+                        param=pname,
+                        method=method,
+                        vuln_class=vuln_class,
+                    )
+                    break  # one confirmed finding per field per class
 
         # ---- 2. Crawl ----------------------------------------------------
         audit_urls: List[str] = []
@@ -856,124 +1084,168 @@ class VulnAnalysisAgent(BaseAgent):
         stats = {
             "crawled": len(audit_urls),
             "params_probed": 0,
+            "forms_audited": 0,
             "requests": 0,
             "crawl_degraded": crawl_error is not None,
+            "authenticated": bool(auth_headers),
         }
 
-        # ---- 3+4. Probe + differential per parameter ----------------------
+        # ---- 3+4. Probe + differential: query params, then POST forms ---
         for target_url in audit_urls:
+            # (a) GET query parameters
             params = [
                 {"name": k, "value": v} for k, v in _parse_qsl(_urlparse(target_url).query)
             ]
-            if not params:
-                continue
-            control_value = payload.get("control", "audit_probe_baseline_77")
+            page_html = ""
+            if params:
+                try:
+                    baseline = await _scoped_get(_set_param(target_url, params[0]["name"], control_value))
+                    stats["requests"] += 1
+                except OutOfScopeError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - dead endpoint: skip
+                    logger.warning("web_audit_baseline_failed", url=target_url, error=str(e))
+                    continue
+                page_html = baseline.text or ""
+
+                async def _get_send(field: str, value: str, _u=target_url):
+                    return await _scoped_get(_set_param(_u, field, value))
+
+                await _audit_fields(_get_send, target_url, [p["name"] for p in params], baseline, "GET")
+            # (b) Form-POST surface (WEB-AUDIT-002): fetch the page (reuse the
+            # baseline body when we already have it) and audit discovered POST
+            # forms field-by-field with a per-form control baseline.
             try:
-                baseline = await _scoped_get(_set_param(target_url, params[0]["name"], control_value))
-                stats["requests"] += 1
+                if not page_html:
+                    page_html = (await _scoped_get(target_url)).text or ""
+                    stats["requests"] += 1
             except OutOfScopeError:
                 raise
-            except Exception as e:  # noqa: BLE001 - dead endpoint: skip
-                logger.warning("web_audit_baseline_failed", url=target_url, error=str(e))
+            except Exception as e:  # noqa: BLE001 - page fetch is best-effort
+                logger.warning("web_audit_page_fetch_failed", url=target_url, error=str(e))
                 continue
-            baseline_body = (baseline.text or "").lower()
-            for param in params:
-                pname = param["name"]
-                stats["params_probed"] += 1
-                for vuln_class, probes in self._AUDIT_PROBES.items():
-                    if payload.get("classes") and vuln_class not in payload["classes"]:
+            for form in _discover_forms(page_html, target_url):
+                action = form["action"]
+                try:
+                    fu = _urlparse(action)
+                    if fu.scheme not in ("http", "https") or not fu.hostname:
                         continue
-                    confirmed = None
-                    for probe in probes:
+                    enforcer.validate_target(fu.hostname)
+                except Exception:  # noqa: BLE001 - out-of-scope form action
+                    continue
+                fields = form["fields"]
+                defaults = dict(form["defaults"])
+
+                async def _form_send(field: str, value: str, _a=action, _f=fields, _d=defaults):
+                    data = {name: (control_value if name == field else (_d.get(name) or control_value)) for name in _f}
+                    data[field] = value
+                    return await _scoped_post(_a, data)
+
+                try:
+                    form_baseline = await _scoped_post(
+                        action,
+                        {name: (defaults.get(name) or control_value) for name in fields},
+                    )
+                    stats["requests"] += 1
+                except OutOfScopeError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - form baseline failed
+                    logger.warning("web_audit_form_baseline_failed", url=action, error=str(e))
+                    continue
+                stats["forms_audited"] += 1
+                await _audit_fields(_form_send, action, fields, form_baseline, "POST")
+
+        # ---- 5. Blind-SSRF via OAST (WEB-AUDIT-003) ----------------------
+        # Only when explicitly requested (payload['ssrf'] or class list includes
+        # 'ssrf') AND the oast-mcp server is available. Flow: mint a per-audit
+        # correlation token, inject the callback URL into every parameter, poll
+        # once after a settle window — a captured interaction is an unforgeable
+        # out-of-band signal (blind SSRF). No callback => NO finding (honest).
+        wants_ssrf = "ssrf" in (payload.get("classes") or []) or bool(payload.get("ssrf"))
+        if wants_ssrf:
+            oast_ok, oast_error = False, None
+            cb_url = ""
+            token = ""
+            try:
+                from ai_osop.adapters.oast_mcp import OASTAdapter
+
+                oast = OASTAdapter(self.ctx.mcp_registry)
+                token, cb_url = await oast.register(
+                    label="web_audit",
+                    context={
+                        "engagement_id": engagement_id,
+                        "vuln_class": "ssrf",
+                        "seed_url": url,
+                    },
+                )
+                oast_ok = bool(token and cb_url)
+            except Exception as e:  # noqa: BLE001 - OAST optional
+                oast_error = str(e)
+                logger.warning("web_audit_oast_unavailable", error=str(e))
+            if oast_ok:
+                stats["oast_callback_url"] = cb_url
+                injected_targets: List[str] = []
+                for target_url in audit_urls:
+                    params = [
+                        {"name": k} for k, _ in _parse_qsl(_urlparse(target_url).query)
+                    ]
+                    if not params:
+                        continue
+                    for p in params:
                         try:
-                            resp = await _scoped_get(_set_param(target_url, pname, probe))
+                            await _scoped_get(_set_param(target_url, p["name"], cb_url))
                             stats["requests"] += 1
+                            injected_targets.append(target_url)
                         except OutOfScopeError:
                             raise
-                        except Exception as e:  # noqa: BLE001 - probe transport error
+                        except Exception as e:  # noqa: BLE001 - injection attempt
                             logger.warning(
-                                "web_audit_probe_failed", url=target_url, param=pname, error=str(e)
+                                "web_audit_ssrf_probe_failed", url=target_url, error=str(e)
                             )
-                            break
-                        body = resp.text or ""
-                        body_l = body.lower()
-                        if vuln_class == "sqli":
-                            sig_hit = any(
-                                sig in body_l and sig not in baseline_body
-                                for sig in self._SQLI_ERROR_SIGNATURES
-                            )
-                            bypass = (
-                                resp.status_code in (200, 302)
-                                and baseline.status_code in (401, 403)
-                                and body_l != baseline_body
-                            )
-                            # Data-leak differential: a tautology probe that
-                            # returns substantially MORE content than the control
-                            # (classic UNION/boolean dump: empty control, rows on
-                            # injection). Thresholds are conservative — 3x growth
-                            # plus an absolute delta — so benign param echo noise
-                            # (a few chars of reflection) cannot fire it.
-                            data_leak = (
-                                "or" in probe.lower()
-                                and len(body) > (len(baseline_body) * 3)
-                                and (len(body) - len(baseline_body)) > 40
-                            )
-                            if sig_hit or bypass or data_leak:
-                                confirmed = ("sqli", probe, sig_hit, bypass)
-                                break
-                        elif vuln_class == "xss":
-                            if "probe_xss_marker_9f3a" in body and "probe_xss_marker_9f3a" not in baseline_body:
-                                confirmed = ("xss", probe, True, False)
-                                break
-                        elif vuln_class == "ssti":
-                            if "63" in body and "63" not in baseline_body and "7*9" in probe:
-                                confirmed = ("ssti", probe, True, False)
-                                break
-                    if confirmed is None:
-                        continue
-                    _, probe, sig_hit, bypass = confirmed
-                    cwe, vclass, sev = {
-                        "sqli": ("CWE-89", VulnClass.SQLI, Severity.HIGH),
-                        "xss": ("CWE-79", VulnClass.XSS, Severity.MEDIUM),
-                        "ssti": ("CWE-1336", VulnClass.SSTI, Severity.HIGH),
-                    }[vuln_class]
+                # Settle window: the target needs a moment to make its
+                # server-side callback; too long and we waste the task budget.
+                await asyncio.sleep(min(float(payload.get("ssrf_settle", 8.0)), 15.0))
+                try:
+                    hits = await oast.poll(token)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("web_audit_oast_poll_failed", error=str(e))
+                    hits = []
+                stats["oast_hits"] = len(hits) if hits else 0
+                if hits:
+                    hit = hits[0]
                     vuln = Vulnerability(
-                        cwe=cwe,
-                        vuln_type=vclass,
-                        severity=sev,
-                        title=f"{vuln_class.upper()} via parameter '{pname}' (web_audit differential)",
+                        cwe="CWE-918",
+                        vuln_type=VulnClass.SSRF,
+                        severity=Severity.HIGH,
+                        title="Blind SSRF confirmed via out-of-band callback (web_audit OAST)",
                         description=(
-                            f"web_audit differential confirmed {vuln_class.upper()} at {target_url}: "
-                            f"parameter '{pname}' with probe {probe!r} produced a behavioral delta "
-                            f"the control request lacked (error_signature={sig_hit}, "
-                            f"auth_bypass={bypass})."
+                            f"The parameter injection of the OAST callback URL {cb_url} caused "
+                            f"the target to make an out-of-band HTTP request back to the "
+                            f"interaction server (source_ip={hit.get('source_ip')}). This is "
+                            f"direct, unforgeable evidence of server-side request forgery."
                         ),
                         evidence=[
                             {
-                                "type": "web_audit_differential",
+                                "type": "oast_callback",
                                 "provenance": "web_audit",
-                                "url": target_url,
-                                "parameter": pname,
-                                "baseline_value": control_value,
-                                "probe": probe,
-                                "baseline_status": baseline.status_code,
-                                "injected_status": resp.status_code,
-                                "error_signature": sig_hit,
-                                "auth_bypass": bypass,
+                                "callback_url": cb_url,
+                                "token": token,
+                                "interaction": hit,
+                                "injected_urls": injected_targets,
                             }
                         ],
                         tool_source="web_audit",
-                        confidence=0.85,
+                        confidence=0.9,
                         validated=True,
-                        exploitability="medium",
-                        impact="high" if sev == Severity.HIGH else "medium",
+                        exploitability="high",
+                        impact="high",
                         entry_point=True,
                         engagement_id=engagement_id,
                     )
                     try:
                         await self.ctx.graph_memory.add_vulnerability(vuln)
                         self.findings[vuln.id] = vuln
-                    except Exception as e:  # noqa: BLE001 - persist is advisory
+                    except Exception as e:  # noqa: BLE001 - advisory
                         logger.error("web_audit_persist_failed", vuln_id=vuln.id, error=str(e))
                     try:
                         from ai_osop.core.findings_ledger import record_finding_event
@@ -984,20 +1256,16 @@ class VulnAnalysisAgent(BaseAgent):
                             finding_title=vuln.title,
                             stage="validated",
                             status="VALIDATED",
-                            reason="web_audit differential (control vs probe behavioral delta)",
-                            evidence={"url": target_url, "parameter": pname, "probe": probe},
+                            reason="OAST callback captured (blind SSRF confirmed out-of-band)",
+                            evidence={"callback_url": cb_url, "source_ip": hit.get("source_ip")},
                             actor=self.ctx.agent_id,
                         )
-                    except Exception:  # noqa: BLE001 - ledger is advisory
+                    except Exception:  # noqa: BLE001 - advisory
                         pass
                     findings.append(vuln)
-                    logger.info(
-                        "web_audit_confirmed",
-                        url=target_url,
-                        param=pname,
-                        vuln_class=vuln_class,
-                    )
-                    break  # one confirmed finding per parameter per class
+                    logger.info("web_audit_ssrf_confirmed", callback_url=cb_url)
+                else:
+                    logger.info("web_audit_ssrf_no_callback", token=token[:8])
 
         return {
             "status": "success",
