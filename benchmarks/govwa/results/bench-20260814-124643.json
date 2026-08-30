@@ -1,0 +1,144 @@
+{
+  "target": "http://127.0.0.1:8095",
+  "manifest": "C:\\Users\\HP\\OneDrive\\Desktop\\burp_mcp\\ai-osop\\benchmarks\\ground_truth\\govwa.yaml",
+  "generated_utc": "2026-08-14T12:46:43.855723+00:00",
+  "scorecard": {
+    "tp": 0,
+    "fn": 5,
+    "fp": 0,
+    "pos": 5,
+    "neg": 3,
+    "recall": 0.0,
+    "precision": 1.0,
+    "validated_recall": 0.0
+  },
+  "runs": [
+    [
+      {
+        "check_id": "GOVWA-001",
+        "status": "VALIDATED",
+        "validated": true,
+        "confidence": 1.0,
+        "seconds": 0.031,
+        "evidence": {
+          "request": "http://127.0.0.1:8095/sqli2",
+          "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Sql Injection</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: url(\"publ",
+          "status_code": 200,
+          "type": "sqlmap_injection",
+          "payload": "1 UNION SELECT 1,'sqli_probe_govwa','Jakarta','0888'"
+        }
+      },
+      {
+        "check_id": "GOVWA-002",
+        "status": "NOT_FOUND",
+        "validated": false,
+        "confidence": 0.0,
+        "seconds": 0.016,
+        "evidence": {
+          "request": "http://127.0.0.1:8095/sqli1",
+          "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Sql Injection</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: url(\"publ",
+          "status_code": 200,
+          "type": "sqlmap_injection",
+          "payload": "1'||'1'='1"
+        }
+      },
+      {
+        "check_id": "GOVWA-003",
+        "status": "VALIDATED",
+        "validated": true,
+        "confidence": 1.0,
+        "seconds": 0.0,
+        "evidence": {
+          "request": "http://127.0.0.1:8095/xss1",
+          "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Cross Site Scripting</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: ur",
+          "status_code": 200,
+          "type": "reflected_xss",
+          "payload": "<img src=x onerror=alert(1)>",
+          "reflection": true
+        }
+      },
+      {
+        "check_id": "GOVWA-004",
+        "status": "NOT_FOUND",
+        "validated": false,
+        "confidence": 0.0,
+        "seconds": 0.047,
+        "evidence": {
+          "request": "http://127.0.0.1:8095/idor2action",
+          "response": "runtime error: invalid memory address or nil pointer dereference\n",
+          "status_code": 500,
+          "type": "idor",
+          "payload": {
+            "uid": "1",
+            "signature": "c4ca4238a0b923820dcc509a6f75849b"
+          },
+          "note": "user1 overwrote the ADMIN profile using a forged md5(uid) signature"
+        }
+      },
+      {
+        "check_id": "GOVWA-005",
+        "status": "VALIDATED",
+        "validated": true,
+        "confidence": 1.0,
+        "seconds": 0.0,
+        "evidence": {
+          "request": "http://127.0.0.1:8095/verify",
+          "response": "[{\"code\":1}]",
+          "status_code": 200,
+          "type": "auth_bypass",
+          "payload": {
+            "otp": "256612",
+            "digest": "a587cd6bf1e49d2c3928d1f8b86f248b"
+          },
+          "note": "client-side OTP gate bypassed with the constant from the page JS"
+        }
+      },
+      {
+        "check_id": "GOVWA-NEG-001",
+        "status": "NOT_FOUND",
+        "validated": false,
+        "confidence": 0.0,
+        "seconds": 0.015,
+        "evidence": {
+          "request": "http://127.0.0.1:8095/sqli2",
+          "response": "runtime error: invalid memory address or nil pointer dereference\n",
+          "status_code": 500,
+          "type": "sqlmap_injection",
+          "payload": "1 UNION SELECT 1,'sqli_probe_govwa','Jakarta','0888'"
+        }
+      },
+      {
+        "check_id": "GOVWA-NEG-002",
+        "status": "NOT_FOUND",
+        "validated": false,
+        "confidence": 0.0,
+        "seconds": 0.016,
+        "evidence": {
+          "request": "http://127.0.0.1:8095/idor2action",
+          "response": "runtime error: invalid memory address or nil pointer dereference\n",
+          "status_code": 500,
+          "type": "idor",
+          "payload": {
+            "uid": "1",
+            "signature": "deadbeef"
+          }
+        }
+      },
+      {
+        "check_id": "GOVWA-NEG-003",
+        "status": "NOT_FOUND",
+        "validated": false,
+        "confidence": 0.0,
+        "seconds": 0.0,
+        "evidence": {
+          "request": "http://127.0.0.1:8095/xss1",
+          "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Cross Site Scripting</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: ur",
+          "status_code": 200,
+          "type": "reflected_xss",
+          "payload": "<script>alert(1)</script>"
+        }
+      }
+    ]
+  ],
+  "findings_export": "benchmarks\\results\\owasp-govwa-core-v1-findings.json"
+}

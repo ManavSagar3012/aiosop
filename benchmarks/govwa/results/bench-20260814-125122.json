@@ -1,0 +1,292 @@
+{
+  "generated_at": "2026-08-14T12:51:22.197865+00:00",
+  "target": "http://127.0.0.1:8095",
+  "runs": 1,
+  "stability": {
+    "scored_timeouts": [],
+    "stable": true
+  },
+  "scorecard": {
+    "summary": {
+      "manifest_positives": 5,
+      "manifest_negative_controls": 3,
+      "findings_total": 5,
+      "findings_real": 5,
+      "findings_simulated_dropped": 0,
+      "true_positives": 5,
+      "validated_true_positives": 5,
+      "unvalidated_matches": 0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "extras_for_triage": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "validated_recall": 1.0,
+      "coverage": 1.0,
+      "evidence_completeness": 1.0,
+      "mock_llm": false
+    },
+    "matched": [
+      {
+        "gt_id": "GOVWA-001",
+        "finding_id": "govwa-bench-govwa-001-20260814125122",
+        "finding_type": "sqli",
+        "endpoint": "http://127.0.0.1:8095/sqli2",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "GOVWA-002",
+        "finding_id": "govwa-bench-govwa-002-20260814125122",
+        "finding_type": "sqli",
+        "endpoint": "http://127.0.0.1:8095/sqli1",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "GOVWA-003",
+        "finding_id": "govwa-bench-govwa-003-20260814125122",
+        "finding_type": "xss",
+        "endpoint": "http://127.0.0.1:8095/xss1",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "reflected_xss",
+          "reflection",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "GOVWA-004",
+        "finding_id": "govwa-bench-govwa-004-20260814125122",
+        "finding_type": "idor",
+        "endpoint": "http://127.0.0.1:8095/idor2action",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "idor",
+          "note",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "GOVWA-005",
+        "finding_id": "govwa-bench-govwa-005-20260814125122",
+        "finding_type": "authbypass",
+        "endpoint": "http://127.0.0.1:8095/verify",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "auth_bypass",
+          "note",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      }
+    ],
+    "unvalidated_matches": [],
+    "false_negatives": [],
+    "false_positives": [],
+    "extras": [],
+    "notes": [
+      "recall measured over manifest positives (what MUST be found).",
+      "validated_recall counts only matches with validated=true, no manual confirmation requirement, and complete manifest-required evidence.",
+      "precision measured only against explicit negative controls; None means no negative controls were defined.",
+      "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+      "simulated/mock findings dropped before scoring."
+    ]
+  },
+  "findings_export": "benchmarks\\results\\owasp-govwa-core-v1-findings.json",
+  "per_check": {
+    "GOVWA-001": {
+      "name": "GOVWA-001",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.01600000000325963,
+      "evidence": {
+        "request": "http://127.0.0.1:8095/sqli2",
+        "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Sql Injection</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: url(\"publ",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "1 UNION SELECT 1,'sqli_probe_govwa','Jakarta','0888'"
+      },
+      "error": null
+    },
+    "GOVWA-002": {
+      "name": "GOVWA-002",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://127.0.0.1:8095/sqli1",
+        "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Sql Injection</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: url(\"publ",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "1 OR 1=1"
+      },
+      "error": null
+    },
+    "GOVWA-003": {
+      "name": "GOVWA-003",
+      "type": "XSS",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://127.0.0.1:8095/xss1",
+        "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Cross Site Scripting</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: ur",
+        "status_code": 200,
+        "type": "reflected_xss",
+        "payload": "<img src=x onerror=alert(1)>",
+        "reflection": true
+      },
+      "error": null
+    },
+    "GOVWA-004": {
+      "name": "GOVWA-004",
+      "type": "IDOR",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.125,
+      "evidence": {
+        "request": "http://127.0.0.1:8095/idor2action",
+        "response": "[{\"status\":\"1\",\"message\":\"Update Success\"}]",
+        "status_code": 200,
+        "type": "idor",
+        "payload": {
+          "uid": "1",
+          "signature": "c4ca4238a0b923820dcc509a6f75849b"
+        },
+        "note": "user1 overwrote the ADMIN profile using a forged md5(uid) signature"
+      },
+      "error": null
+    },
+    "GOVWA-005": {
+      "name": "GOVWA-005",
+      "type": "AuthBypass",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://127.0.0.1:8095/verify",
+        "response": "[{\"code\":1}]",
+        "status_code": 200,
+        "type": "auth_bypass",
+        "payload": {
+          "otp": "256612",
+          "digest": "a587cd6bf1e49d2c3928d1f8b86f248b"
+        },
+        "note": "client-side OTP gate bypassed with the constant from the page JS"
+      },
+      "error": null
+    },
+    "GOVWA-NEG-001": {
+      "name": "GOVWA-NEG-001",
+      "type": "SQLi",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.015999999988707714,
+      "evidence": {
+        "request": "http://127.0.0.1:8095/sqli2",
+        "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Sql Injection</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: url(\"publ",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "1 UNION SELECT 1,'sqli_probe_govwa','Jakarta','0888'"
+      },
+      "error": null
+    },
+    "GOVWA-NEG-002": {
+      "name": "GOVWA-NEG-002",
+      "type": "IDOR",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.04700000000593718,
+      "evidence": {
+        "request": "http://127.0.0.1:8095/idor2action",
+        "response": "[{\"status\":\"0\",\"message\":\"Integrity Error\"}]",
+        "status_code": 200,
+        "type": "idor",
+        "payload": {
+          "uid": "1",
+          "signature": "deadbeef"
+        }
+      },
+      "error": null
+    },
+    "GOVWA-NEG-003": {
+      "name": "GOVWA-NEG-003",
+      "type": "XSS",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://127.0.0.1:8095/xss1",
+        "response": " \n<!DOCTYPE html>\n<html>\n<head>\n    <title>Cross Site Scripting</title>\n\n    <link href=\"public/css/font-awesome-4.7.0/css/font-awesome.css\" rel=\"stylesheet\">\n\n    \n    <link rel=\"stylesheet\" type=\"text/css\" href=\"public/css/open-sans.css\" />\n    <link href=\"public/css/bootstrap/css/bootstrap.min.css\" rel=\"stylesheet\">\n    \n    <script type=\"text/javascript\" src=\"public/js/jquery-3.2.1-min.js\"></script>\n    <script type=\"text/javascript\" src=\"public/js/bootstrap.min.js\"></script>\n    \n    <link href=\"public/css/main.css\" rel=\"stylesheet\">\n\n    <style>\n        .header {\n    background-image: ur",
+        "status_code": 200,
+        "type": "reflected_xss",
+        "payload": "<script>alert(1)</script>"
+      },
+      "error": null
+    }
+  }
+}

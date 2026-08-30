@@ -1,0 +1,301 @@
+{
+  "generated_at": "2026-08-14T11:03:01.217722+00:00",
+  "target": "http://localhost:8083",
+  "runs": 1,
+  "stability": {
+    "scored_timeouts": [],
+    "stable": true
+  },
+  "scorecard": {
+    "summary": {
+      "manifest_positives": 5,
+      "manifest_negative_controls": 3,
+      "findings_total": 5,
+      "findings_real": 5,
+      "findings_simulated_dropped": 0,
+      "true_positives": 5,
+      "validated_true_positives": 5,
+      "unvalidated_matches": 0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "extras_for_triage": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "validated_recall": 1.0,
+      "coverage": 1.0,
+      "evidence_completeness": 1.0,
+      "mock_llm": false
+    },
+    "matched": [
+      {
+        "gt_id": "DVGA-001",
+        "finding_id": "dvga-bench-dvga-001-20260814110301",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8083/graphql",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "rows",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVGA-002",
+        "finding_id": "dvga-bench-dvga-002-20260814110301",
+        "finding_type": "rce",
+        "endpoint": "http://localhost:8083/graphql",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "command_injection",
+          "marker",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVGA-003",
+        "finding_id": "dvga-bench-dvga-003-20260814110301",
+        "finding_type": "jwt",
+        "endpoint": "http://localhost:8083/graphql",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "jwt",
+          "note",
+          "request",
+          "response",
+          "status_code",
+          "token",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVGA-004",
+        "finding_id": "dvga-bench-dvga-004-20260814110301",
+        "finding_type": "idor",
+        "endpoint": "http://localhost:8083/graphql",
+        "confidence": 0.95,
+        "evidence_kinds": [
+          "idor",
+          "note",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVGA-005",
+        "finding_id": "dvga-bench-dvga-005-20260814110301",
+        "finding_type": "infodisclosure",
+        "endpoint": "http://localhost:8083/graphql",
+        "confidence": 0.95,
+        "evidence_kinds": [
+          "exposed_fields",
+          "info_disclosure",
+          "note",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      }
+    ],
+    "unvalidated_matches": [],
+    "false_negatives": [],
+    "false_positives": [],
+    "extras": [],
+    "notes": [
+      "recall measured over manifest positives (what MUST be found).",
+      "validated_recall counts only matches with validated=true, no manual confirmation requirement, and complete manifest-required evidence.",
+      "precision measured only against explicit negative controls; None means no negative controls were defined.",
+      "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+      "simulated/mock findings dropped before scoring."
+    ]
+  },
+  "findings_export": "C:\\Users\\HP\\OneDrive\\Desktop\\burp_mcp\\ai-osop\\benchmarks\\results\\owasp-dvga-core-v1-findings.json",
+  "per_check": {
+    "DVGA-001": {
+      "name": "DVGA-001",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.15,
+      "evidence": {
+        "request": "http://localhost:8083/graphql",
+        "response": "{\"data\":{\"pastes\":[{\"id\":\"12\",\"title\":\"Testing Testing\"},{\"id\":\"11\",\"title\":\"This is my first paste\"},{\"id\":\"10\",\"title\":\"This is my first paste\"},{\"id\":\"9\",\"title\":\"TITLE!!!!!\"},{\"id\":\"8\",\"title\":\"This is my first paste\"},{\"id\":\"7\",\"title\":\"What is this even\"},{\"id\":\"6\",\"title\":\"What is this even\"},{\"id\":\"5\",\"title\":\"Whoa this is cool\"},{\"id\":\"4\",\"title\":\"TITLE!!!!!\"},{\"id\":\"3\",\"title\":\"Testing Testing\"},{\"id\":\"2\",\"title\":\"555-555-1337\"},{\"id\":\"1\",\"title\":\"Testing Testing\"}]}}",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "x' OR '1'='1",
+        "rows": 12
+      },
+      "error": null
+    },
+    "DVGA-002": {
+      "name": "DVGA-002",
+      "type": "RCE",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.13,
+      "evidence": {
+        "request": "http://localhost:8083/graphql",
+        "response": "{\"data\":{\"systemDebug\":\"    PID TTY          TIME CMD\\n      1 ?        00:00:02 python\\n     56 ?        00:00:00 sh\\n     57 ?        00:00:00 ps\\nDVGA_RCE_MARKER\\n\"}}",
+        "status_code": 200,
+        "type": "command_injection",
+        "payload": ";echo DVGA_RCE_MARKER",
+        "marker": "DVGA_RCE_MARKER"
+      },
+      "error": null
+    },
+    "DVGA-003": {
+      "name": "DVGA-003",
+      "type": "JWT",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.06,
+      "evidence": {
+        "request": "http://localhost:8083/graphql",
+        "response": "{\"data\":{\"me\":{\"id\":\"1\",\"username\":\"admin\",\"password\":\"changeme\"}}}",
+        "status_code": 200,
+        "type": "jwt",
+        "note": "unsigned forged token accepted (verify_signature=False)",
+        "token": "eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJpZGVudGl0eSI6ICJhZG1pbiJ9."
+      },
+      "error": null
+    },
+    "DVGA-004": {
+      "name": "DVGA-004",
+      "type": "IDOR",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.95,
+      "seconds": 0.07,
+      "evidence": {
+        "request": "http://localhost:8083/graphql",
+        "response": "{\"data\":{\"users\":[{\"id\":\"1\",\"username\":\"admin\",\"password\":\"******\"}]}}",
+        "status_code": 200,
+        "type": "idor",
+        "note": "admin user record returned without any token (broken object-level authorization)"
+      },
+      "error": null
+    },
+    "DVGA-005": {
+      "name": "DVGA-005",
+      "type": "InfoDisclosure",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.95,
+      "seconds": 0.07,
+      "evidence": {
+        "request": "http://localhost:8083/graphql",
+        "response": "{\"data\":{\"__schema\":{\"queryType\":{\"fields\":[{\"name\":\"pastes\"},{\"name\":\"paste\"},{\"name\":\"systemUpdate\"},{\"name\":\"systemDiagnostics\"},{\"name\":\"systemDebug\"},{\"name\":\"systemHealth\"},{\"name\":\"users\"},{\"name\":\"readAndBurn\"},{\"name\":\"search\"},{\"name\":\"audits\"},{\"name\":\"deleteAllPastes\"},{\"name\":\"me\"}]}}}}",
+        "status_code": 200,
+        "type": "info_disclosure",
+        "note": "GraphQL introspection enabled \u2014 full schema exposed",
+        "exposed_fields": [
+          "pastes",
+          "paste",
+          "systemUpdate",
+          "systemDiagnostics",
+          "systemDebug",
+          "systemHealth",
+          "users",
+          "readAndBurn",
+          "search",
+          "audits",
+          "deleteAllPastes",
+          "me"
+        ]
+      },
+      "error": null
+    },
+    "DVGA-NEG-001": {
+      "name": "DVGA-NEG-001",
+      "type": "SQLi",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.07,
+      "evidence": {
+        "request": "http://localhost:8083/graphql",
+        "response": "{\"data\":{\"pastes\":[]}}",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "zz_nonexistent_marker",
+        "rows": 0
+      },
+      "error": null
+    },
+    "DVGA-NEG-002": {
+      "name": "DVGA-NEG-002",
+      "type": "RCE",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.07,
+      "evidence": {
+        "request": "http://localhost:8083/graphql",
+        "response": "{\"data\":{\"systemDebug\":\"    PID TTY          TIME CMD\\n      1 ?        00:00:02 python\\n     58 ?        00:00:00 sh\\n     59 ?        00:00:00 ps\\n\"}}",
+        "status_code": 200,
+        "type": "command_injection",
+        "payload": "",
+        "marker": "DVGA_RCE_MARKER"
+      },
+      "error": null
+    },
+    "DVGA-NEG-003": {
+      "name": "DVGA-NEG-003",
+      "type": "IDOR",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.07,
+      "evidence": {
+        "request": "http://localhost:8083/graphql",
+        "response": "{\"data\":{\"users\":[]}}",
+        "status_code": 200,
+        "type": "idor",
+        "payload": "id=999999",
+        "rows": 0
+      },
+      "error": null
+    }
+  }
+}

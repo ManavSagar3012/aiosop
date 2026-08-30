@@ -1,0 +1,326 @@
+{
+  "generated_at": "2026-08-14T13:39:42.224661+00:00",
+  "target": "http://localhost:8100",
+  "runs": 1,
+  "stability": {
+    "scored_timeouts": [],
+    "stable": true
+  },
+  "scorecard": {
+    "summary": {
+      "manifest_positives": 6,
+      "manifest_negative_controls": 3,
+      "findings_total": 6,
+      "findings_real": 6,
+      "findings_simulated_dropped": 0,
+      "true_positives": 6,
+      "validated_true_positives": 6,
+      "unvalidated_matches": 0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "extras_for_triage": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "validated_recall": 1.0,
+      "coverage": 1.0,
+      "evidence_completeness": 1.0,
+      "mock_llm": false
+    },
+    "matched": [
+      {
+        "gt_id": "ASPGOAT-001",
+        "finding_id": "aspgoat-bench-aspgoat-001-20260814133942",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8100/Home/SqlInjection",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "ASPGOAT-002",
+        "finding_id": "aspgoat-bench-aspgoat-002-20260814133942",
+        "finding_type": "xss",
+        "endpoint": "http://localhost:8100/Home/ReflectedXSS",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "reflected_xss",
+          "reflection",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "ASPGOAT-003",
+        "finding_id": "aspgoat-bench-aspgoat-003-20260814133942",
+        "finding_type": "xxe",
+        "endpoint": "http://localhost:8100/Home/XXE",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type",
+          "xxe"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "ASPGOAT-004",
+        "finding_id": "aspgoat-bench-aspgoat-004-20260814133942",
+        "finding_type": "idor",
+        "endpoint": "http://localhost:8100/Home/InsecureDirectObjectReference",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "idor",
+          "note",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "ASPGOAT-005",
+        "finding_id": "aspgoat-bench-aspgoat-005-20260814133942",
+        "finding_type": "openredirect",
+        "endpoint": "http://localhost:8100/Home/OpenRedirect",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "location",
+          "open_redirect",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "ASPGOAT-006",
+        "finding_id": "aspgoat-bench-aspgoat-006-20260814133942",
+        "finding_type": "ssrf",
+        "endpoint": "http://localhost:8100/Home/SSRF",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "note",
+          "payload",
+          "request",
+          "response",
+          "ssrf",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      }
+    ],
+    "unvalidated_matches": [],
+    "false_negatives": [],
+    "false_positives": [],
+    "extras": [],
+    "notes": [
+      "recall measured over manifest positives (what MUST be found).",
+      "validated_recall counts only matches with validated=true, no manual confirmation requirement, and complete manifest-required evidence.",
+      "precision measured only against explicit negative controls; None means no negative controls were defined.",
+      "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+      "simulated/mock findings dropped before scoring."
+    ]
+  },
+  "findings_export": "C:\\Users\\HP\\OneDrive\\Desktop\\burp_mcp\\ai-osop\\benchmarks\\results\\owasp-aspgoat-core-v1-findings.json",
+  "per_check": {
+    "ASPGOAT-001": {
+      "name": "ASPGOAT-001",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://localhost:8100/Home/SqlInjection",
+        "response": "\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\" />\n    <title>Sql Injection Demo - AspGoat</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css\" rel=\"stylesheet\" />\n    <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css\" />\n    <link href=\"https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Fira+Code&family=Space+Mono&display=swap\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"/css/site.css?v=nOwViQZ2vY7SjHNFqtwp_c2L0nSiOe0M_IZ1j32BYWs\" />\n    <style>\n",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "' UNION SELECT 99,'aspgoat_probe','h','e','i','j'--"
+      },
+      "error": null
+    },
+    "ASPGOAT-002": {
+      "name": "ASPGOAT-002",
+      "type": "XSS",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.01600000000325963,
+      "evidence": {
+        "request": "http://localhost:8100/Home/ReflectedXSS",
+        "response": "\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\" />\n    <title>Reflected XSS Demo - AspGoat</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css\" rel=\"stylesheet\" />\n    <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css\" />\n    <link href=\"https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Fira+Code&family=Space+Mono&display=swap\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"/css/site.css?v=nOwViQZ2vY7SjHNFqtwp_c2L0nSiOe0M_IZ1j32BYWs\" />\n    <style>\n",
+        "status_code": 200,
+        "type": "reflected_xss",
+        "payload": "<script>alert(1)</script>",
+        "reflection": true
+      },
+      "error": null
+    },
+    "ASPGOAT-003": {
+      "name": "ASPGOAT-003",
+      "type": "XXE",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.014999999999417923,
+      "evidence": {
+        "request": "http://localhost:8100/Home/XXE",
+        "response": "\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\" />\n    <title>XML External Entities Demo - AspGoat</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css\" rel=\"stylesheet\" />\n    <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css\" />\n    <link href=\"https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Fira+Code&family=Space+Mono&display=swap\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"/css/site.css?v=nOwViQZ2vY7SjHNFqtwp_c2L0nSiOe0M_IZ1j32BYWs\" />\n    ",
+        "status_code": 200,
+        "type": "xxe",
+        "payload": "<?xml version=\"1.0\"?><!DOCTYPE x [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><root>&xxe;</root>"
+      },
+      "error": null
+    },
+    "ASPGOAT-004": {
+      "name": "ASPGOAT-004",
+      "type": "IDOR",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://localhost:8100/Home/InsecureDirectObjectReference",
+        "response": "\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\" />\n    <title>IDOR Demo - AspGoat</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css\" rel=\"stylesheet\" />\n    <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css\" />\n    <link href=\"https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Fira+Code&family=Space+Mono&display=swap\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"/css/site.css?v=nOwViQZ2vY7SjHNFqtwp_c2L0nSiOe0M_IZ1j32BYWs\" />\n    <style>\n        h",
+        "status_code": 200,
+        "type": "idor",
+        "payload": {
+          "UserId": 1
+        },
+        "note": "admin api_key leaked without auth"
+      },
+      "error": null
+    },
+    "ASPGOAT-005": {
+      "name": "ASPGOAT-005",
+      "type": "OpenRedirect",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://localhost:8100/Home/OpenRedirect",
+        "response": "",
+        "status_code": 302,
+        "type": "open_redirect",
+        "payload": "https://evil.example",
+        "location": "https://evil.example"
+      },
+      "error": null
+    },
+    "ASPGOAT-006": {
+      "name": "ASPGOAT-006",
+      "type": "SSRF",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.01600000000325963,
+      "evidence": {
+        "request": "http://localhost:8100/Home/SSRF",
+        "response": "\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\" />\n    <title>SSRF Demo - AspGoat</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css\" rel=\"stylesheet\" />\n    <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css\" />\n    <link href=\"https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Fira+Code&family=Space+Mono&display=swap\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"/css/site.css?v=nOwViQZ2vY7SjHNFqtwp_c2L0nSiOe0M_IZ1j32BYWs\" />\n    <style>\n        h",
+        "status_code": 200,
+        "type": "ssrf",
+        "payload": "http://127.0.0.1:8000/internal/config",
+        "note": "internal config (jwtSigningKey) leaked via server-side fetch"
+      },
+      "error": null
+    },
+    "ASPGOAT-NEG-001": {
+      "name": "ASPGOAT-NEG-001",
+      "type": "SQLi",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.014999999999417923,
+      "evidence": {
+        "request": "http://localhost:8100/Home/SqlInjection",
+        "response": "\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\" />\n    <title>Sql Injection Demo - AspGoat</title>\n    <link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css\" rel=\"stylesheet\" />\n    <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css\" />\n    <link href=\"https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&family=Fira+Code&family=Space+Mono&display=swap\" rel=\"stylesheet\">\n    <link rel=\"stylesheet\" href=\"/css/site.css?v=nOwViQZ2vY7SjHNFqtwp_c2L0nSiOe0M_IZ1j32BYWs\" />\n    <style>\n",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "103.54.120.77"
+      },
+      "error": null
+    },
+    "ASPGOAT-NEG-002": {
+      "name": "ASPGOAT-NEG-002",
+      "type": "IDOR",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://localhost:8100/Home/InsecureDirectObjectReference",
+        "response": "User not found",
+        "status_code": 404,
+        "type": "idor",
+        "payload": {
+          "UserId": 999
+        }
+      },
+      "error": null
+    },
+    "ASPGOAT-NEG-003": {
+      "name": "ASPGOAT-NEG-003",
+      "type": "OpenRedirect",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://localhost:8100/Home/OpenRedirect",
+        "response": "",
+        "status_code": 302,
+        "type": "open_redirect",
+        "payload": "/Home/Dashboard",
+        "location": "/Home/Dashboard"
+      },
+      "error": null
+    }
+  }
+}

