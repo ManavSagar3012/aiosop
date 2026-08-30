@@ -39,6 +39,53 @@ class EngagementManager:
             logger.error("engagement_creation_failed", error=str(e), exc_info=True)
             raise
 
+    async def confirm_engagement(self, session_id: str, operator_id: str) -> SessionState:
+        """AEGIS-RT v2 (2026-08-29): operator-confirm the engagement card.
+
+        Records that a named operator reviewed and accepted the scope + RoE
+        (the in-scope / out-of-scope / techniques / authorization-proof fields).
+        This is the one-shot 'gate fires once' moment: it is required before the
+        engagement may leave INITIALIZED and never re-opens (idempotent — a
+        second confirm is a no-op that preserves the original timestamp).
+        """
+        session = self._orch._sessions.get(session_id)
+        if not session:
+            raise WorkflowException(f"Session {session_id} not found")
+        if not session.authorization_confirmed:
+            session.authorization_confirmed = True
+            session.confirmed_by = operator_id
+            session.confirmed_at = datetime.utcnow()
+            await self._orch.session_memory.store_session_state(session)
+            await self._orch.session_memory.persist_session_state(session)
+        await self._orch._audit_log(
+            AuditEvent(
+                event_type="engagement_card_confirmed",
+                severity="info",
+                actor_type="operator",
+                actor_id=operator_id,
+                action={"session_id": session_id},
+                result={"authorization_confirmed": True},
+                context={"engagement_id": session.scope.engagement_id},
+                engagement_id=session.scope.engagement_id,
+            )
+        )
+        return session
+
+    async def _assert_authorized(self, session: SessionState) -> None:
+        """AEGIS-RT v2 (2026-08-29): refuse to start work without an engagement card.
+
+        Raises WorkflowException unless the session has authorization proof
+        (authorization_ref) or an operator explicitly confirmed the card. This is
+        the 'refuse entirely if no authorization exists' gate. Called before any
+        phase transition out of INITIALIZED, so recon cannot start on an
+        unauthorized engagement.
+        """
+        if not session.has_authorization:
+            raise WorkflowException(
+                "Engagement is not authorized: no authorization_ref and no operator "
+                "confirmation (POST /engagements/{id}/confirm). Refusing to start."
+            )
+
     async def _create_engagement_unsafe(
         self, scope: ScopeDefinition, roe: Dict[str, Any], created_by: Optional[str] = None
     ) -> SessionState:
@@ -154,6 +201,12 @@ class EngagementManager:
             raise WorkflowTransitionError(
                 f"Invalid transition: {current.value} -> {new_phase.value}"
             )
+        # AEGIS-RT v2 (2026-08-29): engagement-card gate. Leaving INITIALIZED (the
+        # first real transition, into RECONNAISSANCE) requires either an
+        # authorization_ref on the scope or an operator-confirmed card. Without it,
+        # refuse — an unauthorized engagement cannot begin any work.
+        if current == EngagementPhase.INITIALIZED:
+            await self._assert_authorized(session)
         if new_phase == EngagementPhase.EXPLOITATION:
             stats = await self._orch.graph_memory.get_graph_stats(session_id)
             if stats.get("vulnerabilities", 0) == 0:

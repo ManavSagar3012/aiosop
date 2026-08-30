@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 import redis.asyncio as redis
+from redis.exceptions import ResponseError as RedisResponseError
 
 from ai_osop.core.config import scope_signing_key, settings
 
@@ -231,7 +232,14 @@ class DistributedCoordinationBus:
                     "confidence": str(event.confidence),
                     "engagement_id": event.engagement_id,
                     "timestamp": event.timestamp,
-                    "payload": json.dumps(event.payload),
+                    # FIX (bus-payload-serialize-2026-08-30): task/agent payloads
+                    # routinely carry datetime objects (Task.started_at, lease_expires
+                    # echoed into events). Plain json.dumps raised
+                    # "Object of type datetime is not JSON serializable", the publish
+                    # failed, and the bus silently degraded to local fallback — the
+                    # dashboard's live feed and cross-component events stopped
+                    # flowing. default=str matches the canonical serializer on line 68.
+                    "payload": json.dumps(event.payload, default=str),
                     "signature": event.signature,
                 },
                 maxlen=10000,  # Keep last 10k events per engagement
@@ -274,7 +282,7 @@ class DistributedCoordinationBus:
                 mkstream=True,
             )
             logger.info(f"Created/Verified consumer group: {group_name}")
-        except redis.exceptions.ResponseError as e:
+        except RedisResponseError as e:
             if "BUSYGROUP" not in str(e):
                 logger.error(f"Error creating consumer group: {e}")
                 return
@@ -320,9 +328,16 @@ class DistributedCoordinationBus:
         Phase 6: Validates source_agent against the authorized sources list.
         Phase 7 (Buzz-inspired): Verifies event signature.
         """
+        if fields.get("init") == "true":
+            return CoordinationEvent(
+                topic="system.init",
+                source_agent="system",
+                event_type="system",
+                payload={"raw": fields}
+            )
         try:
             payload_data = json.loads(fields.get("payload", "{}"))
-            source = fields.get("source", "unknown")
+            source = fields.get("source", fields.get("source_agent", "unknown"))
             signature = fields.get("signature", "")
 
             # FIX (bus-parse-order-2026-08-23): construct and SIGNATURE-VERIFY the
@@ -333,7 +348,7 @@ class DistributedCoordinationBus:
             event = CoordinationEvent(
                 event_id=fields.get("event_id", str(uuid.uuid4())),
                 topic=fields["topic"],
-                source_agent=fields["source"],
+                source_agent=source,
                 event_type=fields.get("type", "unknown"),
                 confidence=float(fields.get("confidence", 0.5)),
                 # FIX (bus-parse-fields-2026-08-23): restore engagement_id and the
@@ -346,7 +361,6 @@ class DistributedCoordinationBus:
                 timestamp=fields.get("timestamp", datetime.utcnow().isoformat()),
                 signature=signature,
             )
-
             # Phase 7 (Buzz-inspired): Verify event signature (pre-tagging)
             if signature and not event.verify_signature():
                 logger.warning(
@@ -361,7 +375,18 @@ class DistributedCoordinationBus:
             # logging is enabled -> the exception was swallowed by the broad
             # handler below and EVERY event from an unauthorized source was
             # reclassified as error.parse (history/consume lost the event).
-            if source not in self.AUTHORIZED_SOURCES:
+            # FIX (bus-source-normalize-2026-08-30): agents publish with their
+            # full instance id ("strategic-planner-001", "recon-agent-002")
+            # while AUTHORIZED_SOURCES lists base types ("strategic_planner"),
+            # so every instance-published event was tagged _unauthorized_source.
+            # Normalize the instance id to its base type before the check.
+            _source_base = (
+                source.rsplit("-", 1)[0].replace("-", "_") if "-" in source else source
+            )
+            if (
+                source not in self.AUTHORIZED_SOURCES
+                and _source_base not in self.AUTHORIZED_SOURCES
+            ):
                 logger.warning(
                     f"unauthorized_event_source source={source} "
                     f"topic={fields.get('topic', '?')} event_id={fields.get('event_id', '?')}"

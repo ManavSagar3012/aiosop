@@ -35,6 +35,10 @@ class PayloadMutationAgent(BaseAgent):
         self.engine = AdaptivePayloadEngine(self.mcp_adapter, llm_client=self.ctx.llm_client)
         # Vector memory is accessible via self.ctx.vector_memory (to be added to Context)
 
+    DETERMINISTIC_TASK_TYPES: frozenset = frozenset({
+        "generate_payloads", "mutate_payload", "evolve_population", "process_feedback",
+    })
+
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute payload mutation tasks."""
         task_type = task.type

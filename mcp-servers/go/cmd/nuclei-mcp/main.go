@@ -4,6 +4,7 @@ import (
 	"os"
 	"context"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -54,12 +55,47 @@ func main() {
 			// but never forwarded to nuclei, so every MCP scan silently ran the full
 			// template set (~13k templates) — turning targeted capability tests into
 			// multi-minute full scans. Pass each requested template via -t.
+			// FIX (template-path-resolve-2026-08-30): relative paths are resolved
+			// against the nuclei templates root (~/nuclei-templates) when the path
+			// does not exist relative to this process's CWD. The qualification gate
+			// passes store-relative paths ("http/misconfiguration/…"), which nuclei
+			// previously received unresolved -> "no templates provided for scan".
+			hasExplicitTemplates := false
 			for _, tmpl := range stringSlice(params["templates"]) {
+				hasExplicitTemplates = true
+				if _, err := os.Stat(tmpl); err != nil {
+					if home, herr := os.UserHomeDir(); herr == nil {
+						cand := home + string(os.PathSeparator) + "nuclei-templates" +
+							string(os.PathSeparator) + filepath.FromSlash(tmpl)
+						if _, cerr := os.Stat(cand); cerr == nil {
+							tmpl = cand
+						}
+					}
+				}
 				args = append(args, "-t", tmpl)
 			}
 			// Severity filter (-severity) and tag filter (-tags) forwarded to nuclei.
-			if sev, ok := params["severity"].(string); ok && strings.TrimSpace(sev) != "" {
-				args = append(args, "-severity", strings.TrimSpace(sev))
+			// NUCLEI-DEFAULT-SEVERITY (2026-08-30): an omitted severity previously
+			// ran the FULL ~13k-template set, turning every LLM-driven scan that
+			// forgot the parameter into a 15+ minute job the reaper then killed.
+			// Default to the actionable severities (mirrors NUCLEI_SCAN_PROFILES
+			// "standard"); callers can still widen it explicitly (info/low).
+			// FIX (default-severity-scope-2026-08-30): only apply the default when
+			// the caller did NOT explicitly select templates or tags — an explicit
+			// template choice defines the scan scope, and forcing critical/high/
+			// medium on it silently dropped intentionally-selected info templates
+			// (zero findings from http-missing-security-headers).
+			sevArg := ""
+			if sev, ok := params["severity"].(string); ok {
+				sevArg = strings.TrimSpace(sev)
+			}
+			if sevArg == "" && !hasExplicitTemplates {
+				if tags, ok := params["tags"].(string); !ok || strings.TrimSpace(tags) == "" {
+					sevArg = "critical,high,medium"
+				}
+			}
+			if sevArg != "" {
+				args = append(args, "-severity", sevArg)
 			}
 			if tags, ok := params["tags"].(string); ok && strings.TrimSpace(tags) != "" {
 				args = append(args, "-tags", strings.TrimSpace(tags))

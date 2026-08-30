@@ -48,6 +48,9 @@ AGENT_TOOL_POLICY: Dict[AgentType, Set[str]] = {
     AgentType.STATEFUL_LOGIC: {"browser-mcp", "internal"},
     AgentType.RETRIEVAL: {"internal"},
     AgentType.SELF_PENTEST: {"security-bridge", "browser-mcp", "internal"},
+    # LLM red team (AEGIS-LRT, 2026-08-29): reaches target/judge models through
+    # the platform's llm_client directly — no external MCP servers.
+    AgentType.LLM_RED_TEAM: {"internal"},
 }
 
 # Dangerous tool parameters that should be validated against scope

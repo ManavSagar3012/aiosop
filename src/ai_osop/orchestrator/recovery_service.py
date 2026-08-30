@@ -201,6 +201,39 @@ class RecoveryService:
                     task.assigned_agent_id = None
                     task.status = "pending"
 
+                # FIX (orphan-recovery-2026-08-30): a task whose engagement session
+                # no longer exists is an ORPHAN — resurrecting it re-assigns it to
+                # an idle agent (the scheduler's in-memory pending pass does not
+                # re-check the session), where it burns agent capacity on a dead
+                # engagement until it times out, then re-enters the retry/DLQ
+                # cycle on every restart. Dead-letter it instead; an operator can
+                # still requeue it explicitly after re-creating the engagement.
+                if task.engagement_id not in self._orch._sessions:
+                    if task.status in ("pending", "running"):
+                        task.status = "failed"
+                        task.completed_at = datetime.utcnow()
+                        task.result = {
+                            "status": "failed",
+                            "error": "orphaned: engagement session not found at recovery",
+                        }
+                        try:
+                            await self._orch.graph_memory.upsert_task(
+                                task, result_summary={"orphaned": True}
+                            )
+                        except Exception as e:
+                            logger.warning("recovery_orphan_persist_failed", task_id=task.id, error=str(e))
+                        try:
+                            await self._orch.dlq.enqueue(
+                                task,
+                                reason="orphaned_engagement",
+                                final_error="engagement session not found at recovery",
+                            )
+                        except Exception as e:
+                            logger.error("recovery_dlq_failed", task_id=task.id, error=str(e))
+                        self._orch._tasks[task.id] = task
+                        recovered["exhausted"] += 1
+                        continue
+
                 self._orch._tasks[task.id] = task
                 recovered["tasks"] += 1
                 await self._orch.session_memory.push_task_queue(

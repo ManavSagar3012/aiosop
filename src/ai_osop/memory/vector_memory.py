@@ -7,6 +7,33 @@ import json
 from typing import Any, Dict, List, Optional
 
 
+def _clean_text(value: str) -> str:
+    """Strip characters PostgreSQL text cannot store (SURROGATE-STRIP-001).
+
+    Nuclei template output carries lone surrogates and NUL bytes; asyncpg
+    refuses ANY text parameter containing them (UntranslatableCharacterError),
+    so persisting real scan findings into the semantic stores crashed the
+    write.
+    """
+    if "\x00" in value:
+        value = value.replace("\x00", "")
+    try:
+        value.encode("utf-8")
+        return value
+    except UnicodeEncodeError:
+        return value.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
+
+
+def _clean_meta(metadata: Any) -> Any:
+    if isinstance(metadata, str):
+        return _clean_text(metadata)
+    if isinstance(metadata, dict):
+        return {k: _clean_meta(v) for k, v in metadata.items()}
+    if isinstance(metadata, (list, tuple)):
+        return [_clean_meta(v) for v in metadata]
+    return metadata
+
+
 class VectorMemory:
     """
     Manages embedding-based storage and retrieval for payloads and exploits,
@@ -97,10 +124,10 @@ class VectorMemory:
                 INSERT INTO semantic_payloads (payload_type, content, embedding, metadata)
                 VALUES ($1, $2, $3, $4)
             """,
-                payload_type,
-                content,
+                _clean_text(payload_type),
+                _clean_text(content),
                 json.dumps(embedding),
-                json.dumps(metadata),
+                json.dumps(_clean_meta(metadata)),
             )
 
     async def search_similar_payloads(
@@ -149,9 +176,9 @@ class VectorMemory:
                 INSERT INTO semantic_findings (document, embedding, metadata)
                 VALUES ($1, $2, $3)
                 """,
-                document,
+                _clean_text(document),
                 json.dumps(embedding),
-                json.dumps(metadata),
+                json.dumps(_clean_meta(metadata)),
             )
 
     async def search_similar_findings(

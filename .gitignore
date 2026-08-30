@@ -1,4 +1,51 @@
-```
-# Compiled and build artifacts
-*.bundle
-```
+# --- secrets / environment (never commit) ---
+.env
+.env.backup
+.env.bak.*
+*.pem
+*.key
+
+# --- runtime / local state ---
+.runtime/
+.runlogs/
+.last_engagement_id
+.claude/
+.claude-flow/
+.mimosa/
+.coverage
+coverage.xml
+dump.rdb
+*.rdb
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# --- node / UI build ---
+node_modules/
+ui/node_modules/
+.vite/
+ui/dist/
+
+# --- logs & scratch output ---
+*.log
+*.log.*
+*.out
+*.err
+
+# --- transient session artifacts (root-level scratch) ---
+/*.txt
+/*.json
+/*.png
+.tmp/
+tmp/
+scratch/
+*.patch
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+desktop.ini

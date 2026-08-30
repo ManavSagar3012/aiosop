@@ -35,6 +35,10 @@ class ReportingAgent(BaseAgent):
         self.exporter = ReportExporter(template_dir)
         self.generated_reports: Dict[str, Dict[str, Any]] = {}
 
+    DETERMINISTIC_TASK_TYPES: frozenset = frozenset({
+        "generate_report", "generate_yield_report", "compile_evidence",
+    })
+
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute reporting task."""
         task_type = task.type
@@ -135,12 +139,21 @@ class ReportingAgent(BaseAgent):
                 # Resolve event_id from the pre-built audit map; default if absent.
                 event_id = audit_event_by_target.get(n.get("id"), "no-audit-event")
 
-                findings.append(
+                # AIOSOP-TAXONOMY-001: enrich each finding with ATT&CK / OWASP /
+                # CVSS / remediation so the technical report carries standard
+                # identifiers and actionable remediation for every entry.
+                from ai_osop.core.attack_taxonomy import enrich_finding
+                from ai_osop.core.bounty_report import _CVSS, _REMEDIATION
+
+                sev_key = str(n.get("severity", "info")).strip().lower()
+                vuln_type = n.get("vuln_type", "unknown")
+
+                finding = enrich_finding(
                     {
                         "id": n.get("id"),
                         "title": n.get("title", "Unknown"),
                         "severity": n.get("severity", "INFO"),
-                        "vuln_type": n.get("vuln_type", "unknown"),
+                        "vuln_type": vuln_type,
                         "target": n.get("endpoint_id", "unknown"),
                         "description": n.get("description", "No description provided."),
                         "evidence": display_evidence,
@@ -148,6 +161,11 @@ class ReportingAgent(BaseAgent):
                         "event_id": event_id,
                     }
                 )
+                finding["cvss"] = _CVSS.get(sev_key, _CVSS.get("info", "0.0 (Informational)"))
+                finding["remediation"] = _REMEDIATION.get(
+                    vuln_type, "Apply input validation and least-privilege controls."
+                )
+                findings.append(finding)
         except Exception as e:
             logger.warning("could_not_fetch_findings_from_graph", error=str(e))
 

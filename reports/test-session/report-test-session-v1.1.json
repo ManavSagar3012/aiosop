@@ -1,6 +1,6 @@
 {
   "engagement_id": "test-session",
-  "date": "2026-08-25",
+  "date": "2026-08-30",
   "version": "v1.1",
   "risk_narrative": "Mocked Executive Risk Narrative.",
   "stats": {
@@ -23,7 +23,12 @@
       "description": "A test vulnerability",
       "evidence": "Type: proof\nPayload: <script>alert(1)</script>",
       "evidence_hash": "6181cd90ed49fd22f83eb9c257856296af2c11becbaa600b457db5d92a212be7",
-      "event_id": "no-audit-event"
+      "event_id": "no-audit-event",
+      "attack_id": "T1059.007",
+      "attack_name": "Command and Scripting Interpreter: JavaScript",
+      "owasp": "A03:2021-Injection",
+      "cvss": "8.1 (High)",
+      "remediation": "Context-aware output encoding; a strict CSP; avoid innerHTML with untrusted data."
     }
   ],
   "findings": [
@@ -36,7 +41,12 @@
       "description": "A test vulnerability",
       "evidence": "Type: proof\nPayload: <script>alert(1)</script>",
       "evidence_hash": "6181cd90ed49fd22f83eb9c257856296af2c11becbaa600b457db5d92a212be7",
-      "event_id": "no-audit-event"
+      "event_id": "no-audit-event",
+      "attack_id": "T1059.007",
+      "attack_name": "Command and Scripting Interpreter: JavaScript",
+      "owasp": "A03:2021-Injection",
+      "cvss": "8.1 (High)",
+      "remediation": "Context-aware output encoding; a strict CSP; avoid innerHTML with untrusted data."
     }
   ]
 }

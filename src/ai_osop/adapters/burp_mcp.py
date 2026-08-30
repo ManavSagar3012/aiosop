@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.core.config import Severity, VulnClass
+from ai_osop.core.exceptions import MCPException
 from ai_osop.core.models import Endpoint, ScopeDefinition, Vulnerability
 from ai_osop.mcp.protocol import MCPExecuteResponse, MCPRegistry
 
@@ -141,10 +142,17 @@ class BurpMCPAdapter:
     async def send_to_repeater(
         self, request: Dict[str, Any], tab_name: Optional[str] = None
     ) -> MCPExecuteResponse:
-        """Send request to Repeater for manual manipulation."""
+        """Send request to Repeater for manual manipulation.
+
+        ``request`` is a flat request dict ({"url","method","body","headers"}) as
+        produced by the exploit agent. The Java extension reads url/method/body
+        as individual parameters, so flatten here.
+        """
         params = {
-            "request": request,
-            "tab_name": tab_name or f"auto-{datetime.utcnow().timestamp()}",
+            "url": request.get("url", ""),
+            "method": request.get("method", "GET"),
+            "body": request.get("body", ""),
+            "tab_name": tab_name or "",
         }
         response = await self.registry.execute_tool(self.SERVER_ID, "send_to_repeater", params)
         self._check_response(response, "send_to_repeater")
@@ -157,12 +165,19 @@ class BurpMCPAdapter:
         payload_set: List[str],
         config: Optional[Dict[str, Any]] = None,
     ) -> MCPExecuteResponse:
-        """Execute automated fuzzing attack via Intruder."""
+        """Send a request to Burp's Intruder UI tab (Community) for fuzzing.
+
+        The Java extension's intruder_attack tool accepts url/method/body and an
+        optional tab_name; on Community it hands the request to the Intruder tab
+        (attack execution is Pro-only). payload_positions/payload_set are accepted
+        for API compatibility but the extension does not drive a live attack.
+        """
+        cfg = config or {}
         params = {
-            "request": request,
-            "payload_positions": payload_positions,
-            "payload_set": payload_set,
-            "config": config or {"attack_type": "sniper", "thread_count": 10, "delay_ms": 100},
+            "url": request.get("url", ""),
+            "method": request.get("method", "GET"),
+            "body": request.get("body", ""),
+            "tab_name": cfg.get("tab_name", "") or "",
         }
         response = await self.registry.execute_tool(
             self.SERVER_ID, "intruder_attack", params, timeout_override=1800
@@ -173,17 +188,18 @@ class BurpMCPAdapter:
     async def extension_call(
         self, extension_name: str, method: str, params: Dict[str, Any]
     ) -> MCPExecuteResponse:
-        """Invoke a Burp extension method. Requires approval."""
-        request_params = {
-            "extension_name": extension_name,
-            "method": method,
-            "params": params,
-        }
-        response = await self.registry.execute_tool(
-            self.SERVER_ID, "extension_call", request_params, timeout_override=300
+        """Placeholder for arbitrary Burp extension invocation.
+
+        The Java extension does not expose a generic extension_call tool (and
+        never did — the tool was advertised but unimplemented). Prefer the
+        specific tools: extension_data_get/extension_data_set for extension
+        persistence, sync_to_organizer, send_to_decoder, etc.
+        """
+        raise MCPException(
+            "Burp extension_call is not implemented by the AI-OSOP extension. "
+            "Use the specific tools: extension_data_get/extension_data_set, "
+            "sync_to_organizer, send_to_decoder, collaborator_*."
         )
-        self._check_response(response, "extension_call")
-        return response
 
     async def get_sitemap(self, url_prefix: Optional[str] = None) -> List[Endpoint]:
         """Extract site map as normalized endpoints."""
@@ -308,7 +324,8 @@ class BurpMCPAdapter:
             if entry.get("id") == request_id:
                 return entry
 
-        # Fallback to MCP query
+        # Fallback to MCP query (the Java extension implements get_request_by_id
+        # against the live proxy history by integer id).
         response = await self.registry.execute_tool(
             self.SERVER_ID, "get_request_by_id", {"request_id": request_id}
         )
@@ -316,3 +333,138 @@ class BurpMCPAdapter:
         if response.status == "success" and response.result:
             return response.result
         return None
+
+    # ---------------------------------------------------------------- new tools (v0.2.0)
+
+    async def get_version(self) -> Dict[str, Any]:
+        """Report Burp edition, version, and available capability probes."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "get_version", {})
+        if response.status != "success" or not response.result:
+            return {}
+        return response.result
+
+    async def get_live_traffic(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """Traffic observed through Burp's HTTP engine (registered handler)."""
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "get_live_traffic", {"limit": limit}
+        )
+        if response.status != "success" or not response.result:
+            return []
+        return response.result.get("entries", [])
+
+    async def ws_open(self, url: str) -> Dict[str, Any]:
+        """Open a WebSocket client connection through Burp's WebSockets module."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "ws_open", {"url": url})
+        self._check_response(response, "ws_open")
+        return response.result or {}
+
+    async def ws_send(self, ws_id: str, payload: str) -> MCPExecuteResponse:
+        """Send a text message over an AI-OSOP-opened WebSocket."""
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "ws_send", {"ws_id": ws_id, "payload": payload}
+        )
+        self._check_response(response, "ws_send")
+        return response
+
+    async def ws_read(self, ws_id: str) -> List[Dict[str, Any]]:
+        """Drain buffered inbound messages from an AI-OSOP-opened WebSocket."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "ws_read", {"ws_id": ws_id})
+        if response.status != "success" or not response.result:
+            return []
+        return response.result.get("messages", [])
+
+    async def ws_close(self, ws_id: str) -> MCPExecuteResponse:
+        """Close an AI-OSOP-opened WebSocket."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "ws_close", {"ws_id": ws_id})
+        self._check_response(response, "ws_close")
+        return response
+
+    async def ws_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """WebSocket frames seen by the proxy."""
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "ws_history", {"limit": limit}
+        )
+        if response.status != "success" or not response.result:
+            return []
+        return response.result.get("entries", [])
+
+    async def add_to_scope(self, url: str) -> MCPExecuteResponse:
+        """Add a URL to Burp's project scope."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "add_to_scope", {"url": url})
+        self._check_response(response, "add_to_scope")
+        return response
+
+    async def remove_from_scope(self, url: str) -> MCPExecuteResponse:
+        """Remove a URL from Burp's project scope."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "remove_from_scope", {"url": url})
+        self._check_response(response, "remove_from_scope")
+        return response
+
+    async def is_in_scope(self, url: str) -> bool:
+        """Check whether a URL is in Burp's project scope."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "is_in_scope", {"url": url})
+        if response.status != "success" or not response.result:
+            return False
+        return bool(response.result.get("in_scope", False))
+
+    async def sync_to_organizer(self, url: str, method: str = "GET", body: str = "") -> MCPExecuteResponse:
+        """Send a request/response pair to Burp's Organizer (Pro) for the findings UI."""
+        response = await self.registry.execute_tool(
+            self.SERVER_ID,
+            "sync_to_organizer",
+            {"url": url, "method": method, "body": body},
+        )
+        self._check_response(response, "sync_to_organizer")
+        return response
+
+    async def send_to_decoder(self, text: str) -> MCPExecuteResponse:
+        """Send a value to Burp's Decoder tab."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "send_to_decoder", {"text": text})
+        self._check_response(response, "send_to_decoder")
+        return response
+
+    async def extension_data_get(self, key: str) -> Optional[str]:
+        """Read a value from the extension's persistent data store."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "extension_data_get", {"key": key})
+        if response.status != "success" or not response.result:
+            return None
+        return response.result.get("value")
+
+    async def extension_data_set(self, key: str, value: str) -> MCPExecuteResponse:
+        """Write a value to the extension's persistent data store."""
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "extension_data_set", {"key": key, "value": value}
+        )
+        self._check_response(response, "extension_data_set")
+        return response
+
+    async def collaborator_payload(self) -> Dict[str, Any]:
+        """Generate a Burp Collaborator payload (Pro). On Community this errors
+        with a pointer to AI-OSOP's oast-mcp (port 8099)."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "collaborator_payload", {})
+        self._check_response(response, "collaborator_payload")
+        return response.result or {}
+
+    async def collaborator_interactions(self, collab_id: str = "") -> List[Dict[str, Any]]:
+        """Fetch interactions for a previously generated Collaborator payload."""
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "collaborator_interactions", {"collab_id": collab_id}
+        )
+        if response.status != "success" or not response.result:
+            return []
+        return response.result.get("interactions", [])
+
+    async def export_project_options(self) -> Optional[str]:
+        """Export Burp project options as JSON (useful for audit trail)."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "export_project_options", {})
+        if response.status != "success" or not response.result:
+            return None
+        return response.result.get("project_options")
+
+    async def set_scan_config(self, config: str) -> MCPExecuteResponse:
+        """Persist a scanner config for consumption when Burp Scanner is available."""
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "set_scan_config", {"config": config}
+        )
+        self._check_response(response, "set_scan_config")
+        return response

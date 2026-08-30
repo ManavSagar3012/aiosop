@@ -128,7 +128,11 @@ def test_api_startup_registers_agents(client):
     # Note: the "experimental" designation was removed post-migration.
     # FIX (service-agent-2026-08-24): ServiceAssessmentAgent added as 22nd
     # registered agent (Tier-1 TLS/SSH service assessment specialist).
-    assert client.orch.register_agent.call_count == 22
+    # FIX (2026-08-29): RetrievalAgent + LLMRedTeamAgent added — RetrievalAgent
+    # backs the AEGIS-RT recall_findings priming; LLMRedTeamAgent is the AEGIS-LRT
+    # LLM red team operator. Total registered = 27 (includes vuln-agent-002
+    # second worker and service-agent-001).
+    assert client.orch.register_agent.call_count == 27
 
 
 def test_root_not_found(client):

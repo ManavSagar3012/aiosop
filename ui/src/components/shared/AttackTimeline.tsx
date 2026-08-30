@@ -39,7 +39,10 @@ export const AttackTimeline: React.FC = () => {
           id: entry.id,
           timestamp: entry.timestamp,
           type: 'phase',
-          title: `Phase: ${entry.action?.phase || entry.action?.new_phase || 'unknown'}`,
+          // FIX (timeline-phase-shape-2026-08-30): audit phase_transition events
+          // carry {to_phase, from_phase} while WS events carry {new_phase}/{phase};
+          // read all three so the timeline stops rendering "Phase: unknown".
+          title: `Phase: ${entry.action?.phase || entry.action?.new_phase || entry.action?.to_phase || 'unknown'}`,
           description: typeof entry.action === 'string' ? entry.action : JSON.stringify(entry.action),
         });
       }

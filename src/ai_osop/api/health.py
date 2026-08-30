@@ -23,6 +23,7 @@ from typing import Any, Deque, Dict
 from fastapi import APIRouter, HTTPException, status
 
 from ai_osop.api.deps import state
+from ai_osop.core.config import settings
 from ai_osop.core.metrics import READY_STATUS
 
 router = APIRouter(tags=["health"])
@@ -73,8 +74,34 @@ async def health_metrics():
 _readiness_history: Deque[Dict[str, Any]] = deque(maxlen=5)
 
 
+# LATENCY-PROBE-001 (2026-08-30): the shared SessionMemory client serves
+# responses from pre-buffered socket data, so pinging it routinely measures
+# ~0µs regardless of real network latency. Health checks use a dedicated
+# probe connection (created lazily, reused) whose socket carries no other
+# traffic, so every ping is a true round trip.
+_redis_probe_client = None
+
+
+def _get_redis_probe():
+    global _redis_probe_client
+    if _redis_probe_client is None:
+        import redis.asyncio as _aioredis
+
+        _redis_probe_client = _aioredis.from_url(
+            settings.redis_uri, socket_connect_timeout=2.0, socket_timeout=2.0
+        )
+    return _redis_probe_client
+
+
 async def _check_redis() -> Dict[str, Any]:
-    """Check Redis connectivity via the orchestrator's session_memory."""
+    """Check Redis connectivity.
+
+    Health gate pings the orchestrator's own client (the one the platform
+    actually uses). LATENCY-PROBE-001: the latency NUMBER comes from a
+    dedicated probe connection, because the shared client's socket carries
+    27 agents' traffic and its responses are routinely pre-buffered — pinging
+    it measures ~0µs regardless of real network latency.
+    """
     try:
         orch = state.get("orchestrator")
         if not orch or not orch.session_memory:
@@ -82,9 +109,13 @@ async def _check_redis() -> Dict[str, Any]:
         redis = orch.session_memory._redis
         if not redis:
             return {"status": "unhealthy", "error": "redis client not connected"}
-        start = time.monotonic()
         await redis.ping()
-        return {"status": "healthy", "latency_ms": round((time.monotonic() - start) * 1000, 2)}
+        start = time.perf_counter()
+        try:
+            await _get_redis_probe().ping()
+        except Exception:  # noqa: BLE001 - probe failure degrades the number, not health
+            return {"status": "healthy", "latency_ms": 0.0}
+        return {"status": "healthy", "latency_ms": round((time.perf_counter() - start) * 1000, 2)}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
 
@@ -98,9 +129,9 @@ async def _check_neo4j() -> Dict[str, Any]:
         driver = orch.graph_memory._driver
         if not driver:
             return {"status": "unhealthy", "error": "neo4j driver not connected"}
-        start = time.monotonic()
+        start = time.perf_counter()
         await driver.verify_connectivity()
-        return {"status": "healthy", "latency_ms": round((time.monotonic() - start) * 1000, 2)}
+        return {"status": "healthy", "latency_ms": round((time.perf_counter() - start) * 1000, 2)}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
 
@@ -114,12 +145,12 @@ async def _check_postgres() -> Dict[str, Any]:
         engine = orch.session_memory._pg_engine
         if not engine:
             return {"status": "unhealthy", "error": "postgres engine not initialized"}
-        start = time.monotonic()
+        start = time.perf_counter()
         from sqlalchemy import text
 
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-        return {"status": "healthy", "latency_ms": round((time.monotonic() - start) * 1000, 2)}
+        return {"status": "healthy", "latency_ms": round((time.perf_counter() - start) * 1000, 2)}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
 
@@ -201,6 +232,7 @@ async def _check_tool_reality() -> Dict[str, Any]:
         "threat-intel-mcp": (settings.threat_intel_mcp_host, settings.threat_intel_mcp_port),
         "security-bridge": (settings.security_bridge_host, settings.security_bridge_port),
         "source-map-mcp": (settings.source_map_mcp_host, settings.source_map_mcp_port),
+        "oast-mcp": (settings.oast_public_host, settings.oast_port),
         "cloud-mcp": (settings.cloud_mcp_host, settings.cloud_mcp_port),
         "turbo-intruder-mcp": (settings.turbo_intruder_mcp_host, settings.turbo_intruder_mcp_port),
     }
@@ -324,14 +356,14 @@ async def _deep_probe() -> Dict[str, Any]:
         return r.json().get("result", {}) if r.status_code == 200 else {}
 
     async def probe(name, coro):
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             verdict, detail = await coro
         except Exception as e:  # noqa: BLE001
             verdict, detail = "down", {"error": str(e)}
         channels[name] = {
             "verdict": verdict,
-            "latency_ms": round((time.monotonic() - start) * 1000, 1),
+            "latency_ms": round((time.perf_counter() - start) * 1000, 1),
             **detail,
         }
 
@@ -400,9 +432,12 @@ async def _deep_probe() -> Dict[str, Any]:
             )
             if http_res.get("status") != "success":
                 return ("failed", {"stage": "http", "detail": http_res})
-            # Active-scan capability check. scan_target on Community/unlicensed Burp
-            # errors at Scanner.startAudit() (returns null) BEFORE any audit begins, so
-            # this is a safe, side-effect-free capability probe against the local API.
+            # Active-scan capability check. scan_target on Community performs a
+            # probe via the HTTP engine and returns status "probe_completed" — that
+            # is NOT the active scanner, so it must not count as scan-capable.
+            # (v0.2.0 extension; the old 0.1.x extension errored at
+            # Scanner.startAudit instead, which also correctly read as
+            # scan_unavailable.)
             scan_res = await execute(
                 c,
                 burp,
@@ -411,17 +446,21 @@ async def _deep_probe() -> Dict[str, Any]:
                 25.0,
             )
             scan_err = str(scan_res.get("error", "")) if isinstance(scan_res, dict) else ""
-            if scan_res and not scan_err:
+            scan_status = scan_res.get("status", "") if isinstance(scan_res, dict) else ""
+            is_probe_fallback = scan_status == "probe_completed"
+            if scan_res and not scan_err and not is_probe_fallback:
                 return ("real_execution_verified", {"scan_capable": True, "http_verified": True})
             # HTTP works but the active scanner does not — honest, distinct verdict so
             # channels_verified no longer over-counts Burp as scan-ready.
+            reason = scan_err[:200]
+            if not reason and is_probe_fallback:
+                reason = "Burp Community fallback: active probe performed, but Burp Scanner is Pro-only"
             return (
                 "scan_unavailable",
                 {
                     "scan_capable": False,
                     "http_verified": True,
-                    "reason": scan_err[:200]
-                    or "active scanner unavailable (requires Burp Suite Professional)",
+                    "reason": reason or "active scanner unavailable (requires Burp Suite Professional)",
                 },
             )
 
@@ -602,16 +641,16 @@ async def run_startup_self_test() -> Dict[str, Any]:
 
     async def _check(name: str, checker, critical: bool = False) -> None:
         nonlocal checks_passed, checks_failed
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             result = await checker()
-            result["latency_ms"] = round((time.monotonic() - start) * 1000, 2)
+            result["latency_ms"] = round((time.perf_counter() - start) * 1000, 2)
             result["critical"] = critical
         except Exception as e:
             result = {
                 "status": "FAIL",
                 "error": str(e),
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "critical": critical,
             }
         if result.get("status") in ("healthy", "ready", "PASS"):
@@ -630,12 +669,12 @@ async def run_startup_self_test() -> Dict[str, Any]:
     orch = state.get("orchestrator")
     if orch:
         # Task Queue
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             task_queue_len = len(orch._tasks) if hasattr(orch, "_tasks") else 0
             results["task_queue"] = {
                 "status": "PASS",
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "task_count": task_queue_len,
                 "critical": False,
             }
@@ -644,18 +683,18 @@ async def run_startup_self_test() -> Dict[str, Any]:
             results["task_queue"] = {
                 "status": "FAIL",
                 "error": str(e),
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "critical": False,
             }
             checks_failed += 1
 
         # Session Store
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             session_store = state.get("session_store")
             results["session_store"] = {
                 "status": "PASS" if session_store is not None else "degraded",
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "initialized": session_store is not None,
                 "critical": False,
             }
@@ -667,20 +706,20 @@ async def run_startup_self_test() -> Dict[str, Any]:
             results["session_store"] = {
                 "status": "FAIL",
                 "error": str(e),
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "critical": False,
             }
             checks_failed += 1
 
         # Approval Store
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             has_approval_store = (
                 hasattr(orch, "approval_coordinator") and orch.approval_coordinator is not None
             )
             results["approval_store"] = {
                 "status": "PASS" if has_approval_store else "degraded",
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "initialized": has_approval_store,
                 "critical": False,
             }
@@ -692,18 +731,18 @@ async def run_startup_self_test() -> Dict[str, Any]:
             results["approval_store"] = {
                 "status": "FAIL",
                 "error": str(e),
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "critical": False,
             }
             checks_failed += 1
 
         # Graph Layer
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             graph_ok = orch.graph_memory is not None and orch.graph_memory._driver is not None
             results["graph_layer"] = {
                 "status": "PASS" if graph_ok else "FAIL",
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "initialized": graph_ok,
                 "critical": False,
             }
@@ -715,13 +754,13 @@ async def run_startup_self_test() -> Dict[str, Any]:
             results["graph_layer"] = {
                 "status": "FAIL",
                 "error": str(e),
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "critical": False,
             }
             checks_failed += 1
 
         # Tracing Layer
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             from opentelemetry import trace
 
@@ -729,7 +768,7 @@ async def run_startup_self_test() -> Dict[str, Any]:
             tracing_ok = tracer is not None
             results["tracing_layer"] = {
                 "status": "PASS" if tracing_ok else "degraded",
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "initialized": tracing_ok,
                 "critical": False,
             }
@@ -741,13 +780,13 @@ async def run_startup_self_test() -> Dict[str, Any]:
             results["tracing_layer"] = {
                 "status": "FAIL",
                 "error": str(e),
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "critical": False,
             }
             checks_failed += 1
 
         # Metrics Layer
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             from prometheus_client import REGISTRY
 
@@ -757,7 +796,7 @@ async def run_startup_self_test() -> Dict[str, Any]:
             )
             results["metrics_layer"] = {
                 "status": "PASS" if metrics_ok else "degraded",
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "initialized": metrics_ok,
                 "collector_count": len(REGISTRY._names_to_collectors),
                 "critical": False,
@@ -770,7 +809,7 @@ async def run_startup_self_test() -> Dict[str, Any]:
             results["metrics_layer"] = {
                 "status": "FAIL",
                 "error": str(e),
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
+                "latency_ms": round((time.perf_counter() - start) * 1000, 2),
                 "critical": False,
             }
             checks_failed += 1

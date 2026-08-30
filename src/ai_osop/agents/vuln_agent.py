@@ -7,7 +7,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 import httpx
@@ -103,6 +103,19 @@ class VulnAnalysisAgent(BaseAgent):
 
         return await self.ctx.llm_client.complete(messages)
 
+    # DETERMINISTIC-DISPATCH opt-in (2026-08-30): every task type with a
+    # purpose-built scan method. Unknown types raise inside _execute and the
+    # BaseAgent falls back to the LLM cognitive loop.
+    DETERMINISTIC_TASK_TYPES: frozenset = frozenset({
+        "burp_scan", "intruder_fuzz", "nuclei_scan", "sqli_scan", "sqli_http_scan",
+        "web_audit",
+        "xss_scan", "jwt_scan", "mass_assignment_scan", "csrf_scan", "ssrf_scan",
+        "stored_xss_scan", "subdomain_takeover_scan", "secret_liveness_scan",
+        "file_upload_scan", "prototype_pollution_scan", "websocket_scan",
+        "saml_scan", "race_limit_scan", "ssrf_metadata_chain",
+        "request_smuggling_scan", "correlate_findings", "triage_finding",
+    })
+
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute vulnerability analysis task."""
         task_type = task.type
@@ -122,8 +135,17 @@ class VulnAnalysisAgent(BaseAgent):
             return await self._execute_intruder_fuzz(payload)
         elif task_type == "nuclei_scan":
             return await self._execute_nuclei_scan(payload)
+        elif task_type == "web_audit":
+            # WEB-AUDIT-001: integrated crawl -> probe -> differential active
+            # audit (the open-components answer to a licensed scanner button).
+            return await self._execute_web_audit(payload)
         elif task_type == "sqli_scan":
             return await self._execute_sqli_scan(payload)
+        elif task_type == "sqli_http_scan":
+            # AIOSOP-GOLDEN-001 (2026-08-30): deterministic form/body SQLi probe —
+            # no sqlmap backend needed. Differential: control fails, injection
+            # succeeds => confirmed finding.
+            return await self._execute_sqli_http_scan(payload)
         elif task_type == "xss_scan":
             return await self._execute_xss_scan(payload)
         elif task_type == "jwt_scan":
@@ -241,6 +263,14 @@ class VulnAnalysisAgent(BaseAgent):
         session = await self.ctx.session_memory.get_session_state(engagement_id)
         if session:
             await self.burp_adapter.initialize(session.scope, session.session_id)
+
+        # Sync the engagement target into Burp's project scope (scope-gated: only
+        # engagement-scoped URLs pass the registry gate), so Burp's own annotations
+        # and is_in_scope checks treat scan traffic as in-scope.
+        try:
+            await self.burp_adapter.add_to_scope(url)
+        except Exception:
+            logger.debug("add_to_scope skipped for %s (out of engagement scope?)", url)
 
         # Launch Burp scan. AIOSOP-BURP-DEGRADE-001 (2026-07-03): the active scanner
         # (Scanner.startAudit) requires Burp Suite Professional; on Community/unlicensed
@@ -469,7 +499,22 @@ class VulnAnalysisAgent(BaseAgent):
             return {"status": "error", "error": response.error}
 
         # Normalize Nuclei findings
-        raw_findings = response.result.get("findings", [])
+        # FIX (str-get-2026-08-27): nuclei-mcp sometimes returns result as a JSON
+        # string instead of a dict (e.g. when the Go binary pipes raw JSONL).
+        # The original `response.result.get(...)` crashed with
+        # "'str' object has no attribute 'get'" — the #1 cause of 264/416 task
+        # failures across all past engagements.
+        _raw = response.result
+        if isinstance(_raw, str):
+            try:
+                _raw = json.loads(_raw)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning("nuclei_result_not_json", raw_preview=_raw[:200])
+                _raw = {}
+        if not isinstance(_raw, dict):
+            logger.warning("nuclei_result_unexpected_type", result_type=type(_raw).__name__)
+            _raw = {}
+        raw_findings = _raw.get("findings", [])
         vulns = []
 
         # FP triage (AIOSOP-FP-CATCHALL-001): probe the host ONCE for catch-all /
@@ -486,6 +531,11 @@ class VulnAnalysisAgent(BaseAgent):
                 baseline_status=catch_all.get("baseline_status"),
                 baseline_len=catch_all.get("baseline_len"),
             )
+
+        # FP triage (AIOSOP-FP-SCOPE-ATTRIB-001): map the host:port endpoints this
+        # scan was actually pointed at BEFORE normalizing, so per-finding scope
+        # attribution can downrank matches against services outside them.
+        scoped_endpoints = self._scoped_target_endpoints(targets)
 
         for finding in raw_findings:
             # nuclei-mcp emits each finding as a JSONL string (one JSON object per
@@ -504,6 +554,8 @@ class VulnAnalysisAgent(BaseAgent):
             vuln = self._normalize_nuclei_finding(finding)
             if catch_all.get("is_catch_all"):
                 self._apply_catch_all_fp_downrank(vuln, catch_all)
+            if scoped_endpoints:
+                self._apply_out_of_scan_scope_downrank(vuln, scoped_endpoints)
             if engagement_id:
                 vuln.engagement_id = engagement_id
             # FIX (finding-intelligence-2026-08-24): persistence DEFERRED until the
@@ -649,6 +701,447 @@ class VulnAnalysisAgent(BaseAgent):
         return {
             "status": "success",
             "tool": "sqlmap",
+            "target": url,
+            "injectable": True,
+            "findings_count": 1,
+            "findings": [vuln.model_dump()],
+        }
+
+    # ==================== web_audit: integrated active scanner ====================
+    # WEB-AUDIT-001 (2026-08-30): a Burp-Pro-style crawl -> probe -> differential
+    # audit built from the platform's open components (katana crawl, in-process
+    # probe injection, behavioral-delta judgment) — no licensed Burp features.
+
+    # High-signal probe sets; the differential (baseline vs probe response) does
+    # the confirming, the probe only has to provoke a distinguishing response.
+    _AUDIT_PROBES: Dict[str, List[str]] = {
+        "sqli": [
+            "' OR '1'='1",
+            "1' AND '1'='1' --",
+            "1 UNION SELECT NULL",
+        ],
+        "xss": [
+            "<script>probe_xss_marker_9f3a</script>",
+            "\"><img src=x onerror=probe_xss_marker_9f3a>",
+        ],
+        "ssti": [
+            "{{7*9}}",
+            "${7*9}",
+        ],
+    }
+
+    _SQLI_ERROR_SIGNATURES: Tuple[str, ...] = (
+        "sql syntax",
+        "sqlite3.",
+        "mysql_fetch",
+        "you have an error in your sql",
+        "warning: mysql",
+        "unclosed quotation mark",
+        "quoted string not properly terminated",
+        "psycopg2",
+        "pg_query",
+        "unterminated string",
+    )
+
+    async def _execute_web_audit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """WEB-AUDIT-001: integrated crawl -> inventory -> probe -> differential audit.
+
+        The "one button" Burp-Pro-style active scan, built from open components:
+          1. SCOPE (fail closed): load the engagement's signed scope and build a
+             ScopeEnforcer; every request host is validated BEFORE any socket
+             opens, and only http/https is ever fetched.
+          2. CRAWL: katana (via security-bridge) discovers parameter-bearing URLs;
+             on tool failure this degrades to auditing just the seed URL.
+          3. PROBE: for every discovered parameter, inject class-specific probes
+             (SQLi / reflected XSS / SSTI) with a control-baseline request.
+          4. DIFFERENTIAL JUDGMENT: a finding needs a behavioral delta the
+             baseline lacks — SQL error signatures or auth-bypass status delta
+             for SQLi, raw marker reflection for XSS, template evaluation
+             (7*9=63) for SSTI.
+          5. FUNNEL: confirmed deltas mint VALIDATED Vulnerability records
+             (graph + ledger), returned in the result the scheduler persists.
+        """
+        from urllib.parse import parse_qsl as _parse_qsl, urlencode as _urlencode, urlparse as _urlparse
+
+        from ai_osop.core.exceptions import OutOfScopeError
+        from ai_osop.safety.scope import ScopeEnforcer
+
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException(
+                "web_audit task requires one of 'url', 'target_url', or 'target' in payload"
+            )
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("web_audit: cannot determine engagement_id")
+
+        # ---- 1. Scope gate (fail closed) --------------------------------
+        parsed_seed = _urlparse(url)
+        if parsed_seed.scheme not in ("http", "https"):
+            raise OutOfScopeError(f"web_audit refuses non-HTTP scheme: {url}")
+        scope_def = None
+        session = None
+        try:
+            session = await self.ctx.session_memory.load_session_state(engagement_id)
+        except Exception as e:  # noqa: BLE001 - degrade to payload scope below
+            logger.warning("web_audit_session_load_failed", engagement_id=engagement_id, error=str(e))
+        scope_obj = getattr(session, "scope", None) if session is not None else None
+        if scope_obj is not None:
+            scope_def = scope_obj
+        elif isinstance(payload.get("scope"), dict):
+            from ai_osop.core.models import ScopeDefinition
+
+            scope_def = ScopeDefinition(**payload["scope"])
+        if scope_def is None:
+            raise OutOfScopeError(
+                "web_audit: no signed engagement scope available; refusing to probe "
+                f"{parsed_seed.hostname}. Schedule web_audit within an engagement."
+            )
+        enforcer = ScopeEnforcer(scope_def)
+        enforcer.validate_target(parsed_seed.hostname or "")
+
+        # ---- helpers ----------------------------------------------------
+        async def _scoped_get(target_url: str) -> httpx.Response:
+            """GET a target URL after re-validating its host against scope."""
+            p = _urlparse(target_url)
+            if p.scheme not in ("http", "https"):
+                raise OutOfScopeError(f"web_audit refuses non-HTTP scheme: {target_url}")
+            enforcer.validate_target(p.hostname or "")
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                return await client.get(target_url)
+
+        def _set_param(target_url: str, param: str, value: str) -> str:
+            """Return target_url with `param` replaced by `value` (others kept)."""
+            p = _urlparse(target_url)
+            pairs = [(k, v) for k, v in _parse_qsl(p.query) if k != param]
+            pairs.append((param, value))
+            return p._replace(query=_urlencode(pairs)).geturl()
+
+        # ---- 2. Crawl ----------------------------------------------------
+        audit_urls: List[str] = []
+        crawl_error: Optional[str] = None
+        try:
+            resp = await self.ctx.mcp_registry.execute_tool(
+                "security-bridge",
+                "katana_crawl",
+                {"url": url},
+                scope=scope_def,
+            )
+            data = resp.result if getattr(resp, "result", None) else {}
+            raw_urls = data.get("urls") or data.get("results") or []
+            if isinstance(raw_urls, str):
+                raw_urls = [u for u in raw_urls.splitlines() if u.strip()]
+            for u in raw_urls:
+                if not isinstance(u, str) or not u.strip():
+                    continue
+                try:
+                    pu = _urlparse(u.strip())
+                    if pu.scheme not in ("http", "https") or not pu.hostname:
+                        continue
+                    enforcer.validate_target(pu.hostname)
+                    audit_urls.append(u.strip())
+                except Exception:  # noqa: BLE001 - out-of-scope crawl hit: skip
+                    continue
+        except Exception as e:  # noqa: BLE001 - crawl is best-effort
+            crawl_error = str(e)
+            logger.warning("web_audit_crawl_failed", url=url, error=str(e))
+        if url not in audit_urls:
+            audit_urls.insert(0, url)
+        # Bound the audit surface so a huge crawl can't overrun the task budget.
+        audit_urls = audit_urls[: payload.get("max_urls", 25)]
+
+        findings: List[Vulnerability] = []
+        stats = {
+            "crawled": len(audit_urls),
+            "params_probed": 0,
+            "requests": 0,
+            "crawl_degraded": crawl_error is not None,
+        }
+
+        # ---- 3+4. Probe + differential per parameter ----------------------
+        for target_url in audit_urls:
+            params = [
+                {"name": k, "value": v} for k, v in _parse_qsl(_urlparse(target_url).query)
+            ]
+            if not params:
+                continue
+            control_value = payload.get("control", "audit_probe_baseline_77")
+            try:
+                baseline = await _scoped_get(_set_param(target_url, params[0]["name"], control_value))
+                stats["requests"] += 1
+            except OutOfScopeError:
+                raise
+            except Exception as e:  # noqa: BLE001 - dead endpoint: skip
+                logger.warning("web_audit_baseline_failed", url=target_url, error=str(e))
+                continue
+            baseline_body = (baseline.text or "").lower()
+            for param in params:
+                pname = param["name"]
+                stats["params_probed"] += 1
+                for vuln_class, probes in self._AUDIT_PROBES.items():
+                    if payload.get("classes") and vuln_class not in payload["classes"]:
+                        continue
+                    confirmed = None
+                    for probe in probes:
+                        try:
+                            resp = await _scoped_get(_set_param(target_url, pname, probe))
+                            stats["requests"] += 1
+                        except OutOfScopeError:
+                            raise
+                        except Exception as e:  # noqa: BLE001 - probe transport error
+                            logger.warning(
+                                "web_audit_probe_failed", url=target_url, param=pname, error=str(e)
+                            )
+                            break
+                        body = resp.text or ""
+                        body_l = body.lower()
+                        if vuln_class == "sqli":
+                            sig_hit = any(
+                                sig in body_l and sig not in baseline_body
+                                for sig in self._SQLI_ERROR_SIGNATURES
+                            )
+                            bypass = (
+                                resp.status_code in (200, 302)
+                                and baseline.status_code in (401, 403)
+                                and body_l != baseline_body
+                            )
+                            # Data-leak differential: a tautology probe that
+                            # returns substantially MORE content than the control
+                            # (classic UNION/boolean dump: empty control, rows on
+                            # injection). Thresholds are conservative — 3x growth
+                            # plus an absolute delta — so benign param echo noise
+                            # (a few chars of reflection) cannot fire it.
+                            data_leak = (
+                                "or" in probe.lower()
+                                and len(body) > (len(baseline_body) * 3)
+                                and (len(body) - len(baseline_body)) > 40
+                            )
+                            if sig_hit or bypass or data_leak:
+                                confirmed = ("sqli", probe, sig_hit, bypass)
+                                break
+                        elif vuln_class == "xss":
+                            if "probe_xss_marker_9f3a" in body and "probe_xss_marker_9f3a" not in baseline_body:
+                                confirmed = ("xss", probe, True, False)
+                                break
+                        elif vuln_class == "ssti":
+                            if "63" in body and "63" not in baseline_body and "7*9" in probe:
+                                confirmed = ("ssti", probe, True, False)
+                                break
+                    if confirmed is None:
+                        continue
+                    _, probe, sig_hit, bypass = confirmed
+                    cwe, vclass, sev = {
+                        "sqli": ("CWE-89", VulnClass.SQLI, Severity.HIGH),
+                        "xss": ("CWE-79", VulnClass.XSS, Severity.MEDIUM),
+                        "ssti": ("CWE-1336", VulnClass.SSTI, Severity.HIGH),
+                    }[vuln_class]
+                    vuln = Vulnerability(
+                        cwe=cwe,
+                        vuln_type=vclass,
+                        severity=sev,
+                        title=f"{vuln_class.upper()} via parameter '{pname}' (web_audit differential)",
+                        description=(
+                            f"web_audit differential confirmed {vuln_class.upper()} at {target_url}: "
+                            f"parameter '{pname}' with probe {probe!r} produced a behavioral delta "
+                            f"the control request lacked (error_signature={sig_hit}, "
+                            f"auth_bypass={bypass})."
+                        ),
+                        evidence=[
+                            {
+                                "type": "web_audit_differential",
+                                "provenance": "web_audit",
+                                "url": target_url,
+                                "parameter": pname,
+                                "baseline_value": control_value,
+                                "probe": probe,
+                                "baseline_status": baseline.status_code,
+                                "injected_status": resp.status_code,
+                                "error_signature": sig_hit,
+                                "auth_bypass": bypass,
+                            }
+                        ],
+                        tool_source="web_audit",
+                        confidence=0.85,
+                        validated=True,
+                        exploitability="medium",
+                        impact="high" if sev == Severity.HIGH else "medium",
+                        entry_point=True,
+                        engagement_id=engagement_id,
+                    )
+                    try:
+                        await self.ctx.graph_memory.add_vulnerability(vuln)
+                        self.findings[vuln.id] = vuln
+                    except Exception as e:  # noqa: BLE001 - persist is advisory
+                        logger.error("web_audit_persist_failed", vuln_id=vuln.id, error=str(e))
+                    try:
+                        from ai_osop.core.findings_ledger import record_finding_event
+
+                        record_finding_event(
+                            engagement_id=engagement_id,
+                            finding_id=vuln.id,
+                            finding_title=vuln.title,
+                            stage="validated",
+                            status="VALIDATED",
+                            reason="web_audit differential (control vs probe behavioral delta)",
+                            evidence={"url": target_url, "parameter": pname, "probe": probe},
+                            actor=self.ctx.agent_id,
+                        )
+                    except Exception:  # noqa: BLE001 - ledger is advisory
+                        pass
+                    findings.append(vuln)
+                    logger.info(
+                        "web_audit_confirmed",
+                        url=target_url,
+                        param=pname,
+                        vuln_class=vuln_class,
+                    )
+                    break  # one confirmed finding per parameter per class
+
+        return {
+            "status": "success",
+            "tool": "web_audit",
+            "target": url,
+            "stats": stats,
+            "findings_count": len(findings),
+            "findings": [v.model_dump() for v in findings],
+        }
+
+
+    async def _execute_sqli_http_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """AIOSOP-GOLDEN-001: deterministic form/body SQLi differential scan.
+
+        Closes the "0 findings is a black box" gap for login-form SQLi: sqlmap's
+        query-string playbook can't cover a body parameter, and the LLM can't be
+        relied on to call propose_vulnerability. This task probes the target
+        directly with a control vs injection differential and mints a VALIDATED
+        finding when the response difference confirms injection — no tooling, no
+        LLM dependence.
+
+        Payload:
+            url          target POST URL (e.g. http://host/login)
+            parameter    body parameter to test (default 'username')
+            control      benign value (default '__nonexistent_user__')
+            payload      SQLi payload (default "' OR 1=1 --")
+            success      success response marker (default 'Welcome')
+            failure      failure response marker (default 'Login failed')
+            engagement_id  injected by _execute
+        """
+        url = payload.get("url") or payload.get("target_url") or payload.get("target")
+        if not url:
+            raise AgentException(
+                "sqli_http_scan task requires one of 'url', 'target_url', or 'target' in payload"
+            )
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        if not engagement_id:
+            raise AgentException("sqli_http_scan: cannot determine engagement_id")
+
+        parameter = payload.get("parameter", "username")
+        control_value = payload.get("control", "__nonexistent_user__")
+        sqli_payload = payload.get("payload", "' OR 1=1 --")
+        success_marker = payload.get("success", "Welcome")
+        failure_marker = payload.get("failure", "Login failed")
+
+        async def _post(pvalue: str):
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                return await client.post(
+                    url,
+                    data={parameter: pvalue, "password": "probe"},
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+
+        try:
+            control = await _post(control_value)
+            injected = await _post(sqli_payload)
+        except Exception as e:  # noqa: BLE001 - report, do not crash
+            logger.warning("sqli_http_scan_failed", url=url, error=str(e))
+            return {"status": "error", "tool": "sqli_http", "target": url, "error": str(e)}
+
+        control_body = control.text or ""
+        injected_body = injected.text or ""
+        control_failed = failure_marker in control_body or success_marker not in control_body
+        injection_succeeded = success_marker in injected_body
+
+        if not (injection_succeeded and control_failed):
+            logger.info("sqli_http_scan_clean", url=url, parameter=parameter)
+            return {
+                "status": "success",
+                "tool": "sqli_http",
+                "target": url,
+                "injectable": False,
+                "control_failed": control_failed,
+                "injection_succeeded": injection_succeeded,
+                "findings_count": 0,
+            }
+
+        # Differential confirmed -> VALIDATED finding, same standard as sqlmap.
+        vuln = Vulnerability(
+            cwe="CWE-89",
+            vuln_type=VulnClass.SQLI,
+            severity=Severity.HIGH,
+            title=f"SQL Injection in login parameter '{parameter}'",
+            description=(
+                f"HTTP differential confirmed SQL injection at {url}: a control "
+                f"login with '{control_value}' failed, but the payload '{sqli_payload}' "
+                f"reached the success marker '{success_marker}'. This authenticates "
+                f"without valid credentials (form/body injection, no sqlmap needed)."
+            ),
+            evidence=[
+                {
+                    "type": "http_differential",
+                    "provenance": "sqli_http_scan",
+                    "url": url,
+                    "parameter": parameter,
+                    "control_value": control_value,
+                    "payload": sqli_payload,
+                    "control_status": control.status_code,
+                    "control_marker": "fail",
+                    "injected_status": injected.status_code,
+                    "injected_marker": "success",
+                }
+            ],
+            tool_source="sqli_http_scan",
+            confidence=0.9,
+            validated=True,
+            exploitability="high",
+            impact="high",
+            entry_point=True,
+            engagement_id=engagement_id,
+        )
+        try:
+            await self.ctx.graph_memory.add_vulnerability(vuln)
+            self.findings[vuln.id] = vuln
+        except Exception as e:
+            logger.error("sqli_http_scan_persist_failed", vuln_id=vuln.id, error=str(e))
+
+        # AIOSOP-LEDGER-001: record into the findings ledger for funnel visibility.
+        try:
+            from ai_osop.core.findings_ledger import record_finding_event
+
+            record_finding_event(
+                engagement_id=engagement_id,
+                finding_id=vuln.id,
+                finding_title=vuln.title,
+                stage="proposed",
+                status="PROPOSED",
+                reason="sqli_http_scan differential confirmed (control failed, injection succeeded)",
+                evidence={
+                    "url": url,
+                    "parameter": parameter,
+                    "payload": sqli_payload,
+                },
+                actor=self.ctx.agent_id,
+            )
+        except Exception:  # noqa: BLE001 - ledger is advisory
+            pass
+
+        logger.info("sqli_http_scan_confirmed", url=url, parameter=parameter)
+        return {
+            "status": "success",
+            "tool": "sqli_http",
             "target": url,
             "injectable": True,
             "findings_count": 1,
@@ -2691,6 +3184,79 @@ class VulnAnalysisAgent(BaseAgent):
             }
             if getattr(vuln, "evidence", None):
                 vuln.evidence[0] = ev
+
+    def _scoped_target_endpoints(self, targets: List[str]) -> set:
+        """Extract (host, port|None) endpoints the scan was actually pointed at.
+
+        Nuclei network/service templates probe a host's STANDARD service ports
+        regardless of which port the target URL named. On a shared lab host that
+        discovers real-but-unrelated services (live observed: critical Redis CVEs
+        on 127.0.0.1:6379 — an unscoped sibling project's Redis — while the
+        engagement target was 127.0.0.1:80). Downranking such matches needs to
+        know the scoped endpoints; None-port means "scheme default" (80/443).
+        """
+        endpoints: set = set()
+        for t in targets or []:
+            if not isinstance(t, str) or not t.strip():
+                continue
+            raw = t.strip()
+            if "://" not in raw:
+                # Bare host or host:port with no scheme — treat as http origin.
+                raw = f"http://{raw}"
+            try:
+                p = urlparse(raw)
+                port = p.port or (443 if p.scheme == "https" else 80)
+            except ValueError:
+                continue
+            if p.hostname:
+                endpoints.add((p.hostname.lower(), port))
+        return endpoints
+
+    def _apply_out_of_scan_scope_downrank(self, vuln: Vulnerability, scoped_endpoints: set) -> None:
+        """Down-rank findings matched against endpoints this scan never targeted.
+
+        Catches the shared-host service misattribution class of false positive:
+        nuclei matches a REAL service (the version/CVE data is genuine) that simply
+        is not part of the engagement — a sibling project's Redis answering on the
+        host's standard port. The evidence is preserved with a transparent
+        out_of_scan_scope signal; confidence is cut below the triage floor so the
+        finding cannot be promoted as a critical engagement result. Findings that
+        match a scoped endpoint, or whose endpoint can't be parsed, are untouched.
+        """
+        ev = vuln.evidence[0] if getattr(vuln, "evidence", None) else None
+        if not isinstance(ev, dict):
+            return
+        matched_at = str(ev.get("matched_at") or ev.get("url") or "")
+        if not matched_at:
+            return
+
+        # matched_at may be "host:port", a full URL, or scheme://host:port/path.
+        candidate = matched_at.strip()
+        if "://" not in candidate:
+            candidate = f"http://{candidate}"
+        try:
+            p = urlparse(candidate)
+            port = p.port or (443 if p.scheme == "https" else 80)
+        except ValueError:
+            return
+        if not p.hostname:
+            return
+        key = (p.hostname.lower(), port)
+        if key in scoped_endpoints:
+            return
+
+        vuln.confidence = min(getattr(vuln, "confidence", 1.0), 0.2)
+        vuln.exploitability = "low"
+        ev["false_positive_signal"] = {
+            "out_of_scan_scope": True,
+            "matched_endpoint": f"{key[0]}:{key[1]}",
+            "scoped_endpoints": sorted(f"{h}:{pt}" for h, pt in scoped_endpoints),
+            "reason": (
+                "nuclei matched a service on a host port this scan was not pointed at "
+                "(shared-host service misattribution — real service, wrong engagement)"
+            ),
+        }
+        vuln.evidence[0] = ev
 
     def _normalize_nuclei_finding(self, finding: Dict[str, Any]) -> Vulnerability:
         """Convert Nuclei finding to Vulnerability model."""

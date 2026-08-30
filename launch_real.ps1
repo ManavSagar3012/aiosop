@@ -96,8 +96,8 @@ Start-Process -FilePath $venvPy -ArgumentList "mcp-servers/python/cloud_mcp.py -
 
 Start-Sleep -Seconds 8
 
-Write-Host "[5/5] Starting AI-OSOP API on :8200..."
-Start-Process -FilePath $venvPy -ArgumentList "-m uvicorn ai_osop.api.main:app --host 127.0.0.1 --port 8200" -WindowStyle Hidden
+Write-Host "[5/5] Starting AI-OSOP API on :8080..."
+Start-Process -FilePath $venvPy -ArgumentList "-m uvicorn ai_osop.api.main:app --host 127.0.0.1 --port 8080" -WindowStyle Hidden
 
 Start-Sleep -Seconds 20
-Write-Host "Done. Verify tooling reality with:  curl http://127.0.0.1:8200/health/tooling"
+Write-Host "Done. Verify tooling reality with:  curl http://127.0.0.1:8080/health/tooling"

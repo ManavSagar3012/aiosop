@@ -91,6 +91,24 @@ async def get_findings(session_id: str, operator: Dict[str, Any] = Depends(verif
     return [_vuln_node_to_finding(n) for n in vuln_nodes]
 
 
+@router.get("/{session_id}/findings-ledger")
+async def get_findings_ledger(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
+    """AIOSOP-LEDGER-001: expose the findings funnel for an engagement.
+
+    Answers "why did the pipeline produce N findings?" — how many were proposed,
+    validated, rejected (with top reasons), and emitted. This is the visibility
+    primitive for the "0 findings is a black box" problem.
+    """
+    await assert_engagement_access(operator, session_id)
+    from ai_osop.core.findings_ledger import get_findings_ledger
+
+    ledger = get_findings_ledger()
+    return {
+        "funnel": ledger.funnel_for(session_id),
+        "entries": ledger.entries_for(session_id, limit=500),
+    }
+
+
 @router.get("/{session_id}/report")
 async def get_report(session_id: str, operator: Dict[str, Any] = Depends(verify_token)):
     """Serve the persisted assessment report for an engagement.
@@ -264,6 +282,30 @@ async def replay_finding(
     )
     await state["orchestrator"].schedule_task(task)
     return {"status": "queued", "task_id": task.id, "task_type": task.type}
+
+
+@router.post("/{session_id}/sync-outcomes")
+async def sync_outcomes(
+    session_id: str,
+    operator: Dict[str, Any] = Depends(require_role("senior_operator")),
+):
+    """AIOSOP-P2B-SYNC-001: on-demand trigger for the calibration feedback loop.
+
+    Pulls real (or simulated, per OSOP_BUG_BOUNTY_SIMULATION) submission outcomes
+    from the bug-bounty adapter and folds them into the findings corpus, so the
+    ConfidenceCalibrationEngine learns from genuine accept/reject ground truth
+    without waiting for the background poller's next tick.
+    """
+    await assert_engagement_access(operator, session_id)
+    orch = state.get("orchestrator")
+    if orch is None or orch.finding_corpus_service is None:
+        raise HTTPException(status_code=503, detail="Outcome corpus service not initialized")
+    try:
+        ingested = await orch._ingest_outcomes_once()
+    except Exception as e:
+        logger.exception("manual_outcome_sync_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Outcome sync failed: {e}")
+    return {"status": "ok", "ingested": ingested}
 
 
 @router.get("/{session_id}/findings/{finding_id}/vault")

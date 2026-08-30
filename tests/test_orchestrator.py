@@ -25,7 +25,10 @@ def mock_orchestrator():
 @pytest.fixture
 def dummy_scope():
     return ScopeDefinition(
-        engagement_id="test-eng", domains=["example.com"], approval_required_for=["rce"]
+        engagement_id="test-eng",
+        domains=["example.com"],
+        approval_required_for=["rce"],
+        authorization_ref="/path/to/roe.pdf",
     )
 
 
@@ -62,11 +65,13 @@ async def test_transition_phase(mock_orchestrator, dummy_scope):
     assert updated_session.phase == EngagementPhase.RECONNAISSANCE.value
     mock_orchestrator.session_memory.store_session_state.assert_called()
 
-    # Verify auto-task scheduling for recon
-    assert len(mock_orchestrator._tasks) == 1
-    task = list(mock_orchestrator._tasks.values())[0]
+    # Verify auto-task scheduling for recon (full_recon + AEGIS-RT recall_findings)
+    assert len(mock_orchestrator._tasks) == 2
+    task = next(t for t in mock_orchestrator._tasks.values() if t.type == "full_recon")
     assert task.type == "full_recon"
     assert task.payload["domain"] == "example.com"
+    recall = next(t for t in mock_orchestrator._tasks.values() if t.type == "recall_findings")
+    assert recall.agent_type == AgentType.RETRIEVAL
 
 
 @pytest.mark.asyncio

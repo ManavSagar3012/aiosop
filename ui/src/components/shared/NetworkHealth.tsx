@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { API_BASE, AUTH_TOKEN } from '../../services/api';
 import { NetworkService, ConnectionStatus } from '../../services/network';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
@@ -9,10 +9,13 @@ export const NetworkHealth: React.FC<{ collapsed?: boolean }> = ({ collapsed = f
   const [metrics, setMetrics] = useState({ latency: 0, throughput: 0 });
   const sessionId = useIntelligenceStore((s) => s.sessionId);
   const setSessionId = useIntelligenceStore((s) => s.setSessionId);
+  const bootstrappedRef = useRef(false);
+  const netRef = useRef<NetworkService | null>(null);
 
-  // Derive the initial engagement once
+  // Derive the initial engagement ONCE using a ref guard
   useEffect(() => {
-    if (sessionId) return;
+    if (sessionId || bootstrappedRef.current) return;
+    bootstrappedRef.current = true;
     let cancelled = false;
     (async () => {
       try {
@@ -35,20 +38,32 @@ export const NetworkHealth: React.FC<{ collapsed?: boolean }> = ({ collapsed = f
         if (!cancelled) setStatus('disconnected');
       }
     })();
-    return () => { cancelled = true; };
-  }, [sessionId, setSessionId]);
+    return () => {
+      cancelled = true;
+      // FIX (strictmode-bootstrap-2026-08-30): React 18 StrictMode mounts ->
+      // unmounts -> remounts every effect in dev. The first pass started this
+      // bootstrap fetch, cleanup cancelled it, and this ref guard then made the
+      // remounted effect a no-op — so the sidebar NEVER auto-connected (stuck
+      // DISCONNECTED with a healthy stack). Resetting the guard on cleanup lets
+      // the remounted effect retry; the fetch is idempotent.
+      bootstrappedRef.current = false;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Socket lifecycle
+  // Socket lifecycle — only reconnects when sessionId actually changes
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
     const net = new NetworkService((newStatus) => { if (!cancelled) setStatus(newStatus); });
+    netRef.current = net;
     net.connect(sessionId);
     net.hydrate(sessionId);
     const interval = setInterval(() => { if (!cancelled) setMetrics(net.getMetrics()); }, 1000);
     return () => {
       cancelled = true;
       net.disconnect();
+      netRef.current = null;
       clearInterval(interval);
     };
   }, [sessionId]);

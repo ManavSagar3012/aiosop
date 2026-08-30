@@ -8,7 +8,7 @@ import time
 import urllib.request
 import urllib.error
 
-TOKEN = os.environ.get("OSOP_TOKEN", "")
+TOKEN = "dev-token"
 if not TOKEN:
     env_path = os.path.join(os.path.dirname(__file__), "..", "ui", ".env")
     if os.path.exists(env_path):
@@ -23,7 +23,7 @@ if not TOKEN:
     sys.exit(1)
 
 BASE = "http://127.0.0.1:8200"
-SID = "eng-20260825131835-eng-qosmos-live"
+SID = "eng-20260826185912-eng-qosmos-live-003"
 INTERVAL = 3
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 

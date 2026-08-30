@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import structlog
 
+from ai_osop.agents.prompts import AUTONOMOUS_AGENT_SYSTEM_PROMPT
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import AuditEvent, ScopeDefinition, Task
@@ -208,6 +209,33 @@ class BaseAgent(ABC):
     # work, short enough to prevent permanent hangs (Issue 3).
     DEFAULT_TASK_TIMEOUT_SECONDS = 900
 
+    # DETERMINISTIC-DISPATCH (2026-08-30): task types this agent executes via its
+    # own ``_execute()`` implementation instead of the LLM cognitive loop.
+    # Empty by default. Subclasses with purpose-built engines (VulnAnalysisAgent's
+    # normalized scan methods, ReportingAgent, payload engine, ...) opt in per
+    # task type; on deterministic failure/exception execute_task falls back to
+    # the LLM loop, so autonomy is preserved as the safety net. Agents whose
+    # production behavior IS the cognitive loop (e.g. ReconAgent) deliberately
+    # keep this empty.
+    DETERMINISTIC_TASK_TYPES: frozenset = frozenset()
+
+    def _use_deterministic_execution(self, task: Task) -> bool:
+        """True when this task type has a deterministic engine on this agent."""
+        return (
+            bool(self.DETERMINISTIC_TASK_TYPES)
+            and task.type in self.DETERMINISTIC_TASK_TYPES
+        )
+
+    # AIOSOP-PROMPT-001 (2026-08-29): runtime enforcement of the retry/backoff
+    # budgets the production system prompt (docs/AIOSOP_AGENT_SYSTEM_PROMPT.md §8)
+    # sets. The prompt tells the model "max 3 attempts per tool call" and "mark a
+    # host DEGRADED after 5 consecutive failures" — but a prompt is a request, not
+    # a constraint. These constants make the loop itself refuse to repeat an
+    # identical call and stop probing a host that keeps failing, so a runaway LLM
+    # cannot burn the whole task budget on one dead endpoint.
+    MAX_TOOL_ATTEMPTS_PER_CALL = 3
+    MAX_CONSECUTIVE_HOST_FAILURES = 5
+
     async def execute_task(self, task: Task) -> Dict[str, Any]:
         """
         Execute a task using a hypothesis-driven cognitive loop.
@@ -257,9 +285,120 @@ class BaseAgent(ABC):
             start_time = time.time()
             timeout_s = getattr(task, "timeout_seconds", None) or self.DEFAULT_TASK_TIMEOUT_SECONDS
 
+            # DETERMINISTIC-DISPATCH (2026-08-30): purpose-built engines run first.
+            # These paths were previously dead code at runtime — execute_task only
+            # ever ran the LLM cognitive loop, so the deterministic implementations
+            # (VulnAnalysisAgent's 20+ scan methods with normalized findings,
+            # ReportingAgent, payload engine, retrieval, ...) executed only under
+            # unit tests. Order: deterministic _execute → on failure/exception,
+            # fall through to the LLM cognitive loop below (the verified fallback).
+            # Safety is unchanged: registry.execute_tool still runs the scope gate
+            # on every MCP call from either path.
+            if self._use_deterministic_execution(task):
+                agent_logger.info(
+                    "deterministic_dispatch",
+                    agent_id=self.ctx.agent_id,
+                    task_type=task.type,
+                    task_id=task.id,
+                )
+                # SCOPE-BIND-DETERMINISTIC (2026-08-30): some deterministic engines
+                # (e.g. the nuclei scan path) call mcp_registry.execute_tool
+                # directly without an adapter initialize(), so no scope was bound
+                # and the registry gate denied every call with
+                # no_scope_bound_for_active_tool. Bind the engagement scope to ALL
+                # registered servers once, concurrently, before the engine runs —
+                # the same binding adapter initialize() establishes. Scan engines
+                # that initialize their own adapter simply re-bind (idempotent).
+                try:
+                    _session = await asyncio.wait_for(
+                        self.ctx.session_memory.load_session_state(task.engagement_id),
+                        timeout=10.0,
+                    )
+                    _scope = getattr(_session, "scope", None)
+                    if _scope is not None:
+                        _init_calls = [
+                            asyncio.wait_for(
+                                self.ctx.mcp_registry.initialize_server(
+                                    _sid, _scope, {}, task.engagement_id
+                                ),
+                                timeout=20.0,
+                            )
+                            for _sid in list(self.ctx.mcp_registry._servers.keys())
+                        ]
+                        _init_results = await asyncio.gather(*_init_calls, return_exceptions=True)
+                        _bound = sum(1 for r in _init_results if not isinstance(r, BaseException))
+                        agent_logger.info(
+                            "deterministic_scope_bound",
+                            agent_id=self.ctx.agent_id,
+                            task_id=task.id,
+                            servers_bound=_bound,
+                        )
+                except Exception as _e:  # noqa: BLE001 - scope binding is best-effort;
+                    # the gate still fails closed, and per-adapter initialize() in
+                    # the engine remains as the second binding opportunity.
+                    agent_logger.warning(
+                        "deterministic_scope_bind_failed",
+                        agent_id=self.ctx.agent_id,
+                        task_id=task.id,
+                        error=str(_e)[:200],
+                    )
+                try:
+                    det = await asyncio.wait_for(self._execute(task), timeout=timeout_s)
+                except asyncio.TimeoutError:
+                    # The deterministic engine consumed the whole task budget;
+                    # an LLM-loop fallback would immediately hit the same wall.
+                    self.ctx.status = "idle"
+                    self.ctx.current_task = None
+                    return {
+                        "status": "failed",
+                        "error": f"deterministic execution exceeded {timeout_s}s timeout",
+                        "task_type": task.type,
+                    }
+                except asyncio.CancelledError:
+                    self.ctx.status = "idle"
+                    self.ctx.current_task = None
+                    raise
+                except Exception as e:  # noqa: BLE001 - cognitive loop is the fallback
+                    agent_logger.warning(
+                        "deterministic_execute_failed_falling_back_to_cognitive_loop",
+                        agent_id=self.ctx.agent_id,
+                        task_type=task.type,
+                        task_id=task.id,
+                        error=str(e)[:300],
+                    )
+                    det = None
+                # Terminal when the engine completed with any non-failure status.
+                # "error" (bad/missing payload, KB unavailable, ...) is terminal too:
+                # the cognitive loop cannot conjure missing inputs, and letting the
+                # LLM improvise over an engine failure is how out-of-scope noise
+                # happened. Only None (crash) / "failed" (tool-level failure) fall
+                # back to the LLM loop, which may pick different tools.
+                if isinstance(det, dict) and det.get("status") not in (None, "failed"):
+                    try:
+                        det = await self._validate_output(det)
+                    except Exception as e:  # noqa: BLE001 - output validation is advisory
+                        logger.error(f"Agent output validation failed: {str(e)}")
+                    self.ctx.status = "idle"
+                    self.ctx.current_task = None
+                    return det
+                # det failed/None → cognitive loop below
+
             # Retrieve MCP tools available to this agent
             available_tools = []
             for server_id, conn in self.ctx.mcp_registry._servers.items():
+                # LAZY-MCP-INIT-001: If the server wasn't initialized during
+                # startup (e.g. server was down), try to initialize now.
+                if not getattr(conn, "_initialized", False):
+                    try:
+                        from ai_osop.mcp.protocol import MCPInitializeRequest
+                        await conn.connect(max_retries=2)
+                        await conn.initialize(MCPInitializeRequest(
+                            scope={},
+                            session_id=task.engagement_id,
+                        ))
+                    except Exception:  # noqa: BLE001
+                        agent_logger.debug(f"lazy_mcp_init_failed server={server_id}")
+                        continue
                 tools = await conn.list_tools()
                 for t in tools:
                     available_tools.append(
@@ -275,6 +414,15 @@ class BaseAgent(ABC):
             iteration = 0
             max_iterations = 20
             final_result = {"status": "success", "iterations": 0}
+            # AIOSOP-PROMPT-001: per-task retry budgets (runtime enforcement of the
+            # prompt's §8 ceilings). Keyed by (tool, params) so an identical call
+            # refuses to re-run after MAX_TOOL_ATTEMPTS_PER_CALL, and per-host so a
+            # host that keeps failing is marked DEGRADED and skipped.
+            self._call_attempts: Dict[str, int] = {}
+            self._host_failures: Dict[str, int] = {}
+            self._degraded_hosts: set = set()
+            self._last_tool_signature: Optional[str] = None
+            self._last_tool_was_error = False
 
             while (
                 not objective_met
@@ -397,6 +545,55 @@ class BaseAgent(ABC):
                     tool_name = tool_call.get("name")
                     tool_params = tool_call.get("parameters", {})
 
+                    # AIOSOP-PROMPT-001: runtime retry budgets. Compute a stable
+                    # signature of this exact call so an identical (server, name,
+                    # params) repeat is refused after MAX_TOOL_ATTEMPTS_PER_CALL,
+                    # and extract the host so a persistently-failing host is marked
+                    # DEGRADED and skipped. This turns the prompt's §8 ceilings into
+                    # enforced behavior a runaway LLM cannot burn through.
+                    import json as _json
+
+                    try:
+                        _params_sig = _json.dumps(tool_params, sort_keys=True, default=str)
+                    except Exception:  # noqa: BLE001 - params may be non-serializable
+                        _params_sig = str(tool_params)
+                    call_sig = f"{server_id}:{tool_name}:{_params_sig}"
+                    attempts = self._call_attempts.get(call_sig, 0)
+                    if attempts >= self.MAX_TOOL_ATTEMPTS_PER_CALL:
+                        agent_logger.warning(
+                            "tool_attempt_budget_exhausted",
+                            agent_id=self.ctx.agent_id,
+                            signature=call_sig[:200],
+                            attempts=attempts,
+                        )
+                        await self._record_observation(
+                            task.engagement_id,
+                            {"tool_budget_exhausted": f"{server_id}:{tool_name}",
+                             "reason": f"identical call attempted {attempts} times; refusing repeat"},
+                        )
+                        continue
+
+                    # Host extraction for the DEGRADED circuit breaker (reuse the
+                    # same url aliases the task payload resolver uses above).
+                    _host = ""
+                    for _k in ("url", "target_url", "target", "domain", "host"):
+                        _v = tool_params.get(_k)
+                        if isinstance(_v, str):
+                            _host = _v.replace("https://", "").replace("http://", "").split("/")[0]
+                            break
+                    if _host in self._degraded_hosts:
+                        agent_logger.warning(
+                            "tool_skipped_degraded_host",
+                            agent_id=self.ctx.agent_id,
+                            host=_host,
+                        )
+                        await self._record_observation(
+                            task.engagement_id,
+                            {"tool_skipped_degraded_host": _host,
+                             "reason": "host marked DEGRADED after repeated failures"},
+                        )
+                        continue
+
                     # T1.1: Validate tool call before execution
                     try:
                         from ai_osop.safety.tool_call_validator import ToolCallValidator
@@ -429,6 +626,11 @@ class BaseAgent(ABC):
                     except Exception as _v_err:
                         agent_logger.debug("tool_validation_skip error=%s", _v_err)
 
+                    # AIOSOP-PROMPT-001: increment the attempt counter for this
+                    # call signature so the budget check at the top of the next
+                    # iteration catches repeats.
+                    self._call_attempts[call_sig] = attempts + 1
+
                     try:
                         # 3. Execute tool
                         if server_id == "internal":
@@ -436,8 +638,32 @@ class BaseAgent(ABC):
                                 tool_name, tool_params, task
                             )
                         else:
+                            # SCOPE-PASS-001: Pass the engagement scope to the
+                            # MCP registry so the scope gate can validate targets.
+                            _scope = None
+                            try:
+                                _session = await self.ctx.session_memory.load_session_state(task.engagement_id)
+                                _scope = getattr(_session, 'scope', None)
+                            except Exception:  # noqa: BLE001
+                                pass
+                            # FIX (nuclei-default-profile-2026-08-30): an unscoped
+                            # nuclei scan (no severity/tags/template) loads the FULL
+                            # ~13k-template set and runs 15+ minutes into the task
+                            # timeout — the NUCLEI-FANOUT failure mode. The
+                            # deterministic vuln path applies the fast profile, but
+                            # ad-hoc cognitive-loop calls bypassed it. Bound them at
+                            # the call site so every nuclei scan carries scoping.
+                            if server_id == "nuclei-mcp" and tool_name == "scan" and not any(
+                                tool_params.get(k) for k in ("severity", "tags", "template", "templates")
+                            ):
+                                from ai_osop.core.config import NUCLEI_SCAN_PROFILES as _NP
+
+                                _fast = _NP["fast"]
+                                tool_params = {**tool_params, "tags": _fast["tags"]}
+                                if _fast.get("severity"):
+                                    tool_params["severity"] = _fast["severity"]
                             observation = await self.ctx.mcp_registry.execute_tool(
-                                server_id, tool_name, tool_params
+                                server_id, tool_name, tool_params, scope=_scope
                             )
 
                         # Unwrap MCP response wrapper if needed
@@ -468,10 +694,44 @@ class BaseAgent(ABC):
                                 agent_id=self.ctx.agent_id,
                                 error=str(_ae_err),
                             )
+
+                        # AIOSOP-PROMPT-001: success clears the host failure streak
+                        # (a recovered endpoint is no longer degraded).
+                        if _host:
+                            self._host_failures.pop(_host, None)
+                            self._degraded_hosts.discard(_host)
                     except Exception as e:
                         await self._record_observation(
                             task.engagement_id,
                             {"tool": f"{server_id}:{tool_name}", "error": str(e)},
+                        )
+                        # AIOSOP-PROMPT-001: runtime DEGRADED circuit breaker. After
+                        # MAX_CONSECUTIVE_HOST_FAILURES consecutive failures against
+                        # one host, stop probing it and let the rest of the
+                        # assessment continue (the prompt's §8 "mark DEGRADED, stop
+                        # probing it" rule, enforced here so the LLM cannot ignore it).
+                        if _host:
+                            streak = self._host_failures.get(_host, 0) + 1
+                            self._host_failures[_host] = streak
+                            if streak >= self.MAX_CONSECUTIVE_HOST_FAILURES:
+                                self._degraded_hosts.add(_host)
+                                agent_logger.warning(
+                                    "host_marked_degraded",
+                                    agent_id=self.ctx.agent_id,
+                                    host=_host,
+                                    consecutive_failures=streak,
+                                )
+                                await self._record_observation(
+                                    task.engagement_id,
+                                    {"host_degraded": _host,
+                                     "reason": f"{streak} consecutive tool failures"},
+                                )
+                        agent_logger.debug(
+                            "tool_failure_recorded",
+                            agent_id=self.ctx.agent_id,
+                            server=server_id,
+                            tool=tool_name,
+                            host=_host,
                         )
 
             if not objective_met:
@@ -644,6 +904,23 @@ class BaseAgent(ABC):
                         "hypothesis_id": params.get("hypothesis_id", ""),
                     },
                 )
+                # AIOSOP-LEDGER-001 (2026-08-29): record the proposal into the
+                # findings ledger so the pipeline funnel is visible.
+                try:
+                    from ai_osop.core.findings_ledger import record_finding_event
+
+                    record_finding_event(
+                        engagement_id=engagement_id,
+                        finding_id=vuln_id,
+                        finding_title=params.get("title", ""),
+                        stage="proposed",
+                        status="PROPOSED",
+                        reason="autonomous agent proposal",
+                        evidence={"severity": params.get("severity", "medium"), "target": params.get("target", "")},
+                        actor=self.ctx.agent_id,
+                    )
+                except Exception:  # noqa: BLE001 - ledger is advisory
+                    pass
                 return {
                     "status": "success",
                     "message": f"Candidate Vulnerability {params.get('title')} proposed.",
@@ -761,59 +1038,143 @@ class BaseAgent(ABC):
         ]
         all_tools = tools + internal_tools
 
+        # TASK-TYPE-CONTEXT-001: Build task-type-specific instructions
+        # so the LLM knows exactly what it should be doing, what tools
+        # are available, and what a successful outcome looks like.
+        task_type = task.type
+        target = task.payload.get("url") or task.payload.get("target") or task.payload.get("host") or "unknown"
+
+        TASK_INSTRUCTIONS = {
+            "nuclei_scan": (
+                f"You are running a NUCLEI VULNERABILITY SCAN against: {target}\n"
+                "Your goal: Execute the nuclei scan to find real vulnerabilities.\n"
+                "CRITICAL: The nuclei-mcp:scan tool expects 'targets' as a LIST of URLs, e.g.:\n"
+                '  {"server": "nuclei-mcp", "name": "scan", "parameters": {"targets": ["https://example.com"]}}\n'
+                "Do NOT use 'target' (singular) or 'url' — use 'targets' (plural, list).\n"
+                "FIRST SCAN: Run without severity filter to discover ALL findings.\n"
+                "SECOND SCAN: If first returns many results, refine with severity filter.\n"
+                "Available tags: tech,exposure,misconfiguration,cve,xss,sqli,ssrf,lfi rce\n"
+            ),
+            "burp_scan": (
+                f"You are running a BURP SUITE SCAN against: {target}\n"
+                "Your goal: Execute the burp_scan tool against the target.\n"
+                "If burp_scan is unavailable, try nuclei_scan as a fallback.\n"
+            ),
+            "full_recon": (
+                f"You are performing FULL RECONNAISSANCE against: {target}\n"
+                "Your goal: Discover all assets, subdomains, endpoints, and technologies.\n"
+                "Steps: (1) DNS enumeration, (2) port scan, (3) service probing, (4) technology fingerprinting.\n"
+                "Use store_asset and store_endpoint tools to save discoveries to the knowledge graph.\n"
+            ),
+            "assess_services": (
+                f"You are ASSESSING SERVICES on: {target}\n"
+                "Your goal: Test discovered services for vulnerabilities.\n"
+                "Try nuclei_scan, then propose_vulnerability for any findings.\n"
+            ),
+            "xss_scan": (
+                f"You are testing for XSS on: {target}\n"
+                "Your goal: Test endpoints for cross-site scripting vulnerabilities.\n"
+                "Use browser-mcp tools to test XSS payloads.\n"
+            ),
+            "sqli_scan": (
+                f"You are testing for SQL Injection on: {target}\n"
+                "Your goal: Test endpoints for SQL injection vulnerabilities.\n"
+                "Use security-bridge tools to test SQLi payloads.\n"
+            ),
+            "validate_exploit": (
+                f"You are VALIDATING an exploit against: {target}\n"
+                "Your goal: Prove that a reported vulnerability is real and exploitable.\n"
+                "DO NOT just scan — actually exploit the vulnerability to confirm impact.\n"
+            ),
+            "analyze_js": (
+                f"You are ANALYZING JAVASCRIPT from: {target}\n"
+                "Your goal: Extract endpoints, secrets, and API calls from JS bundles.\n"
+                "Use store_endpoint to save any discovered API endpoints.\n"
+            ),
+        }
+
+        task_specific = TASK_INSTRUCTIONS.get(
+            task.type,
+            f"You are executing task type '{task.type}' against: {target}\n"
+            "Use available tools to gather information and find vulnerabilities.\n"
+        )
+
+        # Build a focused context summary instead of dumping the entire state
+        context_summary = {
+            "task_type": task.type,
+            "target": target,
+            "task_payload": task.payload,
+            "known_assets": len(context.get("known_assets", [])),
+            "known_endpoints": len(context.get("known_endpoints", [])),
+            "active_hypotheses": len(context.get("active_hypotheses", [])),
+            "candidate_vulnerabilities": len(context.get("candidate_vulnerabilities", [])),
+            "recent_actions": [
+                {"type": a.get("event_type", ""), "action": str(a.get("action", {}))[:200]}
+                for a in context.get("recent_actions_and_decisions", [])[-3:]
+            ],
+        }
+
+        # List available tool servers so the LLM knows what it can call
+        available_servers = sorted(set(t.get("server", "") for t in all_tools))
+        tools_summary = []
+        for t in all_tools:
+            tools_summary.append({
+                "server": t.get("server", ""),
+                "name": t.get("name", ""),
+                "description": t.get("description", "")[:150],
+            })
+
         prompt = (
-            "You are an autonomous AI cybersecurity agent executing a task.\n"
-            "You operate in a loop: Observe State -> Form Hypothesis -> Choose Tool -> Validate.\n\n"
-            "CURRENT STATE:\n"
-            f"{json.dumps(context, indent=2, default=str)}\n\n"
-            "AVAILABLE TOOLS:\n"
-            f"{json.dumps(all_tools, indent=2, default=str)}\n\n"
-            "INSTRUCTIONS:\n"
-            "Based on the current state and task payload, what is your next action?\n"
-            "You must return ONLY a JSON object with one of two shapes:\n"
-            "1. To use a tool:\n"
-            "   {\n"
-            '     "action": "tool",\n'
-            '     "reasoning": {\n'
-            '       "observation": "What did you just observe?",\n'
-            '       "hypothesis_id": "ID of hypothesis (if applicable)",\n'
-            '       "confidence": 0.8,\n'
-            '       "alternatives_considered": ["list of other tools you could have run"],\n'
-            '       "expected_information_gain": "What you expect this tool to return",\n'
-            '       "why_chosen": "Why this tool is the best next step"\n'
-            "     },\n"
-            '     "tool_call": {\n'
-            '       "server": "server_id",\n'
-            '       "name": "tool_name",\n'
-            '       "parameters": { ... }\n'
-            "     }\n"
-            "   }\n"
-            "2. If the task objective is completely met or you are stuck:\n"
-            "   {\n"
-            '     "action": "complete",\n'
-            '     "reasoning": { "why_chosen": "Reasoning for stopping" },\n'
-            '     "conclusion": "Summary of findings."\n'
-            "   }\n"
+            f"TASK MISSION:\n{task_specific}\n\n"
+            "You operate in an Observe -> Think -> Act -> Validate loop.\n\n"
+            f"CURRENT STATE:\n{json.dumps(context_summary, indent=2, default=str)}\n\n"
+            f"AVAILABLE TOOLS ({len(tools_summary)} tools across {len(available_servers)} servers):\n"
+            f"{json.dumps(tools_summary, indent=2, default=str)}\n\n"
+            "IMPORTANT RULES:\n"
+            "- Use store_asset/store_endpoint/propose_vulnerability to save important discoveries.\n"
+            "- Be specific: include exact URLs, parameters, and payloads in your tool calls.\n"
+            "- Never output empty reasoning — explain WHY you chose each tool.\n\n"
+            "Return ONLY a JSON object:\n"
+            '1. Tool call: {"action": "tool", "reasoning": {"observation": "...", "hypothesis_id": "...", "confidence": 0.8, "alternatives_considered": [...], "expected_information_gain": "...", "why_chosen": "..."}, "tool_call": {"server": "...", "name": "...", "parameters": {...}}}\n'
+            '2. Complete: {"action": "complete", "reasoning": {"why_chosen": "..."}, "conclusion": "Detailed summary of all findings."}\n'
         )
 
         messages = [
+            {
+                "role": "system",
+                # AIOSOP-PROMPT-001 (2026-08-29): production behavioral contract for
+                # the autonomous loop (docs/AIOSOP_AGENT_SYSTEM_PROMPT.md). Loaded
+                # from prompts.py so docs and runtime stay in sync. It is prepended
+                # BEFORE the JSON-output contract so the JSON-discipline message
+                # (which the parser depends on) retains priority for output format
+                # while this message governs behavior.
+                "content": AUTONOMOUS_AGENT_SYSTEM_PROMPT,
+            },
             {
                 "role": "system",
                 "content": (
                     "CRITICAL RULE: You MUST output ONLY a raw JSON object. "
                     "Start your entire response with { and end with }. "
                     "No markdown fences, no explanation, no text before or after the JSON. "
-                    "If you write anything other than a JSON object, the system will crash."
+                    "If you write anything other than a JSON object, the system will crash. "
+                    "Be extremely concise in your chain-of-thought; prioritize logical steps over conversational filler."
                 ),
             },
             {"role": "user", "content": prompt},
         ]
 
         if hasattr(self.ctx.llm_client, "complete"):
+            # Use the configured max_tokens instead of a hardcoded 1500.
+            # On Kaggle (free inference), this lets the model produce thorough
+            # vulnerability analysis and detailed recon plans.
+            from ai_osop.core.config import settings as _action_settings
+            # Cap autonomous-loop tokens so Cloudflare tunnel doesn't 524.
+            # 27B models need ~30-60s for 4k tokens but >100s for 32k.
+            action_max_tokens = min(_action_settings.llm_max_tokens, 4096)
             # --- Attempt 1: normal call with JSON mode hint ---
             try:
                 result = await self.ctx.llm_client.complete(
-                    messages, max_tokens=1500, response_format={"type": "json_object"}
+                    messages, max_tokens=action_max_tokens, response_format={"type": "json_object"}
                 )
                 content = result.get("content", "") if isinstance(result, dict) else str(result)
                 agent_logger.info(
@@ -839,7 +1200,7 @@ class BaseAgent(ABC):
                         messages[-1],  # keep the user prompt
                     ]
                     result2 = await self.ctx.llm_client.complete(
-                        strict_messages, max_tokens=1500, response_format={"type": "json_object"}
+                        strict_messages, max_tokens=action_max_tokens, response_format={"type": "json_object"}
                     )
                     content2 = result2.get("content", "") if isinstance(result2, dict) else str(result2)
                     return self._parse_json_action(content2)
@@ -1005,7 +1366,10 @@ class BaseAgent(ABC):
             return {"status": "error", "error": "Agent returned non-dict output"}
 
         # 1. Schema: status must be a known terminal value
-        VALID_STATUSES = {"success", "failed", "error", "partial", "timeout"}
+        # "completed" (2026-08-30): deterministic engines (retrieval, payload,
+        # workflow) legitimately return status="completed"; only LLM-loop output
+        # is constrained to success/failed/partial/timeout.
+        VALID_STATUSES = {"success", "failed", "error", "partial", "timeout", "completed"}
         status = result.get("status")
         if status not in VALID_STATUSES:
             agent_logger.warning(
@@ -1105,8 +1469,20 @@ class BaseAgent(ABC):
         This ensures the vulnerability_discovery phase has data to scan even
         when the recon agent doesn't explicitly call store_asset/store_endpoint.
         Handles: subfinder, httpx, nuclei, and generic tool outputs.
+
+        FIX (auto-extract-scope-2026-08-30): tool output routinely contains
+        REFERENCE links (nuclei template docs on postgres.org/nmap.org/github.com)
+        and error strings (Java class names like burp.api.montoya). Storing those
+        as this engagement's Assets/Endpoints poisoned the attack graph and fed
+        out-of-scope hosts into the vuln-phase scan batching. Every extracted
+        host is now checked against the engagement scope (task.payload["scope"]
+        when present, else the task's own target values); anything off-scope is
+        dropped. Fabricated status_code=200 for never-probed URLs is also gone —
+        endpoints are stored with a NULL status so only probed ones enter the
+        nuclei batch query.
         """
         import re as _re
+        from urllib.parse import urlparse as _urlparse
 
         text = json.dumps(obs_data, default=str) if not isinstance(obs_data, str) else obs_data
         if not text or len(text) < 10:
@@ -1120,6 +1496,44 @@ class BaseAgent(ABC):
         )
         sid = engagement_id
 
+        # Build the in-scope host allowlist: the signed scope definition attached
+        # to the task payload when present, otherwise the task's own targets.
+        allowed_hosts: set = set()
+
+        def _allow(host: str) -> None:
+            host = (host or "").strip().lower().rstrip(".")
+            # Scope domains may carry a port ("127.0.0.1:9199"); compare on host only.
+            host = host.split(":")[0] if ":" in host and not host.startswith("[") else host
+            if host:
+                allowed_hosts.add(host)
+
+        scope_cfg = task.payload.get("scope")
+        if isinstance(scope_cfg, dict):
+            for d in scope_cfg.get("domains") or []:
+                if isinstance(d, str):
+                    _allow(d.split("/")[0])
+            for ip in scope_cfg.get("ips") or []:
+                if isinstance(ip, str):
+                    _allow(ip.split("/")[0])
+        if not allowed_hosts:
+            for key in ("domain", "target", "url", "targets"):
+                val = task.payload.get(key)
+                if isinstance(val, str):
+                    _allow(val.split("/")[0].split(":")[0])
+                elif isinstance(val, list):
+                    for item in val:
+                        if isinstance(item, str):
+                            _allow(item.split("/")[0].split(":")[0])
+
+        def _host_allowed(host: str) -> bool:
+            host = (host or "").strip().lower().rstrip(".")
+            if not host:
+                return False
+            for allowed in allowed_hosts:
+                if host == allowed or host.endswith(f".{allowed}"):
+                    return True
+            return False
+
         # Extract domains from subfinder/enum results
         domain_pattern = _re.compile(r'([a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)')
         found_domains = set()
@@ -1127,7 +1541,8 @@ class BaseAgent(ABC):
             d = match.group(1)
             # Filter out common false positives
             if not any(fp in d for fp in ('.json', '.xml', '.txt', '.log', '.css', '.js', 'example.com', 'localhost')):
-                found_domains.add(d)
+                if _host_allowed(d):
+                    found_domains.add(d)
 
         for d in list(found_domains)[:20]:  # cap at 20
             try:
@@ -1140,28 +1555,27 @@ class BaseAgent(ABC):
             except Exception:
                 pass
 
-        # Extract URLs/endpoints from httpx/nuclei results
+        # Extract URLs/endpoints from httpx/nuclei results (scope-filtered)
         url_pattern = _re.compile(r'(https?://[a-zA-Z0-9._\-:/]+[a-zA-Z0-9/\-_.?=&#]*)')
         found_urls = set()
         for match in url_pattern.finditer(text):
             u = match.group(1)
-            if len(u) < 200:  # skip overly long URLs
+            if len(u) < 200 and _host_allowed(_urlparse(u).hostname or ""):
                 found_urls.add(u)
 
         for u in list(found_urls)[:30]:  # cap at 30
             try:
                 await self.ctx.graph_memory.run_write_query(
                     """MERGE (e:Endpoint {url: $url, engagement_id: $sid})
-                       SET e.method = 'GET', e.status_code = 200,
-                           e.source = $tool, e.discovered_at = datetime()""",
+                       SET e.method = 'GET', e.source = $tool, e.discovered_at = datetime()""",
                     {"url": u, "sid": sid, "tool": tool_name},
                 )
             except Exception:
                 pass
 
-        # Extract IPs if present
+        # Extract IPs if present (scope-filtered)
         ip_pattern = _re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b')
-        found_ips = set(ip_pattern.findall(text))
+        found_ips = {ip for ip in ip_pattern.findall(text) if _host_allowed(ip)}
         for ip in list(found_ips)[:10]:
             try:
                 await self.ctx.graph_memory.run_write_query(
@@ -1239,7 +1653,16 @@ class BaseAgent(ABC):
                     {
                         "agent_id": self.ctx.agent_id,
                         "agent_type": str(self.ctx.agent_type),
-                        "status": self.ctx.status,
+                        # HEARTBEAT-TRUTH-001 (2026-08-30): current_task is the
+                        # authoritative in-flight signal (set at claim and cleared on
+                        # release); derive running status from it so the heartbeat can
+                        # never report an idle agent that is mid-task (which made the
+                        # heartbeat-based AgentReaper skip genuinely stuck agents).
+                        "status": (
+                            "running"
+                            if self.ctx.current_task is not None
+                            else self.ctx.status
+                        ),
                         "task_id": self.ctx.current_task.id if self.ctx.current_task else None,
                         "engagement_id": self.ctx.session_id,
                         "version": "8.0",

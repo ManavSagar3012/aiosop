@@ -27,11 +27,19 @@ export const ConnectionManager: React.FC = () => {
       const response = await fetch(`${API_BASE}/health/system`, { headers: authHeaders() });
       if (response.ok) {
         const data = await response.json();
+        // FIX (ui-health-contract-2026-08-30): /health/system nests platform
+        // services under data.platform.* and reports MCP as data.mcp (the
+        // previous data.postgres/.../data.mcp_registry shape never existed,
+        // so this component threw on every poll and the header permanently
+        // displayed DISCONNECTED despite a healthy stack). Read defensively:
+        // accept both the nested shape and a flat legacy shape.
+        const platform = data.platform ?? data;
+        const mcpEntry = data.mcp ?? data.mcp_registry ?? {};
         setHealth({
-          postgres: { status: data.postgres.status, error: data.postgres.error },
-          redis: { status: data.redis.status, error: data.redis.error },
-          neo4j: { status: data.neo4j.status, error: data.neo4j.error },
-          mcp: { status: data.mcp_registry.status, error: data.mcp_registry.error },
+          postgres: { status: platform.postgres?.status ?? 'unhealthy', error: platform.postgres?.error },
+          redis: { status: platform.redis?.status ?? 'unhealthy', error: platform.redis?.error },
+          neo4j: { status: platform.neo4j?.status ?? 'unhealthy', error: platform.neo4j?.error },
+          mcp: { status: mcpEntry.status ?? 'unhealthy', error: mcpEntry.error },
         });
       }
     } catch (e) {

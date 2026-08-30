@@ -157,6 +157,25 @@ class TriagerGate:
             confidence=confidence,
             blockers=blockers,
         )
+
+        # AIOSOP-LEDGER-001 (2026-08-29): record the gate decision into the
+        # findings ledger so the funnel is visible (EMIT vs the blockers that
+        # held a finding back). Best-effort — never breaks the gate.
+        try:
+            from ai_osop.core.findings_ledger import record_finding_event
+
+            record_finding_event(
+                engagement_id=primitive.engagement_id,
+                finding_id=primitive.id or "",
+                finding_title=str(getattr(primitive, "target", "")),
+                stage="triaged",
+                status=verdict.value.upper(),
+                reason="; ".join(blockers) if blockers else "passes triage",
+                evidence={"confidence": confidence, "reproducibility_score": repro_score},
+                actor="TriagerGate",
+            )
+        except Exception:  # noqa: BLE001 - ledger is advisory
+            pass
         return report
 
     def register_emitted(self, dedup_key: str) -> None:

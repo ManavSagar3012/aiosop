@@ -255,7 +255,7 @@ class Task(BaseModel):
     agent_type: AgentType
     payload: Dict[str, Any] = Field(default_factory=dict)
     dependencies: List[str] = Field(default_factory=list)
-    max_retries: int = 3
+    max_retries: int = 5  # bumped from 3: tunnel-aware retry in _maybe_retry triples this for 524s
     timeout_seconds: int = 300
     scope_check: bool = True
     approval_required: bool = False
@@ -308,8 +308,31 @@ class ScopeDefinition(BaseModel):
     signature: Optional[str] = None  # Cryptographic signature for ScopeDefinition
 
     def _signing_payload(self) -> str:
-        """Canonical representation of the scope-defining fields that are signed."""
-        return f"{self.engagement_id}:{','.join(self.domains)}:{','.join(self.ips)}"
+        """Canonical representation of the scope-defining fields that are signed.
+
+        AEGIS-RT v2 (2026-08-29): expanded beyond engagement_id+domains+ips to cover
+        every field an operator would expect to be tamper-evident — exclusions,
+        allowed techniques, restrictions, approval requirements, the testing window,
+        and the authorization reference. Previously a mid-session edit to any of
+        those fields passed signature verification silently.
+        """
+        def _s(v: Optional[datetime]) -> str:
+            return v.isoformat() if v else ""
+
+        return "|".join(
+            [
+                self.engagement_id or "",
+                ",".join(sorted(self.domains)),
+                ",".join(sorted(self.ips)),
+                ",".join(sorted(self.exclusions)),
+                ",".join(sorted(self.allowed_techniques)),
+                ",".join(sorted(self.restrictions)),
+                ",".join(sorted(self.approval_required_for)),
+                _s(self.testing_window_start),
+                _s(self.testing_window_end),
+                self.authorization_ref or "",
+            ]
+        )
 
     def sign(self, secret_key: bytes) -> str:
         """Compute and store the HMAC signature over the scope-defining fields.
@@ -339,6 +362,20 @@ class SessionState(BaseModel):
     created_by: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    # AEGIS-RT v2 (2026-08-29): the engagement-card confirmation gate. An
+    # engagement cannot leave INITIALIZED (i.e. cannot start recon) until either
+    # the scope carries an authorization_ref (proof of authorization) OR an
+    # operator explicitly confirmed the card via POST /engagements/{id}/confirm.
+    authorization_confirmed: bool = False
+    confirmed_by: Optional[str] = None
+    confirmed_at: Optional[datetime] = None
+
+    @property
+    def has_authorization(self) -> bool:
+        """True when an authorization proof exists OR the card was operator-confirmed."""
+        return bool(self.authorization_confirmed) or bool(
+            self.scope and self.scope.authorization_ref
+        )
 
 
 class AuditEvent(BaseModel):

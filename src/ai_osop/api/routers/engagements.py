@@ -149,6 +149,34 @@ async def transition_phase(
         raise HTTPException(status_code=400, detail="Phase transition failed")
 
 
+@router.post("/{session_id}/confirm")
+async def confirm_engagement(
+    session_id: str,
+    operator: Dict[str, Any] = Depends(require_role("operator", "senior_operator")),
+):
+    """AEGIS-RT v2 (2026-08-29): operator-confirm the engagement card.
+
+    Records that a named operator reviewed and accepted the scope + RoE (in-scope
+    targets, exclusions, allowed techniques, authorization proof). Required before
+    the engagement may leave INITIALIZED into RECONNAISSANCE; fires once and never
+    re-opens. 400 if the engagement is unauthorized and still unconfirmed.
+    """
+    await assert_engagement_access(operator, session_id)
+    _orch = state.get("orchestrator")
+    if _orch is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    try:
+        session = await _orch.confirm_engagement(session_id, operator.get("sub"))
+        return session
+    except WorkflowException as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        import logging
+
+        logging.getLogger("ai_osop.api.engagements").exception("confirm_engagement_failed")
+        raise HTTPException(status_code=400, detail="Engagement confirmation failed")
+
+
 @router.post("/{session_id}/halt")
 async def halt_engagement(
     session_id: str,

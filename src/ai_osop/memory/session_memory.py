@@ -229,6 +229,30 @@ def _wrap_redis_for_metrics(redis_client):
     return redis_client
 
 
+def _strip_lone_surrogates(obj: Any) -> Any:
+    """Remove characters PostgreSQL cannot store in text/JSONB, recursively.
+
+    Nuclei template output carries lone Unicode surrogates AND embedded NUL
+    bytes. json.dumps escapes surrogates as \\udXXX and NUL as \\u0000 —
+    asyncpg/PostgreSQL refuse both when parsing JSONB
+    (UntranslatableCharacterError) — so persisting a successful scan result
+    crashed the write and sent the completed task into the retry/DLQ cycle.
+    """
+    if isinstance(obj, str):
+        if "\x00" in obj:
+            obj = obj.replace("\x00", "")
+        try:
+            obj.encode("utf-8")
+            return obj
+        except UnicodeEncodeError:
+            return obj.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
+    if isinstance(obj, dict):
+        return {k: _strip_lone_surrogates(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_strip_lone_surrogates(v) for v in obj]
+    return obj
+
+
 class SessionMemory:
     """
     Multi-tier session memory with hot/warm/cold storage.
@@ -269,8 +293,21 @@ class SessionMemory:
 
         # PostgreSQL with retry
         async def _connect_postgres() -> None:
+            # SURROGATE-STRIP-001 (2026-08-30): scan tool output (nuclei template
+            # metadata) can carry lone Unicode surrogates. json.dumps escapes them
+            # as \udXXX, and PostgreSQL's JSONB parser rejects those escapes
+            # (asyncpg UntranslatableCharacterError) — so any JSONB write carrying
+            # them failed: task results, audit events, canonical findings, DLQ
+            # entries. A custom json_serializer on THE engine protects every
+            # JSONB write in one place instead of chasing each call site.
             self._pg_engine = create_async_engine(
-                settings.postgres_uri, pool_size=20, max_overflow=10, echo=False
+                settings.postgres_uri,
+                pool_size=20,
+                max_overflow=10,
+                echo=False,
+                json_serializer=lambda o: json.dumps(
+                    _strip_lone_surrogates(o), default=str
+                ),
             )
             self._async_session = _TimedPostgresSessionMaker(
                 sessionmaker(self._pg_engine, class_=AsyncSession, expire_on_commit=False)
@@ -734,8 +771,16 @@ class SessionMemory:
                         task_type=entry.task_type,
                         agent_type=entry.agent_type,
                         reason=entry.reason,
-                        final_error=entry.final_error,
-                        task_payload=entry.task_payload,
+                        final_error=(
+                            _strip_lone_surrogates(entry.final_error)
+                            if isinstance(entry.final_error, str)
+                            else entry.final_error
+                        ),
+                        task_payload=(
+                            _strip_lone_surrogates(entry.task_payload)
+                            if entry.task_payload is not None
+                            else None
+                        ),
                         status=entry.status,
                         operator_notes=entry.operator_notes,
                         retry_count=entry.retry_count,
@@ -1005,7 +1050,18 @@ class SessionMemory:
         ):
             # Hot tier (Redis)
             await self.store_hot(f"task:{task.id}", task.model_dump(), ttl=86400 * 7)
-            # Warm tier (Postgres)
+            # Warm tier (Postgres). Surrogate-strip both JSONB blobs before the
+            # round-trip (see _strip_lone_surrogates).
+            _payload_safe = (
+                _strip_lone_surrogates(json.loads(json.dumps(task.payload, default=str)))
+                if task.payload
+                else {}
+            )
+            _result_safe = (
+                _strip_lone_surrogates(json.loads(json.dumps(task.result, default=str)))
+                if task.result
+                else None
+            )
             async with self._async_session() as session:
                 stmt = (
                     insert(TaskORM)
@@ -1014,22 +1070,14 @@ class SessionMemory:
                         type=task.type,
                         priority=task.priority,
                         agent_type=task.agent_type.value,
-                        payload=(
-                            json.loads(json.dumps(task.payload, default=str))
-                            if task.payload
-                            else {}
-                        ),
+                        payload=_payload_safe,
                         dependencies=task.dependencies,
                         max_retries=task.max_retries,
                         timeout_seconds=task.timeout_seconds,
                         scope_check=task.scope_check,
                         approval_required=task.approval_required,
                         status=task.status,
-                        result=(
-                            json.loads(json.dumps(task.result, default=str))
-                            if task.result
-                            else None
-                        ),
+                        result=_result_safe,
                         retry_count=task.retry_count,
                         created_at=task.created_at,
                         started_at=task.started_at,
@@ -1041,11 +1089,7 @@ class SessionMemory:
                         index_elements=["id"],
                         set_={
                             "status": task.status,
-                            "result": (
-                                json.loads(json.dumps(task.result, default=str))
-                                if task.result
-                                else None
-                            ),
+                            "result": _result_safe,
                             "retry_count": task.retry_count,
                             "started_at": task.started_at,
                             "completed_at": task.completed_at,

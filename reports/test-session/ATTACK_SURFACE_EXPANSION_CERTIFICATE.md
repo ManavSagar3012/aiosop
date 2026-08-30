@@ -1,6 +1,6 @@
 # ATTACK SURFACE EXPANSION CERTIFICATE
 **Engagement ID:** `test-session`  
-**Generated At:** `2026-08-25 13:00:47 UTC`  
+**Generated At:** `2026-08-30 14:15:07 UTC`  
 **Discovery Level:** **SHALLOW**  
 **Expansion Ratio:** **0x**  
 **Privilege Expansion (PER):** **1.0x**  

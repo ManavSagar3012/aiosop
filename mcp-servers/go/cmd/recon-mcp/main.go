@@ -228,6 +228,17 @@ func main() {
 // ============================ helpers ============================
 
 func stringSlice(value any) []string {
+	// FIX (stringlist-coerce-2026-08-30): accept a bare string as a one-element
+	// list. LLM-driven calls intermittently send "targets": "127.0.0.1" (singular
+	// scalar) for array-typed params; the strict []any cast returned nil, which the
+	// caller treats identically to a missing parameter ("targets parameter is
+	// required") even though the intent was unambiguous. Coerce instead of reject.
+	if s, ok := value.(string); ok {
+		if strings.TrimSpace(s) != "" {
+			return []string{s}
+		}
+		return nil
+	}
 	items, ok := value.([]any)
 	if !ok {
 		return nil

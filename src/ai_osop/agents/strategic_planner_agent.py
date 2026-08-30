@@ -77,14 +77,21 @@ class StrategicPlannerAgent(CognitiveSwarmAgent):
     4. Dynamically reprioritizes based on new findings
     """
 
-    def __init__(self, agent_id: str, redis_url: str):
-        super().__init__(agent_id, redis_url)
+    def __init__(self, agent_id: str, redis_url: str = ""):
+        super().__init__(agent_id=agent_id, agent_type="strategic_planner", redis_url=redis_url)
         self.goals: Dict[str, StrategicGoal] = {}
         self.intelligence_gaps: List[IntelligenceGap] = []
         self.current_strategy: Optional[str] = None
 
         # Default attack goals for web applications
         self._initialize_default_goals()
+
+    def _define_subscriptions(self) -> List[str]:
+        return ["recon.discovery", "vuln.detected", "exploit.success", "credential.found"]
+
+    async def start_autonomous_tasks(self):
+        """Run the goal evaluation loop continuously."""
+        await self._goal_evaluation_loop()
 
     def _initialize_default_goals(self):
         """Initialize standard penetration testing goals."""
@@ -123,18 +130,28 @@ class StrategicPlannerAgent(CognitiveSwarmAgent):
             self.goals[goal.id] = goal
 
     async def start(self):
-        """Start the strategic planner with autonomous goal management."""
-        logger.info(f"🧠 {self.agent_id} starting strategic planning...")
+        """Start the strategic planner as a background task (non-blocking).
 
-        # Subscribe to all finding events
-        await self.subscribe(
-            ["recon.discovery", "vuln.detected", "exploit.success", "credential.found"]
-        )
+        The base ``CognitiveSwarmAgent.run()`` wires the bus connection, the
+        subscription listener (using ``_define_subscriptions``), and
+        ``start_autonomous_tasks`` (the goal evaluation loop). This wrapper
+        launches it in the background so callers (the orchestrator) can wire
+        the planner without blocking on its infinite loops.
+        """
+        self._run_task = asyncio.create_task(self.run())
+        logger.info(f"🧠 {self.agent_id} starting strategic planning (background)...")
 
-        # Start goal evaluation loop
-        asyncio.create_task(self._goal_evaluation_loop())
-
-        logger.info(f"🧠 {self.agent_id} active and planning attacks")
+    async def stop(self):
+        """Stop the planner: cancel the background run loop and disconnect."""
+        task = getattr(self, "_run_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        await self.disconnect()
+        logger.info(f"🧠 {self.agent_id} stopped")
 
     async def handle_event(self, event: CoordinationEvent):
         """Process new findings and update strategic goals."""
@@ -232,7 +249,7 @@ class StrategicPlannerAgent(CognitiveSwarmAgent):
 
         for gap in sorted_gaps[:5]:  # Limit to top 5 gaps
             if gap.priority.value >= GoalPriority.HIGH.value:
-                task_event = CoordinationEvent(
+                await self.publish(
                     topic="strategic.task_request",
                     payload={
                         "task_type": gap.gap_type,
@@ -241,10 +258,7 @@ class StrategicPlannerAgent(CognitiveSwarmAgent):
                         "goal_id": gap.goal_id,
                         "requester": self.agent_id,
                     },
-                    source=self.agent_id,
                 )
-
-                await self.publish(task_event)
                 logger.info(
                     f"📋 Published task request: {gap.gap_type} (Priority: {gap.priority.name})"
                 )
@@ -262,17 +276,15 @@ class StrategicPlannerAgent(CognitiveSwarmAgent):
                             goal.status = GoalStatus.COMPLETED
                             logger.info(f"✅ Goal completed: {goal.name}")
 
-                            # Publish completion event
-                            completion_event = CoordinationEvent(
+                            # Publish completion event via the bus publish method
+                            await self.publish(
                                 topic="strategic.goal_completed",
                                 payload={
                                     "goal_id": goal.id,
                                     "goal_name": goal.name,
                                     "completion_time": asyncio.get_event_loop().time(),
                                 },
-                                source=self.agent_id,
                             )
-                            await self.publish(completion_event)
 
                     elif goal.status == GoalStatus.PENDING:
                         goal.status = GoalStatus.IN_PROGRESS

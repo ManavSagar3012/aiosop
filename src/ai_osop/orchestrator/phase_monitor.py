@@ -31,6 +31,18 @@ class PhaseMonitor:
         policy = self._orch.PHASE_POLICY.get(phase)
 
         if policy and policy.get("automatic_next_phase"):
+            # AEGIS-RT v2 (2026-08-29): enforce `requires_manual_approval` at runtime.
+            # The flag previously lived only in config as documentation — no code path
+            # read it, so an operator-gated phase auto-advanced the moment its tasks
+            # finished. Now: unless OSOP_AUTO_ADVANCE_ALL=1 (full autonomy mode), a
+            # phase that requires manual approval will NOT auto-advance; it parks and
+            # waits for the operator to call POST /engagements/{id}/transition. This is
+            # the safety counterweight to the new full auto-advance chain in
+            # PHASE_POLICY. (phase_monitor.py:31)
+            if policy.get("requires_manual_approval") and not getattr(
+                self._orch, "_auto_advance_all", False
+            ):
+                return
             # Check if all tasks for current phase are complete
             if await self._orch._is_phase_complete(session_id, phase):
                 next_phase = await self._orch._resolve_auto_next(
@@ -68,6 +80,22 @@ class PhaseMonitor:
             await self._orch.engagement_manager.ensure_authenticated_discovery(
                 session.session_id, url_hint=url_hint
             )
+            # AEGIS-RT v2 (2026-08-29): prime a new engagement with semantic memory
+            # of past confirmed findings, so recon/vuln agents benefit from "what
+            # worked before". Best-effort: if the RetrievalAgent isn't registered or
+            # pgvector is down, the task errors harmlessly and recon continues.
+            recall_task = Task(
+                type="recall_findings",
+                priority=3,
+                agent_type=AgentType.RETRIEVAL,
+                payload={
+                    "query": session.scope.domains[0] if session.scope.domains else "",
+                    "limit": 5,
+                },
+                engagement_id=session.session_id,
+                timeout_seconds=60,
+            )
+            await self._orch.task_scheduler.schedule_task(recall_task)
 
         elif phase == EngagementPhase.VULNERABILITY_DISCOVERY:
             # Sprint 15A/15B + nuclei self-heal (AIOSOP-NUCLEI-TIMEOUT/FANOUT-2026-06-24).
@@ -80,15 +108,18 @@ class PhaseMonitor:
             # 1) Per-asset Burp scan (Burp crawls from the host root).
             assets: List[str] = []
             try:
-                asset_records = await self._orch.graph_memory.run_read_query(
-                    "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain",
-                    {"sid": session.session_id},
+                asset_records = await asyncio.wait_for(
+                    self._orch.graph_memory.run_read_query(
+                        "MATCH (a:Asset {engagement_id: $sid}) RETURN a.value as domain",
+                        {"sid": session.session_id},
+                    ),
+                    timeout=10.0,
                 )
                 for record in asset_records:
                     domain_val = record.get("domain")
                     if domain_val:
                         assets.append(domain_val)
-            except Exception as e:
+            except (asyncio.TimeoutError, Exception) as e:
                 logger.warning("asset_graph_query_failed", error=str(e))
 
             # Fallback: if no assets in graph, seed from scope domains
@@ -107,6 +138,25 @@ class PhaseMonitor:
                 )
                 await self._orch.task_scheduler.schedule_task(burp_task)
 
+                # WEB-AUDIT-001: integrated crawl -> probe -> differential audit per
+                # asset — the open-components active-scan button (katana crawl +
+                # in-process probe injection + behavioral-delta judgment). It
+                # complements burp_scan (proxy-based) and nuclei (template-based)
+                # with parameter-level differential coverage.
+                web_audit_task = Task(
+                    type="web_audit",
+                    priority=6,
+                    agent_type=AgentType.VULN_ANALYSIS,
+                    payload={
+                        "url": self._orch.engagement_manager._domain_to_url(domain),
+                        "max_urls": 25,
+                        "classes": ["sqli", "xss", "ssti"],
+                    },
+                    engagement_id=session.session_id,
+                    timeout_seconds=900,
+                )
+                await self._orch.task_scheduler.schedule_task(web_audit_task)
+
             # 2) Endpoint-aware, value-ordered, batched Nuclei scans.
             endpoints: List[Dict[str, Any]] = []
             # Only scan endpoints confirmed reachable by a probe (status_code set).
@@ -114,13 +164,20 @@ class PhaseMonitor:
             # start from) and failed probes carry a NULL status_code; feeding those
             # to nuclei made every template TLS-timeout against a dead scheme,
             # roughly doubling scan wall-time for zero added coverage.
-            endpoint_records = await self._orch.graph_memory.run_read_query(
-                """MATCH (e:Endpoint {engagement_id: $sid})
-                   WHERE e.status_code IS NOT NULL
-                   RETURN e.url AS url, e.method AS method,
-                          e.status_code AS status_code, e.technologies AS technologies""",
-                {"sid": session.session_id},
-            )
+            try:
+                endpoint_records = await asyncio.wait_for(
+                    self._orch.graph_memory.run_read_query(
+                        """MATCH (e:Endpoint {engagement_id: $sid})
+                           WHERE e.status_code IS NOT NULL
+                           RETURN e.url AS url, e.method AS method,
+                                  e.status_code AS status_code, e.technologies AS technologies""",
+                        {"sid": session.session_id},
+                    ),
+                    timeout=10.0,
+                )
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning("endpoint_graph_query_failed", error=str(e))
+                endpoint_records = []
             for r in endpoint_records:
                 if r.get("url"):
                     endpoints.append(
@@ -168,6 +225,59 @@ class PhaseMonitor:
                         timeout_seconds=settings.nuclei_mcp_timeout + 120,
                     )
                     await self._orch.task_scheduler.schedule_task(nuclei_task)
+
+            # AIOSOP-GOLDEN-001 (2026-08-30): login/authenticated-form SQLi
+            # differential scan. sqlmap's query-string playbook cannot cover a
+            # body parameter (login forms), so once recon has surfaced an
+            # authentication-form endpoint we dispatch sqli_http_scan — a
+            # deterministic control-vs-injection probe that mints a VALIDATED
+            # finding without any external tooling.
+            try:
+                _form_records = await asyncio.wait_for(
+                    self._orch.graph_memory.run_read_query(
+                        """MATCH (e:Endpoint {engagement_id: $sid})
+                           WHERE toLower(coalesce(e.url, '')) CONTAINS 'login'
+                              OR toLower(coalesce(e.url, '')) CONTAINS 'signin'
+                              OR toLower(coalesce(e.url, '')) CONTAINS 'auth'
+                              OR toLower(coalesce(e.path, '')) CONTAINS 'login'
+                              OR toLower(coalesce(e.path, '')) CONTAINS 'signin'
+                              OR toLower(coalesce(e.path, '')) CONTAINS 'auth'
+                              OR toLower(coalesce(e.path, '')) CONTAINS 'authenticate'
+                              OR toLower(coalesce(e.path, '')) CONTAINS 'account'
+                           RETURN e.url AS url""",
+                        {"sid": session.session_id},
+                    ),
+                    timeout=10.0,
+                )
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning("login_endpoint_graph_query_failed", error=str(e))
+                _form_records = []
+
+            _seen_login_urls: set = set()
+            _LOGIN_HINTS = ("login", "signin", "sign-in", "auth", "authenticate", "account")
+            for _r in _form_records:
+                _u = (_r.get("url") or "").strip()
+                # Defense in depth: re-verify the login-form heuristic in Python
+                # rather than trusting the graph query to filter. A recon record
+                # that surfaced via another query must not be auto-scanned.
+                _ul = _u.lower()
+                if not _u or _u in _seen_login_urls or not any(_h in _ul for _h in _LOGIN_HINTS):
+                    continue
+                _seen_login_urls.add(_u)
+                _sqli_task = Task(
+                    type="sqli_http_scan",
+                    priority=8,
+                    agent_type=AgentType.VULN_ANALYSIS,
+                    payload={"url": _u, "engagement_id": session.session_id},
+                    engagement_id=session.session_id,
+                    timeout_seconds=90,
+                )
+                await self._orch.task_scheduler.schedule_task(_sqli_task)
+                logger.info(
+                    "sqli_http_scan_scheduled",
+                    session_id=session.session_id,
+                    url=_u,
+                )
 
             # 3) Autonomous authenticated authorization testing — IDOR / BOLA /
             #    broken access control / horizontal + vertical privilege escalation.

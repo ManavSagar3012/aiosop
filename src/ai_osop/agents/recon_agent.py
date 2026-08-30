@@ -538,6 +538,26 @@ class ReconAgent(BaseAgent):
         if not domain:
             return {"status": "failed", "error": "domain parameter is required for full recon"}
 
+        # AIOSOP-RECON-INIT-2026-08-27: the recon-mcp connection must be initialized
+        # for this engagement before any tool executes. Unlike VulnAgent (which
+        # initializes burp/security-bridge/browser adapters per scan), ReconAgent
+        # previously never called recon_adapter.initialize(), so the MCP connection
+        # stayed _initialized=False. That made the scheduler's tool-reality gate
+        # (TaskScheduler._server_ready requires _initialized) block full_recon
+        # forever and, even past the gate, conn.execute() would raise "not
+        # initialized" — recon never dispatched and no agent reasoning (LLM) ran.
+        # Initialize here, mirroring VulnAgent's pattern; degrade gracefully so a
+        # transient init failure does not abort the whole recon chain (the adapter
+        # methods already fall back to seed assets on tool errors).
+        try:
+            engagement_id = self.ctx.current_task.engagement_id
+            session = await self.ctx.session_memory.get_session_state(engagement_id)
+            if session is not None:
+                await self.recon_adapter.initialize(session.scope, session.session_id)
+                await self.security_bridge.initialize(session.scope, session.session_id)
+        except Exception as e:
+            logger.warning(f"recon_adapter_initialize_failed: {e}")
+
         # 1. DNS Enum
         dns_results = await self._execute_dns_enum({"domain": domain})
 

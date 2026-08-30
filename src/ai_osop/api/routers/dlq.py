@@ -93,6 +93,8 @@ async def requeue_dlq_entry(
             raise HTTPException(status_code=404, detail="DLQ entry not found")
 
         task = await orchestrator.dlq.requeue(entry_id)
+        if task:
+            await orchestrator.schedule_task(task)
 
         # Audit log
         await orchestrator._audit_log(
@@ -170,6 +172,8 @@ async def retry_dlq_entry(
             raise HTTPException(status_code=404, detail="DLQ entry not found")
 
         task = await orchestrator.dlq.requeue(entry_id)
+        if task:
+            await orchestrator.schedule_task(task)
 
         # Audit log
         await orchestrator._audit_log(

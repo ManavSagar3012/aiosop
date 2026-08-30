@@ -1,4 +1,0 @@
- id | type | status | assigned_agent_id | retry_count | started_at | completed_at 
-----+------+--------+-------------------+-------------+------------+--------------
-(0 rows)
-

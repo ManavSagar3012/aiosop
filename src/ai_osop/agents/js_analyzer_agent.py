@@ -227,6 +227,10 @@ class JSAnalyzerAgent(BaseAgent):
                 logger.warning("js_analyzer_scope_init_failed", error=str(e))
 
     # ------------------------------------------------------------------ routing
+    DETERMINISTIC_TASK_TYPES: frozenset = frozenset({
+        "analyze_js", "extract_endpoints_from_js", "detect_secrets_in_js",
+    })
+
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute JS analysis task."""
         task_type = task.type

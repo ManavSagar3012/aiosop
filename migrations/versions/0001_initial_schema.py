@@ -50,7 +50,7 @@ def upgrade() -> None:
         sa.Column("timeout_seconds", sa.Integer),
         sa.Column("scope_check", sa.Boolean, default=True),
         sa.Column("approval_required", sa.Boolean, default=False),
-        sa.Column("status", sa.String(16), index=True),
+        sa.Column("status", sa.String(32), index=True),
         sa.Column("result", postgresql.JSONB, nullable=True),
         sa.Column("retry_count", sa.Integer),
         sa.Column("created_at", sa.DateTime),

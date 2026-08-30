@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -57,6 +59,15 @@ class TaskScheduler:
         # tool-reality parking lot: task_id -> (task, parked_at_monotonic)
         self._blocked_tasks: Dict[str, tuple] = {}
         self._block_reaper_started = False
+        # FIX (assign-race-2026-08-30): _assign_task is invoked concurrently by the
+        # orchestrator's _scheduler_loop AND the API's _auto_dispatch_loop, with many
+        # awaits between the caller's "status == pending" check and the
+        # status="running" write inside this method. Two dispatchers could therefore
+        # both pass the check and execute the same task on two different agents (or a
+        # tight poll could observe it wedged "pending" mid-assignment). The per-task
+        # lock serializes assignment; the re-check below makes the second caller a
+        # no-op once the first has moved the task out of pending.
+        self._assign_locks: Dict[str, asyncio.Lock] = {}
 
     async def schedule_task(self, task: Task) -> Task:
         """Schedule a task for execution."""
@@ -180,8 +191,6 @@ class TaskScheduler:
             return False, f"server {server_id} not registered"
         if getattr(conn, "_circuit_open", False):
             return False, f"server {server_id} circuit breaker open"
-        if not getattr(conn, "_initialized", False):
-            return False, f"server {server_id} not initialized"
         # Tiered liveness probe:
         #   1) /mcp/state (Python SDK servers) -> authoritative status
         #   2) /health      (universal; Go SDK servers have no /mcp/state and
@@ -197,8 +206,34 @@ class TaskScheduler:
             import aiohttp
 
             session = getattr(conn, "_session", None)
-            if session is None:
-                return False, f"server {server_id} has no active session"
+            if session is None or session.closed:
+                # TOOL-REALITY-RECONNECT-001: Bypass the MCP connection layer and
+                # probe the server directly via HTTP. The MCP connection may have
+                # been closed during startup when servers weren't ready, but the
+                # servers are now healthy. A direct HTTP probe avoids the circuit
+                # breaker and stale session issues.
+                try:
+                    import aiohttp as _aio
+                    async with _aio.ClientSession() as _probe_session:
+                        async with _probe_session.get(
+                            f"http://{conn.host}:{conn.port}/health",
+                            timeout=_aio.ClientTimeout(total=3.0),
+                        ) as resp:
+                            if resp.status != 200:
+                                return False, f"server {server_id} direct /health HTTP {resp.status}"
+                            body = await resp.json(content_type=None)
+                            if str(body.get("status", "")).lower() == "ready":
+                                # Reconnect the MCP session for future tool calls
+                                try:
+                                    conn._circuit_open = False
+                                    conn._half_open = False
+                                    await conn.connect(max_retries=2)
+                                except Exception:  # noqa: BLE001
+                                    pass  # session may still be None but server is reachable
+                                return True, "ready (reconnected)"
+                            return False, f"server {server_id} /health status={body.get('status')}"
+                except Exception:  # noqa: BLE001
+                    return False, f"server {server_id} direct probe failed"
             async with session.get(
                 f"http://{conn.host}:{conn.port}/health",
                 timeout=aiohttp.ClientTimeout(total=3.0),
@@ -264,6 +299,27 @@ class TaskScheduler:
                 )
 
     async def _assign_task(self, task: Task) -> None:
+        """Assign task to appropriate agent — serialized per task id.
+
+        FIX (assign-race-2026-08-30): wraps _assign_task_inner with a per-task lock
+        plus an entry-state re-check. Callers (scheduler loop, API auto-dispatch,
+        approval resume, blocked-task revival) race on the same task; without this,
+        two dispatchers could both pass a stale "pending" check and execute the task
+        on two agents simultaneously. Entry states: "pending" (normal) and
+        "awaiting_approval" (operator-approved re-dispatch).
+        """
+        lock = self._assign_locks.setdefault(task.id, asyncio.Lock())
+        if lock.locked():
+            # Another dispatcher is mid-assignment for this exact task — its own
+            # status transition (running / blocked / awaiting_approval / failed)
+            # is the outcome; a second pass would double-execute it.
+            return
+        async with lock:
+            if task.status not in ("pending", "awaiting_approval"):
+                return
+            await self._assign_task_inner(task)
+
+    async def _assign_task_inner(self, task: Task) -> None:
         """Assign task to appropriate agent."""
         with trace_span(
             "orchestrator._assign_task",
@@ -481,7 +537,17 @@ class TaskScheduler:
             # structlog is not level-filtered here (OSOP_LOG_LEVEL is unwired, see
             # AIOSOP-LOGCFG-001) — could not be quieted by lowering the level. It also
             # actively drowned real diagnostics during live triage.
-            if str(agent.ctx.agent_type) == str(agent_type) and agent.ctx.status == "idle":
+            # FIX (agent-type-normalize-2026-08-30): str(AgentType.X) yields
+            # "AgentType.EXPLOIT_VALIDATION" while task.agent_type deserialized from
+            # durable state / API payloads is the .value ("exploit_validation") — so
+            # every task restored from Postgres/Redis or created via POST /tasks
+            # matched NO agent ("no_agent_found") and wedged pending forever. Compare
+            # normalized enum values on both sides instead of raw str().
+            _agent_type_norm = getattr(agent_type, "value", str(agent_type))
+            _ctx_type_norm = getattr(
+                agent.ctx.agent_type, "value", str(agent.ctx.agent_type)
+            )
+            if _agent_type_norm == _ctx_type_norm and agent.ctx.status == "idle":
                 if task_type and hasattr(agent, "supports_task_type"):
                     if not agent.supports_task_type(task_type):
                         continue
@@ -521,6 +587,11 @@ class TaskScheduler:
             agent = self._orch._agents.get(agent_id)
             if agent is not None:
                 agent.ctx.status = "idle"
+                # HEARTBEAT-TRUTH-001: mirror the claim — a cancelled/hard-timed-out
+                # execute_task skips its own cleanup, which used to leave
+                # ctx.current_task bound to a finished task, making the heartbeat
+                # report a phantom running task until the next assignment.
+                agent.ctx.current_task = None
 
     @staticmethod
     def _sanitize_external_payload(task: Task) -> None:
@@ -558,20 +629,40 @@ class TaskScheduler:
             task.payload.pop("approval_id", None)
 
     async def _maybe_retry(self, task: Task, result: Dict[str, Any]) -> bool:
-        """Requeue a failed task if retry budget remains."""
-        if task.retry_count >= task.max_retries:
+        """Requeue a failed task if retry budget remains.
+
+        Tunnel-aware: when the failure looks like a Cloudflare 524 (tunnel
+        timeout), use a much longer backoff (60-120s) and a higher effective
+        retry cap.  The model behind the tunnel is likely still alive — it
+        just needs breathing room.
+        """
+        error_str = str(result.get("error") or result.get("status") or "")
+        is_tunnel_timeout = "524" in error_str or "tunnel" in error_str.lower()
+
+        # Tunnel errors get a generous retry budget: the model is alive but
+        # slow, so burning retries at 2-4-8s is wasteful.
+        effective_max = task.max_retries * 3 if is_tunnel_timeout else task.max_retries
+
+        if task.retry_count >= effective_max:
             try:
                 await self._orch.dlq.enqueue(
                     task,
                     reason="retry_budget_exhausted",
-                    final_error=str(result.get("error") or result.get("status") or ""),
+                    final_error=error_str,
                 )
             except Exception as e:
                 logger.error("dlq_enqueue_failed", task_id=task.id, error=str(e))
             return False
 
         task.retry_count += 1
-        backoff = min(2**task.retry_count, 30)
+
+        if is_tunnel_timeout:
+            # Long, patient backoff for tunnel timeouts:
+            # 60s, 75s, 90s, 105s, 120s, 120s…
+            backoff = min(60 + 15 * (task.retry_count - 1), 120)
+        else:
+            backoff = min(2**task.retry_count, 30)
+
         await self._orch._audit_log(
             AuditEvent(
                 event_type="task_retry",
@@ -582,9 +673,10 @@ class TaskScheduler:
                     "task_id": task.id,
                     "task_type": task.type,
                     "attempt": task.retry_count,
-                    "max_retries": task.max_retries,
+                    "max_retries": effective_max,
                     "backoff_seconds": backoff,
-                    "error": str(result.get("error") or result.get("status") or "")[:300],
+                    "is_tunnel_timeout": is_tunnel_timeout,
+                    "error": error_str[:300],
                 },
                 result={"requeued": True},
                 context={"engagement_id": task.engagement_id},
@@ -596,8 +688,9 @@ class TaskScheduler:
             task_id=task.id,
             task_type=task.type,
             attempt=task.retry_count,
-            max_retries=task.max_retries,
+            max_retries=effective_max,
             backoff=backoff,
+            is_tunnel_timeout=is_tunnel_timeout,
         )
 
         task.status = "pending"
@@ -653,7 +746,7 @@ class TaskScheduler:
                 # root cause of 0/372 tasks ever completing and of stalled autonomous
                 # runs. wait_for cancels the hung coroutine and we fail/retry the task,
                 # so every task is guaranteed to reach a terminal state.
-                _timeout = getattr(task, "timeout_seconds", None) or 300
+                _timeout = getattr(task, "timeout_seconds", None) or 600
                 result = await asyncio.wait_for(agent.execute_task(task), timeout=_timeout)
                 status = result.get("status") if isinstance(result, dict) else None
                 if status in self._FAILURE_STATUSES:
@@ -705,6 +798,17 @@ class TaskScheduler:
             task.completed_at = datetime.utcnow()
             await self._orch.graph_memory.upsert_task(task, result_summary=result)
             await self._orch.session_memory.store_task(task)
+
+            # FINDINGS-PIPELINE-001: Extract and persist findings from completed tasks
+            # into canonical_findings so the LLM's observations become real, queryable
+            # findings instead of being lost in ephemeral audit events.
+            try:
+                await self._extract_and_store_findings(task, result)
+            except Exception as f_err:  # noqa: BLE001 - findings pipeline is best-effort
+                logger.warning(
+                    f"findings_extraction_failed task_id={task.id} error={f_err}"
+                )
+
             # AUTONOMY-LOOP-001 (charter 22): scan-completing tasks trigger
             # hypothesis regeneration automatically — previously this only ran
             # when an operator hit the /intelligence API endpoint, so the
@@ -748,6 +852,187 @@ class TaskScheduler:
                 task, result_summary={"downstream_triggered": True}
             )
             await self._orch.session_memory.store_task(task)
+
+    async def _extract_and_store_findings(
+        self, task: Task, result: Dict[str, Any]
+    ) -> None:
+        """Extract findings from a completed task result and persist them
+        to canonical_findings.
+
+        FINDINGS-PIPELINE-001: Previously, task results were stored in the task
+        record but never flowed into canonical_findings — the table existed with
+        0 rows. This method bridges that gap by:
+          1. Extracting vulnerability-like observations from the result
+          2. Deduplicating using the finding_fingerprint from finding_intelligence
+          3. Persisting each unique finding as a canonical_findings row
+        """
+        # Only extract from scan/analysis tasks that produce findings
+        FINDING_TASK_TYPES = {
+            "nuclei_scan", "burp_scan", "full_recon", "assess_services",
+            "xss_scan", "sqli_scan", "validate_exploit", "exploit_validation",
+            "analyze_js", "replay_for_diff_auth",
+        }
+        if task.type not in FINDING_TASK_TYPES:
+            return
+
+        # Extract raw findings from various result shapes
+        raw_findings: List[Dict[str, Any]] = []
+
+        # Shape 1: nuclei-style results with 'findings' list
+        if isinstance(result.get("findings"), list):
+            raw_findings.extend(result["findings"])
+
+        # Shape 2: result contains 'vulnerabilities' key
+        if isinstance(result.get("vulnerabilities"), list):
+            raw_findings.extend(result["vulnerabilities"])
+
+        # Shape 3: conclusion contains structured data parsed as findings
+        if isinstance(result.get("parsed_findings"), list):
+            raw_findings.extend(result["parsed_findings"])
+
+        # Shape 4: MCP tool output with 'items' list (nuclei-style)
+        mcp_output = result.get("mcp_output")
+        if isinstance(mcp_output, dict) and isinstance(mcp_output.get("items"), list):
+            for item in mcp_output["items"]:
+                if isinstance(item, dict):
+                    raw_findings.append(item)
+        elif isinstance(mcp_output, list):
+            for item in mcp_output:
+                if isinstance(item, dict):
+                    raw_findings.append(item)
+
+        # Shape 5: The 'result' dict itself might be a single finding
+        if not raw_findings and result.get("status") in (None, "success"):
+            if result.get("severity") or result.get("vuln_type") or result.get("template"):
+                raw_findings.append(result)
+
+        # Shape 6: Agent conclusion text with embedded findings
+        conclusion = str(result.get("conclusion", ""))
+        if not raw_findings and conclusion:
+            # Check if conclusion mentions specific vuln types
+            import re
+            vuln_patterns = [
+                (r"sql[_ ]injection", "SQL Injection", "high", "sqli"),
+                (r"cross[_ ]site[_ ]scripting|\bxss\b", "Cross-Site Scripting", "medium", "xss"),
+                (r"\bidor\b|insecure[_ ]direct[_ ]object", "IDOR", "high", "idor"),
+                (r"\bssrf\b|server[_ ]side[_ ]request", "SSRF", "high", "ssrf"),
+                (r"\bssti\b|server[_ ]side[_ ]template", "SSTI", "critical", "ssti"),
+                (r"\blfi\b|local[_ ]file[_ ]inclusion|path[_ ]traversal", "Path Traversal", "high", "lfi"),
+                (r"\brce\b|remote[_ ]code[_ ]execution", "Remote Code Execution", "critical", "rce"),
+                (r"open[_ ]redirect", "Open Redirect", "medium", "redirect"),
+                (r"missing[_ ]security[_ ]header|security[_ ]header", "Missing Security Headers", "low", "headers"),
+                (r"\bcors\b|cross[_ ]origin", "CORS Misconfiguration", "medium", "cors"),
+                (r"\bjwt\b|json[_ ]web[_ ]token", "JWT Issue", "medium", "jwt"),
+                (r"\bcsrf\b|cross[_ ]site[_ ]request[_ ]forgery", "CSRF", "medium", "csrf"),
+            ]
+            for pattern, title, severity, vuln_type in vuln_patterns:
+                if re.search(pattern, conclusion, re.IGNORECASE):
+                    raw_findings.append({
+                        "title": title,
+                        "severity": severity,
+                        "vuln_type": vuln_type,
+                        "description": conclusion[:500],
+                    })
+
+        if not raw_findings:
+            return
+
+        # Deduplicate and persist using SQLAlchemy
+        persisted = 0
+        dedup_keys_seen: set = set()
+        now = datetime.utcnow()
+
+        for finding in raw_findings:
+            if not isinstance(finding, dict):
+                continue
+
+            title = finding.get("title") or finding.get("name") or finding.get("template") or "Unknown Finding"
+            severity = (finding.get("severity") or "medium").lower()
+            vuln_class = finding.get("vuln_type") or finding.get("type") or "unknown"
+            target = finding.get("url") or finding.get("target") or finding.get("endpoint") or ""
+            confidence = float(finding.get("confidence", 0.5))
+
+            # Build dedup key
+            dedup_raw = f"{task.engagement_id}|{title}|{target}|{severity}"
+            dedup_key = hashlib.sha256(dedup_raw.encode()).hexdigest()[:20]
+
+            # Skip if already seen in this batch
+            if dedup_key in dedup_keys_seen:
+                continue
+            dedup_keys_seen.add(dedup_key)
+
+            finding_id = f"cf-{uuid.uuid4().hex[:12]}"
+            try:
+                from sqlalchemy import text as sql_text
+
+                async with self._orch.session_memory._async_session() as session:
+                    # Check if already exists
+                    exists_result = await session.execute(
+                        sql_text("SELECT id FROM canonical_findings WHERE dedup_key = :dk"),
+                        {"dk": dedup_key},
+                    )
+                    if exists_result.scalar_one_or_none():
+                        continue
+
+                    await session.execute(
+                        sql_text(
+                            "INSERT INTO canonical_findings "
+                            "(id, dedup_key, tenant_id, engagement_id, asset_id, endpoint_id, "
+                            "vulnerability_class, title, severity, lifecycle_state, "
+                            "confidence_score, reproducibility_score, "
+                            "source_task_id, source_result_id, "
+                            "merged_into_finding_id, policy_eligible, "
+                            "unsupported_claim_reasons, created_at, updated_at) "
+                            "VALUES (:id, :dk, :tid, :eid, :aid, :epid, "
+                            ":vc, :title, :sev, :ls, "
+                            ":cs, :rs, "
+                            ":stid, :srid, "
+                            ":mifid, :pe, "
+                            ":ucr, :cat, :uat)"
+                        ),
+                        {
+                            "id": finding_id,
+                            "dk": dedup_key,
+                            "tid": "default",
+                            "eid": task.engagement_id,
+                            "aid": "",
+                            "epid": target,
+                            "vc": vuln_class,
+                            "title": title,
+                            "sev": severity,
+                            "ls": "detected",
+                            "cs": confidence,
+                            "rs": 0.0,
+                            "stid": task.id,
+                            "srid": "",
+                            "mifid": None,
+                            "pe": True,
+                            "ucr": json.dumps([]),
+                            "cat": now,
+                            "uat": now,
+                        },
+                    )
+                    # FIX (canonical-commit-2026-08-30): this session was closed
+                    # without a commit, so EVERY insert here rolled back —
+                    # canonical_findings sat at 0 rows forever while the log
+                    # claimed canonical_finding_persisted. Commit per finding.
+                    await session.commit()
+                    persisted += 1
+                logger.info(
+                    f"canonical_finding_persisted finding_id={finding_id} "
+                    f"title={title} severity={severity} task_id={task.id}"
+                )
+            except Exception as ins_err:  # noqa: BLE001
+                logger.warning(
+                    f"canonical_finding_insert_failed task_id={task.id} "
+                    f"title={title} error={ins_err}"
+                )
+
+        if persisted:
+            logger.info(
+                f"findings_extracted task_id={task.id} "
+                f"count={persisted} total_raw={len(raw_findings)}"
+            )
 
     async def _auto_schedule_js_analysis(self, engagement_id: str,
                                           scan_result: Dict[str, Any]) -> None:

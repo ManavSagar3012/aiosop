@@ -33,6 +33,8 @@ class RetrievalAgent(BaseAgent):
                 embed_fn=llm.get_embedding, store=VectorMemoryFindingsStore(vm)
             )
 
+    DETERMINISTIC_TASK_TYPES: frozenset = frozenset({"recall_findings", "record_finding"})
+
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute retrieval task."""
         if task.type == "recall_findings":

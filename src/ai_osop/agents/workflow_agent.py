@@ -69,6 +69,12 @@ class PlaywrightAgent(BaseAgent):
             return None
         return sess.to_playwright_storage_state()
 
+    DETERMINISTIC_TASK_TYPES: frozenset = frozenset({
+        "navigate", "authenticate", "map_workflow", "replay_for_diff_auth",
+        "extract_semantics", "capture_session", "capture_authenticated_surface",
+        "extract_har_api_inventory", "run_diff_auth_analysis",
+    })
+
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute browser intelligence tasks."""
         logger.debug(f"DEBUG: Agent {self.ctx.agent_id} entering _execute for task {task.id}")

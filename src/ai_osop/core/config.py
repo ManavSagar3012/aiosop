@@ -39,6 +39,7 @@ class AgentType(str, Enum):
     REACT_SPECIALIST = "react_specialist"
     RETRIEVAL = "retrieval"
     SELF_PENTEST = "self_pentest"
+    LLM_RED_TEAM = "llm_red_team"
 
 
 class VulnClass(str, Enum):
@@ -82,6 +83,12 @@ class VulnClass(str, Enum):
     THREAT_HUNTING = "threat_hunting"
     FORENSICS = "forensics"
     SAST_SINK = "sast_sink"
+    # AEGIS-LRT (2026-08-29): LLM red team vulnerability classes
+    LLM_PROMPT_INJECTION = "llm_prompt_injection"
+    LLM_JAILBREAK = "llm_jailbreak"
+    LLM_DATA_LEAKAGE = "llm_data_leakage"
+    LLM_AGENT_ABUSE = "llm_agent_abuse"
+    LLM_DEFENSE_EXTRACTION = "llm_defense_extraction"
 
 
 TASK_SKILL_MAP = {
@@ -186,9 +193,12 @@ class Settings(BaseSettings):
 
     # LLM / AI
     llm_primary_provider: str = Field(default="openai", validation_alias="OSOP_LLM_PRIMARY")
-    llm_primary_model: str = Field(default="gpt-4o", validation_alias="OSOP_LLM_PRIMARY_MODEL")
+    llm_primary_model: str = Field(default="anthropic/GLM5.2-free", validation_alias="OSOP_LLM_PRIMARY_MODEL")
     llm_fallback_model: str = Field(
-        default="gpt-4o-mini", validation_alias="OSOP_LLM_FALLBACK_MODEL"
+        default="anthropic/qwen/qwen3.8-max-free", validation_alias="OSOP_LLM_FALLBACK_MODEL"
+    )
+    llm_fallback2_model: Optional[str] = Field(
+        default=None, validation_alias="OSOP_LLM_FALLBACK2_MODEL"
     )
     # Embedding model for semantic memory (skills, payload recall, findings knowledge).
     # Configurable per provider instead of hardcoded; defaults to an OpenAI model.
@@ -216,14 +226,49 @@ class Settings(BaseSettings):
     chain_analysis_interval_seconds: int = Field(
         default=900, validation_alias="OSOP_CHAIN_ANALYSIS_INTERVAL"
     )
+    # AEGIS-RT v2 (2026-08-29): master switch for the fully-autonomous phase cycle.
+    # When True, PhaseMonitor._auto_advance_phase ignores each phase's
+    # `requires_manual_approval` flag and advances the whole recon -> vuln -> attack ->
+    # report -> complete cycle without operator prompts (destructive exploit tasks
+    # STILL require per-task operator approval via approval_required=True). When False
+    # (default), operator-gated phases wait for the operator like before.
+    auto_advance_all: bool = Field(
+        default=False, validation_alias="OSOP_AUTO_ADVANCE_ALL"
+    )
     llm_api_key_path: str = Field(
         default="secret/data/llm/openai", validation_alias="OSOP_LLM_KEY_PATH"
     )
     # Direct API key for LLM providers (OpenRouter, OpenAI, etc.).
     # When set, passed to litellm.acompletion(api_key=...) so the provider
     # is authenticated without relying on env-var convention.
+    # PATCH (live-verify-2026-08-29): no committed key defaults — real credentials
+    # belong in .env / the environment, never in source control.
     llm_api_key: Optional[str] = Field(default=None, validation_alias="OPENROUTER_API_KEY")
     llm_base_url: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_BASE_URL")
+    # AEGIS-LLM-PRIMARY-URL (2026-08-30): dedicated chat endpoint for the PRIMARY
+    # model ladder. Distinct from llm_base_url (which the embeddings path uses) so
+    # a chat-only provider (e.g. api.b.ai — Anthropic /v1/messages, no /embeddings)
+    # can serve completions while local Ollama keeps serving embeddings.
+    llm_primary_base_url: Optional[str] = Field(
+        default=None, validation_alias="OSOP_LLM_PRIMARY_BASE_URL"
+    )
+    # Separate base URL for fallback model (e.g. OpenRouter) when primary uses
+    # a custom endpoint (e.g. Kaggle Qwen). Prevents fallback from hitting the
+    # wrong provider (524/404 errors when Kaggle throttles).
+    llm_fallback_base_url: Optional[str] = Field(
+        default=None, validation_alias="OSOP_LLM_FALLBACK_BASE_URL"
+    )
+    llm_fallback_api_key: Optional[str] = Field(
+        default=None, validation_alias="OSOP_LLM_FALLBACK_API_KEY"
+    )
+    llm_fallback2_base_url: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_FALLBACK2_BASE_URL")
+    llm_fallback2_api_key: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_FALLBACK2_API_KEY")
+    # AEGIS-LLM-FALLBACK3 (2026-08-30): 4th-tier fallback. Sits below fallback2 so
+    # the chain is primary -> fallback -> fallback2 -> fallback3. Used as the final
+    # offline/self-hosted safety net (e.g. ollama/phi3) when every cloud tier fails.
+    llm_fallback3_model: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_FALLBACK3_MODEL")
+    llm_fallback3_base_url: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_FALLBACK3_BASE_URL")
+    llm_fallback3_api_key: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_FALLBACK3_API_KEY")
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.1  # Low temperature for deterministic security reasoning
     # AIOSOP-LLM-TIMEOUT-001 (2026-07-03): bound every LLM completion HTTP call.
@@ -258,6 +303,40 @@ class Settings(BaseSettings):
     # blows the latency bound. Cap think() generation separately.
     llm_reasoning_max_tokens: int = Field(
         default=512, validation_alias="OSOP_LLM_REASONING_MAX_TOKENS"
+    )
+    # AEGIS-LRT (2026-08-29): LLM red team target model. The model under test.
+    # Separate from the platform's primary/fallback models so red team traffic
+    # goes to a different endpoint (e.g. a local Ollama model, a different API key).
+    lrt_target_model: str = Field(
+        default="anthropic/qwen/qwen3.8-max-free", validation_alias="OSOP_LRT_TARGET_MODEL"
+    )
+    lrt_target_base_url: Optional[str] = Field(
+        default=None, validation_alias="OSOP_LRT_TARGET_BASE_URL"
+    )
+    lrt_target_api_key: Optional[str] = Field(
+        default=None, validation_alias="OSOP_LRT_TARGET_API_KEY"
+    )
+    # AEGIS-LRT: judge model — MUST differ from target model to avoid self-eval bias.
+    lrt_judge_model: str = Field(
+        default="openai/gpt-4o-mini", validation_alias="OSOP_LRT_JUDGE_MODEL"
+    )
+    lrt_judge_base_url: Optional[str] = Field(
+        default=None, validation_alias="OSOP_LRT_JUDGE_BASE_URL"
+    )
+    lrt_judge_api_key: Optional[str] = Field(
+        default=None, validation_alias="OSOP_LRT_JUDGE_API_KEY"
+    )
+    # AEGIS-LRT: spend cap per engagement (USD-equivalent token estimate).
+    lrt_max_spend_usd: float = Field(
+        default=0.50, validation_alias="OSOP_LRT_MAX_SPEND_USD"
+    )
+    # AEGIS-LRT: iterations per search loop batch before reflection.
+    lrt_iterations_per_batch: int = Field(
+        default=25, validation_alias="OSOP_LRT_ITERATIONS_PER_BATCH"
+    )
+    # AEGIS-LRT: K payloads to generate per objective+attack class iteration.
+    lrt_k_payloads: int = Field(
+        default=5, validation_alias="OSOP_LRT_K_PAYLOADS"
     )
     # AIOSOP-REPORT-TRUNC-001 (2026-07-03): cap per-finding evidence in the RENDERED
     # report. Raw nuclei/burp evidence embeds full HTTP request+response bodies (often
@@ -605,21 +684,30 @@ PHASE_POLICY = {
         "requires_manual_approval": False,
         "automatic_next_phase": EngagementPhase.VULNERABILITY_DISCOVERY,
     },
+    # AEGIS-RT v2 autonomy chain (2026-08-29): the full recon -> vuln -> attack ->
+    # report -> improve cycle is now expressible. Each phase names its automatic next
+    # phase so the PhaseMonitor can advance without a human prompt. Safety is preserved
+    # two ways: (a) `requires_manual_approval` is now ENFORCED at runtime (see
+    # PhaseMonitor._auto_advance_phase) — by default the monitor will NOT auto-advance
+    # out of an operator-gated phase; set OSOP_AUTO_ADVANCE_ALL=1 to run the whole
+    # cycle unprompted; (b) the destructive EXPLOIT_VALIDATION tasks remain
+    # approval_required=True regardless, so actual exploit execution still needs a
+    # per-task operator approval.
     EngagementPhase.VULNERABILITY_DISCOVERY: {
         "requires_manual_approval": True,
-        "automatic_next_phase": None,
+        "automatic_next_phase": EngagementPhase.EXPLOITATION,  # rerouted to REPORTING when 0 vulns (_resolve_auto_next)
     },
     EngagementPhase.EXPLOITATION: {
         "requires_manual_approval": True,
-        "automatic_next_phase": None,
+        "automatic_next_phase": EngagementPhase.POST_EXPLOITATION,
     },
     EngagementPhase.POST_EXPLOITATION: {
         "requires_manual_approval": True,
-        "automatic_next_phase": None,
+        "automatic_next_phase": EngagementPhase.REPORTING,
     },
     EngagementPhase.REPORTING: {
         "requires_manual_approval": True,
-        "automatic_next_phase": None,
+        "automatic_next_phase": EngagementPhase.COMPLETED,
     },
     EngagementPhase.COMPLETED: {
         "requires_manual_approval": False,

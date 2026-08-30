@@ -19,6 +19,7 @@ export class NetworkService {
   private onStatusChange: (status: ConnectionStatus) => void;
   private lastEventId: number = 0;
   private eventBuffer: SwarmEvent[] = [];
+  private _agentSyncInFlight = false;
   private lastLatency = 0;
   private eventThroughput = 0;
   private eventCount = 0;
@@ -34,7 +35,9 @@ export class NetworkService {
    */
   async hydrate(sessionId: string) {
     console.log(`[Network] Hydrating session: ${sessionId}`);
-    useIntelligenceStore.getState().setSessionId(sessionId);
+    // NOTE: do NOT call setSessionId here — the caller already owns that state.
+    // Setting it again triggers cascading re-renders across the component tree
+    // and is the root cause of the "Maximum update depth exceeded" error.
     const headers = authHeaders();
     try {
       // 1. Session Info
@@ -165,7 +168,7 @@ export class NetworkService {
         if (event.data.phase) swarm.setPhase(event.data.phase);
         break;
       case 'phase_transition':
-        swarm.setPhase(event.data.new_phase || event.data.phase);
+        swarm.setPhase(event.data.new_phase || event.data.to_phase || event.data.phase);
         break;
       case 'graph_update':
         // Re-fetch graph data on update signal
@@ -178,29 +181,40 @@ export class NetworkService {
         break;
       case 'agent_observation': {
         const payloadData = event.data as Record<string, unknown>;
-        if (payloadData.topic === 'task.completed' || payloadData.topic === 'task.failed') {
-          const headers = authHeaders();
-          fetch(`${API_BASE}/agents`, { headers })
-            .then(res => res.json())
-            .then(backendAgents => {
-              const frontendAgents = backendAgents.map((a: unknown) => {
-                const b = a as Record<string, unknown>;
-                return {
-                  id: b.agent_id as string,
-                  type: b.agent_type as string,
-                  status: b.status as 'idle' | 'running' | 'error' | 'shutdown',
-                  cost_incurred: (b.cost_incurred as number) || 0
-                };
-              });
-              useSwarmStore.getState().setAgents(frontendAgents);
-            })
-            .catch(e => console.error("Failed to sync agents on task complete", e));
-          
-          if (event.engagement_id) {
-            fetch(`${API_BASE}/engagements/${event.engagement_id}/findings`, { headers })
-              .then(res => res.json())
-              .then(data => useIntelligenceStore.getState().setFindings(data))
-              .catch(e => console.error("Failed to sync findings on task complete", e));
+        if (payloadData.topic && (payloadData.topic as string).startsWith('task.')) {
+          // FIX (sync-throttle-2026-08-30): during active scans the bus emits
+          // task.* events continuously; refetching /agents + /findings and
+          // resetting store arrays on EVERY event buried React in nested
+          // updates ("Maximum update depth exceeded") and froze the feed.
+          // Coalesce: at most one in-flight sync at a time.
+          if (!this._agentSyncInFlight) {
+            this._agentSyncInFlight = true;
+            const runSync = async () => {
+              try {
+                const headers = authHeaders();
+                const backendAgents = await (await fetch(`${API_BASE}/agents`, { headers })).json();
+                const frontendAgents = backendAgents.map((a: unknown) => {
+                  const b = a as Record<string, unknown>;
+                  return {
+                    id: b.agent_id as string,
+                    type: b.agent_type as string,
+                    status: b.status as 'idle' | 'running' | 'error' | 'shutdown',
+                    cost_incurred: (b.cost_incurred as number) || 0
+                  };
+                });
+                useSwarmStore.getState().setAgents(frontendAgents);
+
+                if (event.engagement_id) {
+                  const data = await (await fetch(`${API_BASE}/engagements/${event.engagement_id}/findings`, { headers })).json();
+                  useIntelligenceStore.getState().setFindings(data);
+                }
+              } catch (e) {
+                console.error("Failed to sync agents on task complete", e);
+              } finally {
+                this._agentSyncInFlight = false;
+              }
+            };
+            void runSync();
           }
         }
         break;

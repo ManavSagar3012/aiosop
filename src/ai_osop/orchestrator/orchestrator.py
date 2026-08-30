@@ -80,6 +80,10 @@ class Orchestrator:
         self.rate_limiter = RateLimiter()
         self.temporal_scheduler = temporal_scheduler
         self.temporal_enabled = settings.temporal_enabled
+        # AEGIS-RT v2 (2026-08-29): expose the full-autonomy master switch to the
+        # PhaseMonitor. When True, `requires_manual_approval` phase gates are skipped
+        # and the whole cycle auto-advances; per-task exploit approvals still apply.
+        self._auto_advance_all: bool = bool(settings.auto_advance_all)
 
         # Support both legacy in-memory bus and new distributed bus
         if distributed_bus:
@@ -262,6 +266,10 @@ class Orchestrator:
     ) -> SessionState:
         """Create new engagement session. Delegated to EngagementManager."""
         return await self.engagement_manager.create_engagement(scope, roe, created_by)
+
+    async def confirm_engagement(self, session_id: str, operator_id: str) -> SessionState:
+        """AEGIS-RT v2: operator-confirm the engagement card (one-shot auth gate)."""
+        return await self.engagement_manager.confirm_engagement(session_id, operator_id)
 
     async def transition_phase(self, session_id: str, new_phase: EngagementPhase) -> SessionState:
         """Transition engagement to new phase with validation. Delegated to EngagementManager."""
@@ -808,7 +816,17 @@ class Orchestrator:
         phase_agent_mapping = {
             EngagementPhase.RECONNAISSANCE: {AgentType.RECON},
             EngagementPhase.VULNERABILITY_DISCOVERY: {AgentType.VULN_ANALYSIS},
-            EngagementPhase.EXPLOITATION: {AgentType.EXPLOIT_VALIDATION, AgentType.ATTACK_CHAIN},
+            # AIOSOP-PAYLOAD-COMPLETE-001 (2026-08-29): the EXPLOITATION phase
+            # schedules PAYLOAD_MUTATION tasks (generate_payloads) upstream of
+            # EXPLOIT_VALIDATION — see PhaseMonitor._on_phase_enter. The old mapping
+            # only listed {EXPLOIT_VALIDATION, ATTACK_CHAIN}, so the phase could be
+            # judged "complete" while payload generation was still queued/running,
+            # letting the monitor auto-advance past unfinished work.
+            EngagementPhase.EXPLOITATION: {
+                AgentType.EXPLOIT_VALIDATION,
+                AgentType.ATTACK_CHAIN,
+                AgentType.PAYLOAD_MUTATION,
+            },
             EngagementPhase.POST_EXPLOITATION: {AgentType.WORKFLOW},
             EngagementPhase.REPORTING: {AgentType.REPORTING},
         }

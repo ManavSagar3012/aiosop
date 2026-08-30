@@ -88,6 +88,11 @@ class GraphQLAgent(BaseAgent):
             logger.warning("graphql_url_out_of_scope", url=url, error=str(e))
             return False
 
+    DETERMINISTIC_TASK_TYPES: frozenset = frozenset({
+        "gql_discover_schema", "gql_test_authorization", "gql_find_hidden",
+        "gql_batch_abuse",
+    })
+
     async def _execute(self, task: Task) -> Dict[str, Any]:
         task_type = task.type
         payload = task.payload or {}

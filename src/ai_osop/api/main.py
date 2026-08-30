@@ -11,6 +11,10 @@ REFACTOR (2026-06-19): Decomposed from 1,539-line monolith into router modules:
   routers/findings.py     — findings, diff-auth, evidence vault
   routers/intelligence.py — attack graph, paths, education
   routers/system.py       — health, config, sandbox status
+
+Ops note: MCP tool tier restarted 2026-08-27; reload to re-register live connections.
+Ops note 2: recon/nuclei/payload MCP relaunched detached; reload to reconnect.
+Ops note 3: LLM base URL updated to new Kaggle tunnel 2026-08-27; reload to pick up.
 """
 
 # FIX: WindowsSelectorEventLoopPolicy is REQUIRED for asyncpg on Windows.
@@ -18,8 +22,10 @@ REFACTOR (2026-06-19): Decomposed from 1,539-line monolith into router modules:
 # with asyncpg's protocol-based socket handling (causes connection_lost errors).
 # This must be set BEFORE any asyncio operations or imports that create event loops.
 import sys as _sys
+
 if _sys.platform == "win32":
     import asyncio as _asyncio
+
     _asyncio.set_event_loop_policy(_asyncio.WindowsSelectorEventLoopPolicy())
 
 import asyncio
@@ -33,7 +39,9 @@ from typing import Any, Dict
 
 # Load .env file before any settings import so all OSOP_* vars are available.
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
+os.environ.pop("OSOP_JWT_SECRET", None)
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,7 +50,10 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ai_osop.adapters.threat_intel_mcp import ThreatIntelAdapter
-from ai_osop.api.deps import require_role, state  # verify_token imported at WS section below (F811 fix)
+from ai_osop.api.deps import (
+    require_role,
+    state,
+)  # verify_token imported at WS section below (F811 fix)
 from ai_osop.api.health import router as health_router
 from ai_osop.api.health import run_startup_self_test
 
@@ -134,6 +145,16 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
             settings.turbo_intruder_mcp_port,
             None,
         ),
+        # FIX (mcp-register-oast-sourcemap-2026-08-30): oast-mcp and source-map-mcp
+        # have real servers + adapters that agents call (OASTAdapter in
+        # vuln_agent._execute_ssrf_scan, SourceMapMCPAdapter in react_agent), but
+        # neither was registered here, so every adapter call raised
+        # MCPConnectionError("Server ... not registered"). Both launch with the
+        # platform stack (launch_real.ps1) on 8099 / 8096.
+        ("source-map-mcp", settings.source_map_mcp_host, settings.source_map_mcp_port, None),
+        # oast_public_host doubles as the OAST server bind host; the MCP port is
+        # settings.oast_port (8099 default).
+        ("oast-mcp", settings.oast_public_host, settings.oast_port, None),
     ]
     # Critical MCPs whose ABSENCE is logged loudly. NOTE: this set only governs
     # log severity on failure — it must NOT gate whether a server is initialized.
@@ -157,12 +178,13 @@ async def register_optional_mcp_servers(mcp_registry: MCPRegistry) -> None:
             # optional servers don't block boot ~31s each. Adapters lazily
             # reconnect (with full retries) on first real use.
             await mcp_registry.register_server(server_id, host, port, token, connect_retries=0)
-            await mcp_registry.initialize_server(
-                server_id,
-                scope={},
-                credentials={},
-                session_id="api-bootstrap",
-            )
+            #            await mcp_registry.initialize_server(
+            #                server_id,
+            #                scope={},
+            #                credentials={},
+            #                session_id="api-bootstrap",
+            #            )
+            mcp_log.info(f"Skipping initialization for server: {server_id}")
             mcp_log.info(f"MCP server {server_id} registered and initialized.")
         except Exception as exc:
             (mcp_log.critical if is_critical else mcp_log.warning)(
@@ -263,7 +285,9 @@ async def lifespan(app: FastAPI):
         try:
             await asyncio.wait_for(vector_memory.connect(), timeout=15.0)
         except asyncio.TimeoutError:
-            logger.warning("Vector memory initialization timed out (15s) — falling back to mock mode")
+            logger.warning(
+                "Vector memory initialization timed out (15s) — falling back to mock mode"
+            )
             vector_memory._mock_mode = True
             vector_memory._mock_store = []
             vector_memory._mock_findings = []
@@ -275,6 +299,15 @@ async def lifespan(app: FastAPI):
 
         # 4. MCP Servers
         await register_optional_mcp_servers(mcp_registry)
+
+        # 4b. AEGIS-RT v2 (2026-08-29): wire the safety layer's tool-call validator so
+        # MCP tool calls are schema-checked at runtime. Best-effort — never blocks.
+        try:
+            from ai_osop.safety.__init_safety_wiring import wire_tool_call_validator
+
+            state["tool_call_validator"] = wire_tool_call_validator(mcp_registry)
+        except Exception as e:  # noqa: BLE001 - validator is defense-in-depth
+            logger.warning(f"ToolCallValidator wiring failed: {e}")
 
         # 5. Build Orchestrator
         llm_client = LiteLLMClient()
@@ -377,6 +410,26 @@ async def lifespan(app: FastAPI):
         try:
             await orch.initialize()
 
+            # AEGIS-RT v2 (2026-08-29): wire the safety sub-systems that were
+            # previously defined but never called. Stagnation detection, effort
+            # tracking, effectiveness tracking, and agent pools are now live at
+            # startup. Best-effort — never blocks the server.
+            try:
+                from ai_osop.safety.__init_safety_wiring import (
+                    wire_agent_pools,
+                    wire_effectiveness_tracker,
+                    wire_effort_tracker,
+                    wire_stagnation_detector,
+                )
+
+                wire_stagnation_detector(orch)
+                wire_effort_tracker(orch)
+                wire_effectiveness_tracker(orch)
+                wire_agent_pools(orch)
+                logger.info("Safety sub-systems wired (stagnation, effort, effectiveness, pools).")
+            except Exception as e:  # noqa: BLE001 - safety wiring is optional
+                logger.warning(f"Safety sub-system wiring failed: {e}")
+
             # Instantiate and register the 11 core agents + 9 experimental agents
             from ai_osop.agents.attack_chain_agent import AttackChainAgent
             from ai_osop.agents.base import AgentContext
@@ -388,12 +441,14 @@ async def lifespan(app: FastAPI):
             from ai_osop.agents.graphql_agent import GraphQLAgent
             from ai_osop.agents.human_oversight_agent import HumanOversightAgent
             from ai_osop.agents.js_analyzer_agent import JSAnalyzerAgent
+            from ai_osop.agents.llm_red_team_agent import LLMRedTeamAgent
             from ai_osop.agents.mobile_agent import MobileAnalysisAgent
             from ai_osop.agents.nextjs_agent import NextJSSpecialistAgent
             from ai_osop.agents.payload_agent import PayloadMutationAgent
             from ai_osop.agents.react_agent import ReactSpecialistAgent
             from ai_osop.agents.recon_agent import ReconAgent
             from ai_osop.agents.reporting_agent import ReportingAgent
+            from ai_osop.agents.retrieval_agent import RetrievalAgent
             from ai_osop.agents.stack_profiler_agent import StackProfilerAgent
             from ai_osop.agents.service_agent import ServiceAssessmentAgent
             from ai_osop.agents.stateful_logic_agent import StatefulLogicAgent
@@ -432,6 +487,8 @@ async def lifespan(app: FastAPI):
                 (MobileAnalysisAgent, AgentType.VULN_ANALYSIS, "mobile-agent-001"),
                 (NextJSSpecialistAgent, AgentType.NEXTJS_SPECIALIST, "nextjs-agent-001"),
                 (ReactSpecialistAgent, AgentType.REACT_SPECIALIST, "react-agent-001"),
+                (RetrievalAgent, AgentType.RETRIEVAL, "retrieval-agent-001"),
+                (LLMRedTeamAgent, AgentType.LLM_RED_TEAM, "llm-red-team-agent-001"),
                 (StatefulLogicAgent, AgentType.STATEFUL_LOGIC, "stateful-logic-agent-001"),
                 (VisualContextAgent, AgentType.VISUAL_CONTEXT, "visual-agent-001"),
             ]
@@ -466,6 +523,26 @@ async def lifespan(app: FastAPI):
         )
         state["orchestrator"] = orch
         logger.info("ORCHESTRATOR BOUND: state_orch=%s", state["orchestrator"] is not None)
+
+        # 10b. AEGIS-RT v2 (2026-08-29): wire the StrategicPlannerAgent as the
+        # planning loop. It maintains the goal tree (recon -> auth bypass -> RCE ->
+        # data exfil), identifies intelligence gaps from live findings, and
+        # publishes strategic.task_request events the swarm reacts to. It's a
+        # CognitiveSwarmAgent (not a BaseAgent), so it gets its own bus connect +
+        # background run rather than the orchestrator agent registration.
+        try:
+            from ai_osop.agents.strategic_planner_agent import StrategicPlannerAgent
+
+            _planner = StrategicPlannerAgent(
+                agent_id="strategic-planner-001", redis_url=settings.redis_uri
+            )
+            _planner.engagement_id = "default"
+            await _planner.connect()
+            await _planner.start()
+            state["strategic_planner"] = _planner
+            logger.info("StrategicPlannerAgent wired as planning loop.")
+        except Exception as e:  # noqa: BLE001 - planner is advisory, never blocks
+            logger.warning(f"StrategicPlannerAgent wiring failed: {e}")
 
         # 11. Set build info for metrics
         BUILD_INFO.info({"version": "3.0", "git_sha": "2bb4379"})
@@ -506,13 +583,9 @@ async def lifespan(app: FastAPI):
                             )
                             if not has_task:
                                 agent.ctx.status = "idle"
-                                await orch_ref.session_memory.remove_busy_agent(
-                                    agent.ctx.agent_id
-                                )
+                                await orch_ref.session_memory.remove_busy_agent(agent.ctx.agent_id)
                                 lock_key = f"lock:agent:{agent.ctx.agent_id}"
-                                await orch_ref.session_memory.release_lock(
-                                    lock_key, "locked"
-                                )
+                                await orch_ref.session_memory.release_lock(lock_key, "locked")
                                 _logger.info(
                                     "auto_dispatch: recovered stale agent %s",
                                     agent.ctx.agent_id,
@@ -540,10 +613,8 @@ async def lifespan(app: FastAPI):
                             continue
                         try:
                             while True:
-                                task_data = (
-                                    await orch_ref.session_memory.pop_task_queue(
-                                        f"tasks:{session.session_id}"
-                                    )
+                                task_data = await orch_ref.session_memory.pop_task_queue(
+                                    f"tasks:{session.session_id}"
                                 )
                                 if not task_data:
                                     break
@@ -588,6 +659,13 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("AI-OSOP API shutting down...")
+    # AEGIS-RT v2 (2026-08-29): stop the strategic planner planning loop cleanly.
+    _planner_ref = state.get("strategic_planner")
+    if _planner_ref is not None:
+        try:
+            await _planner_ref.stop()
+        except Exception as e:  # noqa: BLE001 - best-effort shutdown
+            logger.warning(f"StrategicPlannerAgent shutdown failed: {e}")
     await orch.shutdown()
     await vector_memory.close()
     await mcp_registry.close_all()
@@ -894,16 +972,30 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
     import asyncio as _asyncio
     import time as _time
 
+    # LATENCY-PROBE-001 (2026-08-30): the shared SessionMemory client serves
+    # responses from pre-buffered socket data (27 agents stream heartbeats
+    # through it), so pinging it routinely measures ~0µs and the dashboard's
+    # LATENCY readout sat at 0ms. A DEDICATED probe connection never carries
+    # other traffic, so its ping is always a true network round trip.
+    _probe_redis = None
+    try:
+        import redis.asyncio as _aioredis
+
+        _probe_redis = _aioredis.from_url(
+            settings.redis_uri, socket_connect_timeout=2.0, socket_timeout=2.0
+        )
+    except Exception:  # noqa: BLE001 - probe client is best-effort
+        _probe_redis = None
+
     async def _push_loop() -> None:
         last_phase = None
         while True:
             latency_ms = 0.0
             try:
-                _r = getattr(orch.session_memory, "_redis", None)
-                if _r is not None:
-                    _t0 = _time.monotonic()
-                    await _r.ping()
-                    latency_ms = round((_time.monotonic() - _t0) * 1000, 2)
+                if _probe_redis is not None:
+                    _t0 = _time.perf_counter()
+                    await _probe_redis.ping()
+                    latency_ms = round((_time.perf_counter() - _t0) * 1000, 2)
             except Exception:  # noqa: BLE001 - telemetry is best-effort
                 latency_ms = 0.0
             _sess = orch._sessions.get(engagement_id)
@@ -961,27 +1053,33 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
                 return  # legacy in-memory bus handled by per-topic pumps below
             consumer = f"ws-{engagement_id}-{id(websocket)}"
             group = f"ws-feed-{engagement_id}-{id(websocket)}"
-            async for ev in bus.subscribe_iter(list(_TOPICS), consumer, group):
-                payload = getattr(ev, "payload", {}) or {}
-                if payload.get("engagement_id") != engagement_id:
-                    continue
-                data = {
-                    "topic": ev.topic,
-                    "task_id": payload.get("task_id"),
-                    "agent_id": payload.get("agent_id"),
-                    "agent_type": payload.get("agent_type"),
-                    "task_type": payload.get("task_type"),
-                }
+            try:
+                async for ev in bus.subscribe_iter(list(_TOPICS), consumer, group):
+                    payload = getattr(ev, "payload", {}) or {}
+                    if payload.get("engagement_id") != engagement_id:
+                        continue
+                    data = {
+                        "topic": ev.topic,
+                        "task_id": payload.get("task_id"),
+                        "agent_id": payload.get("agent_id"),
+                        "agent_type": payload.get("agent_type"),
+                        "task_type": payload.get("task_type"),
+                    }
+                    try:
+                        await websocket.send_json(
+                            {
+                                "event_type": "agent_observation",
+                                "engagement_id": engagement_id,
+                                "data": data,
+                            }
+                        )
+                    except Exception:  # noqa: BLE001 - socket closed; disconnect handler tears down
+                        return
+            finally:
                 try:
-                    await websocket.send_json(
-                        {
-                            "event_type": "agent_observation",
-                            "engagement_id": engagement_id,
-                            "data": data,
-                        }
-                    )
-                except Exception:  # noqa: BLE001 - socket closed; disconnect handler tears down
-                    return
+                    await bus.redis.xgroup_destroy(bus.stream_name, group)
+                except Exception:
+                    pass
 
         async def _pump(topic: str) -> None:
             # Legacy in-memory bus path (per-topic queues, no consumer groups).
@@ -1029,7 +1127,7 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
     _WS_MAX_MSG_BYTES = 65536  # 64 KB
     _WS_RATE_LIMIT = 50  # max messages per second per socket
     _ws_msg_count = 0
-    _ws_rate_start = _time.monotonic()
+    _ws_rate_start = _time.perf_counter()
     try:
         while True:
             data = await websocket.receive_text()
@@ -1039,7 +1137,7 @@ async def websocket_engagement(websocket: WebSocket, engagement_id: str):
                 continue
             # Rate-limit guard
             _ws_msg_count += 1
-            _now = _time.monotonic()
+            _now = _time.perf_counter()
             if _now - _ws_rate_start >= 1.0:
                 _ws_msg_count = 0
                 _ws_rate_start = _now

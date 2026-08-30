@@ -101,6 +101,11 @@ class MCPConnection:
     _initialized: bool = False
     _capabilities: List[str] = field(default_factory=list)
     _tools: Dict[str, MCPToolDefinition] = field(default_factory=dict)
+    # SCOPE-BIND-001 (2026-08-30): scope bound via /mcp/initialize. Adapters call
+    # execute_tool WITHOUT a per-call scope, so the registry gate falls back to
+    # this binding — without it every adapter-first call was denied with
+    # "no_scope_bound_for_active_tool" even for fully in-scope targets.
+    bound_scope: Optional[Dict[str, Any]] = None
     # Circuit breaker state v2 (Sprint 7)
     _failure_count: int = field(default=0)
     _success_count: int = field(default=0)
@@ -252,6 +257,10 @@ class MCPConnection:
                 self._capabilities = response.capabilities
                 self._tools = {t.name: t for t in response.tools}
                 self._initialized = True
+                # SCOPE-BIND-001: retain the initialized scope so adapter calls
+                # (which pass no per-call scope) are gate-validated against the
+                # engagement scope the operator authorized.
+                self.bound_scope = request.scope
                 self._record_success()
                 return response
         except Exception as e:
@@ -427,6 +436,13 @@ class MCPRegistry:
 
             from ai_osop.core.exceptions import OutOfScopeError
             from ai_osop.safety.scope_gate import check_tool_call
+
+            # SCOPE-BIND-001: adapter calls pass no per-call scope; fall back to
+            # the scope bound at initialize time. An explicit per-call scope (the
+            # cognitive loop passes the session scope every call) always wins.
+            # Fail-closed is unchanged: neither present + active server => denied.
+            if scope is None:
+                scope = getattr(conn, "bound_scope", None)
 
             decision = check_tool_call(server_id, tool_name, parameters, scope)
             if not decision.allowed:

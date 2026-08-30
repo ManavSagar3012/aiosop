@@ -1,4 +1,4 @@
-import { useNotifications } from './NotificationProvider';
+import { useNotifications } from '../components/shared/NotificationProvider';
 
 export const useAlertService = () => {
   const { addNotification } = useNotifications();
