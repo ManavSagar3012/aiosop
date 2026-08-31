@@ -728,6 +728,11 @@ class VulnAnalysisAgent(BaseAgent):
     _AUDIT_PROBES: Dict[str, List[str]] = {
         "sqli": [
             "' OR '1'='1",
+            # FIX (probe-set-2026-08-31, found live): against login queries with
+            # an AND password clause, a bare tautology leaves the quote structure
+            # unbalanced and the row never matches. The comment-terminated form
+            # neutralizes the AND clause and is the canonical auth-bypass probe.
+            "' OR '1'='1' --",
             "1' AND '1'='1' --",
             "1 UNION SELECT NULL",
         ],
@@ -977,14 +982,20 @@ class VulnAnalysisAgent(BaseAgent):
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 return await client.post(target_url, data=data, headers=auth_headers)
 
-        async def _rendered_html(target_url: str) -> Optional[str]:
+        async def _rendered_html(target_url: str) -> Optional[Tuple[str, str]]:
             """WEB-AUDIT-004: Playwright-rendered DOM for JS-rendered SPAs.
 
             browser-mcp `execute` drives real Chromium: navigate (with a
             bounded networkidle settle for the client-side XHR burst), then
             eval document.documentElement.outerHTML — the DOM AFTER render,
-            which is where SPA forms/anchors actually exist. Best-effort:
-            server down or render failure returns None and the caller keeps
+            which is where SPA forms/anchors actually exist.
+
+            Returns (rendered_html, final_url) — final_url is the URL AFTER
+            the navigation's redirect chain, which is how the WEB-AUDIT-007
+            authorize-flow capture sees the real login page: an OIDC-protected
+            SPA navigating to /login lands on the IdP's authorize URL with
+            client_id/state query params; the auth form lives THERE, not on
+            the SPA. Best-effort: failure returns None and the caller keeps
             the static HTML.
             """
             if payload.get("render") is False:
@@ -1009,7 +1020,7 @@ class VulnAnalysisAgent(BaseAgent):
                     "execute",
                     {
                         "action": "eval",
-                        "expression": "document.documentElement.outerHTML",
+                        "expression": "JSON.stringify({html: document.documentElement.outerHTML, url: location.href})",
                         "user_label": "web-audit",
                         "engagement_id": engagement_id,
                     },
@@ -1017,9 +1028,21 @@ class VulnAnalysisAgent(BaseAgent):
                     timeout_override=30,
                 )
                 result = getattr(ev, "result", None) or {}
-                html = result.get("result") if isinstance(result, dict) else None
-                if isinstance(html, str) and len(html) > 50:
-                    return html
+                payload_str = result.get("result") if isinstance(result, dict) else None
+                if isinstance(payload_str, str) and len(payload_str) > 50:
+                    try:
+                        import json as _json
+
+                        obj = _json.loads(payload_str)
+                        html = obj.get("html")
+                        final_url = obj.get("url") or target_url
+                        if isinstance(html, str) and len(html) > 50:
+                            return html, str(final_url)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                # Fallback for older eval shapes: plain HTML without the URL.
+                if isinstance(payload_str, str) and payload_str.lstrip().startswith("<"):
+                    return payload_str, target_url
             except Exception as e:  # noqa: BLE001 - rendered pass is best-effort
                 logger.warning("web_audit_render_failed", url=target_url, error=str(e))
             return None
@@ -1431,18 +1454,48 @@ class VulnAnalysisAgent(BaseAgent):
             if not static_forms:
                 rendered = await _rendered_html(target_url)
                 if rendered:
-                    page_html = rendered
+                    rendered_html, final_url = rendered
+                    page_html = rendered_html
                     stats["rendered"] = True
-                    static_forms = _discover_forms(page_html, target_url)
+                    # WEB-AUDIT-007: authorize-flow capture. If navigation
+                    # FOLLOWED a redirect chain (an OIDC-protected SPA's
+                    # /login lands on the IdP authorize URL with
+                    # client_id/state params), the auth form lives on the
+                    # LANDING page. Audit the landing page's forms right now —
+                    # they are the real login surface, not the SPA's shell.
+                    if final_url != target_url:
+                        try:
+                            fu = _urlparse(final_url)
+                            if fu.scheme in ("http", "https") and fu.hostname:
+                                enforcer.validate_target(fu.hostname)
+                                landing_forms = _discover_forms(rendered_html, final_url)
+                                if landing_forms:
+                                    stats["auth_flow_landed_url"] = final_url
+                                    stats["auth_flow_forms"] = len(landing_forms)
+                                    logger.info(
+                                        "web_audit_auth_flow_capture",
+                                        landed_url=final_url,
+                                        forms=len(landing_forms),
+                                    )
+                                    static_forms = list(static_forms or []) + [
+                                        {
+                                            **lf,
+                                            "action": lf.get("action") or final_url,
+                                        }
+                                        for lf in landing_forms
+                                    ]
+                        except Exception:  # noqa: BLE001 - out-of-scope landing
+                            pass
+                    static_forms = _discover_forms(page_html, target_url) or static_forms
                     try:
                         import re as _re
                         from urllib.parse import urljoin as _urljoin
 
                         max_urls = int(payload.get("max_urls", 25))
-                        for href in _re.findall(r'href="([^"]+)"', rendered)[:40]:
+                        for href in _re.findall(r'href="([^"]+)"', rendered_html)[:40]:
                             if len(audit_urls) >= max_urls:
                                 break
-                            link = _urljoin(target_url, href)
+                            link = _urljoin(final_url, href)
                             lu = _urlparse(link)
                             if lu.scheme not in ("http", "https") or not lu.hostname:
                                 continue

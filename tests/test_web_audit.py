@@ -414,6 +414,70 @@ def _routing_registry(*, browser_html: str = "") -> MagicMock:
     return reg
 
 
+def _redirect_registry(*, landing_html: str, landing_url: str) -> MagicMock:
+    """Registry whose rendered eval returns a LANDING page at a different URL
+    (authorize-flow: SPA /login -> IdP authorize URL with a real form)."""
+    reg = MagicMock()
+    state = {"navigated": False}
+
+    class _Resp:
+        def __init__(self, status, result):
+            self.status = status
+            self.result = result
+
+    async def execute_tool(server_id, tool, params, scope=None, timeout_override=None):
+        if server_id == "browser-mcp" and tool == "execute":
+            if params.get("action") == "navigate":
+                state["navigated"] = True
+                return _Resp("success", {"ok": True})
+            if params.get("action") == "eval" and state["navigated"]:
+                import json as _json
+
+                return _Resp(
+                    "success",
+                    {"result": _json.dumps({"html": landing_html, "url": landing_url})},
+                )
+        raise RuntimeError("tool unavailable")
+
+    reg.execute_tool = AsyncMock(side_effect=execute_tool)
+    return reg
+
+
+async def test_web_audit_auth_flow_landing_form_audited(monkeypatch):
+    """WEB-AUDIT-007: when the rendered navigation lands on a DIFFERENT
+    in-scope URL (OIDC authorize redirect), the landing page's login form is
+    captured and audited — the real auth surface lives there, not the SPA."""
+    agent = _make_agent(seed_scope_domains=["127.0.0.1"], seed_scope_ips=["127.0.0.1"])
+    landing = (
+        "<html><body><form method='POST' action='/realms/qosmos/login-actions/authenticate'>"
+        "<input name='username'><input name='password' type='password'>"
+        "<input type='submit'></form></body></html>"
+    )
+    agent.ctx.mcp_registry = _redirect_registry(
+        landing_html=landing,
+        landing_url="http://127.0.0.1:8080/realms/qosmos/protocol/openid-connect/auth?client_id=x&state=y",
+    )
+    seen = _patch_http(
+        monkeypatch,
+        {
+            "username=audit_probe_baseline_77": _FakeResponse(401, "Login failed"),
+            "OR '1'='1": _FakeResponse(200, "Welcome, admin!"),
+        },
+    )
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1:3000/login", "engagement_id": "eng-test", "classes": ["sqli"]}
+    )
+    assert result["status"] == "success"
+    assert result["stats"].get("rendered") is True
+    assert result["stats"].get("auth_flow_landed_url", "").startswith("http://127.0.0.1:8080/realms/qosmos")
+    assert result["stats"].get("auth_flow_forms") == 1
+    assert result["stats"]["forms_audited"] >= 1
+    assert result["findings_count"] >= 1
+    finding = result["findings"][0]
+    assert finding["cwe"] == "CWE-89"
+    assert "login-actions/authenticate" in finding["evidence"][0]["url"]
+
+
 def _aws_key_fixture() -> str:
     """AWS-key-shaped fixture assembled from parts so no literal in this
     source file matches the AKIA[0-9A-Z]{16} credential pattern (it is the
