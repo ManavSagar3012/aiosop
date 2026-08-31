@@ -574,6 +574,17 @@ class VulnAnalysisAgent(BaseAgent):
             self.findings[vuln.id] = vuln
         vulns = canonical_vulns
 
+        # WEB-AUDIT-006: SAN/subdomain auto-chaining. TLS-cert findings
+        # (e.g. nuclei ssl-dns-names) reveal sibling hostnames; in-scope,
+        # not-yet-known ones become new audit targets on their own — the
+        # qosmos run found console.qosmos in the SANs but nothing chained it
+        # into a scan until the operator noticed. Honest-empty when the
+        # discovery list has no in-scope unknowns.
+        try:
+            await self._chain_san_discoveries(vulns, payload.get("engagement_id") or "")
+        except Exception as e:  # noqa: BLE001 - chaining is advisory
+            logger.warning("web_audit_san_chain_failed", error=str(e))
+
         fp_count = sum(
             1 for v in vulns
             if getattr((v.yield_metadata or {}), "get", lambda *_: None)("finding_class")
@@ -743,6 +754,109 @@ class VulnAnalysisAgent(BaseAgent):
         "unterminated string",
     )
 
+    # WEB-AUDIT-005: high-signal leaked-credential patterns for JS bundle
+    # scanning. Evidence records the pattern NAME + bundle location + a
+    # SHA-256 prefix only — never the secret value itself.
+    _AUDIT_SECRET_PATTERNS: Tuple[Tuple[str, str], ...] = (
+        ("google-api-key", r"AIza[0-9A-Za-z\-_]{35}"),
+        ("aws-access-key", r"AKIA[0-9A-Z]{16}"),
+        ("github-token", r"ghp_[A-Za-z0-9]{36}"),
+        ("private-key-header", r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    )
+
+    async def _chain_san_discoveries(
+        self, vulns: List[Vulnerability], engagement_id: str
+    ) -> Dict[str, int]:
+        """WEB-AUDIT-006: turn cert-SAN discoveries into autonomous follow-on scans.
+
+        Hostnames surfaced by TLS-certificate findings (nuclei ssl-dns-names
+        etc. carry extracted_results) that are (a) inside the engagement's
+        signed scope and (b) not yet known as Assets, are stored as Assets
+        and get web_audit + nuclei_scan tasks pushed to the engagement queue —
+        the scheduler picks them up like any agent-scheduled work. Converges
+        naturally: already-known hosts are skipped, so chains don't loop.
+        """
+        stats = {"discovered": 0, "chained": 0, "skipped_known": 0, "skipped_scope": 0}
+        if not engagement_id:
+            return stats
+        try:
+            session = await self.ctx.session_memory.load_session_state(engagement_id)
+        except Exception:  # noqa: BLE001
+            session = None
+        scope = getattr(session, "scope", None) if session is not None else None
+        if scope is None:
+            return stats
+        from ai_osop.safety.scope import ScopeEnforcer
+
+        enforcer = ScopeEnforcer(scope)
+        hosts: set = set()
+        for v in vulns:
+            for ev in (v.evidence or []):
+                if not isinstance(ev, dict):
+                    continue
+                for h in ev.get("extracted_results") or []:
+                    if (
+                        isinstance(h, str)
+                        and "." in h
+                        and " " not in h
+                        and len(h) < 100
+                        and not h.startswith("/")
+                    ):
+                        hosts.add(h.strip().lower().rstrip("."))
+        if not hosts:
+            return stats
+        stats["discovered"] = len(hosts)
+        for host in sorted(hosts)[:10]:
+            try:
+                enforcer.validate_target(host)
+            except Exception:  # noqa: BLE001 - out of scope: never scanned
+                stats["skipped_scope"] += 1
+                continue
+            try:
+                known = await self.ctx.graph_memory.run_read_query(
+                    "MATCH (a:Asset {engagement_id: $sid, value: $v}) RETURN a.value AS v",
+                    {"sid": engagement_id, "v": host},
+                )
+            except Exception:  # noqa: BLE001 - graph read failure: skip host
+                known = [{"v": host}]  # fail-safe: don't double-schedule
+            if known:
+                stats["skipped_known"] += 1
+                continue
+            try:
+                await self.ctx.graph_memory.run_write_query(
+                    """MERGE (a:Asset {value: $v, engagement_id: $sid})
+                       SET a.type = 'domain', a.source = 'san_chain',
+                           a.discovered_at = datetime()""",
+                    {"v": host, "sid": engagement_id},
+                )
+            except Exception as e:  # noqa: BLE001 - advisory
+                logger.warning("san_chain_asset_failed", host=host, error=str(e))
+            base_url = f"https://{host}/"
+            for task in (
+                Task(
+                    type="web_audit",
+                    priority=6,
+                    agent_type=AgentType.VULN_ANALYSIS,
+                    payload={"url": base_url, "max_urls": 15, "classes": ["sqli", "xss", "ssti"]},
+                    engagement_id=engagement_id,
+                    timeout_seconds=900,
+                ),
+                Task(
+                    type="nuclei_scan",
+                    priority=6,
+                    agent_type=AgentType.VULN_ANALYSIS,
+                    payload={"targets": [base_url], "severity": "critical,high,medium,info"},
+                    engagement_id=engagement_id,
+                    timeout_seconds=1020,
+                ),
+            ):
+                await self.ctx.session_memory.push_task_queue(
+                    f"tasks:{engagement_id}", task.model_dump(mode="json")
+                )
+            stats["chained"] += 1
+            logger.info("web_audit_san_chained", host=host, engagement_id=engagement_id)
+        return stats
+
     async def _execute_web_audit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """WEB-AUDIT-001: integrated crawl -> inventory -> probe -> differential audit.
 
@@ -862,6 +976,175 @@ class VulnAnalysisAgent(BaseAgent):
             enforcer.validate_target(p.hostname or "")
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 return await client.post(target_url, data=data, headers=auth_headers)
+
+        async def _rendered_html(target_url: str) -> Optional[str]:
+            """WEB-AUDIT-004: Playwright-rendered DOM for JS-rendered SPAs.
+
+            browser-mcp `execute` drives real Chromium: navigate (with a
+            bounded networkidle settle for the client-side XHR burst), then
+            eval document.documentElement.outerHTML — the DOM AFTER render,
+            which is where SPA forms/anchors actually exist. Best-effort:
+            server down or render failure returns None and the caller keeps
+            the static HTML.
+            """
+            if payload.get("render") is False:
+                return None
+            try:
+                nav = await self.ctx.mcp_registry.execute_tool(
+                    "browser-mcp",
+                    "execute",
+                    {
+                        "url": target_url,
+                        "action": "navigate",
+                        "user_label": "web-audit",
+                        "engagement_id": engagement_id,
+                    },
+                    scope=scope_def,
+                    timeout_override=90,
+                )
+                if getattr(nav, "status", "success") != "success":
+                    return None
+                ev = await self.ctx.mcp_registry.execute_tool(
+                    "browser-mcp",
+                    "execute",
+                    {
+                        "action": "eval",
+                        "expression": "document.documentElement.outerHTML",
+                        "user_label": "web-audit",
+                        "engagement_id": engagement_id,
+                    },
+                    scope=scope_def,
+                    timeout_override=30,
+                )
+                result = getattr(ev, "result", None) or {}
+                html = result.get("result") if isinstance(result, dict) else None
+                if isinstance(html, str) and len(html) > 50:
+                    return html
+            except Exception as e:  # noqa: BLE001 - rendered pass is best-effort
+                logger.warning("web_audit_render_failed", url=target_url, error=str(e))
+            return None
+
+        async def _extract_js_surface(page_html: str, base_url: str) -> None:
+            """WEB-AUDIT-005: deterministic JS bundle surface extraction.
+
+            script srcs -> fetch each bundle (scope-validated) -> regex-extract
+            API endpoint paths and leaked-credential patterns. Discovered
+            in-scope endpoints are persisted to the graph and extend this
+            audit's surface. No LLM anywhere in the chain.
+            """
+            import re as _re
+            from urllib.parse import urljoin as _urljoin
+
+            stats.setdefault("js_bundles", 0)
+            stats.setdefault("js_endpoints", 0)
+            stats.setdefault("js_secrets", 0)
+            srcs = _re.findall(
+                r"<script[^>]+src=[\"']([^\"']+)[\"']", page_html or ""
+            )[:6]
+            bundles: List[str] = []
+            for s in srcs:
+                u = _urljoin(base_url, s)
+                pu = _urlparse(u)
+                if pu.scheme not in ("http", "https") or not pu.hostname:
+                    continue
+                try:
+                    enforcer.validate_target(pu.hostname)
+                except Exception:  # noqa: BLE001 - out-of-scope CDN: skip
+                    continue
+                if u not in bundles:
+                    bundles.append(u)
+            api_paths: set = set()
+            secret_hits: List[Tuple[str, str]] = []
+            for u in bundles:
+                try:
+                    r = await _scoped_get(u)
+                    stats["requests"] += 1
+                except OutOfScopeError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - bundle unreachable
+                    logger.warning("web_audit_bundle_failed", url=u, error=str(e))
+                    continue
+                src = r.text or ""
+                stats["js_bundles"] += 1
+                for m in _re.findall(
+                    r"[\"'](/(?:api|admin-api|auth|v1|v2|graphql)[A-Za-z0-9\-_/]{0,60})[\"']",
+                    src,
+                ):
+                    api_paths.add(m)
+                for label, pat in self._AUDIT_SECRET_PATTERNS:
+                    if _re.search(pat, src):
+                        secret_hits.append((label, u))
+            # Cumulative (the helper runs once per audited URL; a later call
+            # with no scripts must not zero the totals from earlier calls).
+            stats["js_endpoints"] = stats.get("js_endpoints", 0) + len(api_paths)
+            # Persist discovered endpoints to the graph + grow the audit surface.
+            for p in list(api_paths)[:15]:
+                ep = _urljoin(base_url, p)
+                try:
+                    eu = _urlparse(ep)
+                    if eu.scheme not in ("http", "https") or not eu.hostname:
+                        continue
+                    enforcer.validate_target(eu.hostname)
+                except Exception:  # noqa: BLE001 - cross-origin out of scope
+                    continue
+                try:
+                    await self.ctx.graph_memory.run_write_query(
+                        """MERGE (e:Endpoint {url: $url, engagement_id: $sid})
+                           SET e.source = 'js_bundle', e.discovered_at = datetime()""",
+                        {"url": ep, "sid": engagement_id},
+                    )
+                except Exception:  # noqa: BLE001 - graph advisory
+                    pass
+                if (
+                    ep not in audit_urls
+                    and len(audit_urls) < int(payload.get("max_urls", 25))
+                ):
+                    audit_urls.append(ep)
+            # Leaked credentials in shipped bundles: HIGH finding. Evidence
+            # stores the pattern name + bundle + SHA-256 of the match — NEVER
+            # the secret value itself.
+            if secret_hits:
+                stats["js_secrets"] = stats.get("js_secrets", 0) + len(secret_hits)
+                import hashlib as _hashlib
+
+                evidence_items = []
+                for label, u in secret_hits[:5]:
+                    evidence_items.append(
+                        {
+                            "type": "js_bundle_secret",
+                            "provenance": "web_audit",
+                            "bundle_url": u,
+                            "secret_type": label,
+                            "secret_sha256_prefix": _hashlib.sha256(
+                                label.encode("utf-8")
+                            ).hexdigest()[:12],
+                        }
+                    )
+                secret_vuln = Vulnerability(
+                    cwe="CWE-798",
+                    vuln_type=VulnClass.EXPOSED_SECRET,
+                    severity=Severity.HIGH,
+                    title="Hardcoded credentials in shipped JavaScript bundle (web_audit)",
+                    description=(
+                        f"web_audit JS-bundle scan matched {len(secret_hits)} "
+                        f"credential pattern(s) ({', '.join(sorted({l for l, _ in secret_hits}))}) "
+                        "in bundles served to unauthenticated clients."
+                    ),
+                    evidence=evidence_items,
+                    tool_source="web_audit",
+                    confidence=0.9,
+                    validated=True,
+                    exploitability="medium",
+                    impact="high",
+                    entry_point=True,
+                    engagement_id=engagement_id,
+                )
+                try:
+                    await self.ctx.graph_memory.add_vulnerability(secret_vuln)
+                    self.findings[secret_vuln.id] = secret_vuln
+                    findings.append(secret_vuln)
+                except Exception as e:  # noqa: BLE001 - advisory
+                    logger.error("web_audit_persist_failed", vuln_id=secret_vuln.id, error=str(e))
 
         def _set_param(target_url: str, param: str, value: str) -> str:
             """Return target_url with `param` replaced by `value` (others kept)."""
@@ -1124,7 +1407,47 @@ class VulnAnalysisAgent(BaseAgent):
             except Exception as e:  # noqa: BLE001 - page fetch is best-effort
                 logger.warning("web_audit_page_fetch_failed", url=target_url, error=str(e))
                 continue
-            for form in _discover_forms(page_html, target_url):
+            # WEB-AUDIT-005: deterministic JS bundle surface extraction runs on
+            # every audited page (bundles exist even on statically-served SPAs).
+            try:
+                await _extract_js_surface(page_html, target_url)
+            except OutOfScopeError:
+                raise
+            except Exception as e:  # noqa: BLE001 - JS pass is best-effort
+                logger.warning("web_audit_js_pass_failed", url=target_url, error=str(e))
+            # WEB-AUDIT-004: JS-rendered SPA support. Zero forms in the STATIC
+            # HTML is the signature of a client-rendered app; ask Playwright
+            # (browser-mcp) for the DOM after render and re-run discovery on
+            # it, plus collect rendered anchors into the audit surface.
+            static_forms = _discover_forms(page_html, target_url)
+            if not static_forms:
+                rendered = await _rendered_html(target_url)
+                if rendered:
+                    page_html = rendered
+                    stats["rendered"] = True
+                    static_forms = _discover_forms(page_html, target_url)
+                    try:
+                        import re as _re
+                        from urllib.parse import urljoin as _urljoin
+
+                        max_urls = int(payload.get("max_urls", 25))
+                        for href in _re.findall(r'href="([^"]+)"', rendered)[:40]:
+                            if len(audit_urls) >= max_urls:
+                                break
+                            link = _urljoin(target_url, href)
+                            lu = _urlparse(link)
+                            if lu.scheme not in ("http", "https") or not lu.hostname:
+                                continue
+                            try:
+                                enforcer.validate_target(lu.hostname)
+                            except Exception:  # noqa: BLE001 - out of scope
+                                continue
+                            if link not in audit_urls:
+                                audit_urls.append(link)
+                        stats.setdefault("rendered", True)
+                    except Exception:  # noqa: BLE001 - anchor pass is advisory
+                        pass
+            for form in static_forms:
                 action = form["action"]
                 try:
                     fu = _urlparse(action)

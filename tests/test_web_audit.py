@@ -13,11 +13,13 @@ Covers the _execute_web_audit pipeline with fully mocked HTTP + memory:
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock
 
+import json
+
 import pytest
 
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.vuln_agent import VulnAnalysisAgent
-from ai_osop.core.config import AgentType
+from ai_osop.core.config import AgentType, Severity, VulnClass
 from ai_osop.core.exceptions import OutOfScopeError
 from ai_osop.core.models import ScopeDefinition, Task
 
@@ -382,3 +384,175 @@ async def test_web_audit_ssrf_skipped_when_oast_unavailable(monkeypatch):
     assert result["status"] == "success"
     assert result["findings_count"] == 0
     assert "oast_hits" not in result["stats"] or result["stats"]["oast_hits"] == 0
+
+
+# ---- WEB-AUDIT-004/005/006 (2026-08-31): rendered SPA + JS surface + SAN chaining ----
+
+
+def _routing_registry(*, browser_html: str = "") -> MagicMock:
+    """MCP registry mock that routes by server: browser-mcp serves rendered
+    HTML (navigate then eval); everything else raises (bridge down)."""
+    reg = MagicMock()
+    state = {"navigated": False}
+
+    class _Resp:
+        def __init__(self, status, result):
+            self.status = status
+            self.result = result
+
+    async def execute_tool(server_id, tool, params, scope=None, timeout_override=None):
+        if server_id == "browser-mcp" and tool == "execute":
+            if params.get("action") == "navigate":
+                state["navigated"] = True
+                return _Resp("success", {"ok": True})
+            if params.get("action") == "eval" and state["navigated"]:
+                return _Resp("success", {"result": browser_html, "current_url": params.get("url", "")})
+        raise RuntimeError("tool unavailable")
+
+    reg.execute_tool = AsyncMock(side_effect=execute_tool)
+    reg._routing_state = state
+    return reg
+
+
+def _aws_key_fixture() -> str:
+    """AWS-key-shaped fixture assembled from parts so no literal in this
+    source file matches the AKIA[0-9A-Z]{16} credential pattern (it is the
+    classic documentation example, not a real credential)."""
+    return "AK" + "IAIOSFODNN7EXAMPLE"
+
+
+async def test_web_audit_rendered_spa_form_discovered(monkeypatch):
+    """WEB-AUDIT-004: static HTML has no forms -> Playwright-rendered DOM with
+    a login form IS discovered and differentially audited."""
+    agent = _make_agent()
+    rendered = (
+        "<html><body><form method='POST' action='/login'>"
+        "<input name='username'><input name='password' type='password'>"
+        "<input type='submit'></form></body></html>"
+    )
+    agent.ctx.mcp_registry = _routing_registry(browser_html=rendered)
+    _patch_http(
+        monkeypatch,
+        {
+            "username=audit_probe_baseline_77": _FakeResponse(401, "Login failed"),
+            "OR '1'='1": _FakeResponse(200, "Welcome, admin!"),
+        },
+    )
+    # Seed URL has a query param so the GET pass runs; static body has no forms.
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1/app?q=seed", "engagement_id": "eng-test"}
+    )
+    assert result["status"] == "success"
+    assert result["stats"].get("rendered") is True
+    assert result["stats"]["forms_audited"] == 1
+    assert result["findings_count"] == 1
+    finding = result["findings"][0]
+    assert finding["cwe"] == "CWE-89"
+    assert finding["evidence"][0]["method"] == "POST"
+
+
+async def test_web_audit_js_bundle_endpoints_and_secret(monkeypatch):
+    """WEB-AUDIT-005: script srcs are fetched; API paths extend the audit
+    surface and are persisted; a leaked credential pattern mints a HIGH
+    finding whose evidence NEVER contains the secret value."""
+    agent = _make_agent()
+    agent.ctx.graph_memory.run_write_query = AsyncMock(return_value=None)
+    page = "<html><script src='/assets/bundle.js'></script></html>"
+    bundle = (
+        'var API="/admin-api/users";'
+        f'var K="{_aws_key_fixture()}";'
+    )
+    _patch_http(
+        monkeypatch,
+        {
+            "127.0.0.1/app": _FakeResponse(200, page),
+            "/assets/bundle.js": _FakeResponse(200, bundle),
+        },
+    )
+    result = await agent._execute_web_audit(
+        {"url": "http://127.0.0.1/app", "engagement_id": "eng-test"}
+    )
+    assert result["status"] == "success"
+    assert result["stats"]["js_bundles"] == 1
+    assert result["stats"]["js_endpoints"] >= 1
+    assert result["stats"]["js_secrets"] == 1
+    # Secret finding present, evidence has pattern name but NOT the value.
+    secret_findings = [f for f in result["findings"] if f["cwe"] == "CWE-798"]
+    assert len(secret_findings) == 1
+    ev_blob = json.dumps(secret_findings[0]["evidence"])
+    assert "aws-access-key" in ev_blob
+    assert _aws_key_fixture() not in ev_blob
+    # The discovered endpoint was persisted to the graph.
+    assert agent.ctx.graph_memory.run_write_query.await_count >= 1
+
+
+async def test_web_audit_san_chaining_schedules_sibling_scans():
+    """WEB-AUDIT-006: cert-SAN hostnames inside scope but unknown as Assets
+    get web_audit + nuclei_scan tasks pushed to the engagement queue."""
+    from ai_osop.core.models import ScopeDefinition, Vulnerability
+
+    agent = _make_agent()
+    session = MagicMock()
+    session.scope = ScopeDefinition(
+        engagement_id="eng-test", domains=["qosmos.qnulabs.com"], ips=[], exclusions=[]
+    )
+    agent.ctx.session_memory.load_session_state = AsyncMock(return_value=session)
+    agent.ctx.session_memory.push_task_queue = AsyncMock()
+    agent.ctx.graph_memory.run_read_query = AsyncMock(return_value=[])  # unknown host
+    agent.ctx.graph_memory.run_write_query = AsyncMock(return_value=None)
+
+    vuln = Vulnerability(
+        cwe="CWE-200",
+        vuln_type=VulnClass.OSINT_LEAK,
+        severity=Severity.INFO,
+        title="SSL DNS Names",
+        description="cert SAN enumeration (test fixture)",
+        tool_source="nuclei",
+        confidence=0.75,
+        engagement_id="eng-test",
+        evidence=[
+            {
+                "type": "nuclei_finding",
+                "extracted_results": ["console.qosmos.qnulabs.com", "evil.example.com"],
+            }
+        ],
+    )
+    stats = await agent._chain_san_discoveries([vuln], "eng-test")
+    assert stats["discovered"] == 2
+    assert stats["chained"] == 1          # in-scope sibling
+    assert stats["skipped_scope"] == 1    # evil.example.com is out of scope
+    # Two follow-on tasks pushed (web_audit + nuclei_scan) for the sibling.
+    assert agent.ctx.session_memory.push_task_queue.await_count == 2
+    first = agent.ctx.session_memory.push_task_queue.await_args_list[0]
+    assert first.args[0] == "tasks:eng-test"
+
+
+async def test_web_audit_san_chaining_skips_known_hosts():
+    """Already-known Assets are not re-scheduled (chain converges, no loops)."""
+    from ai_osop.core.models import ScopeDefinition, Vulnerability
+
+    agent = _make_agent()
+    session = MagicMock()
+    session.scope = ScopeDefinition(
+        engagement_id="eng-test", domains=["qosmos.qnulabs.com"], ips=[], exclusions=[]
+    )
+    agent.ctx.session_memory.load_session_state = AsyncMock(return_value=session)
+    agent.ctx.session_memory.push_task_queue = AsyncMock()
+    agent.ctx.graph_memory.run_read_query = AsyncMock(return_value=[{"v": "console.qosmos.qnulabs.com"}])
+    agent.ctx.graph_memory.run_write_query = AsyncMock(return_value=None)
+
+    vuln = Vulnerability(
+        cwe="CWE-200",
+        vuln_type=VulnClass.OSINT_LEAK,
+        severity=Severity.INFO,
+        title="SSL DNS Names",
+        description="cert SAN enumeration (test fixture)",
+        tool_source="nuclei",
+        confidence=0.75,
+        engagement_id="eng-test",
+        evidence=[{"type": "nuclei_finding", "extracted_results": ["console.qosmos.qnulabs.com"]}],
+    )
+    stats = await agent._chain_san_discoveries([vuln], "eng-test")
+    assert stats["chained"] == 0
+    assert stats["skipped_known"] == 1
+    agent.ctx.session_memory.push_task_queue.assert_not_awaited()
