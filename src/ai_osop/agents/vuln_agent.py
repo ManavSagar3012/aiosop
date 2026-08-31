@@ -1457,6 +1457,84 @@ class VulnAnalysisAgent(BaseAgent):
                     rendered_html, final_url = rendered
                     page_html = rendered_html
                     stats["rendered"] = True
+                    # WEB-AUDIT-008: interactive login-CTA click. Many OIDC
+                    # SPAs render a "Continue with <IdP>" BUTTON on /login —
+                    # the IdP redirect only fires on click, so no HTTP
+                    # redirect chain exists to capture (observed live: the
+                    # qosmos console renders "Continue with Microsoft" and
+                    # waits). Opt-in via payload['follow_login'] (or classes
+                    # containing 'authflow'): click the first plausible login
+                    # CTA, settle, and capture the LANDING page — that is
+                    # where the real auth form lives.
+                    wants_authflow = bool(
+                        payload.get("follow_login")
+                        or "authflow" in (payload.get("classes") or [])
+                    )
+                    if (
+                        wants_authflow
+                        and final_url == target_url
+                        and not _discover_forms(rendered_html, target_url)
+                    ):
+                        try:
+                            click_probe = await self.ctx.mcp_registry.execute_tool(
+                                "browser-mcp",
+                                "execute",
+                                {
+                                    "action": "eval",
+                                    "expression": (
+                                        "(()=>{const el=[...document.querySelectorAll("
+                                        "'button,a,input[type=submit]')].find(b=>/sign in|log ?in|"
+                                        "continue with|sign-in|login/i.test(b.textContent||b.value||''));"
+                                        "if(el){el.click();return JSON.stringify({clicked:true});}"
+                                        "return JSON.stringify({clicked:false});})()"
+                                    ),
+                                    "user_label": "web-audit",
+                                    "engagement_id": engagement_id,
+                                },
+                                scope=scope_def,
+                                timeout_override=30,
+                            )
+                            cp = getattr(click_probe, "result", None) or {}
+                            import json as _json
+
+                            click_info = _json.loads(cp.get("result") or "{}")
+                            if click_info.get("clicked"):
+                                # FIX (cta-capture-2026-08-31): do NOT
+                                # re-navigate — the click already started the
+                                # OIDC redirect chain in this browser context;
+                                # navigating back to the seed URL resets the
+                                # flow. Settle, then eval the CURRENT page
+                                # (location.href + DOM) directly.
+                                await asyncio.sleep(
+                                    min(float(payload.get("authflow_settle", 8.0)), 12.0)
+                                )
+                                settle_ev = await self.ctx.mcp_registry.execute_tool(
+                                    "browser-mcp",
+                                    "execute",
+                                    {
+                                        "action": "eval",
+                                        "expression": (
+                                            "JSON.stringify({html: document.documentElement."
+                                            "outerHTML, url: location.href})"
+                                        ),
+                                        "user_label": "web-audit",
+                                        "engagement_id": engagement_id,
+                                    },
+                                    scope=scope_def,
+                                    timeout_override=30,
+                                )
+                                sv = getattr(settle_ev, "result", None) or {}
+                                s_obj = _json.loads(sv.get("result") or "{}")
+                                if isinstance(s_obj.get("html"), str) and len(s_obj["html"]) > 50:
+                                    rendered_html = s_obj["html"]
+                                    final_url = str(s_obj.get("url") or target_url)
+                                    page_html = rendered_html
+                                    logger.info(
+                                        "web_audit_login_cta_followed",
+                                        landed_url=final_url,
+                                    )
+                        except Exception as e:  # noqa: BLE001 - CTA follow is best-effort
+                            logger.warning("web_audit_login_cta_failed", error=str(e))
                     # WEB-AUDIT-007: authorize-flow capture. If navigation
                     # FOLLOWED a redirect chain (an OIDC-protected SPA's
                     # /login lands on the IdP authorize URL with
