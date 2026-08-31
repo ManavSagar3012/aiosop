@@ -859,8 +859,25 @@ class Orchestrator:
 
         # If no tasks exist yet for this phase: pass-through phases are complete;
         # work-scheduling phases are not (we must wait for their tasks to appear).
+        # FIX (exploit-empty-complete-2026-08-31): EXPLOITATION schedules tasks
+        # ONLY for findings above the exploit bar (EXPLOIT-FILTER-001). When all
+        # findings are info/low severity, ZERO exploit-class tasks will ever
+        # exist — and the phase then waited on tasks that would never be
+        # created, hanging the engagement in exploitation forever (observed live
+        # on the qosmos run: 14 info findings -> phase wedged). The phase is
+        # entered and its scheduling is inline in transition_phase, so an empty
+        # set here means the filter found no candidates: nothing to wait on.
         if not phase_tasks:
-            return phase in PASS_THROUGH_PHASES
+            if phase in PASS_THROUGH_PHASES:
+                return True
+            if phase == EngagementPhase.EXPLOITATION:
+                logger.info(
+                    "exploitation_phase_no_candidates",
+                    session_id=session_id,
+                    hint="no critical/high/medium findings passed the exploit filter",
+                )
+                return True
+            return False
 
         # AIOSOP-PHASEGATE-001 (2026-07-03): decide completion by an explicit TERMINAL
         # allowlist, not an in-flight denylist. The prior check treated a task as

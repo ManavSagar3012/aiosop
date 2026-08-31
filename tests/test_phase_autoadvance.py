@@ -88,3 +88,31 @@ async def test_recon_complete_when_task_finished():
     orch._tasks = {t.id: t}
     done = await orch._is_phase_complete("eng-x", EngagementPhase.RECONNAISSANCE)
     assert done is True
+
+
+@pytest.mark.asyncio
+async def test_exploitation_complete_when_no_exploit_candidates():
+    """EXPLOIT-FILTER-001 schedules exploit tasks ONLY for critical/high/medium
+    findings. When every finding is info/low severity, ZERO exploit-class tasks
+    will ever exist — the phase must complete (nothing to wait on) instead of
+    hanging forever (observed live on an engagement with only info findings).
+    FIX (exploit-empty-complete-2026-08-31)."""
+    orch = _orch(vuln_count=0)
+    orch._tasks = {}
+    done = await orch._is_phase_complete("eng-x", EngagementPhase.EXPLOITATION)
+    assert done is True
+
+
+@pytest.mark.asyncio
+async def test_exploitation_not_complete_while_exploit_task_awaiting():
+    """A gated exploit task awaiting operator approval still blocks the phase."""
+    orch = _orch(vuln_count=1)
+    t = Task(
+        type="exploit_validation",
+        agent_type=AgentType.EXPLOIT_VALIDATION,
+        engagement_id="eng-x",
+        status="awaiting_approval",
+    )
+    orch._tasks = {t.id: t}
+    done = await orch._is_phase_complete("eng-x", EngagementPhase.EXPLOITATION)
+    assert done is False
