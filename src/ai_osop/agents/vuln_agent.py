@@ -1071,6 +1071,14 @@ class VulnAnalysisAgent(BaseAgent):
                     src,
                 ):
                     api_paths.add(m)
+                # Full-URL form (found live on qosmos: the bundle carried
+                # `https://host/admin-api` where NO quote precedes the path, so
+                # the relative-path pattern missed it). Normalize to path.
+                for m in _re.findall(
+                    r"https?://[A-Za-z0-9.\-]+(/(?:api|admin-api|auth|v1|v2|graphql)[A-Za-z0-9\-_/]{0,60})",
+                    src,
+                ):
+                    api_paths.add(m)
                 for label, pat in self._AUDIT_SECRET_PATTERNS:
                     if _re.search(pat, src):
                         secret_hits.append((label, u))
