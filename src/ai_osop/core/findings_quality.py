@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from ai_osop.core.models import DiffAuthFinding
+from ai_osop.core.safe_paths import safe_component
 
 logger = structlog.get_logger("ai_osop.findings_quality")
 
@@ -606,7 +607,7 @@ This certificate verifies the overall quality, operational validity, and finding
                 )
 
         # Save to disk
-        reports_dir = os.path.join("reports", engagement_id)
+        reports_dir = os.path.join("reports", safe_component(engagement_id))
         os.makedirs(reports_dir, exist_ok=True)
         cert_path = os.path.join(reports_dir, "MISSION_QUALITY_CERTIFICATE.md")
         with open(cert_path, "w", encoding="utf-8") as fh:
@@ -874,7 +875,7 @@ The platform achieved an estimated **{coverage_percent:.1%}** coverage density o
             md_content += f"🚨 **SHALLOW DISCOVERY WARNING ({expansion_ratio} Expansion, {privilege_expansion_ratio} PER).** Only a minimal attack surface was mapped (1 endpoint). Downstream scanning coverage is extremely limited. Ensure that the target is not protected by aggressive WAF blocking, and that active crawling, session hijacking, and Wayback historical lookups are fully enabled.\n"
 
         # Save to disk
-        reports_dir = os.path.join("reports", engagement_id)
+        reports_dir = os.path.join("reports", safe_component(engagement_id))
         os.makedirs(reports_dir, exist_ok=True)
         cert_path = os.path.join(reports_dir, "ATTACK_SURFACE_EXPANSION_CERTIFICATE.md")
         with open(cert_path, "w", encoding="utf-8") as fh:

@@ -14,6 +14,7 @@ from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType, settings
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Task
+from ai_osop.core.safe_paths import safe_component
 from ai_osop.reporting.exporters import ReportExporter
 
 logger = structlog.get_logger(__name__)
@@ -281,7 +282,7 @@ class ReportingAgent(BaseAgent):
 
         import os
 
-        reports_dir = os.path.join("reports", engagement_id)
+        reports_dir = os.path.join("reports", safe_component(engagement_id))
         os.makedirs(reports_dir, exist_ok=True)
         artifacts: Dict[str, str] = {}
         for ext, content in (
@@ -360,7 +361,7 @@ class ReportingAgent(BaseAgent):
 | Authenticated | {heatmap['authenticated']} |
 | Admin | {heatmap['admin']} |
 """
-        reports_dir = os.path.join("reports", engagement_id)
+        reports_dir = os.path.join("reports", safe_component(engagement_id))
         os.makedirs(reports_dir, exist_ok=True)
         report_path = os.path.join(reports_dir, "FINDING_YIELD_REPORT.md")
         with open(report_path, "w", encoding="utf-8") as fh:

@@ -13,18 +13,35 @@ import (
 // "-" would be reinterpreted as a tool FLAG, and embedded whitespace/newlines can split or
 // inject additional argv. None of the legitimate inputs (url, target, host, ports, wordlist,
 // mode, js_url) ever start with "-" or contain whitespace, so we reject those globally.
-// Returns the offending key + reason, or "" if all string params are safe.
+// MIMOSA-GUARD-2026-08-30: arrays (e.g. nuclei "targets": [...]) now get the same
+// per-element check — the original string-only cast let a dash-leading element
+// inside an array slip into argv as a flag.
+// Returns the offending key + reason, or "" if all params are safe.
 func sanitizeParams(params map[string]any) (string, string) {
-	for k, v := range params {
-		s, ok := v.(string)
-		if !ok {
-			continue
-		}
+	var check func(k, s string) (string, string)
+	check = func(k, s string) (string, string) {
 		if strings.HasPrefix(s, "-") {
 			return k, "value may not start with '-' (argument injection blocked)"
 		}
 		if strings.ContainsAny(s, " \t\r\n") {
 			return k, "value may not contain whitespace"
+		}
+		return "", ""
+	}
+	for k, v := range params {
+		switch val := v.(type) {
+		case string:
+			if bad, why := check(k, val); bad != "" {
+				return bad, why
+			}
+		case []any:
+			for _, item := range val {
+				if s, ok := item.(string); ok {
+					if bad, why := check(k, s); bad != "" {
+						return bad, why
+					}
+				}
+			}
 		}
 	}
 	return "", ""
