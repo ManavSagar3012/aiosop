@@ -42,6 +42,7 @@ async def create_task(
         dependencies=request.dependencies,
         approval_required=request.approval_required,
         engagement_id=request.engagement_id,
+        timeout_seconds=request.timeout_seconds,
     )
 
     await state["orchestrator"].schedule_task(task)

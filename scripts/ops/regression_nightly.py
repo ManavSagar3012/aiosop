@@ -95,6 +95,10 @@ async def audit_target(tag: str, url: str, classes: list) -> dict:
             "task_type": "web_audit",
             "priority": 9,
             "agent_type": "vuln_analysis",
+            # Rendered pass (Playwright launch + settle + OIDC redirect
+            # following) legitimately exceeds the 300s scheduler default —
+            # found by the harness's own first run (reaper timeout 307s).
+            "timeout_seconds": 900,
             "payload": {"url": url, "max_urls": 5, "classes": classes},
             "engagement_id": sid,
         },

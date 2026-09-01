@@ -39,6 +39,11 @@ class CreateTaskRequest(BaseModel):
     dependencies: List[str] = Field(default_factory=list)
     approval_required: bool = False
     engagement_id: str
+    # Operator-settable task budget (seconds). Long jobs (rendered-SPA audits
+    # with Playwright + OIDC redirect chains) legitimately exceed the 300s
+    # scheduler default and previously got reaped mid-audit (found by the
+    # nightly regression harness's first run). Bounded 60..3600.
+    timeout_seconds: int = Field(300, ge=60, le=3600)
 
 
 class ApprovalDecisionRequest(BaseModel):
