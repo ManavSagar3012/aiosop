@@ -64,6 +64,7 @@ from ai_osop.api.routers import (
     dlq,
     engagements,
     findings,
+    fleet,
     intelligence,
     sessions,
     system,
@@ -914,6 +915,7 @@ app.include_router(sessions.router)
 app.include_router(findings.router)
 app.include_router(intelligence.router)
 app.include_router(system.router)
+app.include_router(fleet.router)
 
 
 # ============== Metrics (protected) ==============
