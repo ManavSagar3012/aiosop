@@ -32,7 +32,15 @@ FALLBACK3 = "anthropic/mimo-v2.5"
 
 
 def _set_env(**kwargs):
-    """Set the OSOP_* env vars the settings object reads at import/call time."""
+    """Set the OSOP_* env vars the settings object reads at import/call time.
+
+    Also reloads ai_osop.core.llm_client: its module-level `settings` binding
+    was imported at first load from the REAL .env, so a fixture env change
+    alone is invisible to _resolve_base_url — the per-tier model-name match
+    then misses and resolution silently falls to the shared base. Reloading
+    both modules makes these tests fixture-driven, not .env-coupled (found
+    live when the operator swapped the fallback2 model).
+    """
     base = {
         "OSOP_LLM_PRIMARY": "anthropic",
         "OSOP_LLM_PRIMARY_MODEL": PRIMARY,
@@ -49,30 +57,31 @@ def _set_env(**kwargs):
     base.update(kwargs)
     for k, v in base.items():
         os.environ[k] = v
-    # Force settings to re-read from env
-    from ai_osop.core import config
+    # Force settings AND the client to re-read from env
     import importlib
 
-    importlib.reload(config)
-    from ai_osop.core.config import settings as _s
+    from ai_osop.core import config
+    from ai_osop.core import llm_client as lc
 
-    return _s
+    importlib.reload(config)
+    importlib.reload(lc)
+    return lc
 
 
 def test_per_tier_base_url_resolution():
     """Each model resolves to its own tier base URL."""
-    _set_env()
-    assert _resolve_base_url(PRIMARY) == APIBAI
-    assert _resolve_base_url(FALLBACK) == APIBAI
-    assert _resolve_base_url(FALLBACK2) == APIBAI
-    assert _resolve_base_url(FALLBACK3) == APIBAI
+    lc = _set_env()
+    assert lc._resolve_base_url(PRIMARY) == APIBAI
+    assert lc._resolve_base_url(FALLBACK) == APIBAI
+    assert lc._resolve_base_url(FALLBACK2) == APIBAI
+    assert lc._resolve_base_url(FALLBACK3) == APIBAI
 
 
 def test_embedding_path_uses_local_ollama():
     """The shared llm_base_url (embeddings) is untouched by the chat ladder."""
-    _set_env()
+    lc = _set_env()
     # An embedding model is not one of the chat tiers -> resolves to llm_base_url.
-    assert _resolve_base_url("nomic-embed-text") == OLLAMA
+    assert lc._resolve_base_url("nomic-embed-text") == OLLAMA
 
 
 @pytest.mark.asyncio
@@ -102,7 +111,11 @@ async def test_all_tiers_dead_raises_not_hangs():
 
     with patch.object(lc.LiteLLMClient, "_call_model", new_callable=AsyncMock) as mock_call:
         mock_call.side_effect = RuntimeError("tier down")
-        client = LiteLLMClient()
+        # Instantiate from the SAME module object being patched — the top-level
+        # import in this file is a stale class from before _set_env's reload
+        # (found live: patch applied to the new class, instance was the old
+        # one, the mock never fired and the real network answered).
+        client = lc.LiteLLMClient()
         with pytest.raises(Exception):
             await client.complete(
                 [{"role": "user", "content": "hi"}],
