@@ -1,0 +1,16 @@
+{
+  "lab_name": "ai-osop-ground-truth-v1",
+  "target": "http://127.0.0.1:8080",
+  "authorization": "local lab - explicitly authorized for testing",
+  "ground_truth": [
+    {"category": "sql injection", "surface": "127.0.0.1", "should_detect": true,
+     "requires_validation": true},
+    {"category": "xss", "surface": "127.0.0.1", "should_detect": true,
+     "requires_validation": true},
+    {"category": "missing security headers", "surface": "127.0.0.1",
+     "should_detect": true},
+    {"category": "waf detection", "surface": "127.0.0.1", "should_detect": false,
+     "_note": "catch-all detector bait - MUST land in REJECTED"}
+  ],
+  "expected_chains": ["recon_guided_injection"]
+}

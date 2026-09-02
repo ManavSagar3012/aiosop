@@ -1,0 +1,14 @@
+{
+  "engagement_id": "eng-20260621041752-syfe-bb-2025-01-20",
+  "date": "2026-06-21",
+  "version": "v1.0",
+  "risk_narrative": "\nThe Syfe UAT environment presents a moderately complex attack surface with both\nclient-side information disclosure and authentication flow weaknesses. Four findings\nwere identified during the reconnaissance phase: two MEDIUM-severity client-side\nstate exposures (isAdvisor role disclosure and voice call OTP feature control) and\ntwo LOW-severity information leakage issues (rate limit timing disclosure and error\nmessage enumeration). These findings suggest that the authentication layer may not\nfully validate client-controlled state on the server side, creating opportunities\nfor targeted attacks against advisor-tier accounts and potential MFA bypass vectors.\nAll findings were confirmed through non-destructive observation and pose no immediate\nexploitation risk without further authenticated testing.\n",
+  "stats": {
+    "assets_count": 14,
+    "endpoints_count": 27,
+    "critical_count": 0,
+    "high_count": 0
+  },
+  "top_findings": [],
+  "findings": []
+}

@@ -38,9 +38,17 @@ class TaskScheduler:
     # an open circuit breaker (observed live: burp_scan failed 3x against a dead
     # burp-mcp with the opaque error "circuit breaker is open").
     # Only verified mappings are listed — unmapped task types are ungated.
+    #
+    # BURP-COMMUNITY-001 (2026-08-31): "burp_scan" was REMOVED from this map.
+    # The task is now capability-driven: Burp Pro runs its own audit, Burp
+    # Community routes active scanning to nuclei-mcp + web_audit, and a fully
+    # unreachable burp-mcp degrades to internal_routed mode (Burp passive layer
+    # skipped, reason recorded in degraded_components). Every outcome succeeds
+    # without parking, so a hard requirement would only stall the discovery
+    # phase. Same for "intruder_fuzz": its deterministic engine sends through
+    # Burp's HTTP engine (every edition) with a scope-gated internal fallback
+    # — it never calls turbo-intruder-mcp, so that mapping was false.
     TASK_TYPE_SERVER_REQUIREMENTS: Dict[str, str] = {
-        "burp_scan": "burp-mcp",
-        "intruder_fuzz": "turbo-intruder-mcp",
         "nuclei_scan": "nuclei-mcp",
         "xss_scan": "browser-mcp",
         "sqli_scan": "security-bridge",

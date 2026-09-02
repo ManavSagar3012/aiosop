@@ -72,9 +72,7 @@ def _scheduled_sqli(orch: Orchestrator) -> list:
 @pytest.mark.asyncio
 async def test_schedules_sqli_scan_for_login_endpoint():
     """A /login endpoint schedules a sqli_http_scan with the right payload."""
-    orch, monitor, session = _make_orch(
-        endpoint_records=[{"url": "https://target.example/login"}]
-    )
+    orch, monitor, session = _make_orch(endpoint_records=[{"url": "https://target.example/login"}])
     await monitor._on_phase_enter(session, EngagementPhase.VULNERABILITY_DISCOVERY)
 
     sqli_tasks = _scheduled_sqli(orch)
@@ -123,3 +121,95 @@ async def test_dedupes_repeated_login_endpoints():
     )
     await monitor._on_phase_enter(session, EngagementPhase.VULNERABILITY_DISCOVERY)
     assert len(_scheduled_sqli(orch)) == 1
+
+
+# ---------------------------------------------------------------------------
+# BURP-COMMUNITY-001 (2026-08-31): edition-aware scan scheduling on phase entry
+# ---------------------------------------------------------------------------
+
+
+def _make_orch_with_edition(edition: str, scanner_available: bool):
+    """Orchestrator whose mcp_registry answers get_version like a real Burp."""
+    from ai_osop.mcp.protocol import MCPExecuteResponse
+
+    orch, monitor, session = _make_orch(endpoint_records=[{"url": "https://target.example/login"}])
+
+    async def _execute_tool(server_id, tool, params, **_):
+        assert server_id == "burp-mcp"
+        if tool == "get_version":
+            return MCPExecuteResponse(
+                request_id="r",
+                status="success",
+                result={
+                    "edition": edition,
+                    "version": "2026.4",
+                    "scanner_available": scanner_available,
+                    "collaborator_available": scanner_available,
+                    "organizer_available": scanner_available,
+                    "websocket_available": True,
+                    "live_traffic": True,
+                },
+            )
+        return MCPExecuteResponse(request_id="r", status="success", result={})
+
+    orch.mcp_registry = MagicMock()
+    orch.mcp_registry.execute_tool = AsyncMock(side_effect=_execute_tool)
+    return orch, monitor, session
+
+
+def _scheduled_by_type(orch, task_type: str) -> list:
+    return [
+        c.args[0]
+        for c in orch.task_scheduler.schedule_task.await_args_list
+        if c.args[0].type == task_type
+    ]
+
+
+@pytest.mark.asyncio
+async def test_community_schedules_no_duplicate_web_audit():
+    """Community with a live Burp: burp_scan runs web_audit INLINE (its routed
+    active-scan engine), so phase entry must NOT schedule a standalone
+    web_audit for the same asset — that would duplicate every probe."""
+    orch, monitor, session = _make_orch_with_edition("COMMUNITY_EDITION", False)
+    await monitor._on_phase_enter(session, EngagementPhase.VULNERABILITY_DISCOVERY)
+
+    burp_tasks = _scheduled_by_type(orch, "burp_scan")
+    assert len(burp_tasks) == 1
+    assert _scheduled_by_type(orch, "web_audit") == []
+    # Budget covers the inline engines: nuclei_mcp_timeout + web_audit + slack.
+    from ai_osop.core.config import settings
+
+    assert burp_tasks[0].timeout_seconds >= settings.nuclei_mcp_timeout + 600
+
+
+@pytest.mark.asyncio
+async def test_pro_schedules_burp_scan_plus_standalone_web_audit():
+    """Pro: Burp's own scanner covers the audit, so the standalone web_audit
+    differential sweep is still scheduled as its complement (pre-change
+    behavior preserved)."""
+    orch, monitor, session = _make_orch_with_edition("PROFESSIONAL_EDITION", True)
+    await monitor._on_phase_enter(session, EngagementPhase.VULNERABILITY_DISCOVERY)
+
+    assert len(_scheduled_by_type(orch, "burp_scan")) == 1
+    assert len(_scheduled_by_type(orch, "web_audit")) == 1
+
+
+@pytest.mark.asyncio
+async def test_burp_down_still_schedules_full_web_audit_sweep():
+    """burp-mcp unreachable: burp_scan degrades to internal_routed (with its
+    minimal inline audit), so the standalone full max_urls=25 web_audit sweep
+    IS scheduled to restore complete differential coverage."""
+    orch, monitor, session = _make_orch(endpoint_records=[])
+
+    # Force the capability probe to see a dead registry.
+    async def _dead(*a, **k):
+        raise ConnectionError("burp-mcp down")
+
+    orch.mcp_registry = MagicMock()
+    orch.mcp_registry.execute_tool = AsyncMock(side_effect=_dead)
+    await monitor._on_phase_enter(session, EngagementPhase.VULNERABILITY_DISCOVERY)
+
+    assert len(_scheduled_by_type(orch, "burp_scan")) == 1
+    audits = _scheduled_by_type(orch, "web_audit")
+    assert len(audits) == 1
+    assert audits[0].payload["max_urls"] == 25

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 1000px; margin: 0 auto; padding: 2rem; color: #24292e; }
+    h1, h2, h3 { color: #111; }
+    code { background: #f6f8fa; padding: 0.2em 0.4em; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; font-size: 85%; }
+    pre { background: #f6f8fa; padding: 16px; overflow: auto; border-radius: 3px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+    th, td { border: 1px solid #dfe2e5; padding: 6px 13px; }
+    th { background-color: #f6f8fa; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>CONFIDENTIAL / CLIENT-SENSITIVE</h1>
+<h1>Executive Summary</h1>
+<p><strong>Engagement ID:</strong> eng-20260705064010-auto-1783233610
+<strong>Date Generated:</strong> 2026-07-05
+<strong>Version:</strong> v1.0</p>
+<h2>Risk Narrative</h2>
+<p>CONFIDENTIAL</p>
+<p>The assessment identified 19 security findings across 1 asset and 6 exposed endpoints. Of these, 18 are rated high severity, there are no critical findings, and 1 informational finding; no medium or low‑severity issues were detected. The high‑severity findings are dominated by Insecure Direct Object Reference (IDOR) and Broken Access Control (BAC) vulnerabilities affecting the root path (/), the WebSocket endpoint (/socket.io/), and the internationalization resource (/assets/i18n/en.json).</p>
+<p>These access‑control flaws enable unauthenticated users to view or manipulate data that should be restricted, creating a direct path to confidential information exposure and potential service abuse. Given the concentration of high‑severity issues across multiple key endpoints, the risk to the organization is substantial; immediate remediation of the IDOR and BAC findings is recommended, followed by a broader access‑control review to mitigate further unauthorized access.</p>
+<h2>Assessment Overview</h2>
+<ul>
+<li><strong>Total Assets Discovered:</strong> 1</li>
+<li><strong>Total Endpoints Mapped:</strong> 6</li>
+<li><strong>Critical Vulnerabilities:</strong> 0</li>
+<li><strong>High Vulnerabilities:</strong> 18</li>
+</ul>
+<h2>Key Findings Summary</h2>
+<ul>
+<li>
+<p><strong>high</strong>: IDOR — unauthorized access to / (idor)</p>
+</li>
+<li>
+<p><strong>high</strong>: BROKEN_ACCESS_CONTROL — unauthorized access to / (broken_access_control)</p>
+</li>
+<li>
+<p><strong>high</strong>: IDOR — unauthorized access to /socket.io/ (idor)</p>
+</li>
+<li>
+<p><strong>high</strong>: BROKEN_ACCESS_CONTROL — unauthorized access to /socket.io/ (broken_access_control)</p>
+</li>
+<li>
+<p><strong>high</strong>: IDOR — unauthorized access to /assets/i18n/en.json (idor)</p>
+</li>
+</ul>
+<h1>CONFIDENTIAL / CLIENT-SENSITIVE</h1>
+<h1>Technical Details</h1>
+<p><strong>Engagement ID:</strong> eng-20260705064010-auto-1783233610</p>
+<h2>Verified Vulnerabilities</h2>
+<h3>1. IDOR — unauthorized access to /</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-4b0389e847145556</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 9903, &quot;test_identity_size&quot;: 9903, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>d83706cb9fedc62b1b8df92a639a766d814696b97c0489165203047dc2898cac</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>2. BROKEN_ACCESS_CONTROL — unauthorized access to /</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-4b0389e847145556</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 9903, &quot;test_identity_size&quot;: 9903, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>a93ee680eacc0bc3ab5f09ca8156332a558a9bdde99e1e9a3b9ccb4ae948ad93</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>3. IDOR — unauthorized access to /socket.io/</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-2d23b1b809525738</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/socket.io/?EIO=4&amp;transport=polling&amp;t=Pyn0bBi. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/socket.io/?EIO=4&amp;transport=polling&amp;t=Pyn0bBi&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 96, &quot;test_identity_size&quot;: 96, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>b1914272154f66efc518f925383e80631350fe5181a61a1c1f2608cec166f70a</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>4. BROKEN_ACCESS_CONTROL — unauthorized access to /socket.io/</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-2d23b1b809525738</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/socket.io/?EIO=4&amp;transport=polling&amp;t=Pyn0bBi. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/socket.io/?EIO=4&amp;transport=polling&amp;t=Pyn0bBi&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 96, &quot;test_identity_size&quot;: 96, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>eda3031dcb1c30889fe8809d4afa6e02b287390f53cbfac5a68c296b9287dc25</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>5. IDOR — unauthorized access to /assets/i18n/en.json</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-ce2d30702a5ca426</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/assets/i18n/en.json. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (address, balance, credit_card, email, password). Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/assets/i18n/en.json&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 35465, &quot;test_identity_size&quot;: 35465, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [&quot;address&quot;, &quot;balance&quot;, &quot;credit_card&quot;, &quot;email&quot;, &quot;password&quot;, &quot;phone&quot;, &quot;token&quot;], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>97a08296c9370f0f4cb7a7e54c05f4fc225a1e950a657fb2829c1ede92c243a9</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>6. BROKEN_ACCESS_CONTROL — unauthorized access to /assets/i18n/en.json</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-ce2d30702a5ca426</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/assets/i18n/en.json. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (address, balance, credit_card, email, password). Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/assets/i18n/en.json&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 35465, &quot;test_identity_size&quot;: 35465, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [&quot;address&quot;, &quot;balance&quot;, &quot;credit_card&quot;, &quot;email&quot;, &quot;password&quot;, &quot;phone&quot;, &quot;token&quot;], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>700fb0be1d894e9877a3c733ef887fe180c5dcb5a7c409bb5cbc2414fa8da789</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>7. IDOR — unauthorized access to /rest/admin/application-version</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-b1b2ca6df19113ed</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/rest/admin/application-version. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/rest/admin/application-version&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 20, &quot;test_identity_size&quot;: 20, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>686cf52ff0994f00041cbfa1340fce1c3be2e23ac9f49de03964d1716d7340ef</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>8. BROKEN_ACCESS_CONTROL — unauthorized access to /rest/admin/application-version</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-b1b2ca6df19113ed</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/rest/admin/application-version. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/rest/admin/application-version&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 20, &quot;test_identity_size&quot;: 20, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>8fbf41ade5845dbc08773e6d61560a8da99435cc4a3d372ba8a794cecf90cbb6</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>9. IDOR — unauthorized access to /rest/admin/application-configuration</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-34a53fefcced02c2</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/rest/admin/application-configuration. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (email, hash, phone). Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/rest/admin/application-configuration&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 23577, &quot;test_identity_size&quot;: 23577, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [&quot;email&quot;, &quot;hash&quot;, &quot;phone&quot;], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>47aea14d607033b3fc943e3ca29cbd6aec1808984fa7085a314bb08323e64867</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>10. BROKEN_ACCESS_CONTROL — unauthorized access to /rest/admin/application-configuration</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-34a53fefcced02c2</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/rest/admin/application-configuration. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (email, hash, phone). Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/rest/admin/application-configuration&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 23577, &quot;test_identity_size&quot;: 23577, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [&quot;email&quot;, &quot;hash&quot;, &quot;phone&quot;], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>618906beab4ff238cc94ed8203d5096a869415338438e8a0691fa35d84ea0423</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>11. IDOR — unauthorized access to /api/Challenges/</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-012f8d13bb9bc7cb</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/api/Challenges/?name=Score%20Board. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/api/Challenges/?name=Score%20Board&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 476, &quot;test_identity_size&quot;: 476, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>5cd858e57108550b7791e55c9389a5463b58920b107a9a13bf73e1c41fcc066d</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>12. BROKEN_ACCESS_CONTROL — unauthorized access to /api/Challenges/</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-012f8d13bb9bc7cb</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/api/Challenges/?name=Score%20Board. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/api/Challenges/?name=Score%20Board&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 476, &quot;test_identity_size&quot;: 476, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>db5f2f8a5003431a69fb66213b6c649cceadcd6e59d9d8405335a56e398b3fa0</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>13. IDOR — unauthorized access to /rest/languages</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-d91fe34b8743e8a5</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/rest/languages. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/rest/languages&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 4215, &quot;test_identity_size&quot;: 4215, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>0e0174c93cbf1d8947818a2d8f693876d93a12d5e22699668926c47588398d3c</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>14. BROKEN_ACCESS_CONTROL — unauthorized access to /rest/languages</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-d91fe34b8743e8a5</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/rest/languages. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/rest/languages&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 4215, &quot;test_identity_size&quot;: 4215, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>7760b8272986c31c2465e2448b80391fb8841d46045a348aafa1f507872e2c55</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>15. IDOR — unauthorized access to /api/Quantitys/</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-23c7ce67e007ac73</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/api/Quantitys/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/api/Quantitys/&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 7628, &quot;test_identity_size&quot;: 7628, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>2184079e4d5ea8d60ab7f83d24774c3c5f06d2523482609558ad2c7d1d711ba7</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>16. BROKEN_ACCESS_CONTROL — unauthorized access to /api/Quantitys/</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-23c7ce67e007ac73</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/api/Quantitys/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/api/Quantitys/&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 7628, &quot;test_identity_size&quot;: 7628, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>bbda69a8e31ce4dda47457d204a2fe90ce872d1d68a22640688ba5a81952f81f</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>17. IDOR — unauthorized access to /rest/products/search</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: idor</li>
+<li><strong>Target</strong>: api-c0d1f02464b03bfb</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/rest/products/search?q=. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;horizontal_pe&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/rest/products/search?q=&quot;, &quot;test_identity&quot;: &quot;user_a&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 16563, &quot;test_identity_size&quot;: 16563, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>3cf9d835027d6ee08673a2ba796cabd02a81e6a615e39e41db76e3249f93181a</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>18. BROKEN_ACCESS_CONTROL — unauthorized access to /rest/products/search</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: broken_access_control</li>
+<li><strong>Target</strong>: api-c0d1f02464b03bfb</li>
+</ul>
+<h4>Description</h4>
+<p>Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/rest/products/search?q=. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;differential_authorization&quot;, &quot;provenance&quot;: &quot;live&quot;, &quot;category&quot;: &quot;broken_access_control&quot;, &quot;method&quot;: &quot;GET&quot;, &quot;url&quot;: &quot;http://localhost:3000/rest/products/search?q=&quot;, &quot;test_identity&quot;: &quot;anonymous&quot;, &quot;owner_status&quot;: 200, &quot;test_identity_status&quot;: 200, &quot;owner_size&quot;: 16563, &quot;test_identity_size&quot;: 16563, &quot;schema_match&quot;: 1.0, &quot;sensitive_fields&quot;: [], &quot;expected&quot;: &quot;401/403 (denied)&quot;, &quot;observed&quot;: &quot;200 with matching resource body&quot;}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>5080e514e5215493bf87259a3bcec034688c4c288a0b07f9726d53006e6dfe13</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>19. CAA Record</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+</ul>
+<h4>Description</h4>
+<p>A CAA record was discovered. A CAA record is used to specify which certificate authorities (CAs) are allowed to issue certificates for a domain.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;caa-fingerprint&quot;, &quot;matched_at&quot;: &quot;localhost&quot;, &quot;url&quot;: &quot;localhost&quot;, &quot;request&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 29464\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;localhost.\tIN\t CAA\n&quot;, &quot;response&quot;: &quot;;; opcode: QUERY, status: NXDOMAIN, id: 29464\n;; flags: qr rd ra; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;localhost.\tIN\t CAA\n\n;; AUTHORITY SECTION:\n.\t86398\tIN\tSOA\ta.root-servers.net. nstld.verisign-grs.com. 2026070500 1800 900 604800 86400\n&quot;, &quot;extracted_results&quot;: null}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>c5d800dd30693794e5acbe7b6b30fb4002baca7c4fe44712c04d7030c122e95f</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+</body>
+</html>

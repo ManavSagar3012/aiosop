@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260629165104-syfe-vuln-20260629222104</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260629165104-syfe-vuln-20260629222104</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-8ded27b717a1", "labels": ["Task"]}, {"id": "task-3bf531dbb2c4", "labels": ["Task"]}, {"id": "asset-eng-20260629165104-syfe-vuln-20260629222104-uat-bugbounty.nonprod.syfe.com", "labels": ["Asset"]}, {"id": "ep-161753d9f87b", "labels": ["Endpoint"]}, {"id": "ep-ae4cb1e35b98", "labels": ["Endpoint"]}, {"id": "ep-69e51f2aff3b", "labels": ["Endpoint"]}, {"id": "ep-b348158900dd", "labels": ["Endpoint"]}, {"id": "ep-3a39f3709100", "labels": ["Endpoint"]}, {"id": "ep-1af25512a4e0", "labels": ["Endpoint"]}, {"id": "ep-9fd72cd74ab2", "labels": ["Endpoint"]}, {"id": "ep-3d09080fe2e4", "labels": ["Endpoint"]}, {"id": "ep-17d12cf75920", "labels": ["Endpoint"]}, {"id": "ep-14b4537c94e4", "labels": ["Endpoint"]}, {"id": "ep-a78230ba6115", "labels": ["Endpoint"]}, {"id": "ep-cbab4b3532ab", "labels": ["Endpoint"]}, {"id": "ep-38a829be1d5e", "labels": ["Endpoint"]}, {"id": "ep-3165671bda61", "labels": ["Endpoint"]}, {"id": "ep-383e92fac4d5", "labels": ["Endpoint"]}, {"id": "ep-1276cb56fd63", "labels": ["Endpoint"]}, {"id": "ep-167261b35598", "labels": ["Endpoint"]}, {"id": "ep-a817e272f429", "labels": ["Endpoint"]}, {"id": "ep-310820a0e06a", "labels": ["Endpoint"]}, {"id": "ep-e973f137899f", "labels": ["Endpoint"]}, {"id": "ep-ea6ebab95b49", "labels": ["Endpoint"]}, {"id": "ep-e2217bd3e4e5", "labels": ["Endpoint"]}, {"id": "ep-72a8250d7de5", "labels": ["Endpoint"]}, {"id": "ep-53d1a585c92f", "labels": ["Endpoint"]}, {"id": "ep-c18f6595abfc", "labels": ["Endpoint"]}, {"id": "ep-e1030fdf1865", "labels": ["Endpoint"]}, {"id": "ep-635a06ce5731", "labels": ["Endpoint"]}, {"id": "ep-c85e8ab583de", "labels": ["Endpoint"]}, {"id": "ep-191c8dc30b50", "labels": ["Endpoint"]}, {"id": "ep-43b85982e9e4", "labels": ["Endpoint"]}, {"id": "ep-f16b30715fc6", "labels": ["Endpoint"]}, {"id": "ep-30bd3630f529", "labels": ["Endpoint"]}, {"id": "ep-661bc6ec55d3", "labels": ["Endpoint"]}, {"id": "ep-7f215049cd7a", "labels": ["Endpoint"]}, {"id": "ep-e400d639483e", "labels": ["Endpoint"]}, {"id": "ep-8a0854185d35", "labels": ["Endpoint"]}, {"id": "ep-cb03eb9f425d", "labels": ["Endpoint"]}, {"id": "ep-1b613f540d42", "labels": ["Endpoint"]}, {"id": "ep-0ca56479ccec", "labels": ["Endpoint"]}, {"id": "ep-3705f79cabc4", "labels": ["Endpoint"]}, {"id": "ep-804ccb74726f", "labels": ["Endpoint"]}, {"id": "ep-a7695872366d", "labels": ["Endpoint"]}, {"id": "ep-a06d2ac9d68a", "labels": ["Endpoint"]}, {"id": "ep-178d01e9ca2f", "labels": ["Endpoint"]}, {"id": "ep-94ea197270ac", "labels": ["Endpoint"]}, {"id": "ep-55e9a7b61c25", "labels": ["Endpoint"]}, {"id": "ep-d2acac08690f", "labels": ["Endpoint"]}, {"id": "ep-48d9e1ac1f7d", "labels": ["Endpoint"]}, {"id": "ep-fd8626729f94", "labels": ["Endpoint"]}, {"id": "ep-65979c5dd24c", "labels": ["Endpoint"]}, {"id": "ep-6500a885b8a2", "labels": ["Endpoint"]}, {"id": "ep-26b031ed7098", "labels": ["Endpoint"]}, {"id": "task-689ca3d79c28", "labels": ["Task"]}, {"id": "task-99a1cd86ebca", "labels": ["Task"]}, {"id": "endpoint-eng-20260629165104-syfe-vuln-20260629222104-uat-bugbounty.nonprod.syfe.com", "labels": ["Endpoint"]}, {"id": "task-bd5b9b9eb607", "labels": ["Task"]}, {"id": "vuln-301a804ae2f0", "labels": ["Vulnerability"]}, {"id": "vuln-656d1c9efc0a", "labels": ["Vulnerability"]}, {"id": "vuln-cc04f503e7ca", "labels": ["Vulnerability"]}, {"id": "vuln-aec6d37752a0", "labels": ["Vulnerability"]}, {"id": "vuln-92ba02b1506c", "labels": ["Vulnerability"]}, {"id": "vuln-a223ef3b7ab9", "labels": ["Vulnerability"]}, {"id": "vuln-eb2ab752f5ff", "labels": ["Vulnerability"]}, {"id": "vuln-625eb207a55e", "labels": ["Vulnerability"]}, {"id": "vuln-f5a37181b05f", "labels": ["Vulnerability"]}], "edges": [{"source": "asset-eng-20260629165104-syfe-vuln-20260629222104-uat-bugbounty.nonprod.syfe.com", "target": "endpoint-eng-20260629165104-syfe-vuln-20260629222104-uat-bugbounty.nonprod.syfe.com", "type": "HAS_ENDPOINT"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

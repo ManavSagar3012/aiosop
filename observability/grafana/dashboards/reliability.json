@@ -1,0 +1,80 @@
+{
+  "dashboard": {
+    "title": "AI-OSOP Reliability",
+    "tags": ["ai-osop", "reliability", "infrastructure"],
+    "timezone": "utc",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Redis Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_dependency_up{name=\"redis\"}",
+            "legendFormat": "Redis"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Neo4j Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_dependency_up{name=\"neo4j\"}",
+            "legendFormat": "Neo4j"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Postgres Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_dependency_up{name=\"postgres\"}",
+            "legendFormat": "Postgres"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "MCP Health Grid",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "ai_osop_mcp_circuit_breaker_state",
+            "format": "table",
+            "legendFormat": "{{server_id}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+      },
+      {
+        "id": 5,
+        "title": "Neo4j Query Latency (p50/p95/p99)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(ai_osop_graph_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_graph_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(ai_osop_graph_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+      }
+    ],
+    "schemaVersion": 36,
+    "version": 1
+  }
+}

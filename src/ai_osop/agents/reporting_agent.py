@@ -6,7 +6,7 @@ assessment results into structured deliverables.
 
 import os
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import structlog
 
@@ -62,6 +62,17 @@ class ReportingAgent(BaseAgent):
         # 1. Gather real data from memories (no mocks — OSOP-P0-02 anti-fabrication).
         # graph_stats: live per-engagement asset/endpoint counts from Neo4j.
         graph_stats = await self.ctx.graph_memory.get_graph_stats(engagement_id)
+
+        # P0 scope gate source: the engagement's signed scope drives per-finding
+        # scope validation (matched host:port must be inside it — the :80-vs-:443
+        # problem from the external review). Falls back to no-pinned-port hosts.
+        scope_hosts: List[str] = []
+        try:
+            _session = await self.ctx.session_memory.load_session_state(engagement_id)
+            _scope = getattr(_session, "scope", None)
+            scope_hosts = list(_scope.domains or []) if _scope else []
+        except Exception as _e:  # noqa: BLE001 - scope context is best-effort
+            logger.warning("report_scope_lookup_failed", error=str(_e))
 
         # Real vulnerability nodes for this engagement, fetched from the graph below.
         findings = []
@@ -163,9 +174,37 @@ class ReportingAgent(BaseAgent):
                     }
                 )
                 finding["cvss"] = _CVSS.get(sev_key, _CVSS.get("info", "0.0 (Informational)"))
-                finding["remediation"] = _REMEDIATION.get(
-                    vuln_type, "Apply input validation and least-privilege controls."
+                # P0 (external review 2026-09-02): raw scanner observations were
+                # rendered as "Verified Vulnerabilities" — including findings whose
+                # own evidence said out_of_scan_scope / catch_all / fingerprint-only,
+                # and a missing-headers claim the captured response itself refuted.
+                # Validation gates run BEFORE any taxonomy/remediation so the final
+                # status reflects the evidence, and remediation is finding-aware
+                # instead of the generic input-validation fallback.
+                from ai_osop.core.finding_validation import (
+                    remediation_for,
+                    taxonomy_gate,
+                    validate_finding,
                 )
+
+                validation_input = dict(finding)
+                validation_input["evidence"] = raw_evidence  # pre-truncation evidence
+                validate_finding(validation_input, scope_hosts)
+                finding["security_class"] = validation_input.get("security_class")
+                finding["finding_status"] = validation_input.get("finding_status")
+                finding["scope_status"] = validation_input.get("scope_status")
+                finding["fp_probability"] = validation_input.get("fp_probability")
+                finding["validation_notes"] = validation_input.get("validation_notes")
+                if validation_input.get("actual_missing_headers"):
+                    finding["actual_missing_headers"] = validation_input["actual_missing_headers"]
+                taxonomy_gate(finding)
+                specific_remediation = remediation_for(validation_input)
+                if specific_remediation:
+                    finding["remediation"] = specific_remediation
+                else:
+                    finding["remediation"] = _REMEDIATION.get(
+                        vuln_type, "No automated remediation available — manual review required."
+                    )
                 findings.append(finding)
         except Exception as e:
             logger.warning("could_not_fetch_findings_from_graph", error=str(e))
@@ -208,6 +247,21 @@ class ReportingAgent(BaseAgent):
         risk_narrative = await self.ctx.llm_client.complete(messages)
 
         # 3. Render Templates
+        # P0: cross-target correlation (one family affecting N hosts is ONE
+        # issue, not N) and the honest executive funnel — the LLM narrative
+        # must present raw signals vs validated vulnerabilities, not "28
+        # findings" for what is 14 families of observations.
+        from ai_osop.core.finding_validation import correlate_findings, funnel_stats
+
+        correlate_findings(findings)
+        funnel = funnel_stats(raw_count=len(findings), findings=findings)
+        stats["funnel"] = funnel
+        stats["validated_vulnerabilities_count"] = funnel["validated_vulnerabilities"]
+        stats["hardening_items_count"] = funnel["hardening_items"]
+        stats["fingerprint_observations_count"] = funnel["fingerprint_observations"]
+        stats["out_of_scope_count"] = funnel["out_of_scope"]
+        stats["false_positives_count"] = funnel["false_positives"]
+
         report_context = {
             "engagement_id": engagement_id,
             "date": datetime.utcnow().strftime("%Y-%m-%d"),

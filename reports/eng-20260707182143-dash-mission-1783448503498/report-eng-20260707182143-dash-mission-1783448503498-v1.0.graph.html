@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260707182143-dash-mission-1783448503498</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260707182143-dash-mission-1783448503498</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-e9d3981b6260", "labels": ["Task"]}, {"id": "asset-eng-20260707182143-dash-mission-1783448503498-ginandjuice.shop", "labels": ["Asset"]}, {"id": "ep-d80fa8315c2d", "labels": ["Endpoint"]}, {"id": "ep-a77e1f21b092", "labels": ["Endpoint"]}, {"id": "endpoint-f164ccaecfae", "labels": ["Endpoint"]}, {"id": "endpoint-051be805520f", "labels": ["Endpoint"]}, {"id": "endpoint-61092233dc55", "labels": ["Endpoint"]}, {"id": "endpoint-16ad95ab9916", "labels": ["Endpoint"]}, {"id": "endpoint-aa472bb8f6e0", "labels": ["Endpoint"]}, {"id": "endpoint-479118d4b9fe", "labels": ["Endpoint"]}, {"id": "endpoint-116b39f2f833", "labels": ["Endpoint"]}, {"id": "endpoint-2b509d840e7e", "labels": ["Endpoint"]}, {"id": "endpoint-e3f34f296db8", "labels": ["Endpoint"]}, {"id": "endpoint-61e7139ebaba", "labels": ["Endpoint"]}, {"id": "endpoint-14d693f6c53e", "labels": ["Endpoint"]}, {"id": "endpoint-df3dc3b91b12", "labels": ["Endpoint"]}, {"id": "endpoint-0bbe2141cae1", "labels": ["Endpoint"]}, {"id": "endpoint-a0aa4327e283", "labels": ["Endpoint"]}, {"id": "endpoint-a84acf3ed317", "labels": ["Endpoint"]}, {"id": "endpoint-2840f839a767", "labels": ["Endpoint"]}, {"id": "endpoint-9f1b3ac38832", "labels": ["Endpoint"]}, {"id": "endpoint-ccc2784938c5", "labels": ["Endpoint"]}, {"id": "endpoint-408c60bea55b", "labels": ["Endpoint"]}, {"id": "endpoint-e32bc57543fd", "labels": ["Endpoint"]}, {"id": "endpoint-378b9e2ab9d6", "labels": ["Endpoint"]}, {"id": "endpoint-d2e4a53096eb", "labels": ["Endpoint"]}, {"id": "endpoint-3422ecb99f85", "labels": ["Endpoint"]}, {"id": "endpoint-7f8eb5bd3457", "labels": ["Endpoint"]}, {"id": "endpoint-922cdb5b4e80", "labels": ["Endpoint"]}, {"id": "endpoint-5436933e5365", "labels": ["Endpoint"]}, {"id": "endpoint-8aa98b5ae84a", "labels": ["Endpoint"]}, {"id": "endpoint-c1b4da48f93b", "labels": ["Endpoint"]}, {"id": "endpoint-841718b4017b", "labels": ["Endpoint"]}, {"id": "task-94085e58d3fe", "labels": ["Task"]}, {"id": "task-0ac0a5f10946", "labels": ["Task"]}, {"id": "endpoint-eng-20260707182143-dash-mission-1783448503498-ginandjuice.shop", "labels": ["Endpoint"]}, {"id": "task-aa3c24fd7464", "labels": ["Task"]}], "edges": [{"source": "asset-eng-20260707182143-dash-mission-1783448503498-ginandjuice.shop", "target": "endpoint-eng-20260707182143-dash-mission-1783448503498-ginandjuice.shop", "type": "HAS_ENDPOINT"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

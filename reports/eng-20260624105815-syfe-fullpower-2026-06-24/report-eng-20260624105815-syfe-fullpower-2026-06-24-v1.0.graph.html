@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260624105815-syfe-fullpower-2026-06-24</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260624105815-syfe-fullpower-2026-06-24</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "endpoint-uat-bugbounty.nonprod.syfe.com", "labels": ["Endpoint"]}, {"id": "task-fa3552199a5a", "labels": ["Task"]}, {"id": "ep-a985f60b4c26", "labels": ["Endpoint"]}, {"id": "ep-6851e4437f6f", "labels": ["Endpoint"]}, {"id": "ep-c8aed6dbafd6", "labels": ["Endpoint"]}, {"id": "ep-98b7a7306592", "labels": ["Endpoint"]}, {"id": "ep-3ee198f16519", "labels": ["Endpoint"]}, {"id": "ep-a4c0d81b8ff5", "labels": ["Endpoint"]}, {"id": "ep-5a70e0f445e3", "labels": ["Endpoint"]}, {"id": "ep-7901d7d1f2ab", "labels": ["Endpoint"]}, {"id": "ep-b23a3c559ede", "labels": ["Endpoint"]}, {"id": "ep-ede40a928661", "labels": ["Endpoint"]}, {"id": "ep-ab16cba3a016", "labels": ["Endpoint"]}, {"id": "ep-e63529ecc9f7", "labels": ["Endpoint"]}, {"id": "ep-fbba83164082", "labels": ["Endpoint"]}, {"id": "ep-8b2461886f39", "labels": ["Endpoint"]}, {"id": "ep-978655e9b467", "labels": ["Endpoint"]}, {"id": "ep-5a96f7a7accb", "labels": ["Endpoint"]}, {"id": "ep-43f645f58d2a", "labels": ["Endpoint"]}, {"id": "ep-fb5b2c2f3817", "labels": ["Endpoint"]}, {"id": "ep-d02e13654cc5", "labels": ["Endpoint"]}, {"id": "ep-f984ec2c181b", "labels": ["Endpoint"]}, {"id": "ep-32aa9b2df352", "labels": ["Endpoint"]}, {"id": "ep-b89d05f5be16", "labels": ["Endpoint"]}, {"id": "ep-43cc8c5b1fe7", "labels": ["Endpoint"]}, {"id": "ep-68c01f64b152", "labels": ["Endpoint"]}, {"id": "ep-7d3e879fe6e4", "labels": ["Endpoint"]}, {"id": "ep-64a7fb04659a", "labels": ["Endpoint"]}, {"id": "ep-caf6d007561f", "labels": ["Endpoint"]}, {"id": "ep-5d8a7067ca67", "labels": ["Endpoint"]}, {"id": "ep-19ac5f8c8997", "labels": ["Endpoint"]}, {"id": "ep-4b6c7f5d4547", "labels": ["Endpoint"]}, {"id": "ep-3e6567e32dcf", "labels": ["Endpoint"]}, {"id": "ep-fa8ce7d79476", "labels": ["Endpoint"]}, {"id": "ep-89082ff4b95b", "labels": ["Endpoint"]}, {"id": "ep-db1d021f7d83", "labels": ["Endpoint"]}, {"id": "ep-198c905f86e8", "labels": ["Endpoint"]}, {"id": "ep-ed490c8e39c5", "labels": ["Endpoint"]}, {"id": "ep-6ce4835e464d", "labels": ["Endpoint"]}, {"id": "ep-b290af5b1392", "labels": ["Endpoint"]}, {"id": "ep-5cd8664b8254", "labels": ["Endpoint"]}, {"id": "ep-b86a42038e31", "labels": ["Endpoint"]}, {"id": "ep-b533fef85918", "labels": ["Endpoint"]}, {"id": "ep-ba0f1edf7af8", "labels": ["Endpoint"]}, {"id": "ep-fe31c541c200", "labels": ["Endpoint"]}, {"id": "ep-72d5f5266118", "labels": ["Endpoint"]}, {"id": "ep-f060f6296850", "labels": ["Endpoint"]}, {"id": "ep-d1d8844f9e6e", "labels": ["Endpoint"]}, {"id": "ep-3512320369c3", "labels": ["Endpoint"]}, {"id": "ep-08d033a1f843", "labels": ["Endpoint"]}, {"id": "ep-19d69dfd65e8", "labels": ["Endpoint"]}, {"id": "ep-6f9dd40b0571", "labels": ["Endpoint"]}, {"id": "ep-d270118abbc4", "labels": ["Endpoint"]}, {"id": "ep-4068b1ac7f05", "labels": ["Endpoint"]}, {"id": "task-13b1ae91645d", "labels": ["Task"]}, {"id": "task-c7b126d1d078", "labels": ["Task"]}, {"id": "task-32ac2d45d719", "labels": ["Task"]}], "edges": []};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

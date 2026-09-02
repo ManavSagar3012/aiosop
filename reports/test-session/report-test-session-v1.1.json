@@ -1,6 +1,6 @@
 {
   "engagement_id": "test-session",
-  "date": "2026-08-30",
+  "date": "2026-09-02",
   "version": "v1.1",
   "risk_narrative": "Mocked Executive Risk Narrative.",
   "stats": {
@@ -11,7 +11,21 @@
     "medium_count": 0,
     "low_count": 0,
     "info_count": 0,
-    "total_findings": 1
+    "total_findings": 1,
+    "funnel": {
+      "raw_scanner_signals": 1,
+      "unique_finding_families": 1,
+      "validated_vulnerabilities": 1,
+      "hardening_items": 0,
+      "fingerprint_observations": 0,
+      "out_of_scope": 0,
+      "false_positives": 0
+    },
+    "validated_vulnerabilities_count": 1,
+    "hardening_items_count": 0,
+    "fingerprint_observations_count": 0,
+    "out_of_scope_count": 0,
+    "false_positives_count": 0
   },
   "top_findings": [
     {
@@ -28,7 +42,16 @@
       "attack_name": "Command and Scripting Interpreter: JavaScript",
       "owasp": "A03:2021-Injection",
       "cvss": "8.1 (High)",
-      "remediation": "Context-aware output encoding; a strict CSP; avoid innerHTML with untrusted data."
+      "security_class": "validated_vulnerability",
+      "finding_status": "verified",
+      "scope_status": "in_scope",
+      "fp_probability": 0.05,
+      "validation_notes": "passed all validation gates",
+      "remediation": "Context-aware output encoding; a strict CSP; avoid innerHTML with untrusted data.",
+      "affected_targets": [
+        "ep-1"
+      ],
+      "duplicate_count": 1
     }
   ],
   "findings": [
@@ -46,7 +69,16 @@
       "attack_name": "Command and Scripting Interpreter: JavaScript",
       "owasp": "A03:2021-Injection",
       "cvss": "8.1 (High)",
-      "remediation": "Context-aware output encoding; a strict CSP; avoid innerHTML with untrusted data."
+      "security_class": "validated_vulnerability",
+      "finding_status": "verified",
+      "scope_status": "in_scope",
+      "fp_probability": 0.05,
+      "validation_notes": "passed all validation gates",
+      "remediation": "Context-aware output encoding; a strict CSP; avoid innerHTML with untrusted data.",
+      "affected_targets": [
+        "ep-1"
+      ],
+      "duplicate_count": 1
     }
   ]
 }

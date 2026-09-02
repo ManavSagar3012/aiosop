@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260704132256-syfe-c1-approvalfix-20260704185254</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260704132256-syfe-c1-approvalfix-20260704185254</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-1569a01b1c27", "labels": ["Task"]}, {"id": "asset-eng-20260704132256-syfe-c1-approvalfix-20260704185254-uat-bugbounty.nonprod.syfe.com", "labels": ["Asset"]}, {"id": "ep-fb6c4ad75698", "labels": ["Endpoint"]}, {"id": "ep-34d5dbe05ad0", "labels": ["Endpoint"]}, {"id": "task-6f0738ac8889", "labels": ["Task"]}, {"id": "task-aa70a842be17", "labels": ["Task"]}, {"id": "endpoint-eng-20260704132256-syfe-c1-approvalfix-20260704185254-uat-bugbounty.nonprod.syfe.com", "labels": ["Endpoint"]}, {"id": "vuln-231b8b8c95ad", "labels": ["Vulnerability"]}, {"id": "prim-6b3b282b2866", "labels": ["Primitive"]}, {"id": "vuln-f7cdc4ad1f76", "labels": ["Vulnerability"]}, {"id": "vuln-91717b61a96a", "labels": ["Vulnerability"]}, {"id": "vuln-a21ff00d4241", "labels": ["Vulnerability"]}, {"id": "vuln-24b247f1af37", "labels": ["Vulnerability"]}, {"id": "vuln-33c35ee33c8b", "labels": ["Vulnerability"]}, {"id": "vuln-a5a67d30a8d0", "labels": ["Vulnerability"]}, {"id": "vuln-16172f7cdd20", "labels": ["Vulnerability"]}, {"id": "vuln-ed82ea0eb813", "labels": ["Vulnerability"]}, {"id": "vuln-780002c5018a", "labels": ["Vulnerability"]}, {"id": "vuln-3e2acb5898fc", "labels": ["Vulnerability"]}, {"id": "vuln-ab4d3ce82282", "labels": ["Vulnerability"]}, {"id": "vuln-05912773d448", "labels": ["Vulnerability"]}, {"id": "vuln-32d04e649e59", "labels": ["Vulnerability"]}, {"id": "vuln-b07a60264c4f", "labels": ["Vulnerability"]}, {"id": "vuln-32f53e8d2a58", "labels": ["Vulnerability"]}, {"id": "vuln-dbd88fe14901", "labels": ["Vulnerability"]}, {"id": "vuln-aadf732e6568", "labels": ["Vulnerability"]}, {"id": "vuln-262c04228563", "labels": ["Vulnerability"]}, {"id": "vuln-042f7d8c3189", "labels": ["Vulnerability"]}, {"id": "vuln-2288f675b0c4", "labels": ["Vulnerability"]}, {"id": "vuln-4b9f3091c3ca", "labels": ["Vulnerability"]}, {"id": "vuln-bf39258e7f1b", "labels": ["Vulnerability"]}, {"id": "vuln-71adf8c3970c", "labels": ["Vulnerability"]}, {"id": "vuln-63f685b86ced", "labels": ["Vulnerability"]}, {"id": "vuln-956c1c3377bb", "labels": ["Vulnerability"]}, {"id": "vuln-b545c695ea33", "labels": ["Vulnerability"]}, {"id": "vuln-02e4cf81d554", "labels": ["Vulnerability"]}, {"id": "vuln-5ac8f7bcfe3f", "labels": ["Vulnerability"]}, {"id": "vuln-bf01b6bcf08a", "labels": ["Vulnerability"]}, {"id": "vuln-f4f7f8729c98", "labels": ["Vulnerability"]}, {"id": "vuln-80ef05f9b718", "labels": ["Vulnerability"]}, {"id": "vuln-9235c8aa4566", "labels": ["Vulnerability"]}, {"id": "vuln-24cd4dcdb83b", "labels": ["Vulnerability"]}, {"id": "vuln-d1d524fe9284", "labels": ["Vulnerability"]}, {"id": "vuln-eb2f54f6a451", "labels": ["Vulnerability"]}, {"id": "vuln-b63650b8691c", "labels": ["Vulnerability"]}, {"id": "vuln-6c6213e8ed15", "labels": ["Vulnerability"]}, {"id": "vuln-7c1bc49a96ba", "labels": ["Vulnerability"]}, {"id": "vuln-e6ad88110dfb", "labels": ["Vulnerability"]}, {"id": "vuln-f21d5c897176", "labels": ["Vulnerability"]}, {"id": "vuln-d63738d8ca3f", "labels": ["Vulnerability"]}, {"id": "vuln-93628a45e1fa", "labels": ["Vulnerability"]}, {"id": "vuln-75513737068d", "labels": ["Vulnerability"]}, {"id": "vuln-52042877906c", "labels": ["Vulnerability"]}, {"id": "vuln-6c666de35707", "labels": ["Vulnerability"]}, {"id": "vuln-d233220d4061", "labels": ["Vulnerability"]}, {"id": "vuln-def8b20c7d23", "labels": ["Vulnerability"]}, {"id": "vuln-3a2e01ae0349", "labels": ["Vulnerability"]}, {"id": "vuln-7b426c921c93", "labels": ["Vulnerability"]}, {"id": "vuln-473abab1a76e", "labels": ["Vulnerability"]}, {"id": "vuln-8ae93bf3ac2a", "labels": ["Vulnerability"]}, {"id": "vuln-903ccfa5f60f", "labels": ["Vulnerability"]}, {"id": "vuln-ad882e510bc3", "labels": ["Vulnerability"]}, {"id": "vuln-f13f9bb7c351", "labels": ["Vulnerability"]}, {"id": "vuln-9b98519b383a", "labels": ["Vulnerability"]}, {"id": "vuln-d1ad6a26d4f3", "labels": ["Vulnerability"]}, {"id": "vuln-61d4a315f249", "labels": ["Vulnerability"]}, {"id": "task-22eaa9844a5d", "labels": ["Task"]}, {"id": "task-fc8c9b95d719", "labels": ["Task"]}], "edges": [{"source": "asset-eng-20260704132256-syfe-c1-approvalfix-20260704185254-uat-bugbounty.nonprod.syfe.com", "target": "endpoint-eng-20260704132256-syfe-c1-approvalfix-20260704185254-uat-bugbounty.nonprod.syfe.com", "type": "HAS_ENDPOINT"}, {"source": "ep-fb6c4ad75698", "target": "vuln-91717b61a96a", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-a21ff00d4241", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-24b247f1af37", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-33c35ee33c8b", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-a5a67d30a8d0", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-16172f7cdd20", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-ed82ea0eb813", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-780002c5018a", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-3e2acb5898fc", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-ab4d3ce82282", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-05912773d448", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-32d04e649e59", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-b07a60264c4f", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-32f53e8d2a58", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-dbd88fe14901", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-aadf732e6568", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-262c04228563", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-042f7d8c3189", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-2288f675b0c4", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-4b9f3091c3ca", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-bf39258e7f1b", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-71adf8c3970c", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-63f685b86ced", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-956c1c3377bb", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-b545c695ea33", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-02e4cf81d554", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-5ac8f7bcfe3f", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-bf01b6bcf08a", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-f4f7f8729c98", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-80ef05f9b718", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-9235c8aa4566", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-24cd4dcdb83b", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-d1d524fe9284", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-eb2f54f6a451", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-b63650b8691c", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-6c6213e8ed15", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-7c1bc49a96ba", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-e6ad88110dfb", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-f21d5c897176", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-d63738d8ca3f", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-93628a45e1fa", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-75513737068d", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-52042877906c", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-6c666de35707", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-d233220d4061", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-def8b20c7d23", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-3a2e01ae0349", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-7b426c921c93", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-473abab1a76e", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-8ae93bf3ac2a", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-903ccfa5f60f", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-ad882e510bc3", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-f13f9bb7c351", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-9b98519b383a", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-d1ad6a26d4f3", "type": "HAS_VULNERABILITY"}, {"source": "ep-fb6c4ad75698", "target": "vuln-61d4a315f249", "type": "HAS_VULNERABILITY"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

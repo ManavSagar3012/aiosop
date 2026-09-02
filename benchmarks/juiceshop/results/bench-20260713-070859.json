@@ -1,0 +1,215 @@
+{
+  "generated_at": "2026-07-13T07:08:59.249386+00:00",
+  "runs": 1,
+  "stability": {
+    "clean_runs_no_timeout": 0,
+    "total_runs": 1,
+    "stable": false
+  },
+  "scored_scoreboard": {
+    "true_positive": 4,
+    "false_negative": 1,
+    "false_positive": 0,
+    "true_negative": 3,
+    "precision": 1.0,
+    "recall": 0.8
+  },
+  "per_check": {
+    "sqli_login_bypass": {
+      "name": "SQLi auth bypass on /rest/user/login",
+      "owasp": "A03 Injection",
+      "cwe": "CWE-89",
+      "expected_exploitable": true,
+      "scored": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "verdict": "TRUE_POSITIVE",
+      "avg_seconds": 0.04,
+      "evidence": {
+        "payload": "' OR 1=1--",
+        "http_status": 200,
+        "proof": "server issued a session JWT for an injected email with a bogus password",
+        "token_prefix": "eyJ0eXAiOiJKV1QiLCJhbGci..."
+      },
+      "error": null
+    },
+    "sqli_search_error": {
+      "name": "Error-based SQLi on /rest/products/search",
+      "owasp": "A03 Injection",
+      "cwe": "CWE-89",
+      "expected_exploitable": true,
+      "scored": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "verdict": "TRUE_POSITIVE",
+      "avg_seconds": 0.1,
+      "evidence": {
+        "payload": "') OR 1=1--",
+        "http_status": 500,
+        "db_error_excerpt": "<html>\n  <head>\n    <meta charset='utf-8'> \n    <title>Error: SQLITE_ERROR: incomplete input</title>\n    <style>* {\n  margin: 0;\n  padding: 0;\n  outline: 0;\n}\n\nbody {\n  padding: 80px 100px;\n  font: 13px \"Helvetica Neue\","
+      },
+      "error": null
+    },
+    "idor_basket": {
+      "name": "Broken access control: read another user's basket",
+      "owasp": "A01 Broken Access Control",
+      "cwe": "CWE-639",
+      "expected_exploitable": true,
+      "scored": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.9,
+      "verdict": "TRUE_POSITIVE",
+      "avg_seconds": 0.23,
+      "evidence": {
+        "category": "horizontal_pe",
+        "diff": {
+          "status_diff": "200 vs 200",
+          "json_diff": {
+            "added": [],
+            "removed": [],
+            "changed_values": []
+          },
+          "semantic_divergence": [],
+          "leakage_score": 0.4,
+          "ownership_proof": true,
+          "compared_with_anonymous": true,
+          "shared_with_anonymous": false,
+          "needs_manual_confirmation": false
+        },
+        "victim_basket_id": 10,
+        "attacker_http_status": 200,
+        "owner_http_status": 200,
+        "anon_http_status": 401
+      },
+      "error": null
+    },
+    "idor_public_negative": {
+      "name": "NEGATIVE CONTROL: public homepage must NOT be flagged IDOR",
+      "owasp": "A01 (control)",
+      "cwe": "N/A",
+      "expected_exploitable": false,
+      "scored": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "verdict": "TRUE_NEGATIVE",
+      "avg_seconds": 0.03,
+      "evidence": {
+        "note": "public resource; any VALIDATED here is a false positive (FP-suppression failure)",
+        "engine_returned_finding": false
+      },
+      "error": null
+    },
+    "sqli_search_negative": {
+      "name": "NEGATIVE CONTROL: benign search must NOT be flagged SQLi",
+      "owasp": "A03 (control)",
+      "cwe": "N/A",
+      "expected_exploitable": false,
+      "scored": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "verdict": "TRUE_NEGATIVE",
+      "avg_seconds": 0.03,
+      "evidence": {
+        "http_status": 200,
+        "note": "benign query; any VALIDATED here is a false positive"
+      },
+      "error": null
+    },
+    "jwt_forgery": {
+      "name": "JWT forgery / weak verification via real JWTTester",
+      "owasp": "A02 Cryptographic Failures",
+      "cwe": "CWE-347",
+      "expected_exploitable": true,
+      "scored": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.95,
+      "verdict": "TRUE_POSITIVE",
+      "avg_seconds": 0.34,
+      "evidence": {
+        "confirmed_count": 1,
+        "technique": "alg_none",
+        "detail": "Server accepted an unsigned token (alg='none') under a forged identity."
+      },
+      "error": null
+    },
+    "admin_registration": {
+      "name": "Mass assignment grants admin role at registration",
+      "owasp": "A01 Broken Access Control",
+      "cwe": "CWE-915",
+      "expected_exploitable": true,
+      "scored": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "verdict": "FALSE_NEGATIVE",
+      "avg_seconds": 0.28,
+      "evidence": {
+        "registration_status": 201,
+        "created_role": null,
+        "persisted_role": null,
+        "user_id": null
+      },
+      "error": null
+    },
+    "admin_registration_negative": {
+      "name": "NEGATIVE CONTROL: normal registration remains customer",
+      "owasp": "A01 (control)",
+      "cwe": "CWE-915",
+      "expected_exploitable": false,
+      "scored": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "verdict": "TRUE_NEGATIVE",
+      "avg_seconds": 0.04,
+      "evidence": {
+        "registration_status": 201,
+        "created_role": "customer"
+      },
+      "error": null
+    },
+    "secrets_in_js": {
+      "name": "Hardcoded secrets in JS bundle via js_analyzer rules",
+      "owasp": "A05 Security Misconfiguration",
+      "cwe": "CWE-798",
+      "expected_exploitable": false,
+      "scored": false,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.0,
+      "verdict": "n/a",
+      "avg_seconds": 0.43,
+      "evidence": {
+        "bundles_scanned": 1,
+        "secret_hits": [
+          {
+            "rule": "Generic Secret Assignment",
+            "value_prefix": "IamUsedF..."
+          }
+        ],
+        "note": "informational: real secret detection rules applied with placeholder+entropy filtering"
+      },
+      "error": null
+    },
+    "nuclei_scan": {
+      "name": "nuclei scoped scan (informational breadth)",
+      "owasp": "multi",
+      "cwe": "multi",
+      "expected_exploitable": false,
+      "scored": false,
+      "validated": false,
+      "status": "TIMEOUT",
+      "confidence": 0.0,
+      "verdict": "n/a",
+      "avg_seconds": 40.0,
+      "evidence": {},
+      "error": "exceeded 40.0s hard timeout"
+    }
+  }
+}

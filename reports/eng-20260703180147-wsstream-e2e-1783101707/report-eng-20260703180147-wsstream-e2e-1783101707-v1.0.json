@@ -1,0 +1,18 @@
+{
+  "engagement_id": "eng-20260703180147-wsstream-e2e-1783101707",
+  "date": "2026-07-04",
+  "version": "v1.0",
+  "risk_narrative": "",
+  "stats": {
+    "assets_count": 14,
+    "endpoints_count": 14,
+    "critical_count": 0,
+    "high_count": 0,
+    "medium_count": 0,
+    "low_count": 0,
+    "info_count": 0,
+    "total_findings": 0
+  },
+  "top_findings": [],
+  "findings": []
+}

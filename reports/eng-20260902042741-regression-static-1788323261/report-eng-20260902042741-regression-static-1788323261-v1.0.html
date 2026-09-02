@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 1000px; margin: 0 auto; padding: 2rem; color: #24292e; }
+    h1, h2, h3 { color: #111; }
+    code { background: #f6f8fa; padding: 0.2em 0.4em; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; font-size: 85%; }
+    pre { background: #f6f8fa; padding: 16px; overflow: auto; border-radius: 3px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+    th, td { border: 1px solid #dfe2e5; padding: 6px 13px; }
+    th { background-color: #f6f8fa; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>CONFIDENTIAL / CLIENT-SENSITIVE</h1>
+<h1>Executive Summary</h1>
+<p><strong>Engagement ID:</strong> eng-20260902042741-regression-static-1788323261
+<strong>Date Generated:</strong> 2026-09-02
+<strong>Version:</strong> v1.0</p>
+<h2>Risk Narrative</h2>
+<p><strong>CLASSIFICATION: CONFIDENTIAL</strong></p>
+<p><strong>Executive Risk Narrative — Engagement eng-20260902042741-regression-static-1788323261</strong></p>
+<p>This engagement assessed a single asset comprising 10 endpoints, yielding 29 total findings: 2 critical, 6 high, 2 medium, 0 low, and 19 informational. The overall risk posture is driven primarily by the two critical-severity findings, both residing in the Redis infrastructure layer: an integer overflow in Redis Lua scripting (affecting versions prior to 8.2.1) and a use-after-free condition in the Redis Lua parser (affecting versions prior to 8.2.2). Memory-corruption vulnerabilities of this class in a data-tier service carry credible potential for remote code execution, denial of service, or full host compromise, and must be treated as the highest-priority remediation items. The six high-severity findings materially compound this exposure, and the aggregate of 8 critical/high findings against a relatively small attack surface indicates a concentrated, elevated risk profile that warrants executive attention and immediate remediation resources.</p>
+<p>The high-severity findings are dominated by injection-class web vulnerabilities, most notably SQL injection via the POST parameters 'username' and 'password', identified through web audit differential analysis. Because these flaws sit directly on the authentication path, they present a credible path to authentication bypass, credential harvesting, or backend database compromise. A medium-severity cross-site scripting flaw via the GET parameter 'to' further evidences gaps in input handling on the same application surface, while the 19 informational findings, though individually lower risk, point to broader hygiene and hardening opportunities. The concentration of injection and memory-safety defects across both the application and infrastructure layers suggests a systemic input-validation and dependency-management gap rather than isolated coding errors. We recommend immediate upgrade of the affected Redis instances, remediation of the SQL injection findings through parameterized queries, output encoding to address the XSS vector, and a follow-up regression retest to verify closure before the next release cycle.</p>
+<p><strong>— END OF CONFIDENTIAL NARRATIVE —</strong></p>
+<h2>Assessment Overview</h2>
+<ul>
+<li><strong>Total Assets Discovered:</strong> 1</li>
+<li><strong>Total Endpoints Mapped:</strong> 10</li>
+<li><strong>Critical Vulnerabilities:</strong> 2</li>
+<li><strong>High Vulnerabilities:</strong> 6</li>
+</ul>
+<h2>Key Findings Summary</h2>
+<ul>
+<li>
+<p><strong>medium</strong>: XSS via GET parameter 'to' (web_audit differential) (xss)</p>
+</li>
+<li>
+<p><strong>high</strong>: SQLI via POST parameter 'username' (web_audit differential) (sqli)</p>
+</li>
+<li>
+<p><strong>high</strong>: SQLI via POST parameter 'password' (web_audit differential) (sqli)</p>
+</li>
+<li>
+<p><strong>critical</strong>: Redis &lt; 8.2.1 lua script - Integer Overflow (rce)</p>
+</li>
+<li>
+<p><strong>critical</strong>: Redis Lua Parser &lt; 8.2.2 - Use After Free (rce)</p>
+</li>
+</ul>
+<h1>CONFIDENTIAL / CLIENT-SENSITIVE</h1>
+<h1>Technical Details</h1>
+<p><strong>Engagement ID:</strong> eng-20260902042741-regression-static-1788323261</p>
+<h2>A. Validated Vulnerabilities (0)</h2>
+<p>No vulnerabilities passed the validation gates this engagement.</p>
+<h2>B. Security Hardening Items (0)</h2>
+<p>No hardening items identified.</p>
+<h2>C. Technology &amp; Infrastructure Observations (0)</h2>
+<p>No technology observations.</p>
+<p>These are informational asset fingerprints (infrastructure, certificates, services).
+They are attack-surface metadata, not security issues.</p>
+<h2>D. Discarded Signals (29)</h2>
+<h3>D.1 Out of Scope (29)</h3>
+<p>The platform refused to promote these to findings because the evidence shows
+the scanner touched targets outside the authorized engagement scope:</p>
+<ul>
+<li>
+<p>XSS via GET parameter 'to' (web_audit differential) — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>SQLI via POST parameter 'username' (web_audit differential) — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>SQLI via POST parameter 'password' (web_audit differential) — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Redis &lt; 8.2.1 lua script - Integer Overflow — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Redis Lua Parser &lt; 8.2.2 - Use After Free — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Redis  &lt; 8.2.1 Lua Long-String Delimiter - Out-of-Bounds Read — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Redis Lua Sandbox &lt; 8.2.2 - Cross-User Escape — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Redis - Default Logins — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Redis Server - Unauthenticated Access — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Prometheus Metrics - Detect — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Public Swagger API - Detect — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>robots.txt file — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>robots.txt endpoint prober — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>MySQL Info - Enumeration — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Redis Info - Detect — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>SMB Version - Detection — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>SMB - Enum Domains — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>SMB - Enumeration — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>smb2-capabilities - Enumeration — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>SMB2 Server Time - Detection — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>SMB Operating System - Detect — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>PostgreSQL Authentication - Detect — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>HTTP Missing Security Headers — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Add DOM EventListener - Detection — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Deprecated Feature-Policy Header - Detection — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>OWASP Juice Shop — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>X-Recruiting Header — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>FingerprintHub Technology Fingerprint — matched target outside scope: unknown</p>
+</li>
+<li>
+<p>Wappalyzer Technology Detection — matched target outside scope: unknown</p>
+</li>
+</ul>
+</body>
+</html>

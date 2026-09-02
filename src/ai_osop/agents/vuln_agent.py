@@ -210,7 +210,28 @@ class VulnAnalysisAgent(BaseAgent):
         )
 
     async def _execute_burp_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute Burp Suite scan on target."""
+        """Execute the burp_scan task against any Burp edition (Community or Pro).
+
+        BURP-COMMUNITY-001 (2026-08-31): capability-driven hybrid flow. The
+        connected Burp's edition is *detected* (never assumed):
+
+          * Burp Pro (scanner available) runs its own crawl+audit exactly as
+            before — same interface, same workflow.
+          * Burp Community (scanner is Pro-only) still contributes every API
+            it legally supports — scope sync, the HTTP-engine probe recorded
+            in the site map, proxy history, sitemap, live traffic — while the
+            ACTIVE scanning is routed to AI-OSOP's own engines: nuclei-mcp
+            (template scan with FP triage + intelligence dedup + SAN
+            chaining) and the web_audit deterministic differential (SQLi/XSS/
+            SSTI probes, form-POST + JS bundle surface).
+
+        Findings from every source are persisted through the same funnel
+        (graph memory + findings ledger), merged and deduplicated by the
+        finding-intelligence layer, and the result reports which engine
+        provided what (``scan_mode``, ``capability_routing``). Every
+        component degrades gracefully: a failure lands in
+        ``degraded_components`` and never fails the task.
+        """
         # PATCH (REL-010, 2026-06-15): Task scheduler sometimes emits
         # `target`/`target_url` instead of `url` (observed in eng-...verify
         # tasks task-f2948e789933, task-7f00a78fd92a). Accept any of the three
@@ -272,32 +293,174 @@ class VulnAnalysisAgent(BaseAgent):
         except Exception:
             logger.debug("add_to_scope skipped for %s (out of engagement scope?)", url)
 
-        # Launch Burp scan. AIOSOP-BURP-DEGRADE-001 (2026-07-03): the active scanner
-        # (Scanner.startAudit) requires Burp Suite Professional; on Community/unlicensed
-        # it raises — surfaced with the real Java cause by _check_response since
-        # AIOSOP-BURP-ERR-001. That must NOT fail the whole task and poison the DLQ:
-        # the sitemap / proxy-history / already-recorded issues gathered below come from
-        # the proxy layer (present in every Burp edition) and are still worth keeping.
-        # So we degrade — record the real reason in burp_error (returned in the result),
-        # log it, and continue. The task completes with whatever passive data exists.
-        from ai_osop.core.exceptions import MCPException
+        # ---- Launch active scanning (BURP-COMMUNITY-001: capability-driven) --
+        # AIOSOP-BURP-DEGRADE-001 (2026-07-03): the active scanner
+        # (Scanner.startAudit) is Burp Pro-only; on Community the extension
+        # degrades scan_target to an HTTP-engine probe.
+        # BURP-COMMUNITY-001 (2026-08-31): a degraded probe is no longer the
+        # end of the story — the ACTIVE scanning Burp cannot perform is routed
+        # to AI-OSOP's own legal engines (nuclei-mcp + the deterministic
+        # web_audit differential), while Burp Community still contributes
+        # everything it supports (scope sync, HTTP probe, sitemap, proxy
+        # history, live traffic). Findings from all sources are merged and
+        # deduplicated through the same finding-intelligence layer used by
+        # every other scanner, so evidence/validation/reporting are unchanged.
+        from ai_osop.adapters.burp_capabilities import routing_plan
+        from ai_osop.core.exceptions import MCPException, OutOfScopeError
 
-        burp_error = None
-        try:
-            scan_result = await self.burp_adapter.scan_target(url, config)
-            if scan_result.status != "success":
-                burp_error = scan_result.error
-                logger.warning("Burp scan failed to start: %s", burp_error)
-        except MCPException as e:
-            burp_error = str(e)
-            logger.warning("burp_scan_degraded_active_scan_unavailable", error=burp_error)
+        caps = await self.burp_adapter.get_capabilities(probe_url=url)
+        burp_error: Optional[str] = None
+        active_scan_started = False
+        scan_mode = "community_routed"  # re-baselined below per capabilities
 
-        # Retrieve and normalize findings
+        if caps.active_scan_available:
+            # Pro: Burp runs its own crawl+audit, exactly as before.
+            scan_mode = "burp_pro_active_audit"
+            try:
+                scan_result = await self.burp_adapter.scan_target(url, config)
+                res = scan_result.result if isinstance(scan_result.result, dict) else {}
+                if res.get("status") == "started":
+                    active_scan_started = True
+                elif res.get("status") == "probe_completed":
+                    # Extension probe says otherwise (startAudit returned null)
+                    # — treat as Community and route internally.
+                    scan_mode = "community_routed"
+                    burp_error = "Burp scanner probe fell back to HTTP probe (Pro scanner unavailable)"
+                else:
+                    burp_error = str(
+                        res.get("error")
+                        or scan_result.error
+                        or "unexpected scan_target result"
+                    )
+                    logger.warning("Burp scan failed to start: %s", burp_error)
+            except MCPException as e:
+                burp_error = str(e)
+                scan_mode = "community_routed"
+                logger.warning("burp_scan_degraded_active_scan_unavailable", error=burp_error)
+        elif caps.reachable:
+            # Community: Burp is connected but the scanner is Pro-only. Fire
+            # scan_target anyway — the extension performs an HTTP-engine probe
+            # and records the pair in the site map (real, Community-supported
+            # work) — then route the active auditing below.
+            scan_mode = "community_routed"
+            try:
+                await self.burp_adapter.scan_target(url, config)
+            except MCPException as e:
+                burp_error = str(e)
+            logger.info(
+                "burp_scan_community_routed",
+                target=url,
+                edition=caps.edition_family,
+                reason="Burp Scanner is Pro-only; active scanning routed to nuclei-mcp + web_audit",
+            )
+        else:
+            scan_mode = "internal_routed"
+            burp_error = caps.error or "burp-mcp unreachable; Burp passive layer skipped"
+            logger.warning("burp_scan_burp_unreachable", target=url, error=burp_error)
+
+        # ---- AI-OSOP internal active scan (routed when Burp can't do it) ----
+        internal_components: List[Dict[str, Any]] = []
+        degraded_components: List[Dict[str, Any]] = []
+        internal_findings: List[Vulnerability] = []
+        if not active_scan_started:
+            supported_classes = {"sqli", "xss", "ssti", "ssrf"}
+            audit_items = [str(c).lower() for c in (config.get("audit_items") or [])]
+            classes = [c for c in audit_items if c in supported_classes] or [
+                "sqli",
+                "xss",
+                "ssti",
+            ]
+
+            # (a) nuclei-mcp template scan — full internal pipeline (catch-all
+            # FP triage, scope attribution, intelligence dedup, SAN chaining).
+            try:
+                nuclei_payload: Dict[str, Any] = {
+                    "targets": [url],
+                    "engagement_id": engagement_id,
+                    "profile": str(config.get("nuclei_profile", "fast")).lower(),
+                }
+                if config.get("severity"):
+                    nuclei_payload["severity"] = config["severity"]
+                nuc = await self._execute_nuclei_scan(nuclei_payload)
+                if nuc.get("status") == "success":
+                    internal_components.append(
+                        {
+                            "capability": "active_scan",
+                            "provider": "nuclei-mcp",
+                            "findings": nuc.get("findings_count", 0),
+                            "detail": nuc.get("intelligence", {}),
+                        }
+                    )
+                    for f in nuc.get("findings", []):
+                        try:
+                            internal_findings.append(Vulnerability(**f))
+                        except Exception:  # noqa: BLE001 - skip malformed dump
+                            continue
+                else:
+                    degraded_components.append(
+                        {"component": "nuclei-mcp", "reason": str(nuc.get("error", "unknown"))}
+                    )
+            except Exception as e:  # noqa: BLE001 - internal scan is best-effort
+                degraded_components.append({"component": "nuclei-mcp", "reason": str(e)})
+
+            # (b) web_audit deterministic differential (SQLi/XSS/SSTI probes,
+            # form-POST surface, JS bundle surface, rendered-SPA pass).
+            # max_urls default = 25 to match the standalone web_audit sweep the
+            # phase monitor schedules on Pro/burp-down (BURP-COMMUNITY-001:
+            # on Community with a live Burp there IS no standalone task, so
+            # this inline pass is the full-coverage differential).
+            try:
+                wa = await self._execute_web_audit(
+                    {
+                        "url": url,
+                        "engagement_id": engagement_id,
+                        "max_urls": int(config.get("max_urls", 25)),
+                        "classes": classes,
+                        "session_label": payload.get("session_label"),
+                    }
+                )
+                internal_components.append(
+                    {
+                        "capability": "active_scan",
+                        "provider": "web_audit",
+                        "findings": wa.get("findings_count", 0),
+                        "detail": wa.get("stats", {}),
+                    }
+                )
+                for f in wa.get("findings", []):
+                    try:
+                        internal_findings.append(Vulnerability(**f))
+                    except Exception:  # noqa: BLE001
+                        continue
+            except OutOfScopeError as e:
+                degraded_components.append(
+                    {"component": "web_audit", "reason": f"out of scope: {e}"}
+                )
+            except Exception as e:  # noqa: BLE001
+                degraded_components.append({"component": "web_audit", "reason": str(e)})
+
+        # Retrieve and normalize Burp's passive findings (every edition).
         logger.debug("Requesting issues, sitemap, and proxy history for %s", url)
-        vulns = await self.burp_adapter.get_scan_issues(url)
-
-        endpoints = await self.burp_adapter.get_sitemap(url_prefix=domain)
-        history = await self.burp_adapter.get_proxy_history()
+        vulns: List[Vulnerability] = []
+        endpoints: List[Endpoint] = []
+        history: List[Dict[str, Any]] = []
+        if caps.reachable:
+            try:
+                vulns = await self.burp_adapter.get_scan_issues(url)
+            except MCPException as e:
+                degraded_components.append(
+                    {"component": "burp_get_scan_issues", "reason": str(e)}
+                )
+            try:
+                endpoints = await self.burp_adapter.get_sitemap(url_prefix=domain)
+            except MCPException as e:
+                degraded_components.append({"component": "burp_get_sitemap", "reason": str(e)})
+            try:
+                history = await self.burp_adapter.get_proxy_history()
+            except MCPException as e:
+                degraded_components.append(
+                    {"component": "burp_get_proxy_history", "reason": str(e)}
+                )
 
         logger.info(
             "burp_scan_results",
@@ -306,13 +469,16 @@ class VulnAnalysisAgent(BaseAgent):
             history_entries=len(history),
         )
 
-        # Combine endpoints from sitemap and history
+        # Combine endpoints from sitemap and history. (The loop deliberately
+        # uses its own variable: a previous version shadowed `url` here, which
+        # corrupted the `target` field of the task result whenever proxy
+        # history was non-empty.)
         all_endpoints = {ep.url: ep for ep in endpoints}
         for entry in history:
-            url = entry.get("url", "")
-            if domain in url and url not in all_endpoints:
-                all_endpoints[url] = Endpoint(
-                    url=url,
+            entry_url = entry.get("url", "")
+            if domain in entry_url and entry_url not in all_endpoints:
+                all_endpoints[entry_url] = Endpoint(
+                    url=entry_url,
                     method=entry.get("method", "GET"),
                     status_code=entry.get("status_code", 0),
                     host=entry.get("host", domain),
@@ -346,6 +512,23 @@ class VulnAnalysisAgent(BaseAgent):
                 await self.ctx.graph_memory.add_endpoint(ep)
             except Exception as e:
                 logger.error(f"Failed to add endpoint {ep.url} to graph: {e}")
+
+        # ---- Merge + dedup (BURP-COMMUNITY-001) ---------------------------
+        # Burp-native issues (Pro scanner), nuclei findings, and web_audit
+        # differential findings all flow through the SAME finding-intelligence
+        # dedup layer before the result is reported, so one root cause appears
+        # once regardless of which engine caught it. The internal engines have
+        # already persisted their findings inside their own pipelines; this
+        # pass only canonicalizes the RESPONSE view (evidence is unioned, all
+        # member IDs preserved via correlated_ids).
+        merged_findings: List[Vulnerability] = list(vulns) + internal_findings
+        try:
+            from ai_osop.core.finding_intelligence import deduplicate_findings
+
+            canonical_findings, intel_stats = deduplicate_findings(merged_findings)
+        except Exception as e:  # noqa: BLE001 - dedup is advisory for reporting
+            logger.warning("burp_scan_dedup_failed", error=str(e))
+            canonical_findings, intel_stats = merged_findings, {}
 
         # Perform reasoning using security skills (best-effort, never blocks
         # finding persistence; bounded by a short timeout so vuln_agent fits
@@ -387,21 +570,46 @@ class VulnAnalysisAgent(BaseAgent):
             "status": "success",
             "tool": "burp_scanner",
             "target": url,
-            "findings_count": len(vulns),
+            "burp_edition": caps.edition_family,
+            "scan_mode": scan_mode,
+            "capability_routing": routing_plan(caps),
+            "internal_components": internal_components,
+            "degraded_components": degraded_components,
+            "findings_count": len(canonical_findings),
             "endpoints_count": len(all_endpoints),
+            "intelligence": intel_stats,
             "reasoning": reasoning,
             "burp_error": burp_error,
-            "findings": [v.model_dump() for v in vulns],
+            "findings": [v.model_dump() for v in canonical_findings],
         }
 
     async def _execute_intruder_fuzz(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Orchestrate Burp Intruder for payload fuzzing."""
+        """Orchestrate Burp Intruder for payload fuzzing — on Community too.
+
+        BURP-COMMUNITY-001 (2026-08-31): Intruder attack *execution* is a
+        Burp Pro feature; Community only accepts the UI hand-off. The task
+        therefore adapts by edition:
+
+          * Pro: hand the request to the Intruder tab (attack runs in Burp).
+          * Community: hand the request to the Intruder tab for the operator
+            AND execute the payload set deterministically through Burp's own
+            HTTP engine (send_http_request — supported in every edition),
+            with AI-OSOP's differential judgment minting validated findings
+            (SQL error signatures, SSTI evaluation, auth-bypass deltas). An
+            internal scope-gated httpx transport backs up the Burp engine.
+
+        The same interface returns: the response always carries the payload
+        set, per-payload execution results, and confirmed findings.
+        """
         url = payload.get("url")
         method = payload.get("method", "GET")
         body = payload.get("body", "")
         payload_set = payload.get(
             "payload_set", ["' OR 1=1 --", "admin'--", "<script>alert(1)</script>"]
         )
+        # Bound the deterministic pass so a huge payload set can't overrun the
+        # task budget (Intruder Pro is unbounded; this internal engine is not).
+        payload_set = list(payload_set)[:25]
         tab_name = payload.get("tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}")
 
         logger.debug(f"Deploying Intruder attack against {url}")
@@ -414,33 +622,243 @@ class VulnAnalysisAgent(BaseAgent):
             "body": body,
         }
 
-        # The actual integration would pass positions, but for the MCP adapter
-        # we mapped it to just take the request for now.
+        # Burp UI hand-off — works on EVERY edition (operator visibility).
+        ui_ok = False
+        ui_error: Optional[str] = None
         try:
-            # We use extension_call or direct mapping based on Java implementation.
-            # Given our Java update mapped "intruder_attack":
             response = await self.burp_adapter.intruder_attack(
                 request=mock_request,
                 payload_positions=[],  # Handled dynamically by Burp in Sniper mode if empty
                 payload_set=payload_set,
                 config={"attack_type": "sniper", "tab_name": tab_name},
             )
+            ui_ok = response.status == "success"
+        except Exception as e:  # noqa: BLE001 - UI hand-off is best-effort
+            ui_error = str(e)
 
-            # Simulated reasoning over Intruder decision
-            reasoning = f"[INTRUDER_DEPLOYED] Dispatched Sniper attack to {url} with {len(payload_set)} payloads targeting dynamic parameters."
+        caps = await self.burp_adapter.get_capabilities(probe_url=url)
 
+        if caps.active_scan_available:
+            # Pro: Burp Intruder executes the attack itself.
+            reasoning = (
+                f"[INTRUDER_DEPLOYED] Dispatched Sniper attack to {url} with {len(payload_set)} "
+                f"payloads targeting dynamic parameters (Burp Pro executes the attack)."
+            )
             return {
                 "status": "success",
                 "target": url,
                 "tab_name": tab_name,
+                "attack_mode": "burp_intruder_pro",
+                "sent_to_intruder_tab": ui_ok,
                 "reasoning": reasoning,
                 "mcp_response": (
                     response.model_dump() if hasattr(response, "model_dump") else str(response)
                 ),
             }
 
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
+        # ---- Community: deterministic differential fuzz (AI-OSOP engine) --
+        findings: List[Vulnerability] = []
+        execution_rows: List[Dict[str, Any]] = []
+        degraded_reasons: List[str] = []
+
+        # Scope-gate the internal transport exactly like web_audit.
+        from ai_osop.safety.scope import ScopeEnforcer
+
+        enforcer: Optional[ScopeEnforcer] = None
+        engagement_id = payload.get("engagement_id") or (
+            self.ctx.current_task.engagement_id if self.ctx.current_task else None
+        )
+        try:
+            session = await self.ctx.session_memory.get_session_state(engagement_id or "")
+            if session is not None:
+                await self.burp_adapter.initialize(session.scope, session.session_id)
+                enforcer = ScopeEnforcer(session.scope)
+        except Exception as e:  # noqa: BLE001 - scope gate is required, degrade honestly
+            degraded_reasons.append(f"session/scope load failed: {e}")
+
+        def _variant(target_url: str, fuzz_payload: str) -> Tuple[str, str]:
+            """Substitute `fuzz_payload` into the request template.
+
+            Marker forms (checked in order): §...§ spans, then {{FUZZ}} /
+            {{payload}} tokens — in the body first, then the URL. Without
+            markers, every query-string parameter value is replaced; as a
+            last resort the payload rides a `fuzz` query parameter.
+            """
+            import re as _re
+            from urllib.parse import quote as _quote
+            from urllib.parse import parse_qsl as _pqsl, urlencode as _uenc, urlparse as _up
+
+            body_out = body
+            if "§" in body:
+                # Intruder position span: replace with the raw payload.
+                body_out = _re.sub("§[^§]*§", lambda _m: fuzz_payload, body, count=1)
+            elif "{{fuzz}}" in body.lower() or "{{payload}}" in body.lower():
+                low = body.lower()
+                token = "{{fuzz}}" if "{{fuzz}}" in low else "{{payload}}"
+                start = low.index(token)
+                body_out = body[:start] + fuzz_payload + body[start + len(token) :]
+            if "§" in target_url:
+                return (
+                    _re.sub("§[^§]*§", lambda _m: fuzz_payload, target_url, count=1),
+                    body_out,
+                )
+            parsed = _up(target_url)
+            pairs = _pqsl(parsed.query)
+            if pairs:
+                query = _uenc([(k, fuzz_payload) for k, _ in pairs])
+                return parsed._replace(query=query).geturl(), body_out
+            sep = "&" if parsed.query else "?"
+            return f"{target_url}{sep}fuzz={_quote(fuzz_payload)}", body_out
+
+        async def _send(u: str, b: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
+            """One fuzz request: Burp HTTP engine first (Community-supported),
+            internal scope-gated httpx as fallback. Returns (status, body, transport)."""
+            try:
+                result = await self.burp_adapter.send_http_request(
+                    {"url": u, "method": method, "body": b, "headers": headers or {}}
+                )
+                return (
+                    int(result.get("status_code", 0)),
+                    str(result.get("response_body") or ""),
+                    "burp_http_engine",
+                )
+            except Exception as e:  # noqa: BLE001 - fall through to internal transport
+                degraded_reasons.append(f"burp http engine: {e}")
+            if enforcer is None:
+                raise AgentException(
+                    "intruder_fuzz: Burp HTTP engine unavailable and no signed "
+                    "engagement scope for the internal transport; refusing to "
+                    "send unsupervised fuzz traffic."
+                )
+            from urllib.parse import urlparse as _up2
+
+            p = _up2(u)
+            enforcer.validate_target(p.hostname or "")
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                if method.upper() == "GET":
+                    r = await client.get(u, headers=headers or {})
+                else:
+                    r = await client.post(u, content=b, headers=headers or {})
+            return r.status_code, r.text or "", "aiosop_httpx"
+
+        try:
+            base_status, base_body, transport = await _send(url, body)
+            base_body_l = base_body.lower()
+        except Exception as e:  # noqa: BLE001 - no baseline, no honest deltas
+            reasons = [f"baseline request failed: {e}", *degraded_reasons]
+            if ui_error:
+                reasons.append(ui_error)
+            return {
+                "status": "success",
+                "target": url,
+                "tab_name": tab_name,
+                "attack_mode": "aiosop_deterministic",
+                "sent_to_intruder_tab": ui_ok,
+                "findings_count": 0,
+                "execution_results": [],
+                "degraded": True,
+                "reasons": reasons,
+                "reasoning": "[INTRUDER-DEGRADED] UI tab hand-off only; fuzz execution could not run.",
+            }
+
+        for fuzz_payload in payload_set:
+            row: Dict[str, Any] = {"payload": fuzz_payload}
+            try:
+                v_url, v_body = _variant(url, fuzz_payload)
+                status, resp_body, used_transport = await _send(v_url, v_body)
+                row.update(
+                    {
+                        "url": v_url,
+                        "status_code": status,
+                        "response_len": len(resp_body),
+                        "transport": used_transport,
+                        "delta": status != base_status or len(resp_body) != len(base_body),
+                    }
+                )
+                resp_l = resp_body.lower()
+                sql_hit = any(
+                    sig in resp_l and sig not in base_body_l
+                    for sig in self._SQLI_ERROR_SIGNATURES
+                )
+                ssti_hit = (
+                    "7*9" in fuzz_payload and "63" in resp_body and "63" not in base_body
+                )
+                auth_bypass = (
+                    status in (200, 302)
+                    and base_status in (401, 403)
+                    and resp_l != base_body_l
+                    and ("'" in fuzz_payload or " or " in fuzz_payload.lower())
+                )
+                if sql_hit or ssti_hit or auth_bypass:
+                    if sql_hit or auth_bypass:
+                        cwe, vclass, sev = ("CWE-89", VulnClass.SQLI, Severity.CRITICAL)
+                        kind = "SQL error signature" if sql_hit else "auth-bypass delta"
+                    else:
+                        cwe, vclass, sev = ("CWE-1336", VulnClass.SSTI, Severity.HIGH)
+                        kind = "template evaluation (7*9=63)"
+                    vuln = Vulnerability(
+                        cwe=cwe,
+                        vuln_type=vclass,
+                        severity=sev,
+                        title=f"{vclass.value} via intruder_fuzz differential ({kind})",
+                        description=(
+                            f"intruder_fuzz deterministic differential confirmed {kind} "
+                            f"at {v_url} with payload {fuzz_payload!r} (baseline "
+                            f"status={base_status}, injected status={status}). "
+                            "Executed because Burp Intruder attack execution is "
+                            "Pro-only; transport was "
+                            f"{used_transport}."
+                        ),
+                        evidence=[
+                            {
+                                "type": "intruder_fuzz_differential",
+                                "provenance": "aiosop_intruder_fuzz",
+                                "url": v_url,
+                                "payload": fuzz_payload,
+                                "baseline_status": base_status,
+                                "injected_status": status,
+                                "transport": used_transport,
+                                "burp_intruder_execution": False,
+                            }
+                        ],
+                        tool_source="intruder_fuzz",
+                        confidence=0.85,
+                        validated=True,
+                        exploitability="high",
+                        impact="high",
+                        entry_point=True,
+                        engagement_id=engagement_id or "",
+                    )
+                    try:
+                        await self.ctx.graph_memory.add_vulnerability(vuln)
+                        self.findings[vuln.id] = vuln
+                    except Exception as e:  # noqa: BLE001 - advisory
+                        logger.error("intruder_fuzz_persist_failed", vuln_id=vuln.id, error=str(e))
+                    findings.append(vuln)
+                    row["confirmed"] = vclass.value
+            except Exception as e:  # noqa: BLE001 - one payload must not kill the set
+                row["error"] = str(e)
+            execution_rows.append(row)
+
+        reasoning = (
+            f"[INTRUDER-COMMUNITY] Burp Intruder execution is Pro-only; executed "
+            f"{len(execution_rows)} payloads deterministically through the Burp HTTP "
+            f"engine with differential judgment — {len(findings)} confirmed."
+        )
+        return {
+            "status": "success",
+            "target": url,
+            "tab_name": tab_name,
+            "attack_mode": "aiosop_deterministic",
+            "burp_edition": caps.edition_family,
+            "sent_to_intruder_tab": ui_ok,
+            "findings_count": len(findings),
+            "execution_results": execution_rows,
+            "degraded": bool(degraded_reasons),
+            "reasons": degraded_reasons + ([ui_error] if ui_error else []),
+            "reasoning": reasoning,
+            "findings": [v.model_dump() for v in findings],
+        }
 
     async def _execute_nuclei_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute Nuclei scan on targets."""

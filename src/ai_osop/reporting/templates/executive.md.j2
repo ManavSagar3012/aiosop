@@ -13,7 +13,20 @@
 - **Critical Vulnerabilities:** {{ stats.critical_count }}
 - **High Vulnerabilities:** {{ stats.high_count }}
 
+## Finding Validation Funnel
+Raw scanner output is NOT a vulnerability count. Every signal passed
+through deterministic validation gates before classification:
+
+- **Raw scanner signals:** {{ stats.funnel.raw_scanner_signals | default(0) }}
+- **Unique finding families:** {{ stats.funnel.unique_finding_families | default(0) }}
+- **Validated vulnerabilities:** {{ stats.funnel.validated_vulnerabilities | default(0) }}
+- **Security hardening items:** {{ stats.funnel.hardening_items | default(0) }}
+- **Technology observations (informational):** {{ stats.funnel.fingerprint_observations | default(0) }}
+- **Out-of-scope matches (discarded):** {{ stats.funnel.out_of_scope | default(0) }}
+- **False positives (discarded):** {{ stats.funnel.false_positives | default(0) }}
+
 ## Key Findings Summary
 {% for vuln in top_findings %}
 - **{{ vuln.severity }}**: {{ vuln.title }} ({{ vuln.vuln_type }})
 {% endfor %}
+

@@ -1,0 +1,52 @@
+{
+  "engagement_id": "eng-20260830041133-live-e2e",
+  "date": "2026-08-30",
+  "version": "v1.0",
+  "risk_narrative": "**CONFIDENTIAL**\n\n**Executive Risk Narrative \u2014 Engagement eng-20260830041133-live-e2e**\n\nThis assessment examined one in-scope asset across two identified endpoints, resulting in a total of one finding: a single high-severity vulnerability, with no critical, medium, or low findings recorded. The high-severity issue is an SQL injection flaw present in the `username` parameter of the application's login functionality. While the absence of critical findings is a positive indicator of the environment's overall security posture, this finding warrants immediate executive attention. SQL injection within an authentication mechanism is among the most consequential vulnerability classes, as it may permit an attacker to bypass authentication entirely, impersonate legitimate users, and potentially read, modify, or exfiltrate sensitive data stored in the backend database. Given that the login endpoint is externally reachable and represents the primary gateway to the application, the realistic threat exposure is elevated despite the limited overall finding count.\n\nFrom a business risk perspective, successful exploitation of this vulnerability could result in unauthorized account access, compromise of customer or organizational data, regulatory and compliance exposure, and reputational harm. We recommend prioritizing remediation of this finding ahead of all other engineering work on the affected asset. Specific corrective measures should include the adoption of parameterized queries (prepared statements) for all database interactions involving user-supplied input, strict server-side input validation and sanitization on authentication parameters, and least-privilege configuration of the application's database service account to limit blast radius in the event of exploitation. As an interim compensating control, a web application firewall rule targeting injection patterns against the login endpoint may reduce immediate risk, though it should not be treated as a substitute for code-level remediation. Following the fix, we advise a focused retest of the affected endpoint to confirm closure, along with consideration of broader secure coding review across the remaining endpoint surface to guard against similar injection classes.",
+  "stats": {
+    "assets_count": 1,
+    "endpoints_count": 2,
+    "critical_count": 0,
+    "high_count": 1,
+    "medium_count": 0,
+    "low_count": 0,
+    "info_count": 0,
+    "total_findings": 1
+  },
+  "top_findings": [
+    {
+      "id": "vuln-live-002",
+      "title": "SQL Injection in login parameter 'username'",
+      "severity": "high",
+      "vuln_type": "sqli",
+      "target": "http://localhost:57021/login",
+      "description": "HTTP differential confirmed SQL injection at the login form.",
+      "evidence": "Type: http_differential\nPayload: ' OR 1=1 --\nProvenance: sqli_http_scan",
+      "evidence_hash": "88efdb654bc02017a6c48d1fb85b838c829ac5c02d4b4ab9c035ade174a983d2",
+      "event_id": "no-audit-event",
+      "attack_id": "T1190",
+      "attack_name": "Exploit Public-Facing Application",
+      "owasp": "A03:2021-Injection",
+      "cvss": "8.1 (High)",
+      "remediation": "Use parameterized queries / prepared statements; never concatenate input."
+    }
+  ],
+  "findings": [
+    {
+      "id": "vuln-live-002",
+      "title": "SQL Injection in login parameter 'username'",
+      "severity": "high",
+      "vuln_type": "sqli",
+      "target": "http://localhost:57021/login",
+      "description": "HTTP differential confirmed SQL injection at the login form.",
+      "evidence": "Type: http_differential\nPayload: ' OR 1=1 --\nProvenance: sqli_http_scan",
+      "evidence_hash": "88efdb654bc02017a6c48d1fb85b838c829ac5c02d4b4ab9c035ade174a983d2",
+      "event_id": "no-audit-event",
+      "attack_id": "T1190",
+      "attack_name": "Exploit Public-Facing Application",
+      "owasp": "A03:2021-Injection",
+      "cvss": "8.1 (High)",
+      "remediation": "Use parameterized queries / prepared statements; never concatenate input."
+    }
+  ]
+}

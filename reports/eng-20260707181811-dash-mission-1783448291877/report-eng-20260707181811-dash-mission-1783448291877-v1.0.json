@@ -1,0 +1,18 @@
+{
+  "engagement_id": "eng-20260707181811-dash-mission-1783448291877",
+  "date": "2026-07-07",
+  "version": "v1.0",
+  "risk_narrative": "**CONFIDENTIAL**\n\n**Executive Risk Narrative**\n\nThe security assessment engagement (eng-20260707181811-dash-mission-1783448291877) evaluated one digital asset encompassing three endpoints. The evaluation scope covered multiple attack surfaces and interaction points within the designated infrastructure, providing comprehensive coverage of the defined attack landscape.\n\nThe assessment identified zero findings across all severity classifications, with zero critical, high, medium, low, and informational findings recorded. This outcome indicates that the tested asset and its endpoints demonstrate a strong security posture within the scope of this engagement. However, this result reflects the findings from this specific assessment period and does not preclude the existence of vulnerabilities that may be identified through alternative assessment methodologies or in areas outside the current evaluation scope.",
+  "stats": {
+    "assets_count": 1,
+    "endpoints_count": 3,
+    "critical_count": 0,
+    "high_count": 0,
+    "medium_count": 0,
+    "low_count": 0,
+    "info_count": 0,
+    "total_findings": 0
+  },
+  "top_findings": [],
+  "findings": []
+}

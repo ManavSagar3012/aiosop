@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 1000px; margin: 0 auto; padding: 2rem; color: #24292e; }
+    h1, h2, h3 { color: #111; }
+    code { background: #f6f8fa; padding: 0.2em 0.4em; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; font-size: 85%; }
+    pre { background: #f6f8fa; padding: 16px; overflow: auto; border-radius: 3px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+    th, td { border: 1px solid #dfe2e5; padding: 6px 13px; }
+    th { background-color: #f6f8fa; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>CONFIDENTIAL / CLIENT-SENSITIVE</h1>
+<h1>Executive Summary</h1>
+<p><strong>Engagement ID:</strong> eng-20260831084454-qosmos-console
+<strong>Date Generated:</strong> 2026-08-31
+<strong>Version:</strong> v1.0</p>
+<h2>Risk Narrative</h2>
+<p><strong>CONFIDENTIAL</strong></p>
+<p><strong>Executive Risk Narrative — Engagement eng-20260831084454-qosmos-console</strong></p>
+<p>The security assessment of the Qosmos console asset identified a total of 28 findings, all classified as informational in severity. No critical, high, medium, or low severity vulnerabilities were confirmed during this engagement, indicating that the assessed asset does not present evidence of immediately exploitable weaknesses or material risk requiring urgent remediation. The informational findings are concentrated in areas of web application hardening and configuration hygiene, including the absence of recommended HTTP security headers (such as Content-Security-Policy and Strict-Transport-Security), missing Subresource Integrity attributes on loaded scripts, and TLS version detection results. While none of these constitute vulnerabilities on their own, they represent gaps against industry hardening baselines that could increase exposure if combined with future defects or changes in the threat landscape.</p>
+<p>From a strategic perspective, the findings also illuminate the asset's cloud footprint, with detections confirming the use of AWS bucket storage and AWS CloudFront as the delivery mechanism. This is consistent with a modern, managed infrastructure posture, though it underscores the importance of maintaining rigorous cloud configuration governance — including bucket access policies, CDN security settings, and header enforcement at the edge — as the primary control surface for this asset. We recommend that the organization treat the 28 informational findings as a defense-in-depth roadmap: implementing security headers and Subresource Integrity are low-effort, high-value improvements that reduce the blast radius of potential client-side attacks, and periodic re-assessment is advised to ensure the posture remains stable as the console evolves. Overall, the current risk posture of the assessed asset is assessed as low, with no findings requiring executive escalation at this time.</p>
+<hr />
+<p><em>Classification: CONFIDENTIAL — Distribution restricted to engagement stakeholders.</em></p>
+<h2>Assessment Overview</h2>
+<ul>
+<li><strong>Total Assets Discovered:</strong> 1</li>
+<li><strong>Total Endpoints Mapped:</strong> 0</li>
+<li><strong>Critical Vulnerabilities:</strong> 0</li>
+<li><strong>High Vulnerabilities:</strong> 0</li>
+</ul>
+<h2>Key Findings Summary</h2>
+<ul>
+<li>
+<p><strong>info</strong>: HTTP Missing Security Headers (unknown)</p>
+</li>
+<li>
+<p><strong>info</strong>: Missing Subresource Integrity (unknown)</p>
+</li>
+<li>
+<p><strong>info</strong>: TLS Version - Detect (unknown)</p>
+</li>
+<li>
+<p><strong>info</strong>: Detect websites using AWS bucket storage (unknown)</p>
+</li>
+<li>
+<p><strong>info</strong>: AWS Cloudfront service detection (unknown)</p>
+</li>
+</ul>
+<h1>CONFIDENTIAL / CLIENT-SENSITIVE</h1>
+<h1>Technical Details</h1>
+<p><strong>Engagement ID:</strong> eng-20260831084454-qosmos-console</p>
+<h2>Verified Vulnerabilities</h2>
+<h3>1. HTTP Missing Security Headers</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>This template searches for missing HTTP security headers. The impact of these missing headers can vary.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;http-missing-security-headers&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 08:57:03 GMT\r\nEtag: W/\&quot;ddd64413f55fd19977f1a0e8cfe114df\&quot;\r\nLast-Modified: Thu, 27 Aug 2026 07:01:26 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 58ae4e39408a6d0a576d70c9f855b9e4.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: DN5VM8sP_w2TUZ18NrWHSx5_PRo-AHzUuY-IFlyXDDr2XQAh9aoAZw==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: 6I.ZEXeC5nZuiqfIpuiT1ZPfvJ91e2Gi\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n    &lt;!-- Google tag (gtag.js) --&gt;\n    &lt;script async src=\&quot;https://www.googletagmanager.com/gtag/js?id=G-PD091NTTCX\&quot;&gt;&lt;/script&gt;\n    &lt;script&gt;window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('consent', 'default', {ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied'});\ngtag('js', new Date());\nif (window.top === window.self) { gtag('config', 'G-PD091NTTCX'); }&lt;/script&gt;\n\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://auth.qosmos.qnulabs.com https://api.razorpay.com https://checkout.razorpay.com https://lumberjack.razorpay.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://stats.g.doubleclick.net https://pagead2.googlesyndication.com; img-src 'self' data: https:; script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.googletagmanager.com https://googleads.g.doubleclick.net https://www.googleadservices.com 'sha256-qE3dqAT89u2BJjDElSzJg1ThsUwKcGJ2IG5FyhCXCZo='; frame-src 'self' https://auth.qosmos.qnulabs.com https://*.s3.ap-south-1.amazonaws.com https://api.razorpay.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | QNuLabs&lt;/title&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600;700&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n  &lt;!--\n    Razorpay's checkout.js is NOT loaded here. Loading it globally ran its\n    telemetry (lumberjack.razorpay.com) on every single page view, which any\n    ad/tracker blocker blocks, filling the console with ERR_BLOCKED_BY_CLIENT\n    on pages that have nothing to do with payments. It is now injected on\n    demand by src/lib/razorpay.js, only when a checkout actually starts.\n  --&gt;\n
+
+...[truncated 418 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>f3e699774b2dae6ea74c06d2f938adf5a5b1f27b9326364bacd09a31a5f0936f</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>2. Missing Subresource Integrity</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Checks if external script and stylesheet tags in the HTML response are missing the Subresource Integrity (SRI) attribute.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;missing-sri&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.5\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 08:56:52 GMT\r\nEtag: W/\&quot;ddd64413f55fd19977f1a0e8cfe114df\&quot;\r\nLast-Modified: Thu, 27 Aug 2026 07:01:26 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 a422243977730e4226bf3bb970b6f900.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: jkXTehw1GDe8d1CqfT8P7fBjmYOW7D-oOz2RYHKvyoKf45lnXay2Lw==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: 6I.ZEXeC5nZuiqfIpuiT1ZPfvJ91e2Gi\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n    &lt;!-- Google tag (gtag.js) --&gt;\n    &lt;script async src=\&quot;https://www.googletagmanager.com/gtag/js?id=G-PD091NTTCX\&quot;&gt;&lt;/script&gt;\n    &lt;script&gt;window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('consent', 'default', {ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied'});\ngtag('js', new Date());\nif (window.top === window.self) { gtag('config', 'G-PD091NTTCX'); }&lt;/script&gt;\n\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://auth.qosmos.qnulabs.com https://api.razorpay.com https://checkout.razorpay.com https://lumberjack.razorpay.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://stats.g.doubleclick.net https://pagead2.googlesyndication.com; img-src 'self' data: https:; script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.googletagmanager.com https://googleads.g.doubleclick.net https://www.googleadservices.com 'sha256-qE3dqAT89u2BJjDElSzJg1ThsUwKcGJ2IG5FyhCXCZo='; frame-src 'self' https://auth.qosmos.qnulabs.com https://*.s3.ap-south-1.amazonaws.com https://api.razorpay.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | QNuLabs&lt;/title&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600;700&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n  &lt;!--\n    Razorpay's checkout.js is NOT loaded here. Loading it globally ran its\n    telemetry (lumberjack.razorpay.com) on every single page view, which any\n    ad/tracker blocker blocks, filling the console with ERR_BLOCKED_BY_CLIENT\n    on pages that have nothing to do with payments. It is now injected on\n    demand by src/lib/razorpay.js, only when a checkout actually starts.\n  --&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-BfWKxZb
+
+...[truncated 681 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>3069544440949af83c3c9fd09d680354677eb16f13e4304d25810ae77d2b9f3c</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>3. TLS Version - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.
+It is important to detect the TLS version in order to ensure secure communication between two computers or servers.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;tls-version&quot;, &quot;matched_at&quot;: &quot;qosmos.qnulabs.com:443&quot;, &quot;url&quot;: &quot;qosmos.qnulabs.com&quot;, &quot;request&quot;: null, &quot;response&quot;: null, &quot;extracted_results&quot;: [&quot;tls12&quot;]}, {&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;tls-version&quot;, &quot;matched_at&quot;: &quot;qosmos.qnulabs.com:443&quot;, &quot;url&quot;: &quot;qosmos.qnulabs.com&quot;, &quot;request&quot;: null, &quot;response&quot;: null, &quot;extracted_results&quot;: [&quot;tls13&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>a1da5b13e32b7f5b12f93a2d02a55263278a5d9e40647b7e4069e8a6545f14f3</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>4. Detect websites using AWS bucket storage</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;aws-bucket-service&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.190 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 08:56:43 GMT\r\nEtag: W/\&quot;ddd64413f55fd19977f1a0e8cfe114df\&quot;\r\nLast-Modified: Thu, 27 Aug 2026 07:01:26 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 677944308fd1609f92564a7dd6155d3a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: 2x17oPQ0voml04aL4EPgQxxAmXbWvSQT5WsdK5Dddo18mQgSGLSJgQ==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: 6I.ZEXeC5nZuiqfIpuiT1ZPfvJ91e2Gi\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n    &lt;!-- Google tag (gtag.js) --&gt;\n    &lt;script async src=\&quot;https://www.googletagmanager.com/gtag/js?id=G-PD091NTTCX\&quot;&gt;&lt;/script&gt;\n    &lt;script&gt;window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('consent', 'default', {ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied'});\ngtag('js', new Date());\nif (window.top === window.self) { gtag('config', 'G-PD091NTTCX'); }&lt;/script&gt;\n\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://auth.qosmos.qnulabs.com https://api.razorpay.com https://checkout.razorpay.com https://lumberjack.razorpay.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://stats.g.doubleclick.net https://pagead2.googlesyndication.com; img-src 'self' data: https:; script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.googletagmanager.com https://googleads.g.doubleclick.net https://www.googleadservices.com 'sha256-qE3dqAT89u2BJjDElSzJg1ThsUwKcGJ2IG5FyhCXCZo='; frame-src 'self' https://auth.qosmos.qnulabs.com https://*.s3.ap-south-1.amazonaws.com https://api.razorpay.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | QNuLabs&lt;/title&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600;700&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n  &lt;!--\n    Razorpay's checkout.js is NOT loaded here. Loading it globally ran its\n    telemetry (lumberjack.razorpay.com) on every single page view, which any\n    ad/tracker blocker blocks, filling the console with ERR_BLOCKED_BY_CLIENT\n    on pages that have nothing to do with payments. It is now injected on\n    demand by src/lib/razorpay.js, only when a checkout actually starts.\n  --&gt;\n  &lt;script typ
+
+...[truncated 405 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>a21cf680e67dd5c9e5b00f24a03ffd50af261240a054f52387ec7901f1ea0fb0</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>5. AWS Cloudfront service detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Detect websites using AWS cloudfront service</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;aws-cloudfront-service&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.190 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 08:56:43 GMT\r\nEtag: W/\&quot;ddd64413f55fd19977f1a0e8cfe114df\&quot;\r\nLast-Modified: Thu, 27 Aug 2026 07:01:26 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 677944308fd1609f92564a7dd6155d3a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: 2x17oPQ0voml04aL4EPgQxxAmXbWvSQT5WsdK5Dddo18mQgSGLSJgQ==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: 6I.ZEXeC5nZuiqfIpuiT1ZPfvJ91e2Gi\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n    &lt;!-- Google tag (gtag.js) --&gt;\n    &lt;script async src=\&quot;https://www.googletagmanager.com/gtag/js?id=G-PD091NTTCX\&quot;&gt;&lt;/script&gt;\n    &lt;script&gt;window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('consent', 'default', {ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied'});\ngtag('js', new Date());\nif (window.top === window.self) { gtag('config', 'G-PD091NTTCX'); }&lt;/script&gt;\n\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://auth.qosmos.qnulabs.com https://api.razorpay.com https://checkout.razorpay.com https://lumberjack.razorpay.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://stats.g.doubleclick.net https://pagead2.googlesyndication.com; img-src 'self' data: https:; script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.googletagmanager.com https://googleads.g.doubleclick.net https://www.googleadservices.com 'sha256-qE3dqAT89u2BJjDElSzJg1ThsUwKcGJ2IG5FyhCXCZo='; frame-src 'self' https://auth.qosmos.qnulabs.com https://*.s3.ap-south-1.amazonaws.com https://api.razorpay.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | QNuLabs&lt;/title&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600;700&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n  &lt;!--\n    Razorpay's checkout.js is NOT loaded here. Loading it globally ran its\n    telemetry (lumberjack.razorpay.com) on every single page view, which any\n    ad/tracker blocker blocks, filling the console with ERR_BLOCKED_BY_CLIENT\n    on pages that have nothing to do with payments. It is now injected on\n    demand by src/lib/razorpay.js, only when a checkout actually starts.\n  --&gt;\n  &lt;script
+
+...[truncated 409 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>4417eb5072f37bab1f4c1cf3bcdb60a9f90997ffc2d79f80cb69d1c991c647e4</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>6. Detect SSL Certificate Issuer</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Extract the issuer's organization from the target's certificate. Issuers are entities which sign and distribute certificates.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;ssl-issuer&quot;, &quot;matched_at&quot;: &quot;qosmos.qnulabs.com:443&quot;, &quot;url&quot;: &quot;qosmos.qnulabs.com&quot;, &quot;request&quot;: null, &quot;response&quot;: null, &quot;extracted_results&quot;: [&quot;Amazon&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>96bfd1a2f05316561efb09df823d9133b5e4b55c795a870b44534b663d3af773</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>7. SSL DNS Names</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Extract the Subject Alternative Name (SAN) from the target's certificate. SAN facilitates the usage of additional hostnames with the same certificate.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;ssl-dns-names&quot;, &quot;matched_at&quot;: &quot;qosmos.qnulabs.com:443&quot;, &quot;url&quot;: &quot;qosmos.qnulabs.com&quot;, &quot;request&quot;: null, &quot;response&quot;: null, &quot;extracted_results&quot;: [&quot;qosmos.qnulabs.com&quot;, &quot;console.qosmos.qnulabs.com&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>948c7ca2459c635fbdd4b413dc8f18d850b06c2f1225d9465d2e73012a155edf</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>8. WAF Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>A web application firewall was detected.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;waf-detect&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;POST / HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Version/15.4 Safari/537.36\r\nConnection: close\r\nContent-Length: 27\r\nContent-Type: application/x-www-form-urlencoded\r\nAccept-Encoding: gzip\r\n\r\n_=&lt;script&gt;alert(1)&lt;/script&gt;&quot;, &quot;response&quot;: &quot;HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 1053\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html\r\nDate: Mon, 31 Aug 2026 08:53:58 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: CloudFront\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVia: 1.1 e4295438197bf68d0320eda27ae28684.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: 90zW8vI0sm_WpYxHLE8AGA3lU2J4j9wJzPra1hrrz_55DzjX4Upq_Q==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Cache: Error from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!DOCTYPE HTML PUBLIC \&quot;-//W3C//DTD HTML 4.01 Transitional//EN\&quot; \&quot;http://www.w3.org/TR/html4/loose.dtd\&quot;&gt;\n&lt;HTML&gt;&lt;HEAD&gt;&lt;META HTTP-EQUIV=\&quot;Content-Type\&quot; CONTENT=\&quot;text/html; charset=iso-8859-1\&quot;&gt;\n&lt;TITLE&gt;ERROR: The request could not be satisfied&lt;/TITLE&gt;\n&lt;/HEAD&gt;&lt;BODY&gt;\n&lt;H1&gt;403 ERROR&lt;/H1&gt;\n&lt;H2&gt;The request could not be satisfied.&lt;/H2&gt;\n&lt;HR noshade size=\&quot;1px\&quot;&gt;\nThis distribution is not configured to allow the HTTP request method that was used for this request. The distribution supports only cachable requests.\nWe can't connect to the server for this app or website at this time. There might be too much traffic or a configuration error. Try again later, or contact the app or website owner.\n&lt;BR clear=\&quot;all\&quot;&gt;\nIf you provide content to customers through CloudFront, you can find steps to troubleshoot and help prevent this error by reviewing the CloudFront documentation.\n&lt;BR clear=\&quot;all\&quot;&gt;\n&lt;HR noshade size=\&quot;1px\&quot;&gt;\n&lt;PRE&gt;\nGenerated by cloudfront (CloudFront)\nRequest ID: 90zW8vI0sm_WpYxHLE8AGA3lU2J4j9wJzPra1hrrz_55DzjX4Upq_Q==\n&lt;/PRE&gt;\n&lt;ADDRESS&gt;\n&lt;/ADDRESS&gt;\n&lt;/BODY&gt;&lt;/HTML&gt;&quot;, &quot;extracted_results&quot;: null, &quot;false_positive_signal&quot;: {&quot;catch_all&quot;: true, &quot;reasons&quot;: [&quot;catch_all_host + fp_prone_template:waf-detect&quot;], &quot;baseline_status&quot;: 200, &quot;baseline_len&quot;: 2934}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>4e20889c8b24e605963b84be693ff276271d50b0afffd361f72fdf39be9df077</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>9. Weak Content Security Policy - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Detected misconfigured CSP directives containing unsafe and overly permissive keywords that weakened resource loading restrictions. This configuration allowed high-risk script behaviors, resulting in reduced protection against XSS attacks.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;weak-csp-detect&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.190 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 08:56:43 GMT\r\nEtag: W/\&quot;ddd64413f55fd19977f1a0e8cfe114df\&quot;\r\nLast-Modified: Thu, 27 Aug 2026 07:01:26 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 677944308fd1609f92564a7dd6155d3a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: 2x17oPQ0voml04aL4EPgQxxAmXbWvSQT5WsdK5Dddo18mQgSGLSJgQ==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: 6I.ZEXeC5nZuiqfIpuiT1ZPfvJ91e2Gi\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n    &lt;!-- Google tag (gtag.js) --&gt;\n    &lt;script async src=\&quot;https://www.googletagmanager.com/gtag/js?id=G-PD091NTTCX\&quot;&gt;&lt;/script&gt;\n    &lt;script&gt;window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('consent', 'default', {ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied'});\ngtag('js', new Date());\nif (window.top === window.self) { gtag('config', 'G-PD091NTTCX'); }&lt;/script&gt;\n\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://auth.qosmos.qnulabs.com https://api.razorpay.com https://checkout.razorpay.com https://lumberjack.razorpay.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://stats.g.doubleclick.net https://pagead2.googlesyndication.com; img-src 'self' data: https:; script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.googletagmanager.com https://googleads.g.doubleclick.net https://www.googleadservices.com 'sha256-qE3dqAT89u2BJjDElSzJg1ThsUwKcGJ2IG5FyhCXCZo='; frame-src 'self' https://auth.qosmos.qnulabs.com https://*.s3.ap-south-1.amazonaws.com https://api.razorpay.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | QNuLabs&lt;/title&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600;700&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n  &lt;!--\n    Razorpay's checkout.js is NOT loaded here. Loading it globally ran its\n    telemetry (lumberjack.razorpay.com) on every single page view, which any\n    ad/tracker blocker blocks, filling the console with ERR_BLOCKED_BY_CLIENT\n    on pages that have nothing to do with payments. It is now injected on\n    demand by src/lib/razorpay.js, only when a checkout actually starts.\n  --&gt;\n  &lt;script type=\
+
+...[truncated 583 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>9e06381ff295a76095d43eadd6db1316dd74157c0a6c82d6d72f796b35295d6e</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>10. Wappalyzer Technology Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;tech-detect&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 08:56:56 GMT\r\nEtag: W/\&quot;ddd64413f55fd19977f1a0e8cfe114df\&quot;\r\nLast-Modified: Thu, 27 Aug 2026 07:01:26 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 9b9a018decad95c15ed845eed6156ac4.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: 9Cz1XSgsChmAseAa6ZLbL5IrDzFmNYLqN5EKaQthE154Dt_7tDnLSQ==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: 6I.ZEXeC5nZuiqfIpuiT1ZPfvJ91e2Gi\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n    &lt;!-- Google tag (gtag.js) --&gt;\n    &lt;script async src=\&quot;https://www.googletagmanager.com/gtag/js?id=G-PD091NTTCX\&quot;&gt;&lt;/script&gt;\n    &lt;script&gt;window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('consent', 'default', {ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied'});\ngtag('js', new Date());\nif (window.top === window.self) { gtag('config', 'G-PD091NTTCX'); }&lt;/script&gt;\n\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://auth.qosmos.qnulabs.com https://api.razorpay.com https://checkout.razorpay.com https://lumberjack.razorpay.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://stats.g.doubleclick.net https://pagead2.googlesyndication.com; img-src 'self' data: https:; script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.googletagmanager.com https://googleads.g.doubleclick.net https://www.googleadservices.com 'sha256-qE3dqAT89u2BJjDElSzJg1ThsUwKcGJ2IG5FyhCXCZo='; frame-src 'self' https://auth.qosmos.qnulabs.com https://*.s3.ap-south-1.amazonaws.com https://api.razorpay.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | QNuLabs&lt;/title&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600;700&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n  &lt;!--\n    Razorpay's checkout.js is NOT loaded here. Loading it globally ran its\n    telemetry (lumberjack.razorpay.com) on every single page view, which any\n    ad/tracker blocker blocks, filling the console with ERR_BLOCKED_BY_CLIENT\n    on pages that have nothing to do with payments. It is now injected on\n    demand by src/lib/razorpay.js, only when a checkout actually starts.\n  --&gt;\n  &lt;script type=\&quot;module\&quot; cr
+
+...[truncated 545 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>fb59894047edff7b35f05ef61d9d1cb51b2857bc5ec2a8e3ebf88a29ab69130c</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>11. Detect Amazon-S3 Bucket</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;s3-detect&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/%c0&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET /%c0 HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 6.2; rv:140.0.) Gecko/20100101 Firefox/140.0.\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 08:57:02 GMT\r\nEtag: W/\&quot;ddd64413f55fd19977f1a0e8cfe114df\&quot;\r\nLast-Modified: Thu, 27 Aug 2026 07:01:26 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 88ead6d8e1c453e4323dff19e8e052dc.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: ncQVQBOI6QQgrifQqwi0PmexhawuvA5_BbKeF5Gwh6in1mm-DaonBg==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: 6I.ZEXeC5nZuiqfIpuiT1ZPfvJ91e2Gi\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n    &lt;!-- Google tag (gtag.js) --&gt;\n    &lt;script async src=\&quot;https://www.googletagmanager.com/gtag/js?id=G-PD091NTTCX\&quot;&gt;&lt;/script&gt;\n    &lt;script&gt;window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('consent', 'default', {ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied'});\ngtag('js', new Date());\nif (window.top === window.self) { gtag('config', 'G-PD091NTTCX'); }&lt;/script&gt;\n\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://auth.qosmos.qnulabs.com https://api.razorpay.com https://checkout.razorpay.com https://lumberjack.razorpay.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://stats.g.doubleclick.net https://pagead2.googlesyndication.com; img-src 'self' data: https:; script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.googletagmanager.com https://googleads.g.doubleclick.net https://www.googleadservices.com 'sha256-qE3dqAT89u2BJjDElSzJg1ThsUwKcGJ2IG5FyhCXCZo='; frame-src 'self' https://auth.qosmos.qnulabs.com https://*.s3.ap-south-1.amazonaws.com https://api.razorpay.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | QNuLabs&lt;/title&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600;700&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n  &lt;!--\n    Razorpay's checkout.js is NOT loaded here. Loading it globally ran its\n    telemetry (lumberjack.razorpay.com) on every single page view, which any\n    ad/tracker blocker blocks, filling the console with ERR_BLOCKED_BY_CLIENT\n    on pages that have nothing to do with payments. It is now injected on\n    demand by src/lib/razorpay.js, only when a checkout actually starts.\n  --&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-BfWK
+
+...[truncated 509 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>f50bff9f829a6a9685fda9169c3bed6762009c9114b4f89395a1125f4eb53e87</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>12. AWS Service - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Detect if AWS is being used in the application.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;aws-detect&quot;, &quot;matched_at&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 08:57:03 GMT\r\nEtag: W/\&quot;ddd64413f55fd19977f1a0e8cfe114df\&quot;\r\nLast-Modified: Thu, 27 Aug 2026 07:01:26 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 58ae4e39408a6d0a576d70c9f855b9e4.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: DN5VM8sP_w2TUZ18NrWHSx5_PRo-AHzUuY-IFlyXDDr2XQAh9aoAZw==\r\nX-Amz-Cf-Pop: DEL54-P8\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: 6I.ZEXeC5nZuiqfIpuiT1ZPfvJ91e2Gi\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n    &lt;!-- Google tag (gtag.js) --&gt;\n    &lt;script async src=\&quot;https://www.googletagmanager.com/gtag/js?id=G-PD091NTTCX\&quot;&gt;&lt;/script&gt;\n    &lt;script&gt;window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('consent', 'default', {ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied'});\ngtag('js', new Date());\nif (window.top === window.self) { gtag('config', 'G-PD091NTTCX'); }&lt;/script&gt;\n\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://auth.qosmos.qnulabs.com https://api.razorpay.com https://checkout.razorpay.com https://lumberjack.razorpay.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://stats.g.doubleclick.net https://pagead2.googlesyndication.com; img-src 'self' data: https:; script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.googletagmanager.com https://googleads.g.doubleclick.net https://www.googleadservices.com 'sha256-qE3dqAT89u2BJjDElSzJg1ThsUwKcGJ2IG5FyhCXCZo='; frame-src 'self' https://auth.qosmos.qnulabs.com https://*.s3.ap-south-1.amazonaws.com https://api.razorpay.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | QNuLabs&lt;/title&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600;700;800&amp;family=Geist+Mono:wght@400;500;600;700&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n  &lt;!--\n    Razorpay's checkout.js is NOT loaded here. Loading it globally ran its\n    telemetry (lumberjack.razorpay.com) on every single page view, which any\n    ad/tracker blocker blocks, filling the console with ERR_BLOCKED_BY_CLIENT\n    on pages that have nothing to do with payments. It is now injected on\n    demand by src/lib/razorpay.js, only when a checkout actually starts.\n  --&gt;\n  &lt;script type=\&quot;mo
+
+...[truncated 553 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>b46232bd19534c5147a5cd4a850b9296fcb4674dccc2a26bf3e3907e1a28aeb8</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>13. NS Record Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>An NS record was detected. An NS record delegates a subdomain to a set of name servers.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;nameserver-fingerprint&quot;, &quot;matched_at&quot;: &quot;qosmos.qnulabs.com&quot;, &quot;url&quot;: &quot;qosmos.qnulabs.com&quot;, &quot;request&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 36886\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;qosmos.qnulabs.com.\tIN\t NS\n&quot;, &quot;response&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 36886\n;; flags: qr rd ra; QUERY: 1, ANSWER: 5, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;qosmos.qnulabs.com.\tIN\t NS\n\n;; ANSWER SECTION:\nqosmos.qnulabs.com.\t314\tIN\tCNAME\tdzvhrea2cko08.cloudfront.net.\ndzvhrea2cko08.cloudfront.net.\t21600\tIN\tNS\tns-1546.awsdns-01.co.uk.\ndzvhrea2cko08.cloudfront.net.\t21600\tIN\tNS\tns-250.awsdns-31.com.\ndzvhrea2cko08.cloudfront.net.\t21600\tIN\tNS\tns-877.awsdns-45.net.\ndzvhrea2cko08.cloudfront.net.\t21600\tIN\tNS\tns-1482.awsdns-57.org.\n&quot;, &quot;extracted_results&quot;: [&quot;ns-1546.awsdns-01.co.uk.&quot;, &quot;ns-250.awsdns-31.com.&quot;, &quot;ns-877.awsdns-45.net.&quot;, &quot;ns-1482.awsdns-57.org.&quot;], &quot;false_positive_signal&quot;: {&quot;out_of_scan_scope&quot;: true, &quot;matched_endpoint&quot;: &quot;qosmos.qnulabs.com:80&quot;, &quot;scoped_endpoints&quot;: [&quot;qosmos.qnulabs.com:443&quot;], &quot;reason&quot;: &quot;nuclei matched a service on a host port this scan was not pointed at (shared-host service misattribution \u2014 real service, wrong engagement)&quot;}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>83758486fa9fad0cb96a4b7c137cc50965122fa6d0983f8cb22657176b1f707e</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>14. DNS SaaS Service Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>A CNAME DNS record was discovered</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;dns-saas-service-detection&quot;, &quot;matched_at&quot;: &quot;qosmos.qnulabs.com&quot;, &quot;url&quot;: &quot;qosmos.qnulabs.com&quot;, &quot;request&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 40786\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;qosmos.qnulabs.com.\tIN\t CNAME\n&quot;, &quot;response&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 40786\n;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;qosmos.qnulabs.com.\tIN\t CNAME\n\n;; ANSWER SECTION:\nqosmos.qnulabs.com.\t599\tIN\tCNAME\tdzvhrea2cko08.cloudfront.net.\n&quot;, &quot;extracted_results&quot;: [&quot;dzvhrea2cko08.cloudfront.net&quot;], &quot;false_positive_signal&quot;: {&quot;out_of_scan_scope&quot;: true, &quot;matched_endpoint&quot;: &quot;qosmos.qnulabs.com:80&quot;, &quot;scoped_endpoints&quot;: [&quot;qosmos.qnulabs.com:443&quot;], &quot;reason&quot;: &quot;nuclei matched a service on a host port this scan was not pointed at (shared-host service misattribution \u2014 real service, wrong engagement)&quot;}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>91feb66183530c498ba2c710e4902b5a40a13d0cd8926fbfe41167be96b3e771</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>15. HTTP Missing Security Headers</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>This template searches for missing HTTP security headers. The impact of these missing headers can vary.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;http-missing-security-headers&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/111.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 09:01:27 GMT\r\nEtag: W/\&quot;6d8dd52c305b606a75c3a44077d5df14\&quot;\r\nLast-Modified: Mon, 31 Aug 2026 08:57:47 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 e44070691669fda7111d97fca7fa71ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: K4mMu9YZQ9erRIXeB-bP4DVFuAtFBKJzF1oMANGfVDlEDB_TOh1feQ==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: aaQARHBg5IbaT_0R.CHSIRVx6.kQFaG2\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;!--\n    Substituted at build time by the qosmos-csp plugin in vite.config.js, which\n    derives the policy from VITE_API_BASE_URL and VITE_KEYCLOAK_URL and refuses\n    to build without them. The console previously shipped with no policy at all\n    (audit FE-02). A sibling guard fails the build if this placeholder is ever\n    left unsubstituted, because the literal string parses as a policy of\n    unknown directives \u2014 i.e. no policy \u2014 with no error anywhere.\n  --&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://console.qosmos.qnulabs.com https://auth.console.qosmos.qnulabs.com; frame-src 'self' https://auth.console.qosmos.qnulabs.com; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | Admin Console&lt;/title&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.googleapis.com\&quot;&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.gstatic.com\&quot; crossorigin&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-B_biYM1u.js\&quot;&gt;&lt;/script&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; crossorigin href=\&quot;/assets/index-CLlVWdaN.css\&quot;&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n  &lt;div id=\&quot;root\&quot;&gt;&lt;/div&gt;\n&lt;/body&gt;\n\n&lt;/html&gt;&quot;, &quot;extracted_results&quot;: null}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>c16e6da04c871bf4159ae39b7f22044f2fd6ad91992397c7a4c590e0d817d19e</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>16. Missing Subresource Integrity</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Checks if external script and stylesheet tags in the HTML response are missing the Subresource Integrity (SRI) attribute.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;missing-sri&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6.1 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 09:01:52 GMT\r\nEtag: W/\&quot;6d8dd52c305b606a75c3a44077d5df14\&quot;\r\nLast-Modified: Mon, 31 Aug 2026 08:57:47 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 ccb163695642c564a3fe181a890f291e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: mGuHuVs8DSz1Q1kz7cg7co1nC4nwVEuBI2BttiPJV3Zd9uypNNU98w==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: aaQARHBg5IbaT_0R.CHSIRVx6.kQFaG2\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;!--\n    Substituted at build time by the qosmos-csp plugin in vite.config.js, which\n    derives the policy from VITE_API_BASE_URL and VITE_KEYCLOAK_URL and refuses\n    to build without them. The console previously shipped with no policy at all\n    (audit FE-02). A sibling guard fails the build if this placeholder is ever\n    left unsubstituted, because the literal string parses as a policy of\n    unknown directives \u2014 i.e. no policy \u2014 with no error anywhere.\n  --&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://console.qosmos.qnulabs.com https://auth.console.qosmos.qnulabs.com; frame-src 'self' https://auth.console.qosmos.qnulabs.com; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | Admin Console&lt;/title&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.googleapis.com\&quot;&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.gstatic.com\&quot; crossorigin&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-B_biYM1u.js\&quot;&gt;&lt;/script&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; crossorigin href=\&quot;/assets/index-CLlVWdaN.css\&quot;&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n  &lt;div id=\&quot;root\&quot;&gt;&lt;/div&gt;\n&lt;/body&gt;\n\n&lt;/html&gt;&quot;, &quot;extracted_results&quot;: [&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap&quot;, &quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>af3833871959fd1e49afab1890efb075315f58e7cedecc6df3c81230549ea36d</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>17. TLS Version - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.
+It is important to detect the TLS version in order to ensure secure communication between two computers or servers.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;tls-version&quot;, &quot;matched_at&quot;: &quot;console.qosmos.qnulabs.com:443&quot;, &quot;url&quot;: &quot;console.qosmos.qnulabs.com&quot;, &quot;request&quot;: null, &quot;response&quot;: null, &quot;extracted_results&quot;: [&quot;tls12&quot;]}, {&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;tls-version&quot;, &quot;matched_at&quot;: &quot;console.qosmos.qnulabs.com:443&quot;, &quot;url&quot;: &quot;console.qosmos.qnulabs.com&quot;, &quot;request&quot;: null, &quot;response&quot;: null, &quot;extracted_results&quot;: [&quot;tls13&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>987a58d7c8653b7cce1ad620e752e3f80b1b940f3ed4b1812cfa90a386c1a0dc</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>18. Detect websites using AWS bucket storage</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;aws-bucket-service&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 09:01:39 GMT\r\nEtag: W/\&quot;6d8dd52c305b606a75c3a44077d5df14\&quot;\r\nLast-Modified: Mon, 31 Aug 2026 08:57:47 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 7ed0f11cd9e6d93d10fc13ad67472fba.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: wALNjCSUVHaJ6hnRdogC2n55wkAR5BBFaICD3X8l_2akXTUcWUOWHw==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: aaQARHBg5IbaT_0R.CHSIRVx6.kQFaG2\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;!--\n    Substituted at build time by the qosmos-csp plugin in vite.config.js, which\n    derives the policy from VITE_API_BASE_URL and VITE_KEYCLOAK_URL and refuses\n    to build without them. The console previously shipped with no policy at all\n    (audit FE-02). A sibling guard fails the build if this placeholder is ever\n    left unsubstituted, because the literal string parses as a policy of\n    unknown directives \u2014 i.e. no policy \u2014 with no error anywhere.\n  --&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://console.qosmos.qnulabs.com https://auth.console.qosmos.qnulabs.com; frame-src 'self' https://auth.console.qosmos.qnulabs.com; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | Admin Console&lt;/title&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.googleapis.com\&quot;&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.gstatic.com\&quot; crossorigin&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-B_biYM1u.js\&quot;&gt;&lt;/script&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; crossorigin href=\&quot;/assets/index-CLlVWdaN.css\&quot;&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n  &lt;div id=\&quot;root\&quot;&gt;&lt;/div&gt;\n&lt;/body&gt;\n\n&lt;/html&gt;&quot;, &quot;extracted_results&quot;: null}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>d95bc5262583e7cdccb31cf2ecc45aa307505bbcd00e1d7cb8bcc74e0c9e6206</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>19. AWS Cloudfront service detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Detect websites using AWS cloudfront service</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;aws-cloudfront-service&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 09:01:39 GMT\r\nEtag: W/\&quot;6d8dd52c305b606a75c3a44077d5df14\&quot;\r\nLast-Modified: Mon, 31 Aug 2026 08:57:47 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 7ed0f11cd9e6d93d10fc13ad67472fba.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: wALNjCSUVHaJ6hnRdogC2n55wkAR5BBFaICD3X8l_2akXTUcWUOWHw==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: aaQARHBg5IbaT_0R.CHSIRVx6.kQFaG2\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;!--\n    Substituted at build time by the qosmos-csp plugin in vite.config.js, which\n    derives the policy from VITE_API_BASE_URL and VITE_KEYCLOAK_URL and refuses\n    to build without them. The console previously shipped with no policy at all\n    (audit FE-02). A sibling guard fails the build if this placeholder is ever\n    left unsubstituted, because the literal string parses as a policy of\n    unknown directives \u2014 i.e. no policy \u2014 with no error anywhere.\n  --&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://console.qosmos.qnulabs.com https://auth.console.qosmos.qnulabs.com; frame-src 'self' https://auth.console.qosmos.qnulabs.com; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | Admin Console&lt;/title&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.googleapis.com\&quot;&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.gstatic.com\&quot; crossorigin&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-B_biYM1u.js\&quot;&gt;&lt;/script&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; crossorigin href=\&quot;/assets/index-CLlVWdaN.css\&quot;&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n  &lt;div id=\&quot;root\&quot;&gt;&lt;/div&gt;\n&lt;/body&gt;\n\n&lt;/html&gt;&quot;, &quot;extracted_results&quot;: null}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>078af565a494eed9945b9b9a6d519fb41f4d423d895375b1eb42522129de3025</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>20. Detect SSL Certificate Issuer</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Extract the issuer's organization from the target's certificate. Issuers are entities which sign and distribute certificates.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;ssl-issuer&quot;, &quot;matched_at&quot;: &quot;console.qosmos.qnulabs.com:443&quot;, &quot;url&quot;: &quot;console.qosmos.qnulabs.com&quot;, &quot;request&quot;: null, &quot;response&quot;: null, &quot;extracted_results&quot;: [&quot;Amazon&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>6edd165fe8c81ac0addd1ec0458186fa7dc2a036465e7bb8a364240e5bb3d86a</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>21. SSL DNS Names</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Extract the Subject Alternative Name (SAN) from the target's certificate. SAN facilitates the usage of additional hostnames with the same certificate.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;ssl-dns-names&quot;, &quot;matched_at&quot;: &quot;console.qosmos.qnulabs.com:443&quot;, &quot;url&quot;: &quot;console.qosmos.qnulabs.com&quot;, &quot;request&quot;: null, &quot;response&quot;: null, &quot;extracted_results&quot;: [&quot;console.qosmos.qnulabs.com&quot;, &quot;qosmos.qnulabs.com&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>67929b7260dc0ab58193663327c53a89afbe91f25cd17b304d6e3ef98fa0d91d</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>22. WAF Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>A web application firewall was detected.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;waf-detect&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;POST / HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Macintosh, Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15\r\nConnection: close\r\nContent-Length: 27\r\nContent-Type: application/x-www-form-urlencoded\r\nAccept-Encoding: gzip\r\n\r\n_=&lt;script&gt;alert(1)&lt;/script&gt;&quot;, &quot;response&quot;: &quot;HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 1053\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html\r\nDate: Mon, 31 Aug 2026 08:58:35 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: CloudFront\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVia: 1.1 ba6f9394ac9da7a0725d181cca442332.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: pbX5xf6_18w_FLKAY7unJVB2JHMyjcW0dhnlbYW1QsEvTHWxUQFTww==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Cache: Error from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!DOCTYPE HTML PUBLIC \&quot;-//W3C//DTD HTML 4.01 Transitional//EN\&quot; \&quot;http://www.w3.org/TR/html4/loose.dtd\&quot;&gt;\n&lt;HTML&gt;&lt;HEAD&gt;&lt;META HTTP-EQUIV=\&quot;Content-Type\&quot; CONTENT=\&quot;text/html; charset=iso-8859-1\&quot;&gt;\n&lt;TITLE&gt;ERROR: The request could not be satisfied&lt;/TITLE&gt;\n&lt;/HEAD&gt;&lt;BODY&gt;\n&lt;H1&gt;403 ERROR&lt;/H1&gt;\n&lt;H2&gt;The request could not be satisfied.&lt;/H2&gt;\n&lt;HR noshade size=\&quot;1px\&quot;&gt;\nThis distribution is not configured to allow the HTTP request method that was used for this request. The distribution supports only cachable requests.\nWe can't connect to the server for this app or website at this time. There might be too much traffic or a configuration error. Try again later, or contact the app or website owner.\n&lt;BR clear=\&quot;all\&quot;&gt;\nIf you provide content to customers through CloudFront, you can find steps to troubleshoot and help prevent this error by reviewing the CloudFront documentation.\n&lt;BR clear=\&quot;all\&quot;&gt;\n&lt;HR noshade size=\&quot;1px\&quot;&gt;\n&lt;PRE&gt;\nGenerated by cloudfront (CloudFront)\nRequest ID: pbX5xf6_18w_FLKAY7unJVB2JHMyjcW0dhnlbYW1QsEvTHWxUQFTww==\n&lt;/PRE&gt;\n&lt;ADDRESS&gt;\n&lt;/ADDRESS&gt;\n&lt;/BODY&gt;&lt;/HTML&gt;&quot;, &quot;extracted_results&quot;: null, &quot;false_positive_signal&quot;: {&quot;catch_all&quot;: true, &quot;reasons&quot;: [&quot;catch_all_host + fp_prone_template:waf-detect&quot;, &quot;matched_response_indistinguishable_from_catch_all_baseline&quot;], &quot;baseline_status&quot;: 200, &quot;baseline_len&quot;: 1861}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>16047120d9200addc8fc20355d390fd70ccab48443511580913d8da8f7cebc12</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>23. AWS Service - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Detect if AWS is being used in the application.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;aws-detect&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/111.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 09:01:27 GMT\r\nEtag: W/\&quot;6d8dd52c305b606a75c3a44077d5df14\&quot;\r\nLast-Modified: Mon, 31 Aug 2026 08:57:47 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 e44070691669fda7111d97fca7fa71ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: K4mMu9YZQ9erRIXeB-bP4DVFuAtFBKJzF1oMANGfVDlEDB_TOh1feQ==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: aaQARHBg5IbaT_0R.CHSIRVx6.kQFaG2\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;!--\n    Substituted at build time by the qosmos-csp plugin in vite.config.js, which\n    derives the policy from VITE_API_BASE_URL and VITE_KEYCLOAK_URL and refuses\n    to build without them. The console previously shipped with no policy at all\n    (audit FE-02). A sibling guard fails the build if this placeholder is ever\n    left unsubstituted, because the literal string parses as a policy of\n    unknown directives \u2014 i.e. no policy \u2014 with no error anywhere.\n  --&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://console.qosmos.qnulabs.com https://auth.console.qosmos.qnulabs.com; frame-src 'self' https://auth.console.qosmos.qnulabs.com; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | Admin Console&lt;/title&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.googleapis.com\&quot;&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.gstatic.com\&quot; crossorigin&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-B_biYM1u.js\&quot;&gt;&lt;/script&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; crossorigin href=\&quot;/assets/index-CLlVWdaN.css\&quot;&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n  &lt;div id=\&quot;root\&quot;&gt;&lt;/div&gt;\n&lt;/body&gt;\n\n&lt;/html&gt;&quot;, &quot;extracted_results&quot;: null, &quot;false_positive_signal&quot;: {&quot;catch_all&quot;: true, &quot;reasons&quot;: [&quot;catch_all_host + fp_prone_template:aws-detect&quot;], &quot;baseline_status&quot;: 200, &quot;baseline_len&quot;: 1861}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>3363e1928ff183f699555c5345fbbc00bc70a723629b47625847deab9c0c5ab2</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>24. Wappalyzer Technology Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;tech-detect&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 09:01:31 GMT\r\nEtag: W/\&quot;6d8dd52c305b606a75c3a44077d5df14\&quot;\r\nLast-Modified: Mon, 31 Aug 2026 08:57:47 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 ba3b49bb8e3b79790364c0eb5cd21ab8.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: BCQsV0ll8nnoUSXs0aurKb8JUsuRjKjsGZZUuYNLJFjctigspKsAPg==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: aaQARHBg5IbaT_0R.CHSIRVx6.kQFaG2\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;!--\n    Substituted at build time by the qosmos-csp plugin in vite.config.js, which\n    derives the policy from VITE_API_BASE_URL and VITE_KEYCLOAK_URL and refuses\n    to build without them. The console previously shipped with no policy at all\n    (audit FE-02). A sibling guard fails the build if this placeholder is ever\n    left unsubstituted, because the literal string parses as a policy of\n    unknown directives \u2014 i.e. no policy \u2014 with no error anywhere.\n  --&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://console.qosmos.qnulabs.com https://auth.console.qosmos.qnulabs.com; frame-src 'self' https://auth.console.qosmos.qnulabs.com; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | Admin Console&lt;/title&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.googleapis.com\&quot;&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.gstatic.com\&quot; crossorigin&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-B_biYM1u.js\&quot;&gt;&lt;/script&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; crossorigin href=\&quot;/assets/index-CLlVWdaN.css\&quot;&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n  &lt;div id=\&quot;root\&quot;&gt;&lt;/div&gt;\n&lt;/body&gt;\n\n&lt;/html&gt;&quot;, &quot;extracted_results&quot;: null, &quot;false_positive_signal&quot;: {&quot;catch_all&quot;: true, &quot;reasons&quot;: [&quot;catch_all_host + fp_prone_template:tech-detect&quot;], &quot;baseline_status&quot;: 200, &quot;baseline_len&quot;: 1861}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>3523e2c03d042ade6ca1064d3960e61164d1622491335eb121bad1366956b4e8</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>25. Detect Amazon-S3 Bucket</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;s3-detect&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/%c0&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET /%c0 HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 09:01:34 GMT\r\nEtag: W/\&quot;6d8dd52c305b606a75c3a44077d5df14\&quot;\r\nLast-Modified: Mon, 31 Aug 2026 08:57:47 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 098f2d53656d4f3f90dbbcb090ba0150.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: -6DknrP-VdTVbAJ_h9RIEAeEsrWs9toGVl4mVu_385mJOA5hY-tMWg==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: aaQARHBg5IbaT_0R.CHSIRVx6.kQFaG2\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;!--\n    Substituted at build time by the qosmos-csp plugin in vite.config.js, which\n    derives the policy from VITE_API_BASE_URL and VITE_KEYCLOAK_URL and refuses\n    to build without them. The console previously shipped with no policy at all\n    (audit FE-02). A sibling guard fails the build if this placeholder is ever\n    left unsubstituted, because the literal string parses as a policy of\n    unknown directives \u2014 i.e. no policy \u2014 with no error anywhere.\n  --&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://console.qosmos.qnulabs.com https://auth.console.qosmos.qnulabs.com; frame-src 'self' https://auth.console.qosmos.qnulabs.com; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | Admin Console&lt;/title&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.googleapis.com\&quot;&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.gstatic.com\&quot; crossorigin&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-B_biYM1u.js\&quot;&gt;&lt;/script&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; crossorigin href=\&quot;/assets/index-CLlVWdaN.css\&quot;&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n  &lt;div id=\&quot;root\&quot;&gt;&lt;/div&gt;\n&lt;/body&gt;\n\n&lt;/html&gt;&quot;, &quot;extracted_results&quot;: null, &quot;false_positive_signal&quot;: {&quot;catch_all&quot;: true, &quot;reasons&quot;: [&quot;catch_all_host + fp_prone_template:s3-detect&quot;], &quot;baseline_status&quot;: 200, &quot;baseline_len&quot;: 1861}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>65445504eca527dcff743331577c226bc408c57af455618b37a2e824ec280a86</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>26. Weak Content Security Policy - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Detected misconfigured CSP directives containing unsafe and overly permissive keywords that weakened resource loading restrictions. This configuration allowed high-risk script behaviors, resulting in reduced protection against XSS attacks.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;weak-csp-detect&quot;, &quot;matched_at&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;url&quot;: &quot;https://console.qosmos.qnulabs.com/&quot;, &quot;request&quot;: &quot;GET / HTTP/1.1\r\nHost: console.qosmos.qnulabs.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 0\r\nAlt-Svc: h3=\&quot;:443\&quot;; ma=86400\r\nCache-Control: no-cache, must-revalidate\r\nContent-Security-Policy: frame-ancestors 'self'\r\nContent-Type: text/html; charset=utf-8\r\nDate: Mon, 31 Aug 2026 09:01:39 GMT\r\nEtag: W/\&quot;6d8dd52c305b606a75c3a44077d5df14\&quot;\r\nLast-Modified: Mon, 31 Aug 2026 08:57:47 GMT\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nServer: AmazonS3\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nVary: Accept-Encoding\r\nVia: 1.1 7ed0f11cd9e6d93d10fc13ad67472fba.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: wALNjCSUVHaJ6hnRdogC2n55wkAR5BBFaICD3X8l_2akXTUcWUOWHw==\r\nX-Amz-Cf-Pop: DEL51-P3\r\nX-Amz-Server-Side-Encryption: AES256\r\nX-Amz-Version-Id: aaQARHBg5IbaT_0R.CHSIRVx6.kQFaG2\r\nX-Cache: Hit from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n&lt;!doctype html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot; /&gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;/assets/favicon-96x96-C4u3utjl.png\&quot; sizes=\&quot;96x96\&quot; /&gt;\n\n  &lt;meta name=\&quot;viewport\&quot; content=\&quot;width=device-width, initial-scale=1.0\&quot; /&gt;\n  &lt;!--\n    Substituted at build time by the qosmos-csp plugin in vite.config.js, which\n    derives the policy from VITE_API_BASE_URL and VITE_KEYCLOAK_URL and refuses\n    to build without them. The console previously shipped with no policy at all\n    (audit FE-02). A sibling guard fails the build if this placeholder is ever\n    left unsubstituted, because the literal string parses as a policy of\n    unknown directives \u2014 i.e. no policy \u2014 with no error anywhere.\n  --&gt;\n  &lt;meta http-equiv=\&quot;Content-Security-Policy\&quot; content=\&quot;default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; connect-src 'self' https://console.qosmos.qnulabs.com https://auth.console.qosmos.qnulabs.com; frame-src 'self' https://auth.console.qosmos.qnulabs.com; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com;\&quot; /&gt;\n  &lt;title&gt;QOSMOS | Admin Console&lt;/title&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.googleapis.com\&quot;&gt;\n  &lt;link rel=\&quot;preconnect\&quot; href=\&quot;https://fonts.gstatic.com\&quot; crossorigin&gt;\n  &lt;link\n    href=\&quot;https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&amp;family=Geist:wght@100..900&amp;family=Inter:wght@100..900&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;link href=\&quot;https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap\&quot;\n    rel=\&quot;stylesheet\&quot;&gt;\n  &lt;script type=\&quot;module\&quot; crossorigin src=\&quot;/assets/index-B_biYM1u.js\&quot;&gt;&lt;/script&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; crossorigin href=\&quot;/assets/index-CLlVWdaN.css\&quot;&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n  &lt;div id=\&quot;root\&quot;&gt;&lt;/div&gt;\n&lt;/body&gt;\n\n&lt;/html&gt;&quot;, &quot;extracted_results&quot;: [&quot;frame-ancestors 'self'&quot;], &quot;false_positive_signal&quot;: {&quot;catch_all&quot;: true, &quot;reasons&quot;: [&quot;catch_all_host + fp_prone_template:weak-csp-detect&quot;], &quot;baseline_status&quot;: 200, &quot;baseline_len&quot;: 1861}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>65bf026fff38435d40aebfd7d80aaa51e92855a758c94f097261749b10266eef</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>27. DNS SaaS Service Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>A CNAME DNS record was discovered</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;dns-saas-service-detection&quot;, &quot;matched_at&quot;: &quot;console.qosmos.qnulabs.com&quot;, &quot;url&quot;: &quot;console.qosmos.qnulabs.com&quot;, &quot;request&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 36294\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;console.qosmos.qnulabs.com.\tIN\t CNAME\n&quot;, &quot;response&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 36294\n;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;console.qosmos.qnulabs.com.\tIN\t CNAME\n\n;; ANSWER SECTION:\nconsole.qosmos.qnulabs.com.\t352\tIN\tCNAME\td17s1sh6h7yidz.cloudfront.net.\n&quot;, &quot;extracted_results&quot;: [&quot;d17s1sh6h7yidz.cloudfront.net&quot;], &quot;false_positive_signal&quot;: {&quot;out_of_scan_scope&quot;: true, &quot;matched_endpoint&quot;: &quot;console.qosmos.qnulabs.com:80&quot;, &quot;scoped_endpoints&quot;: [&quot;console.qosmos.qnulabs.com:443&quot;], &quot;reason&quot;: &quot;nuclei matched a service on a host port this scan was not pointed at (shared-host service misattribution \u2014 real service, wrong engagement)&quot;}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>0475caaecb339d0c9ed49fdbdbcbb8875c606eaf1d04a8f50cb70dac414e7817</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>28. NS Record Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>An NS record was detected. An NS record delegates a subdomain to a set of name servers.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;nameserver-fingerprint&quot;, &quot;matched_at&quot;: &quot;console.qosmos.qnulabs.com&quot;, &quot;url&quot;: &quot;console.qosmos.qnulabs.com&quot;, &quot;request&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 24397\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;console.qosmos.qnulabs.com.\tIN\t NS\n&quot;, &quot;response&quot;: &quot;;; opcode: QUERY, status: NOERROR, id: 24397\n;; flags: qr rd ra; QUERY: 1, ANSWER: 5, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 1232\n; EDE: 10 (RRSIGs Missing): (for DNSKEY qnulabs.com., id = 58432)\n\n;; QUESTION SECTION:\n;console.qosmos.qnulabs.com.\tIN\t NS\n\n;; ANSWER SECTION:\nconsole.qosmos.qnulabs.com.\t600\tIN\tCNAME\td17s1sh6h7yidz.cloudfront.net.\nd17s1sh6h7yidz.cloudfront.net.\t172800\tIN\tNS\tns-1037.awsdns-01.org.\nd17s1sh6h7yidz.cloudfront.net.\t172800\tIN\tNS\tns-1869.awsdns-41.co.uk.\nd17s1sh6h7yidz.cloudfront.net.\t172800\tIN\tNS\tns-407.awsdns-50.com.\nd17s1sh6h7yidz.cloudfront.net.\t172800\tIN\tNS\tns-978.awsdns-58.net.\n&quot;, &quot;extracted_results&quot;: [&quot;ns-1037.awsdns-01.org.&quot;, &quot;ns-1869.awsdns-41.co.uk.&quot;, &quot;ns-407.awsdns-50.com.&quot;, &quot;ns-978.awsdns-58.net.&quot;], &quot;false_positive_signal&quot;: {&quot;out_of_scan_scope&quot;: true, &quot;matched_endpoint&quot;: &quot;console.qosmos.qnulabs.com:80&quot;, &quot;scoped_endpoints&quot;: [&quot;console.qosmos.qnulabs.com:443&quot;], &quot;reason&quot;: &quot;nuclei matched a service on a host port this scan was not pointed at (shared-host service misattribution \u2014 real service, wrong engagement)&quot;}}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>142ed98d6cb36cb55460ec35b97bac713b0646dd708a510e56971815984c6a30</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+</body>
+</html>

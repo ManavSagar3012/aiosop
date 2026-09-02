@@ -1,0 +1,609 @@
+{
+  "generated_at": "2026-08-11T16:58:09.975495+00:00",
+  "target": "http://localhost:8080",
+  "runs": 1,
+  "stability": {
+    "scored_timeouts": [],
+    "stable": true
+  },
+  "scorecard": {
+    "summary": {
+      "manifest_positives": 15,
+      "manifest_negative_controls": 5,
+      "findings_total": 10,
+      "findings_real": 10,
+      "findings_simulated_dropped": 0,
+      "true_positives": 10,
+      "validated_true_positives": 10,
+      "unvalidated_matches": 0,
+      "false_negatives": 5,
+      "false_positives": 0,
+      "extras_for_triage": 0,
+      "precision": 1.0,
+      "recall": 0.6666666666666666,
+      "validated_recall": 0.6666666666666666,
+      "coverage": 0.6666666666666666,
+      "evidence_completeness": 1.0,
+      "mock_llm": false
+    },
+    "matched": [
+      {
+        "gt_id": "DVWA-001",
+        "finding_id": "dvwa-bench-dvwa-001-20260811165809",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8080/vulnerabilities/sqli/",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-003",
+        "finding_id": "dvwa-bench-dvwa-003-20260811165809",
+        "finding_type": "xssreflected",
+        "endpoint": "http://localhost:8080/vulnerabilities/xss_r/",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "reflection",
+          "request",
+          "response",
+          "status_code",
+          "type",
+          "xss_confirmation"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-005",
+        "finding_id": "dvwa-bench-dvwa-005-20260811165809",
+        "finding_type": "lfi",
+        "endpoint": "http://localhost:8080/vulnerabilities/fi/",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-006",
+        "finding_id": "dvwa-bench-dvwa-006-20260811165809",
+        "finding_type": "commandinjection",
+        "endpoint": "http://localhost:8080/vulnerabilities/exec/",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-007",
+        "finding_id": "dvwa-bench-dvwa-007-20260811165809",
+        "finding_type": "fileupload",
+        "endpoint": "http://localhost:8080/vulnerabilities/upload/",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "probe_status",
+          "request",
+          "response",
+          "type",
+          "uploaded_path"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-009",
+        "finding_id": "dvwa-bench-dvwa-009-20260811165809",
+        "finding_type": "weaksessionid",
+        "endpoint": "http://localhost:8080/login.php",
+        "confidence": 0.8,
+        "evidence_kinds": [
+          "entropy",
+          "request",
+          "session",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-011",
+        "finding_id": "dvwa-bench-dvwa-011-20260811165809",
+        "finding_type": "cspbypass",
+        "endpoint": "http://localhost:8080/vulnerabilities/csp/",
+        "confidence": 0.9,
+        "evidence_kinds": [
+          "csp_bypass",
+          "flaw",
+          "header",
+          "request",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-013",
+        "finding_id": "dvwa-bench-dvwa-013-20260811165809",
+        "finding_type": "sqli",
+        "endpoint": "http://localhost:8080/vulnerabilities/sqli/",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "payload",
+          "request",
+          "response",
+          "sqlmap_injection",
+          "status_code",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-014",
+        "finding_id": "dvwa-bench-dvwa-014-20260811165809",
+        "finding_type": "weakpassword",
+        "endpoint": "http://localhost:8080/login.php",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "default_creds",
+          "request",
+          "type",
+          "weak_password"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      },
+      {
+        "gt_id": "DVWA-015",
+        "finding_id": "dvwa-bench-dvwa-015-20260811165809",
+        "finding_type": "authbypass",
+        "endpoint": "http://localhost:8080/login.php",
+        "confidence": 1.0,
+        "evidence_kinds": [
+          "brute_force",
+          "bruteforce",
+          "request",
+          "type"
+        ],
+        "evidence_complete": true,
+        "missing_evidence": [],
+        "validation_satisfied": true,
+        "validation_reasons": []
+      }
+    ],
+    "unvalidated_matches": [],
+    "false_negatives": [
+      {
+        "gt_id": "DVWA-002",
+        "type": "SQLiBlind",
+        "endpoint": "/vulnerabilities/sqli_blind/",
+        "severity": "High"
+      },
+      {
+        "gt_id": "DVWA-004",
+        "type": "XSSStored",
+        "endpoint": "/vulnerabilities/xss_s/",
+        "severity": "Medium"
+      },
+      {
+        "gt_id": "DVWA-008",
+        "type": "CSRF",
+        "endpoint": "/vulnerabilities/csrf/",
+        "severity": "Medium"
+      },
+      {
+        "gt_id": "DVWA-010",
+        "type": "OpenRedirect",
+        "endpoint": "/vulnerabilities/open_redirect/",
+        "severity": "Medium"
+      },
+      {
+        "gt_id": "DVWA-012",
+        "type": "JSInjection",
+        "endpoint": "/vulnerabilities/javascript/",
+        "severity": "Low"
+      }
+    ],
+    "false_positives": [],
+    "extras": [],
+    "notes": [
+      "recall measured over manifest positives (what MUST be found).",
+      "validated_recall counts only matches with validated=true, no manual confirmation requirement, and complete manifest-required evidence.",
+      "precision measured only against explicit negative controls; None means no negative controls were defined.",
+      "extras are findings unmapped to any manifest entry \u2014 triage manually, not counted as false positives.",
+      "simulated/mock findings dropped before scoring."
+    ]
+  },
+  "findings_export": "C:\\Users\\HP\\OneDrive\\Desktop\\burp_mcp\\ai-osop\\benchmarks\\results\\owasp-dvwa-core-v1-findings.json",
+  "per_check": {
+    "DVWA-001": {
+      "name": "DVWA-001",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.02,
+      "evidence": {
+        "request": "http://localhost:8080/vulnerabilities/sqli/?id=1' UNION SELECT user,password FROM users-- &Submit=Submit",
+        "response": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: SQL Injection :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesheet\" type=\"text/css\" hr",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "1' UNION SELECT user,password FROM users--"
+      },
+      "error": null
+    },
+    "DVWA-002": {
+      "name": "DVWA-002",
+      "type": "SQLiBlind",
+      "expected_exploitable": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "type": "sqli",
+        "payload": "1' AND 1=1-- / 1' AND 1=2-- (boolean differential)",
+        "true_len": 4561,
+        "false_len": 4567,
+        "request": "http://localhost:8080/vulnerabilities/sqli_blind/?id=1' AND 1=1-- &Submit=Submit",
+        "response": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: SQL Injection (Blind) :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesheet\" type=\"text"
+      },
+      "error": null
+    },
+    "DVWA-003": {
+      "name": "DVWA-003",
+      "type": "XSSReflected",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.02,
+      "evidence": {
+        "request": "http://localhost:8080/vulnerabilities/xss_r/?name=%3Cscript%3Ealert%28%27bench-xss-r%27%29%3C/script%3E",
+        "response": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: Reflected Cross Site Scripting (XSS) :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesh",
+        "status_code": 200,
+        "type": "xss_confirmation",
+        "payload": "<script>alert('bench-xss-r')</script>",
+        "reflection": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: Reflected Cross Site Scripting (XSS) :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesh"
+      },
+      "error": null
+    },
+    "DVWA-004": {
+      "name": "DVWA-004",
+      "type": "XSSStored",
+      "expected_exploitable": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.1,
+      "evidence": {
+        "request": "http://localhost:8080/vulnerabilities/xss_s/",
+        "response": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: Stored Cross Site Scripting (XSS) :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesheet",
+        "status_code": 200,
+        "type": "xss_confirmation",
+        "payload": "<script>alert('bench-xss-s-c52536')</script>",
+        "reflection": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: Stored Cross Site Scripting (XSS) :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesheet"
+      },
+      "error": null
+    },
+    "DVWA-005": {
+      "name": "DVWA-005",
+      "type": "LFI",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.0,
+      "evidence": {
+        "request": "http://localhost:8080/vulnerabilities/fi/?page=/etc/passwd",
+        "response": "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbin:x:2:2:bin:/bin:/usr/sbin/nologin\nsys:x:3:3:sys:/dev:/usr/sbin/nologin\nsync:x:4:65534:sync:/bin:/bin/sync\ngames:x:5:60:games:/usr/games:/usr/sbin/nologin\nman:x:6:12:man:/var/cache/man:/usr/sbin/nologin\nlp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin\nmail:x:8:8:mail:/var/mail:/usr/sbin/nologin\nnews:x:9:9:news:/var/spool/news:/usr/sbin/nologin\nuucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin\nproxy:x:13:13:proxy:/bin:/usr/sbin/nologin\nwww-data:x:33:33:www-data:/var/www:/usr/sbin/nologin\nbackup:x:34:34:backup:/var/backups:/usr/sbin/nologin\nlist:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin\nirc:x:39:39:ircd:/var/run/ircd:/usr/sbin/nologin\ngnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:",
+        "status_code": 200,
+        "type": "payload",
+        "payload": "/etc/passwd"
+      },
+      "error": null
+    },
+    "DVWA-006": {
+      "name": "DVWA-006",
+      "type": "CommandInjection",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 3.08,
+      "evidence": {
+        "request": "http://localhost:8080/vulnerabilities/exec/",
+        "response": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: Command Injection :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesheet\" type=\"text/css",
+        "status_code": 200,
+        "type": "payload",
+        "payload": "127.0.0.1;id"
+      },
+      "error": null
+    },
+    "DVWA-007": {
+      "name": "DVWA-007",
+      "type": "FileUpload",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.02,
+      "evidence": {
+        "type": "payload",
+        "payload": "benchc690366b.php",
+        "uploaded_path": "http://localhost:8080/hackable/uploads/benchc690366b.php",
+        "probe_status": 200,
+        "request": "http://localhost:8080/vulnerabilities/upload/",
+        "response": "bench_upload_ok"
+      },
+      "error": null
+    },
+    "DVWA-008": {
+      "name": "DVWA-008",
+      "type": "CSRF",
+      "expected_exploitable": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.11,
+      "evidence": {
+        "type": "csrf",
+        "origin_bypass": "password change accepted without user_token (low security)",
+        "payload": "password_new without user_token",
+        "verified_new_password": false,
+        "request": "http://localhost:8080/vulnerabilities/csrf/"
+      },
+      "error": null
+    },
+    "DVWA-009": {
+      "name": "DVWA-009",
+      "type": "WeakSessionID",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.8,
+      "seconds": 0.06,
+      "evidence": {
+        "type": "session",
+        "entropy": {
+          "length": 26,
+          "regenerated_after_login": false,
+          "session_fixation": true,
+          "charset": "php default"
+        },
+        "request": "http://localhost:8080/login.php"
+      },
+      "error": null
+    },
+    "DVWA-010": {
+      "name": "DVWA-010",
+      "type": "OpenRedirect",
+      "expected_exploitable": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "type": "open_redirect",
+        "location_header": "",
+        "http_status": 404,
+        "payload": "https://evil-bench.example/",
+        "request": "http://localhost:8080/vulnerabilities/open_redirect/?redirect=https://evil-bench.example/",
+        "response": "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\n<p>The requested URL /vulnerabilities/open_redirect/ was not found on this"
+      },
+      "error": null
+    },
+    "DVWA-011": {
+      "name": "DVWA-011",
+      "type": "CSPBypass",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 0.9,
+      "seconds": 0.0,
+      "evidence": {
+        "type": "csp_bypass",
+        "header": "script-src 'self' https://pastebin.com  example.com code.jquery.com https://ssl.google-analytics.com ;",
+        "flaw": "script-src allows untrusted external origins without nonce/hash pinning",
+        "request": "http://localhost:8080/vulnerabilities/csp/"
+      },
+      "error": null
+    },
+    "DVWA-012": {
+      "name": "DVWA-012",
+      "type": "JSInjection",
+      "expected_exploitable": true,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.07,
+      "evidence": {
+        "request": "http://localhost:8080/vulnerabilities/javascript/",
+        "response": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: JavaScript Attacks :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesheet\" type=\"text/cs",
+        "status_code": 200,
+        "type": "payload",
+        "payload": "bench-js-2e8453",
+        "reflection": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: JavaScript Attacks :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesheet\" type=\"text/cs"
+      },
+      "error": null
+    },
+    "DVWA-013": {
+      "name": "DVWA-013",
+      "type": "SQLi",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.01,
+      "evidence": {
+        "request": "http://localhost:8080/vulnerabilities/sqli/?id=1' OR '1'='1-- &Submit=Submit",
+        "response": "\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n\r\n\t<head>\r\n\t\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\r\n\r\n\t\t<title>Vulnerability: SQL Injection :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*</title>\r\n\r\n\t\t<link rel=\"stylesheet\" type=\"text/css\" hr",
+        "status_code": 200,
+        "type": "sqlmap_injection",
+        "payload": "1' OR '1'='1--"
+      },
+      "error": null
+    },
+    "DVWA-014": {
+      "name": "DVWA-014",
+      "type": "WeakPassword",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.06,
+      "evidence": {
+        "type": "weak_password",
+        "default_creds": {
+          "username": "admin",
+          "password": "password"
+        },
+        "request": "http://localhost:8080/login.php"
+      },
+      "error": null
+    },
+    "DVWA-015": {
+      "name": "DVWA-015",
+      "type": "AuthBypass",
+      "expected_exploitable": true,
+      "validated": true,
+      "status": "VALIDATED",
+      "confidence": 1.0,
+      "seconds": 0.06,
+      "evidence": {
+        "type": "brute_force",
+        "bruteforce": {
+          "username": "admin",
+          "found_password": "password",
+          "attempts": 1,
+          "candidates": [
+            "password",
+            "admin",
+            "123456",
+            "dvwa",
+            "letmein",
+            "qwerty",
+            "password1"
+          ]
+        },
+        "request": "http://localhost:8080/login.php"
+      },
+      "error": null
+    },
+    "DVWA-NEG-001": {
+      "name": "DVWA-NEG-001",
+      "type": "MissingAuth",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "note": "login page is the intended public entry point; a MissingAuth detector needs a protected-resource differential (negative control)",
+        "status_code": 200,
+        "request": "http://localhost:8080/login.php"
+      },
+      "error": null
+    },
+    "DVWA-NEG-002": {
+      "name": "DVWA-NEG-002",
+      "type": "XSS",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "note": "static asset; reflected content is not an injection sink",
+        "status_code": 200,
+        "request": "http://localhost:8080/favicon.ico?v=<script>alert(1)</script>"
+      },
+      "error": null
+    },
+    "DVWA-NEG-003": {
+      "name": "DVWA-NEG-003",
+      "type": "LFI",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.02,
+      "evidence": {
+        "note": "directory listing is not path traversal \u2014 needs canonicalization oracle",
+        "status_code": 200,
+        "request": "http://localhost:8080/vulnerabilities/?page=../../../../etc/passwd"
+      },
+      "error": null
+    },
+    "DVWA-NEG-004": {
+      "name": "DVWA-NEG-004",
+      "type": "XSSReflected",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "note": "static content \u2014 no reflected injection point",
+        "status_code": 200,
+        "request": "http://localhost:8080/security.php?name=<script>alert(1)</script>"
+      },
+      "error": null
+    },
+    "DVWA-NEG-005": {
+      "name": "DVWA-NEG-005",
+      "type": "CSRF",
+      "expected_exploitable": false,
+      "validated": false,
+      "status": "NOT_FOUND",
+      "confidence": 0.0,
+      "seconds": 0.0,
+      "evidence": {
+        "note": "state-reset action with same-site context is not a CSRF target (negative control)",
+        "status_code": 200,
+        "request": "http://localhost:8080/setup.php"
+      },
+      "error": null
+    }
+  }
+}

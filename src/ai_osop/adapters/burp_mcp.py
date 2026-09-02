@@ -2,11 +2,21 @@
 Burp Suite MCP Adapter
 Production-grade adapter for Burp Suite MCP with request/response normalization,
 scanner issue correlation, and proxy history management.
+
+BURP-COMMUNITY-001 (2026-08-31): the adapter is edition-aware. Pro-only
+capabilities (Collaborator, Organizer) are detected via
+``ai_osop.adapters.burp_capabilities`` and degrade gracefully — Collaborator
+transparently routes to AI-OSOP's oast-mcp (equivalent OOB detection), and
+Organizer requests return a structured degradation response instead of an
+error, because every AI-OSOP finding is already persisted to the Neo4j attack
+graph + findings ledger. Burp Community APIs (proxy, sitemap, HTTP engine,
+scope, repeater, decoder, websockets, persistence) are used unchanged.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from ai_osop.adapters.burp_capabilities import BurpCapabilities, detect_burp_capabilities
 from ai_osop.core.config import Severity, VulnClass
 from ai_osop.core.exceptions import MCPException
 from ai_osop.core.models import Endpoint, ScopeDefinition, Vulnerability
@@ -27,10 +37,53 @@ class BurpMCPAdapter:
 
     SERVER_ID = "burp-mcp"
 
+    # Capability probe cache TTL. The extension answers get_version from
+    # in-memory probes computed at extension load, so a short TTL keeps the
+    # adapter honest across extension reloads (edition changes mid-session)
+    # without hammering the server on every tool call.
+    CAPABILITY_TTL = timedelta(seconds=120)
+
     def __init__(self, registry: MCPRegistry):
         self.registry = registry
         self._proxy_history_buffer: List[Dict[str, Any]] = []
         self._max_history_size = 10000
+        # FIX (scope-gate-2026-08-24): retain scope so every tool call can be
+        # client-side validated by the registry gate (defense-in-depth).
+        self._scope: Optional[ScopeDefinition] = None
+        self._capabilities: Optional[BurpCapabilities] = None
+        self._capabilities_at: Optional[datetime] = None
+
+    # ---------------------------------------------------------------- edition / routing
+
+    async def get_capabilities(
+        self, refresh: bool = False, probe_url: Optional[str] = None
+    ) -> BurpCapabilities:
+        """Current Burp capability snapshot (cached; never raises).
+
+        BURP-COMMUNITY-001: this is the single decision point for where active
+        scanning is executed. Community (or any edition without a working
+        Pro scanner) reports ``requires_internal_routing`` so callers route to
+        AI-OSOP's nuclei + web_audit engines instead of failing.
+        """
+        now = datetime.utcnow()
+        if (
+            not refresh
+            and self._capabilities is not None
+            and self._capabilities_at is not None
+            and now - self._capabilities_at < self.CAPABILITY_TTL
+        ):
+            return self._capabilities
+        caps = await detect_burp_capabilities(self.registry, probe_url=probe_url)
+        self._capabilities = caps
+        self._capabilities_at = now
+        return caps
+
+    async def edition_info(self) -> Dict[str, Any]:
+        """get_version result as a plain dict (empty on unreachable)."""
+        response = await self.registry.execute_tool(self.SERVER_ID, "get_version", {})
+        if response.status != "success" or not response.result:
+            return {}
+        return response.result
 
     @staticmethod
     def _extract_error(response: MCPExecuteResponse) -> str:
@@ -337,11 +390,13 @@ class BurpMCPAdapter:
     # ---------------------------------------------------------------- new tools (v0.2.0)
 
     async def get_version(self) -> Dict[str, Any]:
-        """Report Burp edition, version, and available capability probes."""
-        response = await self.registry.execute_tool(self.SERVER_ID, "get_version", {})
-        if response.status != "success" or not response.result:
-            return {}
-        return response.result
+        """Report Burp edition, version, and available capability probes.
+
+        Kept as the raw extension view; prefer get_capabilities()/edition_info()
+        for edition-aware routing decisions (they add caching + fail-safe
+        inference for pre-v0.2.0 extensions).
+        """
+        return await self.edition_info()
 
     async def get_live_traffic(self, limit: int = 200) -> List[Dict[str, Any]]:
         """Traffic observed through Burp's HTTP engine (registered handler)."""
@@ -381,9 +436,7 @@ class BurpMCPAdapter:
 
     async def ws_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         """WebSocket frames seen by the proxy."""
-        response = await self.registry.execute_tool(
-            self.SERVER_ID, "ws_history", {"limit": limit}
-        )
+        response = await self.registry.execute_tool(self.SERVER_ID, "ws_history", {"limit": limit})
         if response.status != "success" or not response.result:
             return []
         return response.result.get("entries", [])
@@ -396,7 +449,9 @@ class BurpMCPAdapter:
 
     async def remove_from_scope(self, url: str) -> MCPExecuteResponse:
         """Remove a URL from Burp's project scope."""
-        response = await self.registry.execute_tool(self.SERVER_ID, "remove_from_scope", {"url": url})
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "remove_from_scope", {"url": url}
+        )
         self._check_response(response, "remove_from_scope")
         return response
 
@@ -407,8 +462,46 @@ class BurpMCPAdapter:
             return False
         return bool(response.result.get("in_scope", False))
 
-    async def sync_to_organizer(self, url: str, method: str = "GET", body: str = "") -> MCPExecuteResponse:
-        """Send a request/response pair to Burp's Organizer (Pro) for the findings UI."""
+    async def sync_to_organizer(
+        self, url: str, method: str = "GET", body: str = ""
+    ) -> MCPExecuteResponse:
+        """Send a request/response pair to Burp's Organizer (Pro) for the findings UI.
+
+        BURP-COMMUNITY-001: Organizer is Pro-only. On Community this degrades
+        gracefully instead of erroring: the pair is still captured through
+        Burp's site map (every edition) simply by issuing the request through
+        the HTTP engine, and AI-OSOP's findings already persist to the Neo4j
+        attack graph + findings ledger — the persistence Organizer would have
+        provided. The response reports the degradation explicitly.
+        """
+        caps = await self.get_capabilities()
+        if not (caps.reachable and caps.organizer_available):
+            # Degrade transparently: issue the request through Burp's HTTP
+            # engine so the pair lands in the site map (Community-supported),
+            # keeping the traffic visible in Burp's UI even without Organizer.
+            try:
+                await self.send_http_request({"url": url, "method": method, "body": body})
+                note = (
+                    "Burp Organizer is Pro-only; request issued through Burp's "
+                    "HTTP engine and captured in the site map. Findings persist "
+                    "to the AI-OSOP attack graph + findings ledger."
+                )
+            except Exception as e:  # noqa: BLE001 - best-effort capture
+                note = (
+                    f"Burp Organizer is Pro-only and HTTP capture failed: {e}. "
+                    "Findings persist to the AI-OSOP attack graph + findings ledger."
+                )
+            return MCPExecuteResponse(
+                request_id=f"organizer-degraded-{url[:40]}",
+                status="success",
+                result={
+                    "status": "degraded",
+                    "provider": "aiosop-graph-ledger",
+                    "burp_organizer": False,
+                    "url": url,
+                    "note": note,
+                },
+            )
         response = await self.registry.execute_tool(
             self.SERVER_ID,
             "sync_to_organizer",
@@ -417,15 +510,42 @@ class BurpMCPAdapter:
         self._check_response(response, "sync_to_organizer")
         return response
 
+    async def send_http_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Send one HTTP request through Burp's engine (every edition).
+
+        Community-supported transport used by AI-OSOP's deterministic fuzzing
+        and probe fallbacks. ``request`` is a flat dict ({"url","method","body",
+        "headers"}); returns status_code, response headers and body.
+        """
+        params: Dict[str, Any] = {
+            "url": request.get("url", ""),
+            "method": request.get("method", "GET"),
+        }
+        if request.get("body"):
+            params["body"] = request["body"]
+        if isinstance(request.get("headers"), dict) and request["headers"]:
+            params["headers"] = request["headers"]
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "send_http_request", params, timeout_override=60
+        )
+        result = response.result if isinstance(response.result, dict) else {}
+        if response.status != "success" or result.get("error"):
+            raise MCPException(f"burp send_http_request failed: {self._extract_error(response)}")
+        return result
+
     async def send_to_decoder(self, text: str) -> MCPExecuteResponse:
         """Send a value to Burp's Decoder tab."""
-        response = await self.registry.execute_tool(self.SERVER_ID, "send_to_decoder", {"text": text})
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "send_to_decoder", {"text": text}
+        )
         self._check_response(response, "send_to_decoder")
         return response
 
     async def extension_data_get(self, key: str) -> Optional[str]:
         """Read a value from the extension's persistent data store."""
-        response = await self.registry.execute_tool(self.SERVER_ID, "extension_data_get", {"key": key})
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "extension_data_get", {"key": key}
+        )
         if response.status != "success" or not response.result:
             return None
         return response.result.get("value")
@@ -438,15 +558,80 @@ class BurpMCPAdapter:
         self._check_response(response, "extension_data_set")
         return response
 
-    async def collaborator_payload(self) -> Dict[str, Any]:
-        """Generate a Burp Collaborator payload (Pro). On Community this errors
-        with a pointer to AI-OSOP's oast-mcp (port 8099)."""
-        response = await self.registry.execute_tool(self.SERVER_ID, "collaborator_payload", {})
-        self._check_response(response, "collaborator_payload")
-        return response.result or {}
+    async def collaborator_payload(
+        self, label: str = "burp-collaborator", context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Generate an OOB callback payload — Burp Collaborator (Pro) or AI-OSOP OAST.
+
+        BURP-COMMUNITY-001: on Community (or whenever Collaborator is
+        unavailable), this degrades *gracefully* instead of raising: the same
+        interface transparently mints an AI-OSOP oast-mcp token, which is the
+        platform's own out-of-band interaction server (equivalent detection,
+        no Burp license involved). The response records which provider served
+        the request so evidence provenance stays honest. Only when BOTH
+        providers fail does it return an explicit "unavailable" payload with
+        the reason — never a raise, never null.
+        """
+        caps = await self.get_capabilities()
+        if caps.reachable and caps.collaborator_available:
+            response = await self.registry.execute_tool(self.SERVER_ID, "collaborator_payload", {})
+            result = response.result if isinstance(response.result, dict) else {}
+            if response.status == "success" and result.get("collab_id") and not result.get("error"):
+                return {**result, "provider": "burp-collaborator"}
+            # Fall through to the OAST route: the caller needs a usable payload.
+
+        try:
+            from ai_osop.adapters.oast_mcp import OASTAdapter
+
+            oast = OASTAdapter(self.registry)
+            token, callback_url = await oast.register(label=label, context=context or {})
+            if token and callback_url:
+                return {
+                    "status": "success",
+                    "provider": "aiosop-oast",
+                    "collab_id": token,
+                    "payload": callback_url,
+                    "note": (
+                        "Burp Collaborator is Pro-only; routed to AI-OSOP "
+                        "oast-mcp for equivalent out-of-band detection."
+                    ),
+                }
+            oast_error = "oast-mcp returned empty token/callback_url"
+        except Exception as e:  # noqa: BLE001 - degrade, never raise
+            oast_error = str(e)
+        return {
+            "status": "unavailable",
+            "provider": None,
+            "collab_id": "",
+            "payload": "",
+            "reason": (
+                f"Burp Collaborator unavailable (edition={caps.edition_family}) "
+                f"and AI-OSOP oast-mcp failed: {oast_error}"
+            ),
+            "note": "Start oast-mcp (port 8099) to restore out-of-band detection.",
+        }
 
     async def collaborator_interactions(self, collab_id: str = "") -> List[Dict[str, Any]]:
-        """Fetch interactions for a previously generated Collaborator payload."""
+        """Fetch interactions for a generated Collaborator/OAST payload.
+
+        BURP-COMMUNITY-001: payloads minted on Community are oast-mcp tokens,
+        so this polls oast-mcp instead of Burp's Pro-only Collaborator API.
+        Unknown ids on a Pro install degrade to an empty list (honest
+        "no interactions"), never an error.
+        """
+        caps = await self.get_capabilities()
+        # Community: any payload this stack minted is an OAST token — poll it.
+        if not (caps.reachable and caps.collaborator_available):
+            if not collab_id:
+                return []
+            try:
+                from ai_osop.adapters.oast_mcp import OASTAdapter
+
+                oast = OASTAdapter(self.registry)
+                return await oast.poll(collab_id)
+            except Exception:  # noqa: BLE001 - unknown token / oast down
+                return []
+
         response = await self.registry.execute_tool(
             self.SERVER_ID, "collaborator_interactions", {"collab_id": collab_id}
         )

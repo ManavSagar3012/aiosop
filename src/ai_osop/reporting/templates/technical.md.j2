@@ -2,16 +2,33 @@
 # Technical Details
 **Engagement ID:** {{ engagement_id }}
 
-## Verified Vulnerabilities
+{# P0 (external review 2026-09-02): raw scanner observations must NEVER render
+   as "Verified Vulnerabilities". Findings are grouped by their validated
+   security_class: only gate-passed vulnerabilities appear in section A;
+   hardening, fingerprints, and discarded signals get honest sections with
+   the validation reasoning shown. #}
 
-{% for vuln in findings %}
-### {{ loop.index }}. {{ vuln.title }}
+{% set validated = findings | selectattr("security_class", "equalto", "validated_vulnerability") | list %}
+{% set hardening = findings | selectattr("security_class", "equalto", "hardening_item") | list %}
+{% set fingerprints = findings | selectattr("security_class", "equalto", "fingerprint_observation") | list %}
+{% set out_of_scope = findings | selectattr("security_class", "equalto", "out_of_scope") | list %}
+{% set false_positives = findings | selectattr("security_class", "equalto", "false_positive") | list %}
+
+## A. Validated Vulnerabilities ({{ validated | length }})
+
+{% if not validated %}
+No vulnerabilities passed the validation gates this engagement.
+{% endif %}
+{% for vuln in validated %}
+### A.{{ loop.index }}. {{ vuln.title }}
 - **Severity**: {{ vuln.severity }}
 - **Type**: {{ vuln.vuln_type }}
 - **Target**: {{ vuln.target }}
-{% if vuln.attack_id %}- **Attack Technique**: {{ vuln.attack_id }} - {{ vuln.attack_name }}
+{% if vuln.affected_targets %}- **Affected targets**: {{ vuln.affected_targets | join(", ") }}
+{% endif %}{% if vuln.attack_id %}- **Attack Technique**: {{ vuln.attack_id }} - {{ vuln.attack_name }}
 {% endif %}{% if vuln.owasp %}- **OWASP**: {{ vuln.owasp }}
 {% endif %}{% if vuln.cvss %}- **CVSS**: {{ vuln.cvss }}
+{% endif %}{% if vuln.fp_probability is defined %}- **FP probability**: {{ vuln.fp_probability }}
 {% endif %}
 #### Description
 {{ vuln.description }}
@@ -26,6 +43,66 @@
 ```
 **Artifact SHA-256 Hash**: `{{ vuln.evidence_hash }}`
 **Chain of Custody ID**: `{{ vuln.event_id }}`
+**Validation**: {{ vuln.validation_notes | default("passed all validation gates") }}
 
 ---
 {% endfor %}
+
+## B. Security Hardening Items ({{ hardening | length }})
+
+{% if not hardening %}
+No hardening items identified.
+{% endif %}
+{% for vuln in hardening %}
+### B.{{ loop.index }}. {{ vuln.title }}
+- **Status**: hardening recommendation (not a vulnerability)
+- **Target**: {{ vuln.target }}
+{% if vuln.affected_targets %}- **Affected targets**: {{ vuln.affected_targets | join(", ") }}
+{% endif %}{% if vuln.actual_missing_headers %}- **Verified absent (from captured evidence)**: {{ vuln.actual_missing_headers | join(", ") }}
+{% endif %}
+{{ vuln.description }}
+
+#### Remediation
+{{ vuln.remediation }}
+
+#### Evidence
+```
+{{ vuln.evidence }}
+```
+**Validation**: {{ vuln.validation_notes | default("passed all validation gates") }}
+
+---
+{% endfor %}
+
+## C. Technology & Infrastructure Observations ({{ fingerprints | length }})
+
+{% if not fingerprints %}
+No technology observations.
+{% endif %}
+These are informational asset fingerprints (infrastructure, certificates, services).
+They are attack-surface metadata, not security issues.
+{% for vuln in fingerprints %}
+- {{ vuln.title }} (target: {{ vuln.target }}) — {{ vuln.remediation | default("informational", true) }}
+{% endfor %}
+
+## D. Discarded Signals ({{ out_of_scope | length + false_positives | length }})
+
+{% if not out_of_scope and not false_positives %}
+No findings were discarded.
+{% endif %}
+{% if out_of_scope %}
+### D.1 Out of Scope ({{ out_of_scope | length }})
+The platform refused to promote these to findings because the evidence shows
+the scanner touched targets outside the authorized engagement scope:
+{% for vuln in out_of_scope %}
+- {{ vuln.title }} — {{ vuln.validation_notes | default("target outside engagement scope") }}
+{% endfor %}
+{% endif %}
+{% if false_positives %}
+### D.2 False Positives ({{ false_positives | length }})
+The platform's own evidence contradicted these claims; they are retained here
+with reasons for auditability, never as vulnerabilities:
+{% for vuln in false_positives %}
+- {{ vuln.title }} — {{ vuln.validation_notes | default("false-positive signal") }}
+{% endfor %}
+{% endif %}

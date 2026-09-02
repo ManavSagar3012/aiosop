@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260831165254-qosmos-authflow-proof</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260831165254-qosmos-authflow-proof</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-8e6f4653bd17", "labels": ["Task"]}, {"id": "task-277de5a790d4", "labels": ["Task"]}, {"id": "task-713e3c8bed7f", "labels": ["Task"]}, {"id": "task-0bfda878b9be", "labels": ["Task"]}, {"id": "task-9977fe70c5d9", "labels": ["Task"]}, {"id": "task-f6faf461aca4", "labels": ["Task"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "asset-eng-20260831165254-qosmos-authflow-proof-qosmos.qnulabs.com", "labels": ["Asset"]}, {"id": "vuln-d0b0c735a4c5", "labels": ["Vulnerability"]}, {"id": "prim-d97ab306a2f4", "labels": ["Primitive"]}, {"id": "vuln-9d4db126f759", "labels": ["Vulnerability"]}, {"id": "vuln-ded9ed5cbfee", "labels": ["Vulnerability"]}, {"id": "vuln-ef6d013c4f1c", "labels": ["Vulnerability"]}, {"id": "vuln-3783f8fe9fd8", "labels": ["Vulnerability"]}, {"id": "vuln-77dfa1579e81", "labels": ["Vulnerability"]}, {"id": "vuln-5cf137125d5d", "labels": ["Vulnerability"]}, {"id": "vuln-c6caae348a31", "labels": ["Vulnerability"]}, {"id": "vuln-2e4845330df4", "labels": ["Vulnerability"]}, {"id": "vuln-a744271f630a", "labels": ["Vulnerability"]}, {"id": "vuln-ea32897a25d1", "labels": ["Vulnerability"]}, {"id": "vuln-8e1fd079ee41", "labels": ["Vulnerability"]}, {"id": "vuln-26cca2965ae7", "labels": ["Vulnerability"]}, {"id": "vuln-4e2589645f1e", "labels": ["Vulnerability"]}, {"id": "unknown", "labels": ["Asset"]}, {"id": "task-eb06bf2a98bf", "labels": ["Task"]}, {"id": "task-bcaf32ec39c2", "labels": ["Task"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "unknown", "labels": ["Endpoint"]}, {"id": "vuln-24321f7b7f3d", "labels": ["Vulnerability"]}, {"id": "vuln-e2da9326e026", "labels": ["Vulnerability"]}, {"id": "vuln-7a104d5f3a18", "labels": ["Vulnerability"]}, {"id": "vuln-5771cec66d3c", "labels": ["Vulnerability"]}, {"id": "vuln-b52a7eedb2d5", "labels": ["Vulnerability"]}, {"id": "vuln-29233d96cbce", "labels": ["Vulnerability"]}, {"id": "vuln-6bb6469f696b", "labels": ["Vulnerability"]}, {"id": "vuln-368bbfb502cf", "labels": ["Vulnerability"]}, {"id": "vuln-335b66a3ddff", "labels": ["Vulnerability"]}, {"id": "vuln-57c8d721a2fe", "labels": ["Vulnerability"]}, {"id": "vuln-26514f4e11dd", "labels": ["Vulnerability"]}, {"id": "vuln-b17d08569ef4", "labels": ["Vulnerability"]}, {"id": "vuln-06801c27505f", "labels": ["Vulnerability"]}, {"id": "vuln-a06da8f7598d", "labels": ["Vulnerability"]}, {"id": "task-b975e5c6ca6c", "labels": ["Task"]}], "edges": [{"source": "unknown", "target": "vuln-d0b0c735a4c5", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-9d4db126f759", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-ded9ed5cbfee", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-ef6d013c4f1c", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-3783f8fe9fd8", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-77dfa1579e81", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-5cf137125d5d", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-c6caae348a31", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-2e4845330df4", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-a744271f630a", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-ea32897a25d1", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-8e1fd079ee41", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-26cca2965ae7", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-4e2589645f1e", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-24321f7b7f3d", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-e2da9326e026", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-7a104d5f3a18", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-5771cec66d3c", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-b52a7eedb2d5", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-29233d96cbce", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-6bb6469f696b", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-368bbfb502cf", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-335b66a3ddff", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-57c8d721a2fe", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-26514f4e11dd", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-b17d08569ef4", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-06801c27505f", "type": "HAS_VULNERABILITY"}, {"source": "unknown", "target": "vuln-a06da8f7598d", "type": "HAS_VULNERABILITY"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

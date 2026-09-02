@@ -1,0 +1,284 @@
+{
+  "engagement_id": "eng-20260705104149-auto-1783248109",
+  "date": "2026-07-05",
+  "version": "v1.0",
+  "risk_narrative": "**CONFIDENTIAL**\n\n**Executive Risk Narrative \u2013 Engagement eng-20250705104149-auto-1783248109**\n\nThis assessment identified significant access control vulnerabilities across the evaluated environment. The engagement uncovered 19 total findings, with 18 classified as HIGH severity and 1 informational finding. No critical or medium-severity issues were detected. The attack surface comprised 1 asset with 16 endpoints tested, revealing pervasive broken access control and Insecure Direct Object Reference (IDOR) vulnerabilities affecting core application paths including the root endpoint (/), the WebSocket interface (/socket.io/), and localization resources (/assets/i18n/en.json).\n\nThe concentration of HIGH-severity access control flaws represents a material risk to confidentiality and integrity. Specifically, the IDOR and broken access control findings indicate that unauthorized actors can access restricted resources and functionality without proper authentication or authorization validation. These vulnerabilities, if exploited, could allow attackers to bypass security controls, access sensitive data, or manipulate application behavior. Immediate remediation of the access control mechanisms across all identified endpoints is strongly recommended to mitigate the risk of unauthorized access and potential data exposure.",
+  "stats": {
+    "assets_count": 1,
+    "endpoints_count": 16,
+    "critical_count": 0,
+    "high_count": 18,
+    "medium_count": 0,
+    "low_count": 0,
+    "info_count": 1,
+    "total_findings": 19
+  },
+  "top_findings": [
+    {
+      "id": "vuln-e5c7fe69c995",
+      "title": "IDOR \u2014 unauthorized access to /",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-4b0389e847145556",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 9903, \"test_identity_size\": 9903, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "d83706cb9fedc62b1b8df92a639a766d814696b97c0489165203047dc2898cac",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-1263d2038525",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-4b0389e847145556",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 9903, \"test_identity_size\": 9903, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "a93ee680eacc0bc3ab5f09ca8156332a558a9bdde99e1e9a3b9ccb4ae948ad93",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-30175716f163",
+      "title": "IDOR \u2014 unauthorized access to /socket.io/",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-2d23b1b809525738",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/socket.io/?EIO=4&transport=polling&t=PyntvBh. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/socket.io/?EIO=4&transport=polling&t=PyntvBh\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 96, \"test_identity_size\": 96, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "50050ac32f266d727bb9e99d209d593d6ec35b70307000d42896b4acd68663ed",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-b691ed37d45d",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /socket.io/",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-2d23b1b809525738",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/socket.io/?EIO=4&transport=polling&t=PyntvBh. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/socket.io/?EIO=4&transport=polling&t=PyntvBh\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 96, \"test_identity_size\": 96, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "8c8dbe6ed4594652f2f79313326f95c284c8f8955bb777cd12f2025bbbd5bb5d",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-fbe1124fc2b8",
+      "title": "IDOR \u2014 unauthorized access to /assets/i18n/en.json",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-ce2d30702a5ca426",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/assets/i18n/en.json. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (address, balance, credit_card, email, password). Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/assets/i18n/en.json\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 35465, \"test_identity_size\": 35465, \"schema_match\": 1.0, \"sensitive_fields\": [\"address\", \"balance\", \"credit_card\", \"email\", \"password\", \"phone\", \"token\"], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "97a08296c9370f0f4cb7a7e54c05f4fc225a1e950a657fb2829c1ede92c243a9",
+      "event_id": "no-audit-event"
+    }
+  ],
+  "findings": [
+    {
+      "id": "vuln-e5c7fe69c995",
+      "title": "IDOR \u2014 unauthorized access to /",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-4b0389e847145556",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 9903, \"test_identity_size\": 9903, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "d83706cb9fedc62b1b8df92a639a766d814696b97c0489165203047dc2898cac",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-1263d2038525",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-4b0389e847145556",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 9903, \"test_identity_size\": 9903, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "a93ee680eacc0bc3ab5f09ca8156332a558a9bdde99e1e9a3b9ccb4ae948ad93",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-30175716f163",
+      "title": "IDOR \u2014 unauthorized access to /socket.io/",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-2d23b1b809525738",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/socket.io/?EIO=4&transport=polling&t=PyntvBh. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/socket.io/?EIO=4&transport=polling&t=PyntvBh\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 96, \"test_identity_size\": 96, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "50050ac32f266d727bb9e99d209d593d6ec35b70307000d42896b4acd68663ed",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-b691ed37d45d",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /socket.io/",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-2d23b1b809525738",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/socket.io/?EIO=4&transport=polling&t=PyntvBh. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/socket.io/?EIO=4&transport=polling&t=PyntvBh\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 96, \"test_identity_size\": 96, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "8c8dbe6ed4594652f2f79313326f95c284c8f8955bb777cd12f2025bbbd5bb5d",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-fbe1124fc2b8",
+      "title": "IDOR \u2014 unauthorized access to /assets/i18n/en.json",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-ce2d30702a5ca426",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/assets/i18n/en.json. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (address, balance, credit_card, email, password). Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/assets/i18n/en.json\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 35465, \"test_identity_size\": 35465, \"schema_match\": 1.0, \"sensitive_fields\": [\"address\", \"balance\", \"credit_card\", \"email\", \"password\", \"phone\", \"token\"], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "97a08296c9370f0f4cb7a7e54c05f4fc225a1e950a657fb2829c1ede92c243a9",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-5b5ba0ff2bd0",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /assets/i18n/en.json",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-ce2d30702a5ca426",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/assets/i18n/en.json. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (address, balance, credit_card, email, password). Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/assets/i18n/en.json\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 35465, \"test_identity_size\": 35465, \"schema_match\": 1.0, \"sensitive_fields\": [\"address\", \"balance\", \"credit_card\", \"email\", \"password\", \"phone\", \"token\"], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "700fb0be1d894e9877a3c733ef887fe180c5dcb5a7c409bb5cbc2414fa8da789",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-807d90583124",
+      "title": "IDOR \u2014 unauthorized access to /rest/admin/application-version",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-b1b2ca6df19113ed",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/rest/admin/application-version. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/rest/admin/application-version\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 20, \"test_identity_size\": 20, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "686cf52ff0994f00041cbfa1340fce1c3be2e23ac9f49de03964d1716d7340ef",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-85f6a7735bbd",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /rest/admin/application-version",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-b1b2ca6df19113ed",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/rest/admin/application-version. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/rest/admin/application-version\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 20, \"test_identity_size\": 20, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "8fbf41ade5845dbc08773e6d61560a8da99435cc4a3d372ba8a794cecf90cbb6",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-31bf801c882f",
+      "title": "IDOR \u2014 unauthorized access to /rest/admin/application-configuration",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-34a53fefcced02c2",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/rest/admin/application-configuration. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (email, hash, phone). Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/rest/admin/application-configuration\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 23577, \"test_identity_size\": 23577, \"schema_match\": 1.0, \"sensitive_fields\": [\"email\", \"hash\", \"phone\"], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "47aea14d607033b3fc943e3ca29cbd6aec1808984fa7085a314bb08323e64867",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-b8f22720da36",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /rest/admin/application-configuration",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-34a53fefcced02c2",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/rest/admin/application-configuration. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema and sensitive fields (email, hash, phone). Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/rest/admin/application-configuration\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 23577, \"test_identity_size\": 23577, \"schema_match\": 1.0, \"sensitive_fields\": [\"email\", \"hash\", \"phone\"], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "618906beab4ff238cc94ed8203d5096a869415338438e8a0691fa35d84ea0423",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-9a023061a376",
+      "title": "IDOR \u2014 unauthorized access to /api/Challenges/",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-012f8d13bb9bc7cb",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/api/Challenges/?name=Score%20Board. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/api/Challenges/?name=Score%20Board\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 476, \"test_identity_size\": 476, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "5cd858e57108550b7791e55c9389a5463b58920b107a9a13bf73e1c41fcc066d",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-644a28cb4cf2",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /api/Challenges/",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-012f8d13bb9bc7cb",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/api/Challenges/?name=Score%20Board. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/api/Challenges/?name=Score%20Board\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 476, \"test_identity_size\": 476, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "db5f2f8a5003431a69fb66213b6c649cceadcd6e59d9d8405335a56e398b3fa0",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-8a6da73f7a86",
+      "title": "IDOR \u2014 unauthorized access to /rest/languages",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-d91fe34b8743e8a5",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/rest/languages. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/rest/languages\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 4215, \"test_identity_size\": 4215, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "0e0174c93cbf1d8947818a2d8f693876d93a12d5e22699668926c47588398d3c",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-7dc7a2cf5860",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /rest/languages",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-d91fe34b8743e8a5",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/rest/languages. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/rest/languages\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 4215, \"test_identity_size\": 4215, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "7760b8272986c31c2465e2448b80391fb8841d46045a348aafa1f507872e2c55",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-75dc24bbfcd0",
+      "title": "IDOR \u2014 unauthorized access to /api/Quantitys/",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-23c7ce67e007ac73",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/api/Quantitys/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/api/Quantitys/\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 7628, \"test_identity_size\": 7628, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "2184079e4d5ea8d60ab7f83d24774c3c5f06d2523482609558ad2c7d1d711ba7",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-803e77291221",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /api/Quantitys/",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-23c7ce67e007ac73",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/api/Quantitys/. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/api/Quantitys/\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 7628, \"test_identity_size\": 7628, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "bbda69a8e31ce4dda47457d204a2fe90ce872d1d68a22640688ba5a81952f81f",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-882a04c3d80c",
+      "title": "IDOR \u2014 unauthorized access to /rest/products/search",
+      "severity": "high",
+      "vuln_type": "idor",
+      "target": "api-c0d1f02464b03bfb",
+      "description": "Differential authorization testing showed that a different authenticated identity ('user_a') received the same protected resource as the owning identity at GET http://localhost:3000/rest/products/search?q=. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"horizontal_pe\", \"method\": \"GET\", \"url\": \"http://localhost:3000/rest/products/search?q=\", \"test_identity\": \"user_a\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 16563, \"test_identity_size\": 16563, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "3cf9d835027d6ee08673a2ba796cabd02a81e6a615e39e41db76e3249f93181a",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-8562249a6580",
+      "title": "BROKEN_ACCESS_CONTROL \u2014 unauthorized access to /rest/products/search",
+      "severity": "high",
+      "vuln_type": "broken_access_control",
+      "target": "api-c0d1f02464b03bfb",
+      "description": "Differential authorization testing showed that an unauthenticated (anonymous) request received the same protected resource as the owning identity at GET http://localhost:3000/rest/products/search?q=. The owner (user_a baseline) and the test identity both received a 2xx response with matching schema. Expected the test identity to be denied (401/403).",
+      "evidence": "[{\"type\": \"differential_authorization\", \"provenance\": \"live\", \"category\": \"broken_access_control\", \"method\": \"GET\", \"url\": \"http://localhost:3000/rest/products/search?q=\", \"test_identity\": \"anonymous\", \"owner_status\": 200, \"test_identity_status\": 200, \"owner_size\": 16563, \"test_identity_size\": 16563, \"schema_match\": 1.0, \"sensitive_fields\": [], \"expected\": \"401/403 (denied)\", \"observed\": \"200 with matching resource body\"}]",
+      "evidence_hash": "5080e514e5215493bf87259a3bcec034688c4c288a0b07f9726d53006e6dfe13",
+      "event_id": "no-audit-event"
+    },
+    {
+      "id": "vuln-cc24b314bfa1",
+      "title": "CAA Record",
+      "severity": "info",
+      "vuln_type": "unknown",
+      "target": "unknown",
+      "description": "A CAA record was discovered. A CAA record is used to specify which certificate authorities (CAs) are allowed to issue certificates for a domain.",
+      "evidence": "[{\"type\": \"nuclei_finding\", \"template\": \"caa-fingerprint\", \"matched_at\": \"localhost\", \"url\": \"localhost\", \"request\": \";; opcode: QUERY, status: NOERROR, id: 46926\\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\\n\\n;; OPT PSEUDOSECTION:\\n; EDNS: version 0; flags:; udp: 4096\\n\\n;; QUESTION SECTION:\\n;localhost.\\tIN\\t CAA\\n\", \"response\": \";; opcode: QUERY, status: NXDOMAIN, id: 46926\\n;; flags: qr rd ra; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 1\\n\\n;; OPT PSEUDOSECTION:\\n; EDNS: version 0; flags:; udp: 512\\n\\n;; QUESTION SECTION:\\n;localhost.\\tIN\\t CAA\\n\\n;; AUTHORITY SECTION:\\n.\\t86324\\tIN\\tSOA\\ta.root-servers.net. nstld.verisign-grs.com. 2026070500 1800 900 604800 86400\\n\", \"extracted_results\": null}]",
+      "evidence_hash": "9d2e8f43774045a87ee6097115dd20ec3fd1f4d054ce09a67d791d3825d0574f",
+      "event_id": "no-audit-event"
+    }
+  ]
+}

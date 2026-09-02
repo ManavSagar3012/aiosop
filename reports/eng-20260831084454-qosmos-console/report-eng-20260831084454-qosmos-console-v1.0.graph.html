@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260831084454-qosmos-console</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260831084454-qosmos-console</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-fb0368207333", "labels": ["Task"]}, {"id": "task-994cc70cf104", "labels": ["Task"]}, {"id": "task-c7edcc7d4e77", "labels": ["Task"]}, {"id": "task-2bea4a6084c4", "labels": ["Task"]}, {"id": "task-f9e059dab408", "labels": ["Task"]}, {"id": "task-54e5da58bdfc", "labels": ["Task"]}, {"id": "task-c6f32c40de57", "labels": ["Task"]}, {"id": "vuln-26c6d38fdd14", "labels": ["Vulnerability"]}, {"id": "prim-798e07138c28", "labels": ["Primitive"]}, {"id": "vuln-1091dfcbbd22", "labels": ["Vulnerability"]}, {"id": "vuln-38dcee578589", "labels": ["Vulnerability"]}, {"id": "vuln-4d5e5b6632fb", "labels": ["Vulnerability"]}, {"id": "vuln-ad05de3cb463", "labels": ["Vulnerability"]}, {"id": "vuln-51282eaedf48", "labels": ["Vulnerability"]}, {"id": "vuln-4d8b186ba946", "labels": ["Vulnerability"]}, {"id": "vuln-b4c892ecf98c", "labels": ["Vulnerability"]}, {"id": "vuln-c6b7eb39e738", "labels": ["Vulnerability"]}, {"id": "vuln-f94db54bfcc2", "labels": ["Vulnerability"]}, {"id": "vuln-8f0923d53c7c", "labels": ["Vulnerability"]}, {"id": "vuln-672898da7dae", "labels": ["Vulnerability"]}, {"id": "vuln-cf175ff2fd95", "labels": ["Vulnerability"]}, {"id": "vuln-d9876e98099f", "labels": ["Vulnerability"]}, {"id": "vuln-5a7f504593da", "labels": ["Vulnerability"]}, {"id": "vuln-6d38c624745e", "labels": ["Vulnerability"]}, {"id": "vuln-6bacc0bf19d4", "labels": ["Vulnerability"]}, {"id": "vuln-e7a5b03ae3d1", "labels": ["Vulnerability"]}, {"id": "vuln-ce940afb92e7", "labels": ["Vulnerability"]}, {"id": "vuln-739b254931bf", "labels": ["Vulnerability"]}, {"id": "vuln-1b083c5c9e47", "labels": ["Vulnerability"]}, {"id": "vuln-cf67943bf72d", "labels": ["Vulnerability"]}, {"id": "vuln-4fcb7cee0eb5", "labels": ["Vulnerability"]}, {"id": "vuln-e714b349c6ba", "labels": ["Vulnerability"]}, {"id": "vuln-821188a70bdd", "labels": ["Vulnerability"]}, {"id": "vuln-4be34090aeb3", "labels": ["Vulnerability"]}, {"id": "vuln-02ed1bca40d6", "labels": ["Vulnerability"]}, {"id": "vuln-bd9abdd2a6d0", "labels": ["Vulnerability"]}, {"id": "task-bdb588110bff", "labels": ["Task"]}, {"id": "asset-eng-20260831084454-qosmos-console-None", "labels": ["Asset"]}, {"id": "task-da9508693e14", "labels": ["Task"]}], "edges": []};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

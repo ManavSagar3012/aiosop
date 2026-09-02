@@ -1,0 +1,34 @@
+# AI-OSOP V6.1 Scientific Benchmark Configuration
+# Used for independent reproduction of recall and accuracy metrics.
+
+targets:
+  - name: "OWASP Juice Shop"
+    version: "v17.1.1"
+    url: "http://localhost:3000"
+    vulnerability_count: 100
+    expected_recall: 0.88
+    max_duration_seconds: 14400
+    roe:
+      intensity: "thorough"
+      allow_state_manipulation: true
+
+  - name: "PortSwigger Labs"
+    url: "https://portswigger.net/web-security/all-labs"
+    vulnerability_count: 45
+    expected_recall: 0.72
+    max_duration_seconds: 28800
+    roe:
+      intensity: "targeted"
+      focus_categories: ["auth", "idor", "graphql", "ssrf"]
+
+benchmark_settings:
+  concurrency_level: 10
+  calibration_active: true
+  skill_engine_active: true
+  payout_engine_active: true
+  reproduction_attempts: 3
+
+evidence_thresholds:
+  min_confidence: 0.8
+  consensus_required: 2
+  stages_required: 5

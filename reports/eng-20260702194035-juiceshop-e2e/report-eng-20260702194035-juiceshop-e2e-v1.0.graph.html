@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260702194035-juiceshop-e2e</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260702194035-juiceshop-e2e</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-930753a5652b", "labels": ["Task"]}, {"id": "asset-f48100cfdfde", "labels": ["Asset"]}, {"id": "asset-2f507f8f3a59", "labels": ["Asset"]}, {"id": "asset-1652e21ee9a9", "labels": ["Asset"]}, {"id": "asset-e21d27948ad7", "labels": ["Asset"]}, {"id": "asset-4d410c3073ef", "labels": ["Asset"]}, {"id": "asset-d409684a42a9", "labels": ["Asset"]}, {"id": "asset-0b0e690d6fd3", "labels": ["Asset"]}, {"id": "asset-31fff7ad7f38", "labels": ["Asset"]}, {"id": "asset-3aaa141ac76d", "labels": ["Asset"]}, {"id": "asset-3e4720c4f5f4", "labels": ["Asset"]}, {"id": "asset-898ba1504200", "labels": ["Asset"]}, {"id": "asset-fda2af1f4363", "labels": ["Asset"]}, {"id": "asset-0468ac8f2326", "labels": ["Asset"]}, {"id": "asset-4207ce6873ea", "labels": ["Asset"]}, {"id": "asset-a28b3ce27aeb", "labels": ["Asset"]}, {"id": "asset-e9cf37874a39", "labels": ["Asset"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-localhost", "labels": ["Asset"]}, {"id": "task-5d229724d1af", "labels": ["Task"]}, {"id": "task-a3462b49b460", "labels": ["Task"]}, {"id": "task-7333c235e2ca", "labels": ["Task"]}, {"id": "task-ba1803630c43", "labels": ["Task"]}, {"id": "task-ff5898bd138b", "labels": ["Task"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-autodiscover.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-autodiscover.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-autodiscover.regency.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-autodiscover.regency.localhost", "labels": ["Endpoint"]}, {"id": "task-a133ea1a4656", "labels": ["Task"]}, {"id": "task-e5df5fe9c24e", "labels": ["Task"]}, {"id": "task-3e62f5caecb8", "labels": ["Task"]}, {"id": "task-dacc5d036918", "labels": ["Task"]}, {"id": "task-96c2caf74cd8", "labels": ["Task"]}, {"id": "task-ec335a4c309b", "labels": ["Task"]}, {"id": "task-0d445dee44f1", "labels": ["Task"]}, {"id": "task-173adede003d", "labels": ["Task"]}, {"id": "task-bae43f4f713a", "labels": ["Task"]}, {"id": "task-93009400c27c", "labels": ["Task"]}, {"id": "task-e89e2c46efaf", "labels": ["Task"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-server02.counterintel.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-server02.counterintel.localhost", "labels": ["Endpoint"]}, {"id": "task-dfd1ada7e1b5", "labels": ["Task"]}, {"id": "task-0e1b7c4dad17", "labels": ["Task"]}, {"id": "task-fb4bf87b4506", "labels": ["Task"]}, {"id": "task-8a74c6273297", "labels": ["Task"]}, {"id": "task-e0fbbe0dc5d5", "labels": ["Task"]}, {"id": "task-a5ef5c0cbbef", "labels": ["Task"]}, {"id": "task-c942840c6702", "labels": ["Task"]}, {"id": "task-1d43cd389843", "labels": ["Task"]}, {"id": "task-2ca75406d943", "labels": ["Task"]}, {"id": "task-3b877de73d9e", "labels": ["Task"]}, {"id": "task-e90d99a1b965", "labels": ["Task"]}, {"id": "task-7a97db48d361", "labels": ["Task"]}, {"id": "task-df43c1a353c2", "labels": ["Task"]}, {"id": "task-89efbb232212", "labels": ["Task"]}, {"id": "task-dc70c82cc116", "labels": ["Task"]}, {"id": "task-f2e8cda67034", "labels": ["Task"]}, {"id": "task-dbc6d5dd20ff", "labels": ["Task"]}, {"id": "task-4f92bbbfa31c", "labels": ["Task"]}, {"id": "task-36ca5e3c6e4e", "labels": ["Task"]}, {"id": "task-72483933c92c", "labels": ["Task"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-mail02.regency.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-mail02.regency.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-exchvm.nwcnet.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-exchvm.nwcnet.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-mail03.regency.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-mail03.regency.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-fndlync01.5ninesdata.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-fndlync01.5ninesdata.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-mse-ca-mail.corp.mse.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-mse-ca-mail.corp.mse.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-mail.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-mail.localhost", "labels": ["Endpoint"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-mail.regency.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-mail.regency.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-naeu2.naeuinc.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-naeu2.naeuinc.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-owa.regency.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-owa.regency.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-sbs.allsaintsschool.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-sbs.allsaintsschool.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-tools.sonoma.edu.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-tools.sonoma.edu.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-server2.hunter.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-server2.hunter.localhost", "labels": ["Endpoint"]}, {"id": "asset-eng-20260702194035-juiceshop-e2e-www.localhost", "labels": ["Asset"]}, {"id": "endpoint-eng-20260702194035-juiceshop-e2e-www.localhost", "labels": ["Endpoint"]}, {"id": "task-395e40821afb", "labels": ["Task"]}], "edges": [{"source": "asset-eng-20260702194035-juiceshop-e2e-autodiscover.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-autodiscover.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-autodiscover.regency.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-autodiscover.regency.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-server02.counterintel.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-server02.counterintel.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-mail02.regency.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-mail02.regency.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-exchvm.nwcnet.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-exchvm.nwcnet.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-mail03.regency.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-mail03.regency.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-fndlync01.5ninesdata.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-fndlync01.5ninesdata.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-mse-ca-mail.corp.mse.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-mse-ca-mail.corp.mse.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-mail.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-mail.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-mail.regency.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-mail.regency.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-naeu2.naeuinc.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-naeu2.naeuinc.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-owa.regency.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-owa.regency.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-sbs.allsaintsschool.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-sbs.allsaintsschool.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-tools.sonoma.edu.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-tools.sonoma.edu.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-server2.hunter.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-server2.hunter.localhost", "type": "HAS_ENDPOINT"}, {"source": "asset-eng-20260702194035-juiceshop-e2e-www.localhost", "target": "endpoint-eng-20260702194035-juiceshop-e2e-www.localhost", "type": "HAS_ENDPOINT"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

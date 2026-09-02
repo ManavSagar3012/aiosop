@@ -1,0 +1,1130 @@
+# CONFIDENTIAL / CLIENT-SENSITIVE
+# Executive Summary
+**Engagement ID:** eng-20260703162412-ws-stream-verify-215411
+**Date Generated:** 2026-07-03
+**Version:** v1.0
+
+## Risk Narrative
+**CONFIDENTIAL**
+
+**Executive Risk Narrative – Engagement eng-20260703162412-ws-stream-verify-215411**
+
+The security assessment identified two distinct findings across the evaluated environment, with no critical or high-severity vulnerabilities detected. The primary finding concerns a wildcard DNS configuration, which was detected twice during the assessment. While this configuration does not represent an immediate security breach, wildcard DNS records can potentially facilitate subdomain enumeration attacks and may expose internal infrastructure to unauthorized discovery. Additionally, the presence of default credentials on the Apache Casbin MCP Gateway introduces an authentication bypass risk, albeit classified as a moderate concern given the current asset and endpoint scope.
+
+Overall, the attack surface remains limited, with only one asset and three endpoints evaluated. The absence of critical or high-severity findings indicates a relatively secure baseline posture. However, the identified issues should be addressed in accordance with security best practices: reviewing DNS zone configurations to eliminate unnecessary wildcard records and rotating default credentials on the Casbin MCP Gateway. Ongoing monitoring and periodic reassessment are recommended to maintain the current security posture and mitigate evolving threats.
+
+## Assessment Overview
+- **Total Assets Discovered:** 1
+- **Total Endpoints Mapped:** 3
+- **Critical Vulnerabilities:** 0
+- **High Vulnerabilities:** 0
+
+## Key Findings Summary
+
+- **info**: Wildcard DNS Configuration - Detection (unknown)
+
+- **info**: Wildcard DNS Configuration - Detection (unknown)
+
+- **high**: Apache Casbin MCP Gateway - Default Login (unknown)
+
+- **info**: WAF Detection (unknown)
+
+- **info**: WAF Detection (unknown)
+
+
+# CONFIDENTIAL / CLIENT-SENSITIVE
+# Technical Details
+**Engagement ID:** eng-20260703162412-ws-stream-verify-215411
+
+## Verified Vulnerabilities
+
+
+### 1. Wildcard DNS Configuration - Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+A wildcard DNS configuration was detected. Wildcard DNS records can resolve all subdomains to the same IP address, which may indicate a catch-all configuration.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "wildcard-dns-detect", "matched_at": "3G060Zn6i4GQXq0PGIsaA4NpRLh-3G060Zn6i4GQXq0PGIsaA4NpRLh.uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 16114\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;3G060Zn6i4GQXq0PGIsaA4NpRLh-3G060Zn6i4GQXq0PGIsaA4NpRLh.uat-bugbounty.nonprod.syfe.com.\tIN\t A\n", "response": ";; opcode: QUERY, status: NOERROR, id: 16114\n;; flags: qr rd ra; QUERY: 1, ANSWER: 5, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 1232\n\n;; QUESTION SECTION:\n;3G060Zn6i4GQXq0PGIsaA4NpRLh-3G060Zn6i4GQXq0PGIsaA4NpRLh.uat-bugbounty.nonprod.syfe.com.\tIN\t A\n\n;; ANSWER SECTION:\n3G060Zn6i4GQXq0PGIsaA4NpRLh-3G060Zn6i4GQXq0PGIsaA4NpRLh.uat-bugbounty.nonprod.syfe.com.\t60\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tA\t18.164.246.94\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tA\t18.164.246.80\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tA\t18.164.246.129\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tA\t18.164.246.119\n", "extracted_results": ["18.164.246.80", "18.164.246.129", "18.164.246.119", "18.164.246.94"]}]
+```
+**Artifact SHA-256 Hash**: `98c065e64e42e510344a893ca0cf17b8c2b1c52caa43b40499613839fe29fbab`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 2. Wildcard DNS Configuration - Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+A wildcard DNS configuration was detected. Wildcard DNS records can resolve all subdomains to the same IP address, which may indicate a catch-all configuration.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "wildcard-dns-detect", "matched_at": "3G060Zn6i4GQXq0PGIsaA4NpRLh-3G060Zn6i4GQXq0PGIsaA4NpRLh.uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 41424\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;3G060Zn6i4GQXq0PGIsaA4NpRLh-3G060Zn6i4GQXq0PGIsaA4NpRLh.uat-bugbounty.nonprod.syfe.com.\tIN\t A\n", "response": ";; opcode: QUERY, status: NOERROR, id: 41424\n;; flags: qr rd ra; QUERY: 1, ANSWER: 5, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;3G060Zn6i4GQXq0PGIsaA4NpRLh-3G060Zn6i4GQXq0PGIsaA4NpRLh.uat-bugbounty.nonprod.syfe.com.\tIN\t A\n\n;; ANSWER SECTION:\n3G060Zn6i4GQXq0PGIsaA4NpRLh-3G060Zn6i4GQXq0PGIsaA4NpRLh.uat-bugbounty.nonprod.syfe.com.\t60\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tA\t18.164.246.80\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tA\t18.164.246.129\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tA\t18.164.246.119\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tA\t18.164.246.94\n", "extracted_results": ["18.164.246.80", "18.164.246.129", "18.164.246.119", "18.164.246.94"]}]
+```
+**Artifact SHA-256 Hash**: `17dbc10ffb0ae49a6d125f70c0002914752a24bb3037cb29851fd29ef0990506`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 3. Apache Casbin MCP Gateway - Default Login
+- **Severity**: high
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Apache Casbin MCP Gateway server default login credentials were discovered.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "apache-casbin-mcp-gateway-default-login", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/login", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "POST /login HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36\r\nContent-Length: 45\r\nContent-Type: application/json\r\nAccept-Encoding: gzip\r\n\r\n{\"username\":\"alice\",\"password\":\"password123\"}", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCache-Control: private, no-cache, no-store, max-age=0, must-revalidate\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:27:08 GMT\r\nEtag: \"zogc52dgi651j0\"\r\nServer: nginx\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nVary: Accept-Encoding\r\nVia: 1.1 1cad349a917665b9a8b12c2c8be3558e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: C37YpHY5OFPajtkS0kpEtSGkVS66FqwTt5_HvfjEs42c3znJkbL1uQ==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Powered-By: Next.js\r\n\r\n<!DOCTYPE html><html lang=\"en-sg\"><head><meta charSet=\"utf-8\" data-next-head=\"\"/><meta content=\"origin-when-cross-origin\" name=\"referrer\" data-next-head=\"\"/><meta content=\"EqOJ4Dbu-Bkysp5pVWAG8f6xr3L4wOV394fYGBgretM\" name=\"google-site-verification\" data-next-head=\"\"/><meta content=\"width=device-width, initial-scale=1, shrink-to-fit=no\" name=\"viewport\" data-next-head=\"\"/><meta content=\"#0a1e39\" name=\"theme-color\" data-next-head=\"\"/><link href=\"/manifest.json\" rel=\"manifest\" data-next-head=\"\"/><link href=\"/favicon.png\" rel=\"shortcut icon\" type=\"image/x-icon\" data-next-head=\"\"/><script async=\"\" src=\"https://www.google.com/recaptcha/enterprise.js?render=6Lc9jmIlAAAAABzWpA-bQI0fZNVhfkrdtWyOQxqU\" data-next-head=\"\"></script><script async=\"\" src=\"/zendeskNext.js\" data-next-head=\"\"></script><style type=\"text/css\" data-next-head=\"\">.fresnel-container{margin:0;padding:0;}\n@media not all and (min-width:0px) and (max-width:767.98px){.fresnel-at-sm{display:none!important;}}\n@media not all and (min-width:768px) and (max-width:1199.98px){.fresnel-at-md{display:none!important;}}\n@media not all and (min-width:1200px) and (max-width:1799.98px){.fresnel-at-xl{display:none!important;}}\n@media not all and (min-width:1800px){.fresnel-at-xxl{display:none!important;}}\n@media not all and (max-width:767.98px){.fresnel-lessThan-md{display:none!important;}}\n@media not all and (max-width:1199.98px){.fresnel-lessThan-xl{display:none!important;}}\n@media not all and (max-width:1799.98px){.fresnel-lessThan-xxl{display:none!important;}}\n@media not all and (min-width:768px){.fresnel-greaterThan-sm{display:none!important;}}\n@media not all and (min-width:1200px){.fresnel-greaterThan-md{display:none!important;}}\n@media not all and (min-width:1800px){.fresnel-greaterThan-xl{display:none!important;}}\n@media not all and (min-width:0px){.fresnel-greaterThanOrEqual-sm{display:none!important;}}\n@media not all and (min-width:768px){.fresnel-greaterThanOrEqual-md{display:none!important;}}\n@media not all and (min-width:1200px){.fresnel-greaterThanOrEqual-xl{display:none!important;}}\n@media not all and (min-width:1800px){.fresnel-greaterThanOrEqual-xxl{display:none!important;}}\n@media not all and (min-width:0px) and (max-width:767.98px){.fresnel-between-sm-md{display:none!important;}}\n@media not all and (min-width:0px) and (max-width:1199.98px){.fresnel-between-sm-xl{display:none!important;}}\n@media not all and (min-width:0px) and (max-width:1799.98px){.fresnel-between-sm-xxl{display:none!important;}}\n@media not all and (min-width:768px) and (max-width:1199.98px){.fresnel-between-md-xl{display:none!important;}}\n@media not all and (min-width:768px) and (max-width:1799.98px){.fresnel-between-md-xx
+
+...[truncated 260763 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `6e591257a5673e2cbc18f94a45f8009c3c954e92332e6d7548db080747cd2aff`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 4. WAF Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+A web application firewall was detected.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "waf-detect", "matched_at": "http://uat-bugbounty.nonprod.syfe.com", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "POST / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (SS; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36\r\nConnection: close\r\nContent-Length: 27\r\nContent-Type: application/x-www-form-urlencoded\r\nAccept-Encoding: gzip\r\n\r\n_=<script>alert(1)</script>", "response": "HTTP/1.1 307 Temporary Redirect\r\nConnection: close\r\nContent-Length: 169\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nContent-Type: text/html\r\nDate: Fri, 03 Jul 2026 16:28:07 GMT\r\nLocation: https://uat-bugbounty.nonprod.syfe.com/\r\nServer: CloudFront\r\nVia: 1.1 2aa6f75b24353149c5a850f1525e1aa2.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: yPWuwpBf-U8ts4Ep_PLOsTzjKlsYtqYdPOGL6JuUU0J-MUl-kkcMwg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Redirect from cloudfront\r\nX-Content-Type-Options: nosniff\r\n\r\n<html>\r\n<head><title>307 Temporary Redirect</title></head>\r\n<body>\r\n<center><h1>307 Temporary Redirect</h1></center>\r\n<hr><center>CloudFront</center>\r\n</body>\r\n</html>\r\n", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `26c3ba39e8d9ab0d8b9f08c60ddeac55f7bb3cbdb33d3c8c7e03a4d79bee79ce`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 5. WAF Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+A web application firewall was detected.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "waf-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "POST / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15\r\nConnection: close\r\nContent-Length: 27\r\nContent-Type: application/x-www-form-urlencoded\r\nAccept-Encoding: gzip\r\n\r\n_=<script>alert(1)</script>", "response": "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 919\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nContent-Type: text/html\r\nDate: Fri, 03 Jul 2026 16:28:07 GMT\r\nServer: CloudFront\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nVia: 1.1 2bda09e24433c402e370693377afdb8e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: t1KykFZgg3manI0c9vqkqxySzeKrzDT5eiXkYi_V2BGoY3kiu5Hs-g==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Error from cloudfront\r\nX-Content-Type-Options: nosniff\r\n\r\n<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\">\n<HTML><HEAD><META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=iso-8859-1\">\n<TITLE>ERROR: The request could not be satisfied</TITLE>\n</HEAD><BODY>\n<H1>403 ERROR</H1>\n<H2>The request could not be satisfied.</H2>\n<HR noshade size=\"1px\">\nRequest blocked.\nWe can't connect to the server for this app or website at this time. There might be too much traffic or a configuration error. Try again later, or contact the app or website owner.\n<BR clear=\"all\">\nIf you provide content to customers through CloudFront, you can find steps to troubleshoot and help prevent this error by reviewing the CloudFront documentation.\n<BR clear=\"all\">\n<HR noshade size=\"1px\">\n<PRE>\nGenerated by cloudfront (CloudFront)\nRequest ID: t1KykFZgg3manI0c9vqkqxySzeKrzDT5eiXkYi_V2BGoY3kiu5Hs-g==\n</PRE>\n<ADDRESS>\n</ADDRESS>\n</BODY></HTML>", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `a5b22fd6bf52d1e70fda5aa143c4538c7c1b7a7f6c9dee99c23e937eecdb7129`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 6. TLS Version - Detect
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.
+It is important to detect the TLS version in order to ensure secure communication between two computers or servers.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tls-version", "matched_at": "uat-bugbounty.nonprod.syfe.com:443", "url": "uat-bugbounty.nonprod.syfe.com", "request": null, "response": null, "extracted_results": ["tls12"]}]
+```
+**Artifact SHA-256 Hash**: `d0820c104d3a71737f736da61b3dcdd28149bcd9c0ff7fa77e57155fc9e8ccad`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 7. TLS Version - Detect
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.
+It is important to detect the TLS version in order to ensure secure communication between two computers or servers.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tls-version", "matched_at": "uat-bugbounty.nonprod.syfe.com:443", "url": "uat-bugbounty.nonprod.syfe.com", "request": null, "response": null, "extracted_results": ["tls13"]}]
+```
+**Artifact SHA-256 Hash**: `4d37109dd5e70f93e349bbdce135c988bf9d2851954aaaf770986e7df3bb9f30`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 8. Missing Subresource Integrity
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Checks if external script and stylesheet tags in the HTML response are missing the Subresource Integrity (SRI) attribute.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "missing-sri", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:137.0) Gecko/20100101 Firefox/137.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23272\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574876df454007-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:31:53 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:29:50 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=jgfqClAlspO6kKdXlSKrPLdP_JZwI6e7w5vXjrzH_q0-1783096313.411774-1.0.1.1-fUBeEKWP4b1Cf370JqfYqtkDYIHUWkrQTjgqmp6ksl0; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 48910c286436ffb76daa77b5a409bd48.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: Pmqnmfz2UGa-5Fa-HekaSdLr_sB8cHCymBRR1dwsylfjlcCYpa-KVg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integrity=\"sha384-
+
+...[truncated 193388 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `1ade2c20d320feb7a808332d2b3c1d01a9d604b8bfedeae0ff1a0b051f6bcced`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 9. Missing Subresource Integrity
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Checks if external script and stylesheet tags in the HTML response are missing the Subresource Integrity (SRI) attribute.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "missing-sri", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Fedora; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23272\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574876e833fc3c-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:31:53 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:52 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=axrmBI.DuhJ2dWp.cW7xpGHnnHtgNOqGC1H_PaVwBxc-1783096313.4260108-1.0.1.1-WC.x_.t0YkrihJ_hmoM0nOwrFCnrKfb.frvWK9KU08Q; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 56ff8dabc21c4204f3726e971aa8dcfe.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: tuwV4isz-R7QIrLPIQYPC4MUQDLqXYAOCKFdGtEOfyOpC8tQjB9Gjw==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" typ
+
+...[truncated 193422 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `ca7ef53e5341bc75666d13c13e5a6baff48ccaeeb023827ccb786c4ffe30f804`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 10. robots.txt endpoint prober
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "robots-txt-endpoint", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/robots.txt", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET /robots.txt HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:141.0) Gecko/20100101 Firefox/141.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nContent-Type: text/plain; charset=UTF-8\r\nDate: Fri, 03 Jul 2026 16:32:00 GMT\r\nServer: nginx\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nVary: Accept-Encoding\r\nVia: 1.1 d5fc1cc93cba2e958b2e50cab03d57fc.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: zEVIfW2MB1LLfjgmQ2pRLNCl8p8NJ6ZzCmXlH1PzMx_gr3g6ZuFE6g==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\n\r\nUser-agent: *\nDisallow: /\n", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `f49d7b4107b96a54a35e4eda04de6fc568f50790a58f7f233be4af74834d0cb1`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 11. Missing Cookie SameSite Strict
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Identified cookies that lacked the samesite=strict attribute, which prevented enforcement of restrictions on cross-domain cookie transmission.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "missing-cookie-samesite-strict", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ConnectPC Safari/537.36 Browser\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d39bd8ffa6-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 10:04:01 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=9jQ6JDkq.HpuweKKIzRKPZKcGCT_HBFH.iEmvo1qxUo-1783096328.2560785-1.0.1.1-ZPCAGRICDQpJdKEqfTJWDZ.iyVEYoIPFVTF6tAfeCMk; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 efe5f0e96ead07ee595e7c7461a2c71a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: osSY9OOVRETixjPd_dbmKINl-glrufNkjZLuAEhn92Z5yAXiy9eWng==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"tex
+
+...[truncated 193248 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `3b62086632db29706b2f3ddaf029896618c21b50282c150f7d5a9ce3f2735657`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 12. Missing Cookie SameSite Strict
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Identified cookies that lacked the samesite=strict attribute, which prevented enforcement of restrictions on cross-domain cookie transmission.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "missing-cookie-samesite-strict", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Mobile/15E148 Safari/604.1\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d4ca1986eb-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=171WP.HXKN3k47zDiqM05PsoUWdWjUeUl5LFKLu5yms-1783096328.4453182-1.0.1.1-uagDqS9lwrpJIIQ0.wQ.8v.nUUAgYIwXwaJ9xWXWWd8; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 37141df361655af766631b5a37106772.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: mhuPMjk9CTTz3ebuCjAEXQc-Ysiz6mbO8bke_mrJTg0soz0zXMsd-w==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"st
+
+...[truncated 193269 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `9a6bf70bf66ae288153e49d157fc927ae8ae5f16a7474055a9452a9106fa860a`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 13. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ConnectPC Safari/537.36 Browser\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d39bd8ffa6-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 10:04:01 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=9jQ6JDkq.HpuweKKIzRKPZKcGCT_HBFH.iEmvo1qxUo-1783096328.2560785-1.0.1.1-ZPCAGRICDQpJdKEqfTJWDZ.iyVEYoIPFVTF6tAfeCMk; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 efe5f0e96ead07ee595e7c7461a2c71a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: osSY9OOVRETixjPd_dbmKINl-glrufNkjZLuAEhn92Z5yAXiy9eWng==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integrity=\
+
+...[truncated 193047 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `38b5756cadad13e0f4055525aaf3e25ca47ccaea6b64097164d38f64e17b10ad`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 14. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ConnectPC Safari/537.36 Browser\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d39bd8ffa6-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 10:04:01 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=9jQ6JDkq.HpuweKKIzRKPZKcGCT_HBFH.iEmvo1qxUo-1783096328.2560785-1.0.1.1-ZPCAGRICDQpJdKEqfTJWDZ.iyVEYoIPFVTF6tAfeCMk; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 efe5f0e96ead07ee595e7c7461a2c71a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: osSY9OOVRETixjPd_dbmKINl-glrufNkjZLuAEhn92Z5yAXiy9eWng==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integrity=\
+
+...[truncated 193047 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `38b5756cadad13e0f4055525aaf3e25ca47ccaea6b64097164d38f64e17b10ad`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 15. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ConnectPC Safari/537.36 Browser\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d39bd8ffa6-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 10:04:01 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=9jQ6JDkq.HpuweKKIzRKPZKcGCT_HBFH.iEmvo1qxUo-1783096328.2560785-1.0.1.1-ZPCAGRICDQpJdKEqfTJWDZ.iyVEYoIPFVTF6tAfeCMk; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 efe5f0e96ead07ee595e7c7461a2c71a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: osSY9OOVRETixjPd_dbmKINl-glrufNkjZLuAEhn92Z5yAXiy9eWng==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integrity=\
+
+...[truncated 193047 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `38b5756cadad13e0f4055525aaf3e25ca47ccaea6b64097164d38f64e17b10ad`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 16. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ConnectPC Safari/537.36 Browser\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d39bd8ffa6-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 10:04:01 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=9jQ6JDkq.HpuweKKIzRKPZKcGCT_HBFH.iEmvo1qxUo-1783096328.2560785-1.0.1.1-ZPCAGRICDQpJdKEqfTJWDZ.iyVEYoIPFVTF6tAfeCMk; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 efe5f0e96ead07ee595e7c7461a2c71a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: osSY9OOVRETixjPd_dbmKINl-glrufNkjZLuAEhn92Z5yAXiy9eWng==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integrity=\
+
+...[truncated 193047 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `38b5756cadad13e0f4055525aaf3e25ca47ccaea6b64097164d38f64e17b10ad`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 17. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ConnectPC Safari/537.36 Browser\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d39bd8ffa6-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 10:04:01 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=9jQ6JDkq.HpuweKKIzRKPZKcGCT_HBFH.iEmvo1qxUo-1783096328.2560785-1.0.1.1-ZPCAGRICDQpJdKEqfTJWDZ.iyVEYoIPFVTF6tAfeCMk; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 efe5f0e96ead07ee595e7c7461a2c71a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: osSY9OOVRETixjPd_dbmKINl-glrufNkjZLuAEhn92Z5yAXiy9eWng==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integrity=\
+
+...[truncated 193047 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `38b5756cadad13e0f4055525aaf3e25ca47ccaea6b64097164d38f64e17b10ad`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 18. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Mobile/15E148 Safari/604.1\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d4ca1986eb-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=171WP.HXKN3k47zDiqM05PsoUWdWjUeUl5LFKLu5yms-1783096328.4453182-1.0.1.1-uagDqS9lwrpJIIQ0.wQ.8v.nUUAgYIwXwaJ9xWXWWd8; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 37141df361655af766631b5a37106772.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: mhuPMjk9CTTz3ebuCjAEXQc-Ysiz6mbO8bke_mrJTg0soz0zXMsd-w==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"t
+
+...[truncated 193068 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `5defa5ebd3fa5e19ef1df1cb2502673baf4c840ad7c371e51d62a217394c57e5`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 19. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Mobile/15E148 Safari/604.1\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d4ca1986eb-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=171WP.HXKN3k47zDiqM05PsoUWdWjUeUl5LFKLu5yms-1783096328.4453182-1.0.1.1-uagDqS9lwrpJIIQ0.wQ.8v.nUUAgYIwXwaJ9xWXWWd8; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 37141df361655af766631b5a37106772.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: mhuPMjk9CTTz3ebuCjAEXQc-Ysiz6mbO8bke_mrJTg0soz0zXMsd-w==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"t
+
+...[truncated 193068 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `5defa5ebd3fa5e19ef1df1cb2502673baf4c840ad7c371e51d62a217394c57e5`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 20. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Mobile/15E148 Safari/604.1\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d4ca1986eb-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=171WP.HXKN3k47zDiqM05PsoUWdWjUeUl5LFKLu5yms-1783096328.4453182-1.0.1.1-uagDqS9lwrpJIIQ0.wQ.8v.nUUAgYIwXwaJ9xWXWWd8; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 37141df361655af766631b5a37106772.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: mhuPMjk9CTTz3ebuCjAEXQc-Ysiz6mbO8bke_mrJTg0soz0zXMsd-w==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"t
+
+...[truncated 193068 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `5defa5ebd3fa5e19ef1df1cb2502673baf4c840ad7c371e51d62a217394c57e5`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 21. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Mobile/15E148 Safari/604.1\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d4ca1986eb-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=171WP.HXKN3k47zDiqM05PsoUWdWjUeUl5LFKLu5yms-1783096328.4453182-1.0.1.1-uagDqS9lwrpJIIQ0.wQ.8v.nUUAgYIwXwaJ9xWXWWd8; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 37141df361655af766631b5a37106772.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: mhuPMjk9CTTz3ebuCjAEXQc-Ysiz6mbO8bke_mrJTg0soz0zXMsd-w==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"t
+
+...[truncated 193068 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `5defa5ebd3fa5e19ef1df1cb2502673baf4c840ad7c371e51d62a217394c57e5`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 22. Wappalyzer Technology Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "tech-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Mobile/15E148 Safari/604.1\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23287\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15748d4ca1986eb-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:08 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=171WP.HXKN3k47zDiqM05PsoUWdWjUeUl5LFKLu5yms-1783096328.4453182-1.0.1.1-uagDqS9lwrpJIIQ0.wQ.8v.nUUAgYIwXwaJ9xWXWWd8; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 37141df361655af766631b5a37106772.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: mhuPMjk9CTTz3ebuCjAEXQc-Ysiz6mbO8bke_mrJTg0soz0zXMsd-w==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"t
+
+...[truncated 193068 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `5defa5ebd3fa5e19ef1df1cb2502673baf4c840ad7c371e51d62a217394c57e5`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 23. robots.txt file
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "robots-txt", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/robots.txt", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET /robots.txt HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:105.0) Gecko/20100101 Firefox/105.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nContent-Type: text/plain; charset=UTF-8\r\nDate: Fri, 03 Jul 2026 16:32:13 GMT\r\nServer: nginx\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nVary: Accept-Encoding\r\nVia: 1.1 efe5f0e96ead07ee595e7c7461a2c71a.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: j60ltc2KhGrQrqWP78GI5zMMlIszTPbXpGb-MGs74u-vfnqaq4S0gg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\n\r\nUser-agent: *\nDisallow: /\n", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `efaf7348c4905920ab1cbfcbdfdf64b5520fc5c2634e3da8fee60b69c414e2ea`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 24. robots.txt file
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "robots-txt", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/robots.txt", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET /robots.txt HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Kubuntu; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nContent-Type: text/plain; charset=UTF-8\r\nDate: Fri, 03 Jul 2026 16:32:13 GMT\r\nServer: nginx\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nVary: Accept-Encoding\r\nVia: 1.1 58e5424ce41068d4abee911a0f2856e8.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: 5XrvyjM2PwlERhAIimyXDYgO9HCvjT1mjrqrTU1aZnE4wJdfUo83PQ==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\n\r\nUser-agent: *\nDisallow: /\n", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `41fa2d812427ca66a19dd7a4a06d38518786236c4034a6a667bea2e469b1df73`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 25. Android Asset Links Configuration - Detect
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+The .well-known/assetlinks.json file was found on the target server. This file is used by Android applications to establish verified app-to-web domain associations through the Digital Asset Links protocol.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "assetlinks-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/.well-known/assetlinks.json", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET /.well-known/assetlinks.json HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:85.0) Gecko/20100101 Firefox/91.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCache-Control: public, max-age=0\r\nContent-Type: application/json; charset=UTF-8\r\nDate: Fri, 03 Jul 2026 16:32:14 GMT\r\nEtag: W/\"3bc-19ce39c43f8\"\r\nLast-Modified: Thu, 12 Mar 2026 19:53:15 GMT\r\nServer: nginx\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nVary: Accept-Encoding\r\nVary: Accept-Encoding\r\nVia: 1.1 3e744e3c13b68a267dc61d4a291cd4ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: ZPMQtOH53QwA12QCOfv46B28dnLnIB-mPkpnu2FARd0JLe4a9v6A_w==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\n\r\n[\n  {\n    \"relation\": [\"delegate_permission/common.handle_all_urls\"],\n    \"target\": {\n      \"namespace\": \"android_app\",\n      \"package_name\": \"com.syfe\",\n      \"sha256_cert_fingerprints\": [\n        \"70:D2:35:7E:85:87:7F:8F:93:00:9C:75:9E:72:26:D9:B0:8A:98:C4:D4:76:4B:2C:C4:3E:52:7C:DD:6B:62:C7\"\n      ]\n    }\n  },\n  {\n    \"relation\": [\"delegate_permission/common.handle_all_urls\"],\n    \"target\": {\n      \"namespace\": \"android_app\",\n      \"package_name\": \"com.syfe.staging\",\n      \"sha256_cert_fingerprints\": [\n        \"FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C\"\n      ]\n    }\n  },\n  {\n    \"relation\": [\"delegate_permission/common.handle_all_urls\"],\n    \"target\": {\n      \"namespace\": \"android_app\",\n      \"package_name\": \"com.syfe.debug\",\n      \"sha256_cert_fingerprints\": [\n        \"FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C\"\n      ]\n    }\n  }\n]\n", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `9f9ebe2dc848f665a3d881a9fc9e9bfe7496f093536eaac56d70c3e0d8d416eb`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 26. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15749653bbce83d-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=CHVM..I61.dFri71HMUiEAS5mMETJydM_0VUKNHYO.Q-1783096351.555551-1.0.1.1-OKYJPb_ATUL9du3teai80aythRMQUsrHuOFYgYf9eE0; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 0b64fe403ecf9674f7ad43833d400c0e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: EbxDDgoDP9CVrORk_0MHbyWDPmcO8wVGQGK7D77KJXZFbFkWsXT65Q==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesh
+
+...[truncated 193082 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `995c0fe861672d375614b88ca3d4875197e826285efe04ec4c42eb1109b94bfb`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 27. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15749653bbce83d-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=CHVM..I61.dFri71HMUiEAS5mMETJydM_0VUKNHYO.Q-1783096351.555551-1.0.1.1-OKYJPb_ATUL9du3teai80aythRMQUsrHuOFYgYf9eE0; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 0b64fe403ecf9674f7ad43833d400c0e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: EbxDDgoDP9CVrORk_0MHbyWDPmcO8wVGQGK7D77KJXZFbFkWsXT65Q==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesh
+
+...[truncated 193082 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `995c0fe861672d375614b88ca3d4875197e826285efe04ec4c42eb1109b94bfb`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 28. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15749653bbce83d-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=CHVM..I61.dFri71HMUiEAS5mMETJydM_0VUKNHYO.Q-1783096351.555551-1.0.1.1-OKYJPb_ATUL9du3teai80aythRMQUsrHuOFYgYf9eE0; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 0b64fe403ecf9674f7ad43833d400c0e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: EbxDDgoDP9CVrORk_0MHbyWDPmcO8wVGQGK7D77KJXZFbFkWsXT65Q==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesh
+
+...[truncated 193082 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `995c0fe861672d375614b88ca3d4875197e826285efe04ec4c42eb1109b94bfb`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 29. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15749653bbce83d-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=CHVM..I61.dFri71HMUiEAS5mMETJydM_0VUKNHYO.Q-1783096351.555551-1.0.1.1-OKYJPb_ATUL9du3teai80aythRMQUsrHuOFYgYf9eE0; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 0b64fe403ecf9674f7ad43833d400c0e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: EbxDDgoDP9CVrORk_0MHbyWDPmcO8wVGQGK7D77KJXZFbFkWsXT65Q==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesh
+
+...[truncated 193082 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `995c0fe861672d375614b88ca3d4875197e826285efe04ec4c42eb1109b94bfb`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 30. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15749653bbce83d-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=CHVM..I61.dFri71HMUiEAS5mMETJydM_0VUKNHYO.Q-1783096351.555551-1.0.1.1-OKYJPb_ATUL9du3teai80aythRMQUsrHuOFYgYf9eE0; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 0b64fe403ecf9674f7ad43833d400c0e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: EbxDDgoDP9CVrORk_0MHbyWDPmcO8wVGQGK7D77KJXZFbFkWsXT65Q==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesh
+
+...[truncated 193082 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `995c0fe861672d375614b88ca3d4875197e826285efe04ec4c42eb1109b94bfb`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 31. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15749653bbce83d-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=CHVM..I61.dFri71HMUiEAS5mMETJydM_0VUKNHYO.Q-1783096351.555551-1.0.1.1-OKYJPb_ATUL9du3teai80aythRMQUsrHuOFYgYf9eE0; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 0b64fe403ecf9674f7ad43833d400c0e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: EbxDDgoDP9CVrORk_0MHbyWDPmcO8wVGQGK7D77KJXZFbFkWsXT65Q==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesh
+
+...[truncated 193082 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `995c0fe861672d375614b88ca3d4875197e826285efe04ec4c42eb1109b94bfb`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 32. AWS Service - Detect
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Detect if AWS is being used in the application.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "aws-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a15749653bbce83d-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=CHVM..I61.dFri71HMUiEAS5mMETJydM_0VUKNHYO.Q-1783096351.555551-1.0.1.1-OKYJPb_ATUL9du3teai80aythRMQUsrHuOFYgYf9eE0; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 0b64fe403ecf9674f7ad43833d400c0e.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: EbxDDgoDP9CVrORk_0MHbyWDPmcO8wVGQGK7D77KJXZFbFkWsXT65Q==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/c
+
+...[truncated 193063 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `1b3cc868d67e897bfe89b937fca073b7fe98f1d73e22952918894c550f5d8654`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 33. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574966fdf8fc8b-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=p2y8CsW2VJOtW8OZNHVh87_OL7j3g5lfAhLoJwmKofc-1783096351.8312626-1.0.1.1-g8YFRBcSTLGACsoTkyi5BcFdJhHe3V4vYH.Wfx4tq.U; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 3e744e3c13b68a267dc61d4a291cd4ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: qfZUZxJWX26iZ-cpBtZJtJ4IOJUsFBUv_qO-pNG6h1CAzMNj_kqvXg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\"
+
+...[truncated 193077 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `92be4ab00f9e08f9d7dcc66b31bcbce53f93121e9239d0f7ea94eaf54faa0978`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 34. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574966fdf8fc8b-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=p2y8CsW2VJOtW8OZNHVh87_OL7j3g5lfAhLoJwmKofc-1783096351.8312626-1.0.1.1-g8YFRBcSTLGACsoTkyi5BcFdJhHe3V4vYH.Wfx4tq.U; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 3e744e3c13b68a267dc61d4a291cd4ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: qfZUZxJWX26iZ-cpBtZJtJ4IOJUsFBUv_qO-pNG6h1CAzMNj_kqvXg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\"
+
+...[truncated 193077 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `92be4ab00f9e08f9d7dcc66b31bcbce53f93121e9239d0f7ea94eaf54faa0978`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 35. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574966fdf8fc8b-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=p2y8CsW2VJOtW8OZNHVh87_OL7j3g5lfAhLoJwmKofc-1783096351.8312626-1.0.1.1-g8YFRBcSTLGACsoTkyi5BcFdJhHe3V4vYH.Wfx4tq.U; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 3e744e3c13b68a267dc61d4a291cd4ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: qfZUZxJWX26iZ-cpBtZJtJ4IOJUsFBUv_qO-pNG6h1CAzMNj_kqvXg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\"
+
+...[truncated 193077 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `92be4ab00f9e08f9d7dcc66b31bcbce53f93121e9239d0f7ea94eaf54faa0978`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 36. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574966fdf8fc8b-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=p2y8CsW2VJOtW8OZNHVh87_OL7j3g5lfAhLoJwmKofc-1783096351.8312626-1.0.1.1-g8YFRBcSTLGACsoTkyi5BcFdJhHe3V4vYH.Wfx4tq.U; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 3e744e3c13b68a267dc61d4a291cd4ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: qfZUZxJWX26iZ-cpBtZJtJ4IOJUsFBUv_qO-pNG6h1CAzMNj_kqvXg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\"
+
+...[truncated 193077 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `92be4ab00f9e08f9d7dcc66b31bcbce53f93121e9239d0f7ea94eaf54faa0978`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 37. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574966fdf8fc8b-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=p2y8CsW2VJOtW8OZNHVh87_OL7j3g5lfAhLoJwmKofc-1783096351.8312626-1.0.1.1-g8YFRBcSTLGACsoTkyi5BcFdJhHe3V4vYH.Wfx4tq.U; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 3e744e3c13b68a267dc61d4a291cd4ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: qfZUZxJWX26iZ-cpBtZJtJ4IOJUsFBUv_qO-pNG6h1CAzMNj_kqvXg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\"
+
+...[truncated 193077 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `92be4ab00f9e08f9d7dcc66b31bcbce53f93121e9239d0f7ea94eaf54faa0978`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 38. HTTP Missing Security Headers
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+This template searches for missing HTTP security headers. The impact of these missing headers can vary.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "http-missing-security-headers", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574966fdf8fc8b-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=p2y8CsW2VJOtW8OZNHVh87_OL7j3g5lfAhLoJwmKofc-1783096351.8312626-1.0.1.1-g8YFRBcSTLGACsoTkyi5BcFdJhHe3V4vYH.Wfx4tq.U; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 3e744e3c13b68a267dc61d4a291cd4ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: qfZUZxJWX26iZ-cpBtZJtJ4IOJUsFBUv_qO-pNG6h1CAzMNj_kqvXg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\"
+
+...[truncated 193077 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `92be4ab00f9e08f9d7dcc66b31bcbce53f93121e9239d0f7ea94eaf54faa0978`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 39. AWS Service - Detect
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Detect if AWS is being used in the application.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "aws-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23310\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574966fdf8fc8b-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:54 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=p2y8CsW2VJOtW8OZNHVh87_OL7j3g5lfAhLoJwmKofc-1783096351.8312626-1.0.1.1-g8YFRBcSTLGACsoTkyi5BcFdJhHe3V4vYH.Wfx4tq.U; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 3e744e3c13b68a267dc61d4a291cd4ea.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: qfZUZxJWX26iZ-cpBtZJtJ4IOJUsFBUv_qO-pNG6h1CAzMNj_kqvXg==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" 
+
+...[truncated 193058 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `8c58d943395d3eab5d35e8b476bbeb561e0311266ea4b84c4aaa3df97a2a1b56`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 40. AWS Service - Detect
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Detect if AWS is being used in the application.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "aws-detect", "matched_at": "http://uat-bugbounty.nonprod.syfe.com", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5.2 Safari/605.1.15\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 301 Moved Permanently\r\nConnection: close\r\nContent-Length: 167\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nContent-Type: text/html\r\nDate: Fri, 03 Jul 2026 16:32:31 GMT\r\nLocation: https://uat-bugbounty.nonprod.syfe.com/\r\nServer: CloudFront\r\nVia: 1.1 fa09447ef3c470d11f34f14d24fbfd26.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: riOrugbCY79UWLrj6961hyiLFUMnNjjd_soi9vfRPAkTNZ69bT2gxQ==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Redirect from cloudfront\r\nX-Content-Type-Options: nosniff\r\n\r\n", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `7736e6258b915ab568aba2eb8e08c92dc55ac565baf286dbd75f460cf0c9e2c3`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 41. Detect Sentry Instance
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "detect-sentry", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_5_3; nl-nl) AppleWebKit/527+ (KHTML, like Gecko) Version/3.1.1 Safari/525.20\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23342\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574a3048dadb32-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:33:04 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:52 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=s_ef0fSrVLF2x0wQ13zixR8JWjtzZlD_UvN8nfrph48-1783096384.0507069-1.0.1.1-yKLL6ORPBPwJoRs2nzLUN56BCZnAFFo41vsIxusvpuU; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 7e1828cb2f62043ddb138574ae6ab714.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: BDiiOLCt7lMjzc__Lqr4Lt3zYEK03E4JMqmDxjsmbU08lmAtukg-4w==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" re
+
+...[truncated 193169 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `476a1ed69dba8a80869e650105fa682fd580b1631aebaed9fdb336cfa823c513`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 42. Detect Sentry Instance
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "detect-sentry", "matched_at": "https://uat-bugbounty.nonprod.syfe.com/", "url": "http://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:1.9.5.20) Gecko/ Firefox/3.6.12\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nAge: 23343\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574a3189e9b081-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:33:04 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:52 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=LZp7sihLShg9EeSf1GFh3SmEmgMgp37JtJ78zusZ3pY-1783096384.2482328-1.0.1.1-sW.Du9.JZyo6jY.wZjwELavKe89tDLQYcdwaSm6O.cQ; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 04b6d0a731d8e448d409f0f62d7aa250.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: YKrWFKcYapRzpEch8eX8X3YLVlLg9XZHAbgOspqQ-9MTHcJJqE92Fw==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KE
+
+...[truncated 193084 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `36700a96d370e558cd35c6dd1e4455311fe65a7a0e3880752822439a6051e01c`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 43. Add DOM EventListener - Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Identifies the use of JavaScript addEventListener calls in the DOM.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "addeventlistener-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23358\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574a908f602c60-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:33:19 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:52 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=.CMf4uSMUniaVLVCdImbXDw0mcX_CC3_O9mdeNoU458-1783096399.448411-1.0.1.1-0NkBnjpssCCWodTxDk3g.x90LmEYNHs29Q8QdZNiioc; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 58e5424ce41068d4abee911a0f2856e8.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: HMdy8uzq3wjURDmYiT4OjaicMeFAqsgxX08RGbDB6HMiIQYXPIZBCw==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css
+
+...[truncated 193061 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `120e7aea9032bb83f941a6c8f31ba029cf98a93d5c592b2b0abb598da6b5b0cc`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 44. Email Extractor
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "email-extractor", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23358\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574a908f602c60-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:33:19 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:52 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=.CMf4uSMUniaVLVCdImbXDw0mcX_CC3_O9mdeNoU458-1783096399.448411-1.0.1.1-0NkBnjpssCCWodTxDk3g.x90LmEYNHs29Q8QdZNiioc; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 58e5424ce41068d4abee911a0f2856e8.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: HMdy8uzq3wjURDmYiT4OjaicMeFAqsgxX08RGbDB6HMiIQYXPIZBCw==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integ
+
+...[truncated 193072 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `4d64fbfe440ac1abb5d653a3c7fe91590a81decedab6a91b929fcb40e0605173`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 45. Weak Content Security Policy - Detect
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Detected misconfigured CSP directives containing unsafe and overly permissive keywords that weakened resource loading restrictions. This configuration allowed high-risk script behaviors, resulting in reduced protection against XSS attacks.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "weak-csp-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23358\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574a908f602c60-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:33:19 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:52 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=.CMf4uSMUniaVLVCdImbXDw0mcX_CC3_O9mdeNoU458-1783096399.448411-1.0.1.1-0NkBnjpssCCWodTxDk3g.x90LmEYNHs29Q8QdZNiioc; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 58e5424ce41068d4abee911a0f2856e8.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: HMdy8uzq3wjURDmYiT4OjaicMeFAqsgxX08RGbDB6HMiIQYXPIZBCw==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integ
+
+...[truncated 193177 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `bf2e29aac76215d167f4f552c1b85da987eed54c87aa193cff73430990c16593`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 46. Weak Content Security Policy - Detect
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Detected misconfigured CSP directives containing unsafe and overly permissive keywords that weakened resource loading restrictions. This configuration allowed high-risk script behaviors, resulting in reduced protection against XSS attacks.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "weak-csp-detect", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23358\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574a908f602c60-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:33:19 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:52 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=.CMf4uSMUniaVLVCdImbXDw0mcX_CC3_O9mdeNoU458-1783096399.448411-1.0.1.1-0NkBnjpssCCWodTxDk3g.x90LmEYNHs29Q8QdZNiioc; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 58e5424ce41068d4abee911a0f2856e8.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: HMdy8uzq3wjURDmYiT4OjaicMeFAqsgxX08RGbDB6HMiIQYXPIZBCw==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\" integ
+
+...[truncated 193177 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `bf2e29aac76215d167f4f552c1b85da987eed54c87aa193cff73430990c16593`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 47. AWS Cloudfront service detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Detect websites using AWS cloudfront service
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "aws-cloudfront-service", "matched_at": "https://uat-bugbounty.nonprod.syfe.com", "url": "https://uat-bugbounty.nonprod.syfe.com", "request": "GET / HTTP/1.1\r\nHost: uat-bugbounty.nonprod.syfe.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0\r\nConnection: close\r\nAccept: */*\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n", "response": "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAge: 23358\r\nAlt-Svc: h3=\":443\"; ma=86400\r\nCf-Cache-Status: HIT\r\nCf-Ray: a1574a908f602c60-BOM\r\nContent-Security-Policy: frame-ancestors 'self' https://*.webflow.com http://*.webflow.com http://*.webflow.io http://webflow.com https://webflow.com\r\nContent-Type: text/html; charset=utf-8\r\nDate: Fri, 03 Jul 2026 16:33:19 GMT\r\nLast-Modified: Fri, 03 Jul 2026 11:35:52 GMT\r\nLink: <https://cdn.prod.website-files.com>; rel=preconnect; crossorigin, <https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css>; rel=preload; as=style; crossorigin; integrity=\"sha384-aQha2EPqZQ1m6N2EEnJ12JWQIHzL2KEwBWjAFmitLQa2i4oNjrOW24FZGnfoPt+g\", <https://www.googletagmanager.com>; rel=preconnect, <https://static.zdassets.com>; rel=preconnect\r\nServer: nginx\r\nSet-Cookie: _cfuvid=.CMf4uSMUniaVLVCdImbXDw0mcX_CC3_O9mdeNoU458-1783096399.448411-1.0.1.1-0NkBnjpssCCWodTxDk3g.x90LmEYNHs29Q8QdZNiioc; HttpOnly; SameSite=None; Secure; Path=/; Domain=webflow.io\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\nSurrogate-Control: max-age=432000\r\nSurrogate-Key: syfe-v4.webflow.io 64d3542964db4e6ae6de7d1d pageId:69d5de9a9e57d98e23cd52bb 6875fc5787df33dc30f5b75e\r\nVary: accept-encoding\r\nVia: 1.1 58e5424ce41068d4abee911a0f2856e8.cloudfront.net (CloudFront)\r\nX-Amz-Cf-Id: HMdy8uzq3wjURDmYiT4OjaicMeFAqsgxX08RGbDB6HMiIQYXPIZBCw==\r\nX-Amz-Cf-Pop: SIN3-P4\r\nX-Cache: Miss from cloudfront\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Lambda-Id: aaf4ab41-6120-4754-b58e-439353b5fea7\r\nX-Wf-Region: us-east-1\r\n\r\n<!DOCTYPE html><!-- Last Published: Fri Jul 03 2026 09:35:43 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"syfe-v4.webflow.io\" data-wf-page=\"69d5de9a9e57d98e23cd52bb\" data-wf-site=\"64d3542964db4e6ae6de7d1d\" lang=\"en\"><head><meta charset=\"utf-8\"/><link href=\"https://cdn.prod.website-files.com\" rel=\"preconnect\" crossorigin=\"anonymous\"/><title>Syfe: Invest, Trade and Save in Singapore</title><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"description\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" property=\"og:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" property=\"og:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" property=\"og:image\"/><meta content=\"Syfe: Invest, Trade and Save in Singapore\" name=\"twitter:title\"/><meta content=\"Fastest-growing MAS-regulated digital investment platform in Singapore. Invest your cash and SRS easily within minutes. Invest with any amount and start earning today.\" name=\"twitter:description\"/><meta content=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/66e14507296bdb1ed3c04bc8_Syfe%20Homepage%20Open%20Graph.png\" name=\"twitter:image\"/><meta property=\"og:type\" content=\"website\"/><meta content=\"summary_large_image\" name=\"twitter:card\"/><meta content=\"width=device-width, initial-scale=1\" name=\"viewport\"/><link href=\"https://cdn.prod.website-files.com/64d3542964db4e6ae6de7d1d/css/syfe-v4.shared.69085ad84.min.css\" rel=\"stylesheet\" type=\"text/css\
+
+...[truncated 193060 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+```
+**Artifact SHA-256 Hash**: `6fb6f4a3aae1395f356d3e4c7aa10af2ee1ffbbfa0bf3beac1103a20711d90b6`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 48. AAAA Record - IPv6 Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+An AAAA record was detected. AAAA records are used to map domain names to IPv6 addresses.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "aaaa-fingerprint", "matched_at": "uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 19133\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t AAAA\n", "response": ";; opcode: QUERY, status: NOERROR, id: 19133\n;; flags: qr rd ra; QUERY: 1, ANSWER: 9, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t AAAA\n\n;; ANSWER SECTION:\nuat-bugbounty.nonprod.syfe.com.\t60\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:5600:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:8000:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:7400:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:6800:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:9e00:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:2600:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:e400:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:dc00:3:b73d:9700:93a1\n", "extracted_results": ["2600:9000:257b:5600:3:b73d:9700:93a1", "2600:9000:257b:8000:3:b73d:9700:93a1", "2600:9000:257b:7400:3:b73d:9700:93a1", "2600:9000:257b:6800:3:b73d:9700:93a1", "2600:9000:257b:9e00:3:b73d:9700:93a1", "2600:9000:257b:2600:3:b73d:9700:93a1", "2600:9000:257b:e400:3:b73d:9700:93a1", "2600:9000:257b:dc00:3:b73d:9700:93a1"]}]
+```
+**Artifact SHA-256 Hash**: `6e784d90ebba482d0b4690919aa53261adfcf8d33d1a51d598734f6c2df27e9d`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 49. NS Record Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+An NS record was detected. An NS record delegates a subdomain to a set of name servers.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "nameserver-fingerprint", "matched_at": "uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 11586\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t NS\n", "response": ";; opcode: QUERY, status: NOERROR, id: 11586\n;; flags: qr rd ra; QUERY: 1, ANSWER: 5, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t NS\n\n;; ANSWER SECTION:\nuat-bugbounty.nonprod.syfe.com.\t60\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\nd2uz6yy7bd3xp8.cloudfront.net.\t21600\tIN\tNS\tns-1129.awsdns-13.org.\nd2uz6yy7bd3xp8.cloudfront.net.\t21600\tIN\tNS\tns-247.awsdns-30.com.\nd2uz6yy7bd3xp8.cloudfront.net.\t21600\tIN\tNS\tns-1711.awsdns-21.co.uk.\nd2uz6yy7bd3xp8.cloudfront.net.\t21600\tIN\tNS\tns-890.awsdns-47.net.\n", "extracted_results": ["ns-1129.awsdns-13.org.", "ns-247.awsdns-30.com.", "ns-1711.awsdns-21.co.uk.", "ns-890.awsdns-47.net."]}]
+```
+**Artifact SHA-256 Hash**: `77d7235256bc9112162ae709290c21574222048b8b7d0360c9e2bd0963946cd9`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 50. NS Record Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+An NS record was detected. An NS record delegates a subdomain to a set of name servers.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "nameserver-fingerprint", "matched_at": "uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 39880\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t NS\n", "response": ";; opcode: QUERY, status: NOERROR, id: 39880\n;; flags: qr rd ra; QUERY: 1, ANSWER: 5, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t NS\n\n;; ANSWER SECTION:\nuat-bugbounty.nonprod.syfe.com.\t60\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\nd2uz6yy7bd3xp8.cloudfront.net.\t21600\tIN\tNS\tns-890.awsdns-47.net.\nd2uz6yy7bd3xp8.cloudfront.net.\t21600\tIN\tNS\tns-247.awsdns-30.com.\nd2uz6yy7bd3xp8.cloudfront.net.\t21600\tIN\tNS\tns-1129.awsdns-13.org.\nd2uz6yy7bd3xp8.cloudfront.net.\t21600\tIN\tNS\tns-1711.awsdns-21.co.uk.\n", "extracted_results": ["ns-890.awsdns-47.net.", "ns-247.awsdns-30.com.", "ns-1129.awsdns-13.org.", "ns-1711.awsdns-21.co.uk."]}]
+```
+**Artifact SHA-256 Hash**: `1db109f537991aa02823595dc17d16e827c2c81ecdb0804bfdf66f56303fbff5`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 51. DNS SaaS Service Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+A CNAME DNS record was discovered
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "dns-saas-service-detection", "matched_at": "uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 16539\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t CNAME\n", "response": ";; opcode: QUERY, status: NOERROR, id: 16539\n;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t CNAME\n\n;; ANSWER SECTION:\nuat-bugbounty.nonprod.syfe.com.\t59\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\n", "extracted_results": ["d2uz6yy7bd3xp8.cloudfront.net"]}]
+```
+**Artifact SHA-256 Hash**: `432f3af9df43db0de3c40bba91c7d18d6e52b8bc693fb475aa64f44898853395`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 52. DNS SaaS Service Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+A CNAME DNS record was discovered
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "dns-saas-service-detection", "matched_at": "uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 41680\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t CNAME\n", "response": ";; opcode: QUERY, status: NOERROR, id: 41680\n;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t CNAME\n\n;; ANSWER SECTION:\nuat-bugbounty.nonprod.syfe.com.\t59\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\n", "extracted_results": ["d2uz6yy7bd3xp8.cloudfront.net"]}]
+```
+**Artifact SHA-256 Hash**: `b271bc1592784e2bb530823c2b0cf64d72dbea216258de74ec8c0095cca9aa75`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 53. AAAA Record - IPv6 Detection
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+An AAAA record was detected. AAAA records are used to map domain names to IPv6 addresses.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "aaaa-fingerprint", "matched_at": "uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 6405\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t AAAA\n", "response": ";; opcode: QUERY, status: NOERROR, id: 6405\n;; flags: qr rd ra; QUERY: 1, ANSWER: 9, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 512\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t AAAA\n\n;; ANSWER SECTION:\nuat-bugbounty.nonprod.syfe.com.\t60\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:4a00:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:6a00:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:600:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:a800:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:d200:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:6e00:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:f600:3:b73d:9700:93a1\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tAAAA\t2600:9000:257b:6600:3:b73d:9700:93a1\n", "extracted_results": ["2600:9000:257b:d200:3:b73d:9700:93a1", "2600:9000:257b:6e00:3:b73d:9700:93a1", "2600:9000:257b:f600:3:b73d:9700:93a1", "2600:9000:257b:6600:3:b73d:9700:93a1", "2600:9000:257b:4a00:3:b73d:9700:93a1", "2600:9000:257b:6a00:3:b73d:9700:93a1", "2600:9000:257b:600:3:b73d:9700:93a1", "2600:9000:257b:a800:3:b73d:9700:93a1"]}]
+```
+**Artifact SHA-256 Hash**: `ca036661c060fdd8a3b1880c9af44faea18470e6a90d625acdbf1761c2f2ec96`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 54. CAA Record
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+A CAA record was discovered. A CAA record is used to specify which certificate authorities (CAs) are allowed to issue certificates for a domain.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "caa-fingerprint", "matched_at": "uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 36984\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t CAA\n", "response": ";; opcode: QUERY, status: NOERROR, id: 36984\n;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 1, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 1232\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t CAA\n\n;; ANSWER SECTION:\nuat-bugbounty.nonprod.syfe.com.\t60\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\n\n;; AUTHORITY SECTION:\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tSOA\tns-1129.awsdns-13.org. awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400\n", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `30f0890f370efc9a9c4cab49fea27a0457f57e8a335a7eee218b6396e23147bd`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 55. CAA Record
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+A CAA record was discovered. A CAA record is used to specify which certificate authorities (CAs) are allowed to issue certificates for a domain.
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "caa-fingerprint", "matched_at": "uat-bugbounty.nonprod.syfe.com", "url": "uat-bugbounty.nonprod.syfe.com", "request": ";; opcode: QUERY, status: NOERROR, id: 174\n;; flags: rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 4096\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t CAA\n", "response": ";; opcode: QUERY, status: NOERROR, id: 174\n;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 1, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version 0; flags:; udp: 1232\n\n;; QUESTION SECTION:\n;uat-bugbounty.nonprod.syfe.com.\tIN\t CAA\n\n;; ANSWER SECTION:\nuat-bugbounty.nonprod.syfe.com.\t60\tIN\tCNAME\td2uz6yy7bd3xp8.cloudfront.net.\n\n;; AUTHORITY SECTION:\nd2uz6yy7bd3xp8.cloudfront.net.\t60\tIN\tSOA\tns-1129.awsdns-13.org. awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400\n", "extracted_results": null}]
+```
+**Artifact SHA-256 Hash**: `4de0747dfb871f8894ea7bd1e11ccadec29666bc8ccbf7eea2f27b62bd5d1f7c`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 56. Detect SSL Certificate Issuer
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Extract the issuer's organization from the target's certificate. Issuers are entities which sign and distribute certificates.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "ssl-issuer", "matched_at": "uat-bugbounty.nonprod.syfe.com:443", "url": "uat-bugbounty.nonprod.syfe.com", "request": null, "response": null, "extracted_results": ["Amazon"]}]
+```
+**Artifact SHA-256 Hash**: `9025e4c13ae7b83117ff46fe6c5239d4130ec02b10b2989bc3d7ccbe54a6f4a0`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 57. SSL DNS Names
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Extract the Subject Alternative Name (SAN) from the target's certificate. SAN facilitates the usage of additional hostnames with the same certificate.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "ssl-dns-names", "matched_at": "uat-bugbounty.nonprod.syfe.com:443", "url": "uat-bugbounty.nonprod.syfe.com", "request": null, "response": null, "extracted_results": ["*.nonprod.syfe.com", "nonprod.syfe.com"]}]
+```
+**Artifact SHA-256 Hash**: `b5bb123a4d62107d9057738cb8b57a663e1a2213af3e2cc4f5e4759552dbdd86`
+**Chain of Custody ID**: `no-audit-event`
+
+---
+
+### 58. Wildcard TLS Certificate
+- **Severity**: info
+- **Type**: unknown
+- **Target**: unknown
+
+#### Description
+Checks a sites certificate to see if there are wildcard CN or SAN entries.
+
+
+#### Proof of Concept / Evidence
+```
+[{"type": "nuclei_finding", "template": "wildcard-tls", "matched_at": "uat-bugbounty.nonprod.syfe.com:443", "url": "uat-bugbounty.nonprod.syfe.com", "request": null, "response": null, "extracted_results": ["CN: *.nonprod.syfe.com", " SAN: [*.nonprod.syfe.com nonprod.syfe.com]"]}]
+```
+**Artifact SHA-256 Hash**: `63810d2860634a1b34a9e727b96df5658a1062f5bfa26ee950d185449e421431`
+**Chain of Custody ID**: `no-audit-event`
+
+---

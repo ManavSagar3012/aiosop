@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260712032745-e2e-gj-20260712-032745</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260712032745-e2e-gj-20260712-032745</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-bb5a6b5ad2f2", "labels": ["Task"]}, {"id": "asset-eng-20260712032745-e2e-gj-20260712-032745-ginandjuice.shop", "labels": ["Asset"]}, {"id": "task-37d86af18e39", "labels": ["Task"]}, {"id": "task-003182e75c3a", "labels": ["Task"]}, {"id": "endpoint-eng-20260712032745-e2e-gj-20260712-032745-ginandjuice.shop", "labels": ["Endpoint"]}, {"id": "task-edc878e8f8e7", "labels": ["Task"]}, {"id": "task-166ed0819422", "labels": ["Task"]}, {"id": "task-c4a8f6fe4718", "labels": ["Task"]}, {"id": "task-1e06ed045cd1", "labels": ["Task"]}, {"id": "task-5087c8c787f1", "labels": ["Task"]}, {"id": "task-1a2fed33dcc8", "labels": ["Task"]}, {"id": "task-1553e0cf1304", "labels": ["Task"]}, {"id": "task-5e29e18c9d4b", "labels": ["Task"]}, {"id": "task-d94262a12601", "labels": ["Task"]}, {"id": "task-6656fd5fe7d6", "labels": ["Task"]}, {"id": "task-22d959cb0351", "labels": ["Task"]}, {"id": "task-15ce5594240f", "labels": ["Task"]}, {"id": "task-938b9e6c2c7e", "labels": ["Task"]}, {"id": "task-5fb7dd4ecf6d", "labels": ["Task"]}, {"id": "task-4e6784aa2621", "labels": ["Task"]}, {"id": "task-7b19c0aa743a", "labels": ["Task"]}, {"id": "skip-task-4e6784aa2621", "labels": ["SkippedScan"]}, {"id": "task-245ea13b9e31", "labels": ["Task"]}], "edges": [{"source": "asset-eng-20260712032745-e2e-gj-20260712-032745-ginandjuice.shop", "target": "endpoint-eng-20260712032745-e2e-gj-20260712-032745-ginandjuice.shop", "type": "HAS_ENDPOINT"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

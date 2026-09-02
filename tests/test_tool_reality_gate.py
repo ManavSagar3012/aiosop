@@ -86,12 +86,12 @@ class TestAssignmentGate:
     async def test_down_tool_blocks_task(self):
         """A burp_scan with burp-mcp DOWN is parked as blocked, NOT dispatched."""
         sched = _scheduler_with_server(ready=False, circuit_open=True)
-        task = _task("burp_scan")
+        task = _task("nuclei_scan")
 
         await TaskScheduler._assign_task(sched, task)
 
         assert task.status == "blocked"
-        assert task.result["blocked_on_tool"] == "burp-mcp"
+        assert task.result["blocked_on_tool"] == "nuclei-mcp"
         assert "circuit breaker open" in task.result["reason"]
         assert task.id in sched._blocked_tasks
         # task.blocked event published exactly once for this transition
@@ -99,6 +99,28 @@ class TestAssignmentGate:
         assert "task.blocked" in topics
         # failure path NOT taken (no retry burn, no opaque circuit error)
         sched._on_task_failure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_burp_scan_no_longer_gated_on_burp_availability(self):
+        """BURP-COMMUNITY-001: burp_scan degrades instead of parking.
+
+        The task is now capability-driven — Burp Pro runs its own audit, Burp
+        Community routes active scanning to nuclei-mcp + web_audit, and a dead
+        burp-mcp degrades to internal_routed mode with the reason recorded in
+        degraded_components. Every outcome succeeds without Burp, so a hard
+        tool gate would only stall the vulnerability_discovery phase. A DOWN
+        burp-mcp must therefore pass the assignment gate untouched.
+        """
+        sched = _scheduler_with_server(ready=False, circuit_open=True)
+        task = _task("burp_scan")
+
+        await TaskScheduler._assign_task(sched, task)
+
+        assert task.status != "blocked"
+        assert task.id not in sched._blocked_tasks
+        assert "task.blocked" not in [
+            c.args[0] for c in sched._orch.coordination_bus.publish.call_args_list
+        ]
 
     @pytest.mark.asyncio
     async def test_healthy_tool_dispatches_normally(self):

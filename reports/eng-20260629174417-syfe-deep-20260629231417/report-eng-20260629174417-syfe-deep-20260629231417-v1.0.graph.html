@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260629174417-syfe-deep-20260629231417</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260629174417-syfe-deep-20260629231417</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-91c945be4b15", "labels": ["Task"]}, {"id": "ep-1251ff7a444d", "labels": ["Endpoint"]}, {"id": "task-3239bf89b319", "labels": ["Task"]}, {"id": "asset-eng-20260629174417-syfe-deep-20260629231417-uat-bugbounty.nonprod.syfe.com", "labels": ["Asset"]}, {"id": "ep-208f63a2ce79", "labels": ["Endpoint"]}, {"id": "ep-38d19c8ecf93", "labels": ["Endpoint"]}, {"id": "ep-8eb730a5491d", "labels": ["Endpoint"]}, {"id": "ep-8d3a985f2081", "labels": ["Endpoint"]}, {"id": "ep-3b4fd982e56a", "labels": ["Endpoint"]}, {"id": "ep-d9237bdb87fe", "labels": ["Endpoint"]}, {"id": "ep-f389636d9b3d", "labels": ["Endpoint"]}, {"id": "ep-6165fb9f9cae", "labels": ["Endpoint"]}, {"id": "ep-7909c5524006", "labels": ["Endpoint"]}, {"id": "ep-a904f31feec6", "labels": ["Endpoint"]}, {"id": "ep-d472bfc89d81", "labels": ["Endpoint"]}, {"id": "ep-eb7384ef7a1d", "labels": ["Endpoint"]}, {"id": "ep-7d3ec15ab536", "labels": ["Endpoint"]}, {"id": "ep-366b37f46bd4", "labels": ["Endpoint"]}, {"id": "ep-06cb719e8cd9", "labels": ["Endpoint"]}, {"id": "ep-1443d539de3d", "labels": ["Endpoint"]}, {"id": "ep-2deef20dc193", "labels": ["Endpoint"]}, {"id": "ep-3a6f0d50e7f0", "labels": ["Endpoint"]}, {"id": "ep-86ea3e4d59d4", "labels": ["Endpoint"]}, {"id": "ep-2ae2e1fdc668", "labels": ["Endpoint"]}, {"id": "ep-6b6f2af62423", "labels": ["Endpoint"]}, {"id": "ep-4d3bc95f0394", "labels": ["Endpoint"]}, {"id": "ep-aab0eb8c3739", "labels": ["Endpoint"]}, {"id": "ep-aaf45c50e220", "labels": ["Endpoint"]}, {"id": "ep-37d80e431a91", "labels": ["Endpoint"]}, {"id": "ep-e7c2620f3849", "labels": ["Endpoint"]}, {"id": "ep-8827fc57cdc1", "labels": ["Endpoint"]}, {"id": "ep-8ac6c5bf4b0c", "labels": ["Endpoint"]}, {"id": "ep-07725ee612b0", "labels": ["Endpoint"]}, {"id": "ep-8d241d1136c6", "labels": ["Endpoint"]}, {"id": "ep-7f643226a4be", "labels": ["Endpoint"]}, {"id": "ep-958241a7da41", "labels": ["Endpoint"]}, {"id": "ep-b94944aad9fe", "labels": ["Endpoint"]}, {"id": "ep-32a23c5d7cab", "labels": ["Endpoint"]}, {"id": "ep-2ad8bbdd1a1f", "labels": ["Endpoint"]}, {"id": "ep-424139b94607", "labels": ["Endpoint"]}, {"id": "ep-4a777e52b8d9", "labels": ["Endpoint"]}, {"id": "ep-3f45d95bb61a", "labels": ["Endpoint"]}, {"id": "ep-1a0967e2639f", "labels": ["Endpoint"]}, {"id": "ep-5f900d58e167", "labels": ["Endpoint"]}, {"id": "ep-499a9dfc0094", "labels": ["Endpoint"]}, {"id": "ep-f3cfcf9f481d", "labels": ["Endpoint"]}, {"id": "ep-2db94a14538c", "labels": ["Endpoint"]}, {"id": "ep-27d5d6f1f2dd", "labels": ["Endpoint"]}, {"id": "ep-8d67dd6a8d04", "labels": ["Endpoint"]}, {"id": "ep-8ae18b4d7646", "labels": ["Endpoint"]}, {"id": "ep-cfdbc2cc7e67", "labels": ["Endpoint"]}, {"id": "ep-1c669ae9f345", "labels": ["Endpoint"]}, {"id": "ep-f17536e116a3", "labels": ["Endpoint"]}, {"id": "ep-a7857c0d3759", "labels": ["Endpoint"]}, {"id": "ep-35acfacbe32e", "labels": ["Endpoint"]}, {"id": "ep-2c539dffe422", "labels": ["Endpoint"]}, {"id": "task-d069ab6ecbdc", "labels": ["Task"]}, {"id": "task-2150af7e8519", "labels": ["Task"]}, {"id": "endpoint-eng-20260629174417-syfe-deep-20260629231417-uat-bugbounty.nonprod.syfe.com", "labels": ["Endpoint"]}, {"id": "vuln-042a11f7671c", "labels": ["Vulnerability"]}, {"id": "vuln-613f064e3857", "labels": ["Vulnerability"]}, {"id": "vuln-c59e21ccaeea", "labels": ["Vulnerability"]}, {"id": "vuln-dd1ec13e694e", "labels": ["Vulnerability"]}, {"id": "vuln-6fb194ef819a", "labels": ["Vulnerability"]}, {"id": "vuln-03a3df7e9b84", "labels": ["Vulnerability"]}, {"id": "vuln-98c2921ba25f", "labels": ["Vulnerability"]}, {"id": "vuln-a983b989fc16", "labels": ["Vulnerability"]}, {"id": "vuln-4d95c3e69531", "labels": ["Vulnerability"]}, {"id": "vuln-fd21e7aa8da7", "labels": ["Vulnerability"]}, {"id": "vuln-ef2b7d444317", "labels": ["Vulnerability"]}, {"id": "vuln-b3a99747a08d", "labels": ["Vulnerability"]}, {"id": "vuln-4cb9c74c8f16", "labels": ["Vulnerability"]}, {"id": "vuln-b34220669617", "labels": ["Vulnerability"]}, {"id": "vuln-895ce0adf597", "labels": ["Vulnerability"]}, {"id": "vuln-341faf8d85c3", "labels": ["Vulnerability"]}, {"id": "vuln-12c3ab7a5b74", "labels": ["Vulnerability"]}, {"id": "vuln-5a98c11b5cbc", "labels": ["Vulnerability"]}, {"id": "vuln-4b42a5354700", "labels": ["Vulnerability"]}, {"id": "vuln-285f118d28e0", "labels": ["Vulnerability"]}, {"id": "vuln-602c16f878ec", "labels": ["Vulnerability"]}, {"id": "vuln-8425143336f2", "labels": ["Vulnerability"]}, {"id": "vuln-0da872c99b47", "labels": ["Vulnerability"]}, {"id": "vuln-d5f64afd069b", "labels": ["Vulnerability"]}, {"id": "vuln-74b4de360f64", "labels": ["Vulnerability"]}, {"id": "vuln-5c15e2c54239", "labels": ["Vulnerability"]}, {"id": "vuln-ad11c5ae379d", "labels": ["Vulnerability"]}, {"id": "vuln-3edbd91bd20d", "labels": ["Vulnerability"]}, {"id": "vuln-20958fd4895c", "labels": ["Vulnerability"]}, {"id": "vuln-d4881de8f915", "labels": ["Vulnerability"]}, {"id": "vuln-2b9f86fb5f1d", "labels": ["Vulnerability"]}, {"id": "vuln-0d10edde0c0a", "labels": ["Vulnerability"]}, {"id": "vuln-a2b8e5b71667", "labels": ["Vulnerability"]}, {"id": "vuln-dfe77a189905", "labels": ["Vulnerability"]}, {"id": "vuln-20ee0a31f901", "labels": ["Vulnerability"]}, {"id": "vuln-6ee24fc76165", "labels": ["Vulnerability"]}, {"id": "vuln-8e821cfb0aef", "labels": ["Vulnerability"]}, {"id": "vuln-df3d3418b374", "labels": ["Vulnerability"]}, {"id": "vuln-e091019223f7", "labels": ["Vulnerability"]}, {"id": "vuln-1c14bc9bc875", "labels": ["Vulnerability"]}, {"id": "vuln-013811f457e9", "labels": ["Vulnerability"]}, {"id": "vuln-5090080cfad6", "labels": ["Vulnerability"]}, {"id": "vuln-532b7ac3d24e", "labels": ["Vulnerability"]}, {"id": "vuln-8e924d63f600", "labels": ["Vulnerability"]}, {"id": "vuln-d26e616dc5e4", "labels": ["Vulnerability"]}, {"id": "vuln-8210c4d0178d", "labels": ["Vulnerability"]}, {"id": "vuln-44aea3a33b95", "labels": ["Vulnerability"]}, {"id": "vuln-ee74af802654", "labels": ["Vulnerability"]}, {"id": "vuln-209f396d9216", "labels": ["Vulnerability"]}, {"id": "vuln-41d27de09cbc", "labels": ["Vulnerability"]}, {"id": "vuln-3da81fbee626", "labels": ["Vulnerability"]}, {"id": "vuln-83c0e07a8e6b", "labels": ["Vulnerability"]}, {"id": "vuln-f05070e67386", "labels": ["Vulnerability"]}, {"id": "vuln-cdd3d04b5117", "labels": ["Vulnerability"]}, {"id": "vuln-c7d45926c6db", "labels": ["Vulnerability"]}, {"id": "vuln-1c921a1893d0", "labels": ["Vulnerability"]}, {"id": "vuln-de040ed0c92e", "labels": ["Vulnerability"]}, {"id": "vuln-d8bdb172b6cb", "labels": ["Vulnerability"]}, {"id": "task-e5c93dabd29c", "labels": ["Task"]}, {"id": "task-e175bcfee310", "labels": ["Task"]}, {"id": "task-059afcfbff89", "labels": ["Task"]}, {"id": "task-ac720a91025d", "labels": ["Task"]}, {"id": "task-27ef3459510a", "labels": ["Task"]}, {"id": "task-7b7fd166ea26", "labels": ["Task"]}, {"id": "task-253249f89129", "labels": ["Task"]}, {"id": "task-14e36c80da1d", "labels": ["Task"]}, {"id": "task-b7d719335803", "labels": ["Task"]}, {"id": "task-cc9820a2d438", "labels": ["Task"]}, {"id": "task-4b7672a03b58", "labels": ["Task"]}, {"id": "task-edc4aa9e1d8d", "labels": ["Task"]}, {"id": "task-186d83322b99", "labels": ["Task"]}, {"id": "task-1bf5a4818f48", "labels": ["Task"]}, {"id": "task-f6e02ddde37c", "labels": ["Task"]}, {"id": "task-3c2cc402cb5a", "labels": ["Task"]}, {"id": "task-45cd39e3110a", "labels": ["Task"]}, {"id": "task-d32747e52438", "labels": ["Task"]}, {"id": "task-8be7f532cb28", "labels": ["Task"]}, {"id": "task-272222428f0f", "labels": ["Task"]}, {"id": "task-13d03cdf7e3f", "labels": ["Task"]}, {"id": "task-6a4e79a405fe", "labels": ["Task"]}, {"id": "task-c91a3da9b88c", "labels": ["Task"]}, {"id": "task-50b6a7474801", "labels": ["Task"]}, {"id": "task-840f45d99c30", "labels": ["Task"]}, {"id": "task-9057083fc03f", "labels": ["Task"]}, {"id": "task-31e54ed75a90", "labels": ["Task"]}, {"id": "task-3e42b8787d7b", "labels": ["Task"]}, {"id": "task-f8e33ae1f948", "labels": ["Task"]}, {"id": "task-5800dc2cb4c4", "labels": ["Task"]}, {"id": "task-3f1ae831d938", "labels": ["Task"]}, {"id": "task-c164ac4a30dc", "labels": ["Task"]}, {"id": "task-7cff3c258f64", "labels": ["Task"]}, {"id": "task-74f4270d141e", "labels": ["Task"]}, {"id": "task-0398a9f68ff9", "labels": ["Task"]}, {"id": "task-9e9c7705e402", "labels": ["Task"]}, {"id": "task-c518f7dbc609", "labels": ["Task"]}, {"id": "task-71cd11a4df6b", "labels": ["Task"]}, {"id": "task-ae0eb2b811ac", "labels": ["Task"]}, {"id": "task-2fdd0c7cc8f8", "labels": ["Task"]}, {"id": "task-384ebe9ca0c3", "labels": ["Task"]}, {"id": "task-b7b8993d58bb", "labels": ["Task"]}, {"id": "task-55abfedaa2ed", "labels": ["Task"]}, {"id": "task-d6d7bde552eb", "labels": ["Task"]}, {"id": "task-6823a8bf822a", "labels": ["Task"]}, {"id": "task-fbd70f93c63c", "labels": ["Task"]}, {"id": "task-0c94b98644bf", "labels": ["Task"]}, {"id": "task-0516d648a045", "labels": ["Task"]}, {"id": "task-8dc21f3186b3", "labels": ["Task"]}, {"id": "task-246f9e9e5890", "labels": ["Task"]}, {"id": "task-a03dd742dd00", "labels": ["Task"]}, {"id": "task-a9e765564db8", "labels": ["Task"]}, {"id": "task-6e6496ef8e21", "labels": ["Task"]}, {"id": "task-7f96fc688e85", "labels": ["Task"]}, {"id": "task-171086b2b28a", "labels": ["Task"]}, {"id": "task-392b477e434b", "labels": ["Task"]}, {"id": "task-b5f5fee64532", "labels": ["Task"]}, {"id": "task-ef697c281d6e", "labels": ["Task"]}, {"id": "task-b1197088b1bd", "labels": ["Task"]}], "edges": [{"source": "asset-eng-20260629174417-syfe-deep-20260629231417-uat-bugbounty.nonprod.syfe.com", "target": "endpoint-eng-20260629174417-syfe-deep-20260629231417-uat-bugbounty.nonprod.syfe.com", "type": "HAS_ENDPOINT"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

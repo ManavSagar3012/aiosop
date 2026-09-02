@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260703094521-reconfix-20260703</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260703094521-reconfix-20260703</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "task-b50763cb4271", "labels": ["Task"]}, {"id": "asset-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "labels": ["Asset"]}, {"id": "task-7c101ec2dc77", "labels": ["Task"]}, {"id": "task-0865fa75bec0", "labels": ["Task"]}, {"id": "vuln-85bdb2a5d965", "labels": ["Vulnerability"]}, {"id": "prim-24df54d4af6c", "labels": ["Primitive"]}, {"id": "vuln-e1a3ed78c261", "labels": ["Vulnerability"]}, {"id": "vuln-347ea562599d", "labels": ["Vulnerability"]}, {"id": "vuln-284db716fb18", "labels": ["Vulnerability"]}, {"id": "vuln-3cd1c63472dc", "labels": ["Vulnerability"]}, {"id": "vuln-f953c58ddf74", "labels": ["Vulnerability"]}, {"id": "vuln-94d82edcec13", "labels": ["Vulnerability"]}, {"id": "vuln-47f774fed43e", "labels": ["Vulnerability"]}, {"id": "vuln-3dc05ffa3c06", "labels": ["Vulnerability"]}, {"id": "vuln-a704b2284cc7", "labels": ["Vulnerability"]}, {"id": "vuln-a60b56b3f66e", "labels": ["Vulnerability"]}, {"id": "vuln-cc61932af8dc", "labels": ["Vulnerability"]}, {"id": "vuln-8bd506869290", "labels": ["Vulnerability"]}, {"id": "vuln-598fadde9d8f", "labels": ["Vulnerability"]}, {"id": "vuln-59765fa9bc12", "labels": ["Vulnerability"]}, {"id": "vuln-c89b84e35d71", "labels": ["Vulnerability"]}, {"id": "vuln-b03a242a6b13", "labels": ["Vulnerability"]}, {"id": "vuln-3091cddf7e14", "labels": ["Vulnerability"]}, {"id": "vuln-52de46eac522", "labels": ["Vulnerability"]}, {"id": "vuln-59ed63cedcbe", "labels": ["Vulnerability"]}, {"id": "vuln-d19d602d95e8", "labels": ["Vulnerability"]}, {"id": "vuln-34c36a477e23", "labels": ["Vulnerability"]}, {"id": "vuln-bcd19192baf8", "labels": ["Vulnerability"]}, {"id": "vuln-98760d132247", "labels": ["Vulnerability"]}, {"id": "vuln-ea874d088ae1", "labels": ["Vulnerability"]}, {"id": "vuln-b150cdf6b3ea", "labels": ["Vulnerability"]}, {"id": "vuln-afede703d0c7", "labels": ["Vulnerability"]}, {"id": "vuln-db14d61bae9b", "labels": ["Vulnerability"]}, {"id": "vuln-19ebeb4acaf1", "labels": ["Vulnerability"]}, {"id": "vuln-79d68be09907", "labels": ["Vulnerability"]}, {"id": "vuln-1cc0e01969b4", "labels": ["Vulnerability"]}, {"id": "vuln-4a5042897a83", "labels": ["Vulnerability"]}, {"id": "vuln-0467c8f5f751", "labels": ["Vulnerability"]}, {"id": "vuln-79a2d9fadbf0", "labels": ["Vulnerability"]}, {"id": "vuln-684f18606318", "labels": ["Vulnerability"]}, {"id": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "labels": ["Endpoint"]}, {"id": "task-b63e99df66b2", "labels": ["Task"]}, {"id": "task-198bb17c1f42", "labels": ["Task"]}, {"id": "task-e4a6f72d751c", "labels": ["Task"]}, {"id": "task-efb62cc149ec", "labels": ["Task"]}, {"id": "task-255cb742a1d4", "labels": ["Task"]}, {"id": "task-fad01f08e7f7", "labels": ["Task"]}, {"id": "task-2c61c53ab4a3", "labels": ["Task"]}, {"id": "task-973c3a49b912", "labels": ["Task"]}, {"id": "task-726aadca0784", "labels": ["Task"]}, {"id": "task-530e4682d455", "labels": ["Task"]}, {"id": "task-1803c38365c0", "labels": ["Task"]}, {"id": "task-657a55725214", "labels": ["Task"]}, {"id": "task-9143ee80d7bc", "labels": ["Task"]}, {"id": "task-b96237495c34", "labels": ["Task"]}, {"id": "task-b28556be28fc", "labels": ["Task"]}, {"id": "task-61d8c81faed4", "labels": ["Task"]}, {"id": "task-b29623ee1ba6", "labels": ["Task"]}, {"id": "task-b575f90bdb1b", "labels": ["Task"]}, {"id": "task-985d601838e0", "labels": ["Task"]}, {"id": "task-eb0599feec3c", "labels": ["Task"]}, {"id": "task-7f6e3b0323f4", "labels": ["Task"]}, {"id": "task-3105cbe3c356", "labels": ["Task"]}, {"id": "task-ae70155c0e93", "labels": ["Task"]}, {"id": "task-fe95cdb22c72", "labels": ["Task"]}, {"id": "task-38b474d416bf", "labels": ["Task"]}, {"id": "task-4017f7e5ebd0", "labels": ["Task"]}, {"id": "task-7f44b5e91ac1", "labels": ["Task"]}, {"id": "task-3a8a88da16cf", "labels": ["Task"]}, {"id": "task-1fd12ee47d85", "labels": ["Task"]}, {"id": "task-b30c0e132a65", "labels": ["Task"]}, {"id": "task-57d253cf500a", "labels": ["Task"]}, {"id": "task-538a7e678077", "labels": ["Task"]}, {"id": "task-9517ec1dd958", "labels": ["Task"]}, {"id": "task-aac6916256d7", "labels": ["Task"]}, {"id": "task-4e2e774d2bdb", "labels": ["Task"]}, {"id": "task-faeb51f0a877", "labels": ["Task"]}], "edges": [{"source": "asset-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "type": "HAS_ENDPOINT"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-e1a3ed78c261", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-347ea562599d", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-284db716fb18", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-3cd1c63472dc", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-f953c58ddf74", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-94d82edcec13", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-47f774fed43e", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-3dc05ffa3c06", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-a704b2284cc7", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-a60b56b3f66e", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-cc61932af8dc", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-8bd506869290", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-598fadde9d8f", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-59765fa9bc12", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-c89b84e35d71", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-b03a242a6b13", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-3091cddf7e14", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-52de46eac522", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-59ed63cedcbe", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-d19d602d95e8", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-34c36a477e23", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-bcd19192baf8", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-98760d132247", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-ea874d088ae1", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-b150cdf6b3ea", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-afede703d0c7", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-db14d61bae9b", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-19ebeb4acaf1", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-79d68be09907", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-1cc0e01969b4", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-4a5042897a83", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-0467c8f5f751", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-79a2d9fadbf0", "type": "HAS_VULNERABILITY"}, {"source": "endpoint-eng-20260703094521-reconfix-20260703-uat-bugbounty.nonprod.syfe.com", "target": "vuln-684f18606318", "type": "HAS_VULNERABILITY"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

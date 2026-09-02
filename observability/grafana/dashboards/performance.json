@@ -1,0 +1,67 @@
+{
+  "dashboard": {
+    "title": "AI-OSOP Performance",
+    "tags": ["ai-osop", "performance", "latency", "throughput"],
+    "timezone": "utc",
+    "panels": [
+      {
+        "id": 1,
+        "title": "API Latency (p50/p95/p99)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(ai_osop_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50 {{path}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95 {{path}}"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(ai_osop_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p99 {{path}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Task Throughput",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_task_throughput_total[5m])",
+            "legendFormat": "{{agent_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Agent Execution Latency (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_agent_execution_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{agent_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "MCP Latency by Server (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_mcp_call_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{server_id}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      }
+    ],
+    "schemaVersion": 36,
+    "version": 1
+  }
+}

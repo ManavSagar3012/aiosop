@@ -1,0 +1,96 @@
+{
+  "dashboard": {
+    "title": "AI-OSOP Executive Overview",
+    "tags": ["ai-osop", "executive", "overview"],
+    "timezone": "utc",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Engagements",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_active_engagements",
+            "legendFormat": "Active"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Active Agents",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(ai_osop_active_agent_count)",
+            "legendFormat": "Total"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Queue Depth",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_queued_tasks",
+            "legendFormat": "Queued"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "Task Success Rate (24h)",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_tasks_completed_total[24h]) / rate(ai_osop_tasks_total[24h])",
+            "legendFormat": "Success Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 0.9},
+                {"color": "green", "value": 0.95}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "id": 5,
+        "title": "Task Throughput",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_task_throughput_total[5m])",
+            "legendFormat": "{{agent_type}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+      },
+      {
+        "id": 6,
+        "title": "API Latency (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{path}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+      }
+    ],
+    "schemaVersion": 36,
+    "version": 1
+  }
+}

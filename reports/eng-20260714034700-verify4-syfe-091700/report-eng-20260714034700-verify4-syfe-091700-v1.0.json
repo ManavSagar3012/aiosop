@@ -1,0 +1,18 @@
+{
+  "engagement_id": "eng-20260714034700-verify4-syfe-091700",
+  "date": "2026-07-14",
+  "version": "v1.0",
+  "risk_narrative": "",
+  "stats": {
+    "assets_count": 1,
+    "endpoints_count": 260,
+    "critical_count": 0,
+    "high_count": 0,
+    "medium_count": 0,
+    "low_count": 0,
+    "info_count": 0,
+    "total_findings": 0
+  },
+  "top_findings": [],
+  "findings": []
+}

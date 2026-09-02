@@ -422,46 +422,24 @@ async def _deep_probe() -> Dict[str, Any]:
         # old probe only exercised send_http_request (proxy/repeater, present in every
         # Burp edition), so it reported real_execution_verified even when the active
         # scanner was unavailable (Community/unlicensed), masking a real capability gap.
+        #
+        # BURP-COMMUNITY-001 (2026-08-31): the verdict is now three-way and honest
+        # per edition — Burp Community is reported as
+        # community_verified_internal_scanning (Burp passive layer verified + the
+        # internal engines AI-OSOP routes active scanning to, verified live)
+        # instead of a blanket scan_unavailable. The probe logic lives in
+        # ai_osop.adapters.burp_capabilities.burp_deep_channel_probe (injectable
+        # transport, unit-tested without sockets).
+        from functools import partial
+
+        from ai_osop.adapters.burp_capabilities import burp_deep_channel_probe
+
         async with httpx.AsyncClient() as c:
-            http_res = await execute(
-                c,
-                burp,
-                "send_http_request",
-                {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health", "method": "GET"},
-                20.0,
-            )
-            if http_res.get("status") != "success":
-                return ("failed", {"stage": "http", "detail": http_res})
-            # Active-scan capability check. scan_target on Community performs a
-            # probe via the HTTP engine and returns status "probe_completed" — that
-            # is NOT the active scanner, so it must not count as scan-capable.
-            # (v0.2.0 extension; the old 0.1.x extension errored at
-            # Scanner.startAudit instead, which also correctly read as
-            # scan_unavailable.)
-            scan_res = await execute(
-                c,
-                burp,
-                "scan_target",
-                {"url": f"http://127.0.0.1:{settings.mcp_server_port}/health"},
-                25.0,
-            )
-            scan_err = str(scan_res.get("error", "")) if isinstance(scan_res, dict) else ""
-            scan_status = scan_res.get("status", "") if isinstance(scan_res, dict) else ""
-            is_probe_fallback = scan_status == "probe_completed"
-            if scan_res and not scan_err and not is_probe_fallback:
-                return ("real_execution_verified", {"scan_capable": True, "http_verified": True})
-            # HTTP works but the active scanner does not — honest, distinct verdict so
-            # channels_verified no longer over-counts Burp as scan-ready.
-            reason = scan_err[:200]
-            if not reason and is_probe_fallback:
-                reason = "Burp Community fallback: active probe performed, but Burp Scanner is Pro-only"
-            return (
-                "scan_unavailable",
-                {
-                    "scan_capable": False,
-                    "http_verified": True,
-                    "reason": reason or "active scanner unavailable (requires Burp Suite Professional)",
-                },
+            return await burp_deep_channel_probe(
+                run_tool=partial(execute, c),
+                burp_base=burp,
+                nuclei_base=nuclei,
+                api_port=settings.mcp_server_port,
             )
 
     await asyncio.gather(
@@ -471,7 +449,11 @@ async def _deep_probe() -> Dict[str, Any]:
         probe("burp", burp_probe()),
     )
 
-    verified = sum(1 for v in channels.values() if v["verdict"] == "real_execution_verified")
+    # BURP-COMMUNITY-001: a Burp Community channel counts as verified when
+    # BOTH its passive layer and AI-OSOP's routed active-scanning engines are
+    # proven live — Community is a fully usable scanning channel, not a failure.
+    _VERIFIED_VERDICTS = {"real_execution_verified", "community_verified_internal_scanning"}
+    verified = sum(1 for v in channels.values() if v["verdict"] in _VERIFIED_VERDICTS)
     overall = (
         "real_execution_verified"
         if verified == len(channels)

@@ -35,11 +35,12 @@ Start-Mcp "threat-intel-mcp" (Join-Path $goDir "threat-intel-mcp.exe")
 Start-Mcp "security-bridge"  (Join-Path $goDir "security-bridge.exe")
 
 # Python servers (ports via --port; they read OSOP_*_MCP_* only for clients)
+# payload-mcp on 18083: 8083 is squatted by a foreign qosmos container (.env remap)
 Start-Mcp "browser-mcp"     $venvPy "mcp-servers/python/browser_mcp.py --port 8091"
 Start-Mcp "source-map-mcp"  $venvPy "mcp-servers/python/source_map_mcp.py --port 8096"
 Start-Mcp "turbo-intruder"  $venvPy "mcp-servers/python/turbo_intruder_mcp.py --port 8098"
 Start-Mcp "oast-mcp"        $venvPy "mcp-servers/python/oast_mcp.py --port 8099"
-Start-Mcp "payload-mcp"     $venvPy "mcp-servers/python/payload_mcp_server.py --port 8083"
+Start-Mcp "payload-mcp"     $venvPy "mcp-servers/python/payload_mcp_server.py --port 18083"
 Start-Mcp "cloud-mcp"       $venvPy "mcp-servers/python/cloud_mcp.py --port 8097"
 
 Start-Sleep -Seconds 6

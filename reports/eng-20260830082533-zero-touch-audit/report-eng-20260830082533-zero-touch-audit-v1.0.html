@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 1000px; margin: 0 auto; padding: 2rem; color: #24292e; }
+    h1, h2, h3 { color: #111; }
+    code { background: #f6f8fa; padding: 0.2em 0.4em; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; font-size: 85%; }
+    pre { background: #f6f8fa; padding: 16px; overflow: auto; border-radius: 3px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+    th, td { border: 1px solid #dfe2e5; padding: 6px 13px; }
+    th { background-color: #f6f8fa; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>CONFIDENTIAL / CLIENT-SENSITIVE</h1>
+<h1>Executive Summary</h1>
+<p><strong>Engagement ID:</strong> eng-20260830082533-zero-touch-audit
+<strong>Date Generated:</strong> 2026-08-30
+<strong>Version:</strong> v1.0</p>
+<h2>Risk Narrative</h2>
+<p><strong>CONFIDENTIAL</strong></p>
+<p><strong>Executive Risk Narrative — Engagement eng-20260830082533-zero-touch-audit</strong></p>
+<p>The assessment identified 16 total findings across 2 assets and 1 endpoint, of which 2 are rated Critical and 4 are rated High, with the remaining 10 classified as informational. The elevated-severity findings are heavily concentrated in a single technology: the Redis service and, specifically, its embedded Lua scripting subsystem. Two Critical memory-corruption vulnerabilities — an integer overflow in Lua script handling (affecting Redis prior to 8.2.1) and a use-after-free condition in the Lua parser (prior to 8.2.2) — represent remotely exploitable conditions that could allow arbitrary code execution under the service account. These are compounded by a High-severity cross-user escape of the Lua sandbox, an out-of-bounds read in Lua long-string parsing, and the presence of default credentials on the service. The default login exposure is particularly significant because it removes the authentication barrier that would otherwise gate an attacker's access to the vulnerable scripting engine.</p>
+<p>Taken together, these findings describe a realistic and efficient compromise chain: an attacker with network reachability to the endpoint could authenticate using default credentials, invoke the Lua engine, and leverage the sandbox escape or memory-corruption flaws to execute code — creating potential for data theft, service disruption, or use of the host as a foothold for lateral movement. Because the risk is concentrated on a single endpoint within a small asset footprint, remediation is highly tractable and should be treated as a priority: upgrade Redis to 8.2.2 or later (which resolves all four version-dependent findings), immediately remove default credentials and enforce strong authentication, restrict network exposure of the endpoint, and consider disabling Lua scripting if it is not operationally required. We recommend remediation within standard Critical/High service levels (e.g., 7 days for Critical, 30 days for High) followed by a validation retest. The 10 informational findings pose no immediate risk but should be reviewed as part of ongoing hardening. Until the Critical items are addressed, the affected endpoint should be regarded as carrying elevated compromise risk.</p>
+<p><strong>CONFIDENTIAL</strong></p>
+<h2>Assessment Overview</h2>
+<ul>
+<li><strong>Total Assets Discovered:</strong> 2</li>
+<li><strong>Total Endpoints Mapped:</strong> 1</li>
+<li><strong>Critical Vulnerabilities:</strong> 2</li>
+<li><strong>High Vulnerabilities:</strong> 4</li>
+</ul>
+<h2>Key Findings Summary</h2>
+<ul>
+<li>
+<p><strong>critical</strong>: Redis &lt; 8.2.1 lua script - Integer Overflow (rce)</p>
+</li>
+<li>
+<p><strong>critical</strong>: Redis Lua Parser &lt; 8.2.2 - Use After Free (rce)</p>
+</li>
+<li>
+<p><strong>high</strong>: Redis Lua Sandbox &lt; 8.2.2 - Cross-User Escape (rce)</p>
+</li>
+<li>
+<p><strong>high</strong>: Redis  &lt; 8.2.1 Lua Long-String Delimiter - Out-of-Bounds Read (rce)</p>
+</li>
+<li>
+<p><strong>high</strong>: Redis - Default Logins (unknown)</p>
+</li>
+</ul>
+<h1>CONFIDENTIAL / CLIENT-SENSITIVE</h1>
+<h1>Technical Details</h1>
+<p><strong>Engagement ID:</strong> eng-20260830082533-zero-touch-audit</p>
+<h2>Verified Vulnerabilities</h2>
+<h3>1. Redis &lt; 8.2.1 lua script - Integer Overflow</h3>
+<ul>
+<li><strong>Severity</strong>: critical</li>
+<li><strong>Type</strong>: rce</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1210 - Exploitation of Remote Services</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 9.8 (Critical)</li>
+</ul>
+<h4>Description</h4>
+<p>Redis is an open source, in-memory database that persists on disk. Versions 8.2.1 and below allow an authenticated user to use a specially crafted Lua script to cause an integer overflow and potentially lead to remote code execution The problem exists in all versions of Redis with Lua scripting. This issue is fixed in version 8.2.2.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;CVE-2025-46817&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:6379&quot;, &quot;url&quot;: &quot;127.0.0.1:6379&quot;, &quot;request&quot;: &quot;const redis = require('nuclei/redis');\nconst info = redis.GetServerInfo(Host, Port);\nExport(info);&quot;, &quot;response&quot;: &quot;# Server\r\nredis_version:7.0.15\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:e53ff17674aa6190\r\nredis_mode:standalone\r\nos:Linux 6.6.87.2-microsoft-standard-WSL2 x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:13.3.0\r\nprocess_id:183\r\nprocess_supervised:systemd\r\nrun_id:c4fd36f69fbeb77f9c93943a881955f0c1760c8b\r\ntcp_port:6379\r\nserver_time_usec:1788079386248426\r\nuptime_in_seconds:51154\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:9694490\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\nio_threads_active:0\r\n\r\n# Clients\r\nconnected_clients:1\r\ncluster_connections:0\r\nmaxclients:10000\r\nclient_recent_max_input_buffer:0\r\nclient_recent_max_output_buffer:0\r\nblocked_clients:0\r\ntracking_clients:0\r\nclients_in_timeout_table:0\r\n\r\n# Memory\r\nused_memory:1266736\r\nused_memory_human:1.21M\r\nused_memory_rss:9175040\r\nused_memory_rss_human:8.75M\r\nused_memory_peak:1532184\r\nused_memory_peak_human:1.46M\r\nused_memory_peak_perc:82.68%\r\nused_memory_overhead:879536\r\nused_memory_startup:876080\r\nused_memory_dataset:387200\r\nused_memory_dataset_perc:99.12%\r\nallocator_allocated:1855936\r\nallocator_active:2265088\r\nallocator_resident:7057408\r\ntotal_system_memory:8153923584\r\ntotal_system_memory_human:7.59G\r\nused_memory_lua:34816\r\nused_memory_vm_eval:34816\r\nused_memory_lua_human:34.00K\r\nused_memory_scripts_eval:152\r\nnumber_of_cached_scripts:1\r\nnumber_of_functions:0\r\nnumber_of_libraries:0\r\nused_memory_vm_functions:32768\r\nused_memory_vm_total:67584\r\nused_memory_vm_total_human:66.00K\r\nused_memory_functions:200\r\nused_memory_scripts:352\r\nused_memory_scripts_human:352B\r\nmaxmemory:0\r\nmaxmemory_human:0B\r\nmaxmemory_policy:noeviction\r\nallocator_frag_ratio:1.22\r\nallocator_frag_bytes:409152\r\nallocator_rss_ratio:3.12\r\nallocator_rss_bytes:4792320\r\nrss_overhead_ratio:1.30\r\nrss_overhead_bytes:2117632\r\nmem_fragmentation_ratio:7.48\r\nmem_fragmentation_bytes:7948216\r\nmem_not_counted_for_evict:0\r\nmem_replication_backlog:0\r\nmem_total_replication_buffers:0\r\nmem_clients_slaves:0\r\nmem_clients_normal:0\r\nmem_cluster_links:0\r\nmem_aof_buffer:0\r\nmem_allocator:jemalloc-5.3.0\r\nactive_defrag_running:0\r\nlazyfree_pending_objects:0\r\nlazyfreed_objects:0\r\n\r\n# Persistence\r\nloading:0\r\nasync_loading:0\r\ncurrent_cow_peak:0\r\ncurrent_cow_size:0\r\ncurrent_cow_size_age:0\r\ncurrent_fork_perc:0.00\r\ncurrent_save_keys_processed:0\r\ncurrent_save_keys_total:0\r\nrdb_changes_since_last_save:0\r\nrdb_bgsave_in_progress:0\r\nrdb_last_save_time:1788028232\r\nrdb_last_bgsave_status:ok\r\nrdb_last_bgsave_time_sec:-1\r\nrdb_current_bgsave_time_sec:-1\r\nrdb_saves:0\r\nrdb_last_cow_size:0\r\nrdb_last_load_keys_expired:0\r\nrdb_last_load_keys_loaded:64\r\naof_enabled:0\r\naof_rewrite_in_progress:0\r\naof_rewrite_scheduled:0\r\naof_last_rewrite_time_sec:-1\r\naof_current_rewrite_time_sec:-1\r\naof_last_bgrewrite_status:ok\r\naof_rewrites:0\r\naof_rewrites_consecutive_failures:0\r\naof_last_write_status:ok\r\naof_last_cow_size:0\r\nmodule_fork_in_progress:0\r\nmodule_fork_last_cow_size:0\r\n\r\n# Stats\r\ntotal_connections_received:2140\r\ntotal_commands_processed:3170\r\ninstantaneous_ops_per_sec:0\r\ntotal_net_input_bytes:288660\r\ntotal_net_output_bytes:4006220\r\ntotal_net_repl_input_bytes:0\r\ntotal_net_repl_output_bytes:0\r\ninstantaneous_input_kbps:0.00\r\ninstantaneous_output_kbps:0.00\r\ninstantaneous_input_repl_kbps:0.00\r\ninstantaneous_output_repl_kbps:0.00\r\nrejected_connections:0\r\nsync_full:0\r\nsync_partial_ok:0\r\nsync_partial_err:0\r\nexpired_keys:0\r\nexpired_stale_perc:0.0
+
+...[truncated 1697 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>3124b869b854bcb9fe5f4e346e2114b44791c7b1fc93a00d67b67188ca453f2d</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>2. Redis Lua Parser &lt; 8.2.2 - Use After Free</h3>
+<ul>
+<li><strong>Severity</strong>: critical</li>
+<li><strong>Type</strong>: rce</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1210 - Exploitation of Remote Services</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 9.8 (Critical)</li>
+</ul>
+<h4>Description</h4>
+<p>Redis is an open source, in-memory database that persists on disk. Versions 8.2.1 and below allow an authenticated user to use a specially crafted Lua script to manipulate the garbage collector, trigger a use-after-free and potentially lead to remote code execution. The problem exists in all versions of Redis with Lua scripting. This issue is fixed in version 8.2.2. To workaround this issue without patching the redis-server executable is to prevent users from executing Lua scripts. This can be done using ACL to restrict EVAL and EVALSHA commands.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;CVE-2025-49844&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:6379&quot;, &quot;url&quot;: &quot;127.0.0.1:6379&quot;, &quot;request&quot;: &quot;const redis = require('nuclei/redis');\nconst info = redis.GetServerInfo(Host, Port);\nExport(info);&quot;, &quot;response&quot;: &quot;# Server\r\nredis_version:7.0.15\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:e53ff17674aa6190\r\nredis_mode:standalone\r\nos:Linux 6.6.87.2-microsoft-standard-WSL2 x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:13.3.0\r\nprocess_id:183\r\nprocess_supervised:systemd\r\nrun_id:c4fd36f69fbeb77f9c93943a881955f0c1760c8b\r\ntcp_port:6379\r\nserver_time_usec:1788079386248426\r\nuptime_in_seconds:51154\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:9694490\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\nio_threads_active:0\r\n\r\n# Clients\r\nconnected_clients:1\r\ncluster_connections:0\r\nmaxclients:10000\r\nclient_recent_max_input_buffer:0\r\nclient_recent_max_output_buffer:0\r\nblocked_clients:0\r\ntracking_clients:0\r\nclients_in_timeout_table:0\r\n\r\n# Memory\r\nused_memory:1266736\r\nused_memory_human:1.21M\r\nused_memory_rss:9175040\r\nused_memory_rss_human:8.75M\r\nused_memory_peak:1532184\r\nused_memory_peak_human:1.46M\r\nused_memory_peak_perc:82.68%\r\nused_memory_overhead:879536\r\nused_memory_startup:876080\r\nused_memory_dataset:387200\r\nused_memory_dataset_perc:99.12%\r\nallocator_allocated:1855936\r\nallocator_active:2265088\r\nallocator_resident:7057408\r\ntotal_system_memory:8153923584\r\ntotal_system_memory_human:7.59G\r\nused_memory_lua:34816\r\nused_memory_vm_eval:34816\r\nused_memory_lua_human:34.00K\r\nused_memory_scripts_eval:152\r\nnumber_of_cached_scripts:1\r\nnumber_of_functions:0\r\nnumber_of_libraries:0\r\nused_memory_vm_functions:32768\r\nused_memory_vm_total:67584\r\nused_memory_vm_total_human:66.00K\r\nused_memory_functions:200\r\nused_memory_scripts:352\r\nused_memory_scripts_human:352B\r\nmaxmemory:0\r\nmaxmemory_human:0B\r\nmaxmemory_policy:noeviction\r\nallocator_frag_ratio:1.22\r\nallocator_frag_bytes:409152\r\nallocator_rss_ratio:3.12\r\nallocator_rss_bytes:4792320\r\nrss_overhead_ratio:1.30\r\nrss_overhead_bytes:2117632\r\nmem_fragmentation_ratio:7.48\r\nmem_fragmentation_bytes:7948216\r\nmem_not_counted_for_evict:0\r\nmem_replication_backlog:0\r\nmem_total_replication_buffers:0\r\nmem_clients_slaves:0\r\nmem_clients_normal:0\r\nmem_cluster_links:0\r\nmem_aof_buffer:0\r\nmem_allocator:jemalloc-5.3.0\r\nactive_defrag_running:0\r\nlazyfree_pending_objects:0\r\nlazyfreed_objects:0\r\n\r\n# Persistence\r\nloading:0\r\nasync_loading:0\r\ncurrent_cow_peak:0\r\ncurrent_cow_size:0\r\ncurrent_cow_size_age:0\r\ncurrent_fork_perc:0.00\r\ncurrent_save_keys_processed:0\r\ncurrent_save_keys_total:0\r\nrdb_changes_since_last_save:0\r\nrdb_bgsave_in_progress:0\r\nrdb_last_save_time:1788028232\r\nrdb_last_bgsave_status:ok\r\nrdb_last_bgsave_time_sec:-1\r\nrdb_current_bgsave_time_sec:-1\r\nrdb_saves:0\r\nrdb_last_cow_size:0\r\nrdb_last_load_keys_expired:0\r\nrdb_last_load_keys_loaded:64\r\naof_enabled:0\r\naof_rewrite_in_progress:0\r\naof_rewrite_scheduled:0\r\naof_last_rewrite_time_sec:-1\r\naof_current_rewrite_time_sec:-1\r\naof_last_bgrewrite_status:ok\r\naof_rewrites:0\r\naof_rewrites_consecutive_failures:0\r\naof_last_write_status:ok\r\naof_last_cow_size:0\r\nmodule_fork_in_progress:0\r\nmodule_fork_last_cow_size:0\r\n\r\n# Stats\r\ntotal_connections_received:2140\r\ntotal_commands_processed:3170\r\ninstantaneous_ops_per_sec:0\r\ntotal_net_input_bytes:288660\r\ntotal_net_output_bytes:4006220\r\ntotal_net_repl_input_bytes:0\r\ntotal_net_repl_output_bytes:0\r\ninstantaneous_input_kbps:0.00\r\ninstantaneous_output_kbps:0.00\r\ninstantaneous_input_repl_kbps:0.00\r\ninstantaneous_output_repl_kbps:0.00\r\nrejected_connections:0\r\nsync_full:0\r\nsync_partial_ok:0\r\nsync_partial_err:0\r\nexpired_keys:0\r\nexpired_stale_perc:0.0
+
+...[truncated 1697 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>3cf050a2f860533c8db77459a637c47d24cdd344f70a25c089ef7df8337fb3d8</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>3. Redis Lua Sandbox &lt; 8.2.2 - Cross-User Escape</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: rce</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1210 - Exploitation of Remote Services</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 8.1 (High)</li>
+</ul>
+<h4>Description</h4>
+<p>Redis is an open source, in-memory database that persists on disk. Versions 8.2.1 and below allow an authenticated user to use a specially crafted Lua script to manipulate different LUA objects and potentially run their own code in the context of another user. The problem exists in all versions of Redis with LUA scripting. This issue is fixed in version 8.2.2. A workaround to mitigate the problem without patching the redis-server executable is to prevent users from executing LUA scripts. This can be done using ACL to block a script by restricting both the EVAL and FUNCTION command families.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;CVE-2025-46818&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:6379&quot;, &quot;url&quot;: &quot;127.0.0.1:6379&quot;, &quot;request&quot;: &quot;const redis = require('nuclei/redis');\nconst info = redis.GetServerInfo(Host, Port);\nExport(info);&quot;, &quot;response&quot;: &quot;# Server\r\nredis_version:7.0.15\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:e53ff17674aa6190\r\nredis_mode:standalone\r\nos:Linux 6.6.87.2-microsoft-standard-WSL2 x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:13.3.0\r\nprocess_id:183\r\nprocess_supervised:systemd\r\nrun_id:c4fd36f69fbeb77f9c93943a881955f0c1760c8b\r\ntcp_port:6379\r\nserver_time_usec:1788079386248426\r\nuptime_in_seconds:51154\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:9694490\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\nio_threads_active:0\r\n\r\n# Clients\r\nconnected_clients:1\r\ncluster_connections:0\r\nmaxclients:10000\r\nclient_recent_max_input_buffer:0\r\nclient_recent_max_output_buffer:0\r\nblocked_clients:0\r\ntracking_clients:0\r\nclients_in_timeout_table:0\r\n\r\n# Memory\r\nused_memory:1266736\r\nused_memory_human:1.21M\r\nused_memory_rss:9175040\r\nused_memory_rss_human:8.75M\r\nused_memory_peak:1532184\r\nused_memory_peak_human:1.46M\r\nused_memory_peak_perc:82.68%\r\nused_memory_overhead:879536\r\nused_memory_startup:876080\r\nused_memory_dataset:387200\r\nused_memory_dataset_perc:99.12%\r\nallocator_allocated:1855936\r\nallocator_active:2265088\r\nallocator_resident:7057408\r\ntotal_system_memory:8153923584\r\ntotal_system_memory_human:7.59G\r\nused_memory_lua:34816\r\nused_memory_vm_eval:34816\r\nused_memory_lua_human:34.00K\r\nused_memory_scripts_eval:152\r\nnumber_of_cached_scripts:1\r\nnumber_of_functions:0\r\nnumber_of_libraries:0\r\nused_memory_vm_functions:32768\r\nused_memory_vm_total:67584\r\nused_memory_vm_total_human:66.00K\r\nused_memory_functions:200\r\nused_memory_scripts:352\r\nused_memory_scripts_human:352B\r\nmaxmemory:0\r\nmaxmemory_human:0B\r\nmaxmemory_policy:noeviction\r\nallocator_frag_ratio:1.22\r\nallocator_frag_bytes:409152\r\nallocator_rss_ratio:3.12\r\nallocator_rss_bytes:4792320\r\nrss_overhead_ratio:1.30\r\nrss_overhead_bytes:2117632\r\nmem_fragmentation_ratio:7.48\r\nmem_fragmentation_bytes:7948216\r\nmem_not_counted_for_evict:0\r\nmem_replication_backlog:0\r\nmem_total_replication_buffers:0\r\nmem_clients_slaves:0\r\nmem_clients_normal:0\r\nmem_cluster_links:0\r\nmem_aof_buffer:0\r\nmem_allocator:jemalloc-5.3.0\r\nactive_defrag_running:0\r\nlazyfree_pending_objects:0\r\nlazyfreed_objects:0\r\n\r\n# Persistence\r\nloading:0\r\nasync_loading:0\r\ncurrent_cow_peak:0\r\ncurrent_cow_size:0\r\ncurrent_cow_size_age:0\r\ncurrent_fork_perc:0.00\r\ncurrent_save_keys_processed:0\r\ncurrent_save_keys_total:0\r\nrdb_changes_since_last_save:0\r\nrdb_bgsave_in_progress:0\r\nrdb_last_save_time:1788028232\r\nrdb_last_bgsave_status:ok\r\nrdb_last_bgsave_time_sec:-1\r\nrdb_current_bgsave_time_sec:-1\r\nrdb_saves:0\r\nrdb_last_cow_size:0\r\nrdb_last_load_keys_expired:0\r\nrdb_last_load_keys_loaded:64\r\naof_enabled:0\r\naof_rewrite_in_progress:0\r\naof_rewrite_scheduled:0\r\naof_last_rewrite_time_sec:-1\r\naof_current_rewrite_time_sec:-1\r\naof_last_bgrewrite_status:ok\r\naof_rewrites:0\r\naof_rewrites_consecutive_failures:0\r\naof_last_write_status:ok\r\naof_last_cow_size:0\r\nmodule_fork_in_progress:0\r\nmodule_fork_last_cow_size:0\r\n\r\n# Stats\r\ntotal_connections_received:2140\r\ntotal_commands_processed:3170\r\ninstantaneous_ops_per_sec:0\r\ntotal_net_input_bytes:288660\r\ntotal_net_output_bytes:4006220\r\ntotal_net_repl_input_bytes:0\r\ntotal_net_repl_output_bytes:0\r\ninstantaneous_input_kbps:0.00\r\ninstantaneous_output_kbps:0.00\r\ninstantaneous_input_repl_kbps:0.00\r\ninstantaneous_output_repl_kbps:0.00\r\nrejected_connections:0\r\nsync_full:0\r\nsync_partial_ok:0\r\nsync_partial_err:0\r\nexpired_keys:0\r\nexpired_stale_perc:0.0
+
+...[truncated 1697 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>7644a47004d29243a3c1aea09846048b4c7ee06242e07d85ba04f97d19840215</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>4. Redis  &lt; 8.2.1 Lua Long-String Delimiter - Out-of-Bounds Read</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: rce</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1210 - Exploitation of Remote Services</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 8.1 (High)</li>
+</ul>
+<h4>Description</h4>
+<p>Redis is an open source, in-memory database that persists on disk. Versions 8.2.1 and below allow an authenticated user to use a specially crafted LUA script to read out-of-bound data or crash the server and subsequent denial of service. The problem exists in all versions of Redis with Lua scripting. This issue is fixed in version 8.2.2. To workaround this issue without patching the redis-server executable is to prevent users from executing Lua scripts. This can be done using ACL to block a script by restricting both the EVAL and FUNCTION command families.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;CVE-2025-46819&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:6379&quot;, &quot;url&quot;: &quot;127.0.0.1:6379&quot;, &quot;request&quot;: &quot;const redis = require('nuclei/redis');\nconst info = redis.GetServerInfo(Host, Port);\nExport(info);&quot;, &quot;response&quot;: &quot;# Server\r\nredis_version:7.0.15\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:e53ff17674aa6190\r\nredis_mode:standalone\r\nos:Linux 6.6.87.2-microsoft-standard-WSL2 x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:13.3.0\r\nprocess_id:183\r\nprocess_supervised:systemd\r\nrun_id:c4fd36f69fbeb77f9c93943a881955f0c1760c8b\r\ntcp_port:6379\r\nserver_time_usec:1788079386248426\r\nuptime_in_seconds:51154\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:9694490\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\nio_threads_active:0\r\n\r\n# Clients\r\nconnected_clients:1\r\ncluster_connections:0\r\nmaxclients:10000\r\nclient_recent_max_input_buffer:0\r\nclient_recent_max_output_buffer:0\r\nblocked_clients:0\r\ntracking_clients:0\r\nclients_in_timeout_table:0\r\n\r\n# Memory\r\nused_memory:1266736\r\nused_memory_human:1.21M\r\nused_memory_rss:9175040\r\nused_memory_rss_human:8.75M\r\nused_memory_peak:1532184\r\nused_memory_peak_human:1.46M\r\nused_memory_peak_perc:82.68%\r\nused_memory_overhead:879536\r\nused_memory_startup:876080\r\nused_memory_dataset:387200\r\nused_memory_dataset_perc:99.12%\r\nallocator_allocated:1855936\r\nallocator_active:2265088\r\nallocator_resident:7057408\r\ntotal_system_memory:8153923584\r\ntotal_system_memory_human:7.59G\r\nused_memory_lua:34816\r\nused_memory_vm_eval:34816\r\nused_memory_lua_human:34.00K\r\nused_memory_scripts_eval:152\r\nnumber_of_cached_scripts:1\r\nnumber_of_functions:0\r\nnumber_of_libraries:0\r\nused_memory_vm_functions:32768\r\nused_memory_vm_total:67584\r\nused_memory_vm_total_human:66.00K\r\nused_memory_functions:200\r\nused_memory_scripts:352\r\nused_memory_scripts_human:352B\r\nmaxmemory:0\r\nmaxmemory_human:0B\r\nmaxmemory_policy:noeviction\r\nallocator_frag_ratio:1.22\r\nallocator_frag_bytes:409152\r\nallocator_rss_ratio:3.12\r\nallocator_rss_bytes:4792320\r\nrss_overhead_ratio:1.30\r\nrss_overhead_bytes:2117632\r\nmem_fragmentation_ratio:7.48\r\nmem_fragmentation_bytes:7948216\r\nmem_not_counted_for_evict:0\r\nmem_replication_backlog:0\r\nmem_total_replication_buffers:0\r\nmem_clients_slaves:0\r\nmem_clients_normal:0\r\nmem_cluster_links:0\r\nmem_aof_buffer:0\r\nmem_allocator:jemalloc-5.3.0\r\nactive_defrag_running:0\r\nlazyfree_pending_objects:0\r\nlazyfreed_objects:0\r\n\r\n# Persistence\r\nloading:0\r\nasync_loading:0\r\ncurrent_cow_peak:0\r\ncurrent_cow_size:0\r\ncurrent_cow_size_age:0\r\ncurrent_fork_perc:0.00\r\ncurrent_save_keys_processed:0\r\ncurrent_save_keys_total:0\r\nrdb_changes_since_last_save:0\r\nrdb_bgsave_in_progress:0\r\nrdb_last_save_time:1788028232\r\nrdb_last_bgsave_status:ok\r\nrdb_last_bgsave_time_sec:-1\r\nrdb_current_bgsave_time_sec:-1\r\nrdb_saves:0\r\nrdb_last_cow_size:0\r\nrdb_last_load_keys_expired:0\r\nrdb_last_load_keys_loaded:64\r\naof_enabled:0\r\naof_rewrite_in_progress:0\r\naof_rewrite_scheduled:0\r\naof_last_rewrite_time_sec:-1\r\naof_current_rewrite_time_sec:-1\r\naof_last_bgrewrite_status:ok\r\naof_rewrites:0\r\naof_rewrites_consecutive_failures:0\r\naof_last_write_status:ok\r\naof_last_cow_size:0\r\nmodule_fork_in_progress:0\r\nmodule_fork_last_cow_size:0\r\n\r\n# Stats\r\ntotal_connections_received:2140\r\ntotal_commands_processed:3170\r\ninstantaneous_ops_per_sec:0\r\ntotal_net_input_bytes:288660\r\ntotal_net_output_bytes:4006220\r\ntotal_net_repl_input_bytes:0\r\ntotal_net_repl_output_bytes:0\r\ninstantaneous_input_kbps:0.00\r\ninstantaneous_output_kbps:0.00\r\ninstantaneous_input_repl_kbps:0.00\r\ninstantaneous_output_repl_kbps:0.00\r\nrejected_connections:0\r\nsync_full:0\r\nsync_partial_ok:0\r\nsync_partial_err:0\r\nexpired_keys:0\r\nexpired_stale_perc:0.0
+
+...[truncated 1697 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>8ac1b1cf4fd2d8257d1e5b4b2dd7cc0e606cd599d5b9a1f8b6e0f4db82442b5f</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>5. Redis - Default Logins</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 8.1 (High)</li>
+</ul>
+<h4>Description</h4>
+<p>Redis service was accessed with easily guessed credentials.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;redis-default-logins&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:6379&quot;, &quot;url&quot;: &quot;127.0.0.1:6379&quot;, &quot;request&quot;: &quot;var m = require(\&quot;nuclei/redis\&quot;);\nm.GetServerInfoAuth(Host, Port, Password);&quot;, &quot;response&quot;: &quot;# Server\r\nredis_version:7.0.15\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:e53ff17674aa6190\r\nredis_mode:standalone\r\nos:Linux 6.6.87.2-microsoft-standard-WSL2 x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:13.3.0\r\nprocess_id:183\r\nprocess_supervised:systemd\r\nrun_id:c4fd36f69fbeb77f9c93943a881955f0c1760c8b\r\ntcp_port:6379\r\nserver_time_usec:1788079386438254\r\nuptime_in_seconds:51154\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:9694490\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\nio_threads_active:0\r\n\r\n# Clients\r\nconnected_clients:1\r\ncluster_connections:0\r\nmaxclients:10000\r\nclient_recent_max_input_buffer:20480\r\nclient_recent_max_output_buffer:0\r\nblocked_clients:0\r\ntracking_clients:0\r\nclients_in_timeout_table:0\r\n\r\n# Memory\r\nused_memory:1266736\r\nused_memory_human:1.21M\r\nused_memory_rss:9175040\r\nused_memory_rss_human:8.75M\r\nused_memory_peak:1532184\r\nused_memory_peak_human:1.46M\r\nused_memory_peak_perc:82.68%\r\nused_memory_overhead:879536\r\nused_memory_startup:876080\r\nused_memory_dataset:387200\r\nused_memory_dataset_perc:99.12%\r\nallocator_allocated:1856400\r\nallocator_active:2265088\r\nallocator_resident:7057408\r\ntotal_system_memory:8153923584\r\ntotal_system_memory_human:7.59G\r\nused_memory_lua:35840\r\nused_memory_vm_eval:35840\r\nused_memory_lua_human:35.00K\r\nused_memory_scripts_eval:152\r\nnumber_of_cached_scripts:1\r\nnumber_of_functions:0\r\nnumber_of_libraries:0\r\nused_memory_vm_functions:32768\r\nused_memory_vm_total:68608\r\nused_memory_vm_total_human:67.00K\r\nused_memory_functions:200\r\nused_memory_scripts:352\r\nused_memory_scripts_human:352B\r\nmaxmemory:0\r\nmaxmemory_human:0B\r\nmaxmemory_policy:noeviction\r\nallocator_frag_ratio:1.22\r\nallocator_frag_bytes:408688\r\nallocator_rss_ratio:3.12\r\nallocator_rss_bytes:4792320\r\nrss_overhead_ratio:1.30\r\nrss_overhead_bytes:2117632\r\nmem_fragmentation_ratio:7.25\r\nmem_fragmentation_bytes:7910104\r\nmem_not_counted_for_evict:0\r\nmem_replication_backlog:0\r\nmem_total_replication_buffers:0\r\nmem_clients_slaves:0\r\nmem_clients_normal:0\r\nmem_cluster_links:0\r\nmem_aof_buffer:0\r\nmem_allocator:jemalloc-5.3.0\r\nactive_defrag_running:0\r\nlazyfree_pending_objects:0\r\nlazyfreed_objects:0\r\n\r\n# Persistence\r\nloading:0\r\nasync_loading:0\r\ncurrent_cow_peak:0\r\ncurrent_cow_size:0\r\ncurrent_cow_size_age:0\r\ncurrent_fork_perc:0.00\r\ncurrent_save_keys_processed:0\r\ncurrent_save_keys_total:0\r\nrdb_changes_since_last_save:0\r\nrdb_bgsave_in_progress:0\r\nrdb_last_save_time:1788028232\r\nrdb_last_bgsave_status:ok\r\nrdb_last_bgsave_time_sec:-1\r\nrdb_current_bgsave_time_sec:-1\r\nrdb_saves:0\r\nrdb_last_cow_size:0\r\nrdb_last_load_keys_expired:0\r\nrdb_last_load_keys_loaded:64\r\naof_enabled:0\r\naof_rewrite_in_progress:0\r\naof_rewrite_scheduled:0\r\naof_last_rewrite_time_sec:-1\r\naof_current_rewrite_time_sec:-1\r\naof_last_bgrewrite_status:ok\r\naof_rewrites:0\r\naof_rewrites_consecutive_failures:0\r\naof_last_write_status:ok\r\naof_last_cow_size:0\r\nmodule_fork_in_progress:0\r\nmodule_fork_last_cow_size:0\r\n\r\n# Stats\r\ntotal_connections_received:2146\r\ntotal_commands_processed:3185\r\ninstantaneous_ops_per_sec:8\r\ntotal_net_input_bytes:289698\r\ntotal_net_output_bytes:4012620\r\ntotal_net_repl_input_bytes:0\r\ntotal_net_repl_output_bytes:0\r\ninstantaneous_input_kbps:0.58\r\ninstantaneous_output_kbps:3.85\r\ninstantaneous_input_repl_kbps:0.00\r\ninstantaneous_output_repl_kbps:0.00\r\nrejected_connections:0\r\nsync_full:0\r\nsync_partial_ok:0\r\nsync_partial_err:0\r\nexpired_keys:0\r\nexpired_stale_perc:0.00\r\nexpired
+
+...[truncated 1679 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>f0f965bc69a342d5c804dcda16939ef5c46b0cd57c9e62dbd3086e0bcb549e8e</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>6. Redis Server - Unauthenticated Access</h3>
+<ul>
+<li><strong>Severity</strong>: high</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 8.1 (High)</li>
+</ul>
+<h4>Description</h4>
+<p>Redis server without any required authentication was discovered.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;exposed-redis&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:6379&quot;, &quot;url&quot;: &quot;127.0.0.1:6379&quot;, &quot;request&quot;: &quot;info\r\nquit\r\n&quot;, &quot;response&quot;: &quot;$5018\r\n# Server\r\nredis_version:7.0.15\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:e53ff17674aa6190\r\nredis_mode:standalone\r\nos:Linux 6.6.87.2-microsoft-standard-WSL2 x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:13.3.0\r\nprocess_id:183\r\nprocess_supervised:systemd\r\nrun_id:c4fd36f69fbeb77f9c93943a881955f0c1760c8b\r\ntcp_port:6379\r\nserver_time_usec:1788079388921064\r\nuptime_in_seconds:51156\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:9694492\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\nio_threads_active:0\r\n\r\n# Clients\r\nconnected_clients:2\r\ncluster_connections:0\r\nmaxclients:10000\r\nclient_recent_max_input_buffer:20524\r\nclient_recent_max_output_buffer:0\r\nblocked_clients:0\r\ntracking_clients:0\r\nclients_in_timeout_table:0\r\n\r\n# Memory\r\nused_memory:1289576\r\nused_memory_human:1.23M\r\nused_memory_rss:9175040\r\nused_memory_rss_human:8.75M\r\nused_memory_peak:1532184\r\nused_memory_peak_human:1.46M\r\nused_memory_peak_perc:84.17%\r\nused_memory_overhead:901836\r\nused_memory_startup:876080\r\nused_memory_dataset:387740\r\nused_memory_dataset_perc:93.77%\r\nallocator_allocated:1745808\r\nallocator_active:2129920\r\nallocator_resident:7057408\r\ntotal_system_memory:8153923584\r\ntotal_system_memory_human:7.59G\r\nused_memory_lua:35840\r\nused_memory_vm_eval:35840\r\nused_memory_lua_human:35.00K\r\nused_memory_scripts_eval:152\r\nnumber_of_cached_scripts:1\r\nnumber_of_functions:0\r\nnumber_of_libraries:0\r\nused_memory_vm_functions:32768\r\nused_memory_vm_total:68608\r\nused_memory_vm_total_human:67.00K\r\nused_memory_functions:200\r\nused_memory_scripts:352\r\nused_memory_scripts_human:352B\r\nmaxmemory:0\r\nmaxmemory_human:0B\r\nmaxmemory_policy:noeviction\r\nallocator_frag_ratio:1.22\r\nallocator_frag_bytes:384112\r\nallocator_rss_ratio:3.31\r\nallocator_rss_bytes:4927488\r\nrss_overhead_ratio:1.30\r\nrss_overhead_bytes:2117632\r\nmem_fragmentation_ratio:7.34\r\nmem_fragmentation_bytes:7925400\r\nmem_not_counted_for_evict:0\r\nmem_replication_backlog:0\r\nmem_total_replication_buffers:&quot;, &quot;extracted_results&quot;: null}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>d72e43bde090c3a63d185d54d5a69a97cb4900fd9b729ea09f76b768875ba3d6</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>7. Public Swagger API - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Public Swagger API was detected.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;swagger-api&quot;, &quot;matched_at&quot;: &quot;http://127.0.0.1//api-docs/swagger.yaml&quot;, &quot;url&quot;: &quot;http://127.0.0.1/&quot;, &quot;request&quot;: &quot;GET //api-docs/swagger.yaml HTTP/1.1\r\nHost: 127.0.0.1\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.3 Safari/605.1.15\r\nAccept: text/html, application/json\r\nAccept-Language: en\r\nAccept-Encoding: gzip\r\n\r\n&quot;, &quot;response&quot;: &quot;HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: text/html; charset=utf-8\r\nDate: Sun, 30 Aug 2026 08:41:13 GMT\r\nEtag: W/\&quot;c22-H8FH9nKD8DeX/nvIRrte6ZjP2a4\&quot;\r\nFeature-Policy: payment 'self'\r\nVary: Accept-Encoding\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\nX-Recruiting: /#/jobs\r\n\r\n\n&lt;!-- HTML for static distribution bundle build --&gt;\n&lt;!DOCTYPE html&gt;\n&lt;html lang=\&quot;en\&quot;&gt;\n&lt;head&gt;\n  &lt;meta charset=\&quot;UTF-8\&quot;&gt;\n  \n  &lt;title&gt;Swagger UI&lt;/title&gt;\n  &lt;link rel=\&quot;stylesheet\&quot; type=\&quot;text/css\&quot; href=\&quot;./swagger-ui.css\&quot; &gt;\n  &lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;./favicon-32x32.png\&quot; sizes=\&quot;32x32\&quot; /&gt;&lt;link rel=\&quot;icon\&quot; type=\&quot;image/png\&quot; href=\&quot;./favicon-16x16.png\&quot; sizes=\&quot;16x16\&quot; /&gt;\n  &lt;style&gt;\n    html\n    {\n      box-sizing: border-box;\n      overflow: -moz-scrollbars-vertical;\n      overflow-y: scroll;\n    }\n    *,\n    *:before,\n    *:after\n    {\n      box-sizing: inherit;\n    }\n\n    body {\n      margin:0;\n      background: #fafafa;\n    }\n  &lt;/style&gt;\n&lt;/head&gt;\n\n&lt;body&gt;\n\n&lt;svg xmlns=\&quot;http://www.w3.org/2000/svg\&quot; xmlns:xlink=\&quot;http://www.w3.org/1999/xlink\&quot; style=\&quot;position:absolute;width:0;height:0\&quot;&gt;\n  &lt;defs&gt;\n    &lt;symbol viewBox=\&quot;0 0 20 20\&quot; id=\&quot;unlocked\&quot;&gt;\n      &lt;path d=\&quot;M15.8 8H14V5.6C14 2.703 12.665 1 10 1 7.334 1 6 2.703 6 5.6V6h2v-.801C8 3.754 8.797 3 10 3c1.203 0 2 .754 2 2.199V8H4c-.553 0-1 .646-1 1.199V17c0 .549.428 1.139.951 1.307l1.197.387C5.672 18.861 6.55 19 7.1 19h5.8c.549 0 1.428-.139 1.951-.307l1.196-.387c.524-.167.953-.757.953-1.306V9.199C17 8.646 16.352 8 15.8 8z\&quot;&gt;&lt;/path&gt;\n    &lt;/symbol&gt;\n\n    &lt;symbol viewBox=\&quot;0 0 20 20\&quot; id=\&quot;locked\&quot;&gt;\n      &lt;path d=\&quot;M15.8 8H14V5.6C14 2.703 12.665 1 10 1 7.334 1 6 2.703 6 5.6V8H4c-.553 0-1 .646-1 1.199V17c0 .549.428 1.139.951 1.307l1.197.387C5.672 18.861 6.55 19 7.1 19h5.8c.549 0 1.428-.139 1.951-.307l1.196-.387c.524-.167.953-.757.953-1.306V9.199C17 8.646 16.352 8 15.8 8zM12 8H8V5.199C8 3.754 8.797 3 10 3c1.203 0 2 .754 2 2.199V8z\&quot;/&gt;\n    &lt;/symbol&gt;\n\n    &lt;symbol viewBox=\&quot;0 0 20 20\&quot; id=\&quot;close\&quot;&gt;\n      &lt;path d=\&quot;M14.348 14.849c-.469.469-1.229.469-1.697 0L10 11.819l-2.651 3.029c-.469.469-1.229.469-1.697 0-.469-.469-.469-1.229 0-1.697l2.758-3.15-2.759-3.152c-.469-.469-.469-1.228 0-1.697.469-.469 1.228-.469 1.697 0L10 8.183l2.651-3.031c.469-.469 1.228-.469 1.697 0 .469.469.469 1.229 0 1.697l-2.758 3.152 2.758 3.15c.469.469.469 1.229 0 1.698z\&quot;/&gt;\n    &lt;/symbol&gt;\n\n    &lt;symbol viewBox=\&quot;0 0 20 20\&quot; id=\&quot;large-arrow\&quot;&gt;\n      &lt;path d=\&quot;M13.25 10L6.109 2.58c-.268-.27-.268-.707 0-.979.268-.27.701-.27.969 0l7.83 7.908c.268.271.268.709 0 .979l-7.83 7.908c-.268.271-.701.27-.969 0-.268-.269-.268-.707 0-.979L13.25 10z\&quot;/&gt;\n    &lt;/symbol&gt;\n\n    &lt;symbol viewBox=\&quot;0 0 20 20\&quot; id=\&quot;large-arrow-down\&quot;&gt;\n      &lt;path d=\&quot;M17.418 6.109c.272-.268.709-.268.979 0s.271.701 0 .969l-7.908 7.83c-.27.268-.707.268-.979 0l-7.908-7.83c-.27-.268-.27-.701 0-.969.271-.268.709-.268.979 0L10 13.25l7.418-7.141z\&quot;/&gt;\n    &lt;/symbol&gt;\n\n\n    &lt;symbol viewBox=\&quot;0 0 24 24\&quot; id=\&quot;jump-to\&quot;&gt;\n      &lt;path d=\&quot;M19 7v4H5.83l3.58-3.59L8 6l-6 6 6 6 1.41-1.41L5.83 13H21V7z\&quot;/&gt;\n    &lt;/symbol&gt;\n\n    &lt;symbol viewBox=\&quot;0 0 24 24\&quot; id=\&quot;expand\&quot;&gt;\n      &lt;path d=\&quot;M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z\&quot;/&gt;\n    &lt;/symbol&gt;\n\n  &lt;/defs&gt;\n&lt;/svg&gt;\n\n&lt;div id=\&quot;swagger-ui\&quot;&gt;&lt;/div&gt;\n\n&lt;script src=\&quot;./swagger-ui-bundle.js\&quot;&gt; &lt;/script&gt;\n&lt;script src=\&quot;./swagger-ui-standalone-preset.js\&quot;&gt; &lt;/script&gt;\n&lt;script src=\&quot;./swagger-ui-init.js\&quot;&gt; &lt;/script&gt;\n\n\n\n&lt;sty
+
+...[truncated 138 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>55dc30d24eac5b89e495077862aaa40a513910fdb43a7bffe65da0600d87a3a3</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>8. MySQL Info - Enumeration</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: sqli</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A03:2021-Injection</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Connects to a MySQL server and prints information such as the protocol and version numbers</p>
+<h4>Remediation</h4>
+<p>Use parameterized queries / prepared statements; never concatenate input.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;mysql-info&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:3306&quot;, &quot;url&quot;: &quot;127.0.0.1:3306&quot;, &quot;request&quot;: &quot;var m = require(\&quot;nuclei/mysql\&quot;);\nvar c = m.MySQLClient();\nvar response = c.FingerprintMySQL(Host, Port);\nExport(response);&quot;, &quot;response&quot;: &quot;{\n  \&quot;Host\&quot;: \&quot;127.0.0.1\&quot;,\n  \&quot;IP\&quot;: \&quot;invalid IP\&quot;,\n  \&quot;Port\&quot;: 0,\n  \&quot;Protocol\&quot;: \&quot;mysql\&quot;,\n  \&quot;TLS\&quot;: false,\n  \&quot;Transport\&quot;: \&quot;tcp\&quot;,\n  \&quot;Version\&quot;: \&quot;8.0.36\&quot;,\n  \&quot;Debug\&quot;: {\n    \&quot;PacketType\&quot;: \&quot;handshake\&quot;,\n    \&quot;ErrorMessage\&quot;: \&quot;\&quot;,\n    \&quot;ErrorCode\&quot;: 0\n  },\n  \&quot;Raw\&quot;: \&quot;{\\\&quot;packetType\\\&quot;:\\\&quot;handshake\\\&quot;,\\\&quot;errorMsg\\\&quot;:\\\&quot;\\\&quot;,\\\&quot;errorCode\\\&quot;:0}\&quot;\n}&quot;, &quot;extracted_results&quot;: [&quot;Version: 8.0.36&quot;, &quot;Transport: tcp&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>061c55eb2948b6f5ddf1722f5bca9ae3d37c8b197d9d74aae2101250223fa7d8</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>9. Redis Info - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Retrieves information (such as version number and architecture) from a Redis key-value store.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;redis-info&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:6379&quot;, &quot;url&quot;: &quot;127.0.0.1:6379&quot;, &quot;request&quot;: &quot;const redis = require('nuclei/redis');\nconst info = redis.GetServerInfo(Host, Port);\nExport(info);&quot;, &quot;response&quot;: &quot;# Server\r\nredis_version:7.0.15\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:e53ff17674aa6190\r\nredis_mode:standalone\r\nos:Linux 6.6.87.2-microsoft-standard-WSL2 x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:13.3.0\r\nprocess_id:183\r\nprocess_supervised:systemd\r\nrun_id:c4fd36f69fbeb77f9c93943a881955f0c1760c8b\r\ntcp_port:6379\r\nserver_time_usec:1788079386248426\r\nuptime_in_seconds:51154\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:9694490\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\nio_threads_active:0\r\n\r\n# Clients\r\nconnected_clients:1\r\ncluster_connections:0\r\nmaxclients:10000\r\nclient_recent_max_input_buffer:0\r\nclient_recent_max_output_buffer:0\r\nblocked_clients:0\r\ntracking_clients:0\r\nclients_in_timeout_table:0\r\n\r\n# Memory\r\nused_memory:1266736\r\nused_memory_human:1.21M\r\nused_memory_rss:9175040\r\nused_memory_rss_human:8.75M\r\nused_memory_peak:1532184\r\nused_memory_peak_human:1.46M\r\nused_memory_peak_perc:82.68%\r\nused_memory_overhead:879536\r\nused_memory_startup:876080\r\nused_memory_dataset:387200\r\nused_memory_dataset_perc:99.12%\r\nallocator_allocated:1855936\r\nallocator_active:2265088\r\nallocator_resident:7057408\r\ntotal_system_memory:8153923584\r\ntotal_system_memory_human:7.59G\r\nused_memory_lua:34816\r\nused_memory_vm_eval:34816\r\nused_memory_lua_human:34.00K\r\nused_memory_scripts_eval:152\r\nnumber_of_cached_scripts:1\r\nnumber_of_functions:0\r\nnumber_of_libraries:0\r\nused_memory_vm_functions:32768\r\nused_memory_vm_total:67584\r\nused_memory_vm_total_human:66.00K\r\nused_memory_functions:200\r\nused_memory_scripts:352\r\nused_memory_scripts_human:352B\r\nmaxmemory:0\r\nmaxmemory_human:0B\r\nmaxmemory_policy:noeviction\r\nallocator_frag_ratio:1.22\r\nallocator_frag_bytes:409152\r\nallocator_rss_ratio:3.12\r\nallocator_rss_bytes:4792320\r\nrss_overhead_ratio:1.30\r\nrss_overhead_bytes:2117632\r\nmem_fragmentation_ratio:7.48\r\nmem_fragmentation_bytes:7948216\r\nmem_not_counted_for_evict:0\r\nmem_replication_backlog:0\r\nmem_total_replication_buffers:0\r\nmem_clients_slaves:0\r\nmem_clients_normal:0\r\nmem_cluster_links:0\r\nmem_aof_buffer:0\r\nmem_allocator:jemalloc-5.3.0\r\nactive_defrag_running:0\r\nlazyfree_pending_objects:0\r\nlazyfreed_objects:0\r\n\r\n# Persistence\r\nloading:0\r\nasync_loading:0\r\ncurrent_cow_peak:0\r\ncurrent_cow_size:0\r\ncurrent_cow_size_age:0\r\ncurrent_fork_perc:0.00\r\ncurrent_save_keys_processed:0\r\ncurrent_save_keys_total:0\r\nrdb_changes_since_last_save:0\r\nrdb_bgsave_in_progress:0\r\nrdb_last_save_time:1788028232\r\nrdb_last_bgsave_status:ok\r\nrdb_last_bgsave_time_sec:-1\r\nrdb_current_bgsave_time_sec:-1\r\nrdb_saves:0\r\nrdb_last_cow_size:0\r\nrdb_last_load_keys_expired:0\r\nrdb_last_load_keys_loaded:64\r\naof_enabled:0\r\naof_rewrite_in_progress:0\r\naof_rewrite_scheduled:0\r\naof_last_rewrite_time_sec:-1\r\naof_current_rewrite_time_sec:-1\r\naof_last_bgrewrite_status:ok\r\naof_rewrites:0\r\naof_rewrites_consecutive_failures:0\r\naof_last_write_status:ok\r\naof_last_cow_size:0\r\nmodule_fork_in_progress:0\r\nmodule_fork_last_cow_size:0\r\n\r\n# Stats\r\ntotal_connections_received:2140\r\ntotal_commands_processed:3170\r\ninstantaneous_ops_per_sec:0\r\ntotal_net_input_bytes:288660\r\ntotal_net_output_bytes:4006220\r\ntotal_net_repl_input_bytes:0\r\ntotal_net_repl_output_bytes:0\r\ninstantaneous_input_kbps:0.00\r\ninstantaneous_output_kbps:0.00\r\ninstantaneous_input_repl_kbps:0.00\r\ninstantaneous_output_repl_kbps:0.00\r\nrejected_connections:0\r\nsync_full:0\r\nsync_partial_ok:0\r\nsync_partial_err:0\r\nexpired_keys:0\r\nexpired_stale_perc:0.00\r\
+
+...[truncated 1865 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>32892898a850dd87df324514d4661a323f59e7da4bb9c80d12469f678f093980</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>10. SMB Version - Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>SMB version detection involves identifying the specific Server Message Block protocol version used by a system or network. This process is crucial for ensuring compatibility and security, as different SMB versions may have distinct features and vulnerabilities.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;smb-version-detect&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:445&quot;, &quot;url&quot;: &quot;127.0.0.1:445&quot;, &quot;request&quot;: &quot;let m = require(\&quot;nuclei/smb\&quot;);\nlet c = new m.SMBClient();\nlet response = c.ConnectSMBInfoMode(Host, Port);\nExport(response);&quot;, &quot;response&quot;: &quot;{\n  \&quot;SupportV1\&quot;: false,\n  \&quot;Version\&quot;: {\n    \&quot;Major\&quot;: 2,\n    \&quot;Minor\&quot;: 1,\n    \&quot;Revision\&quot;: 0,\n    \&quot;VerString\&quot;: \&quot;SMB 2.1\&quot;\n  },\n  \&quot;NativeOs\&quot;: \&quot;\&quot;,\n  \&quot;NTLM\&quot;: \&quot;\&quot;,\n  \&quot;GroupName\&quot;: \&quot;\&quot;,\n  \&quot;Capabilities\&quot;: {\n    \&quot;DFSSupport\&quot;: true,\n    \&quot;Leasing\&quot;: true,\n    \&quot;LargeMTU\&quot;: true,\n    \&quot;MultiChan\&quot;: false,\n    \&quot;Persist\&quot;: false,\n    \&quot;DirLeasing\&quot;: false,\n    \&quot;Encryption\&quot;: false\n  },\n  \&quot;HasNTLM\&quot;: true,\n  \&quot;NegotiationLog\&quot;: {\n    \&quot;HeaderLog\&quot;: {\n      \&quot;ProtocolID\&quot;: [\n        0,\n        0,\n        0,\n        0,\n        254,\n        83,\n        77,\n        66\n      ],\n      \&quot;Status\&quot;: 0,\n      \&quot;Command\&quot;: 0,\n      \&quot;Credits\&quot;: 1,\n      \&quot;Flags\&quot;: 1\n    },\n    \&quot;ProtocolID\&quot;: [\n      0,\n      0,\n      0,\n      0,\n      254,\n      83,\n      77,\n      66\n    ],\n    \&quot;Status\&quot;: 0,\n    \&quot;Command\&quot;: 0,\n    \&quot;Credits\&quot;: 1,\n    \&quot;Flags\&quot;: 1,\n    \&quot;SecurityMode\&quot;: 3,\n    \&quot;DialectRevision\&quot;: 528,\n    \&quot;ServerGuid\&quot;: [\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      244,\n      117,\n      7,\n      244,\n      85,\n      143,\n      174,\n      70,\n      151,\n      62,\n      59,\n      42,\n      30,\n      59,\n      134,\n      201\n    ],\n    \&quot;Capabilities\&quot;: 7,\n    \&quot;SystemTime\&quot;: 1788079385,\n    \&quot;ServerStartTime\&quot;: 1240428288,\n    \&quot;AuthenticationTypes\&quot;: [\n      \&quot;1.3.6.1.4.1.311.2.2.30\&quot;,\n      \&quot;1.3.6.1.4.1.311.2.2.10\&quot;\n    ]\n  },\n  \&quot;SessionSetupLog\&quot;: {\n    \&quot;HeaderLog\&quot;: {\n      \&quot;ProtocolID\&quot;: [\n        0,\n        0,\n        0,\n        0,\n        254,\n        83,\n        77,\n        66\n      ],\n      \&quot;Status\&quot;: 3221225494,\n      \&quot;Command\&quot;: 1,\n      \&quot;Credits\&quot;: 1,\n      \&quot;Flags\&quot;: 1\n    },\n    \&quot;ProtocolID\&quot;: [\n      0,\n      0,\n      0,\n      0,\n      254,\n      83,\n      77,\n      66\n    ],\n    \&quot;Status\&quot;: 3221225494,\n    \&quot;Command\&quot;: 1,\n    \&quot;Credits\&quot;: 1,\n    \&quot;Flags\&quot;: 1,\n    \&quot;SetupFlags\&quot;: 0,\n    \&quot;TargetName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n    \&quot;NegotiateFlags\&quot;: 2726953477\n  }\n}&quot;, &quot;extracted_results&quot;: [&quot;SMB 2.1&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>9f3c9a5b47bf9a622a711b68ee89aee615f3eb962b9baa3dcc21e9083b22bdbc</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>11. smb2-capabilities - Enumeration</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Attempts to list the supported capabilities in a SMBv2 server for each enabled dialect.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;smb2-capabilities&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:445&quot;, &quot;url&quot;: &quot;127.0.0.1:445&quot;, &quot;request&quot;: &quot;var m = require(\&quot;nuclei/smb\&quot;);\nvar c = m.SMBClient();\nvar response = c.ConnectSMBInfoMode(Host, Port);\nExport(response);&quot;, &quot;response&quot;: &quot;{\n  \&quot;SupportV1\&quot;: false,\n  \&quot;Version\&quot;: {\n    \&quot;Major\&quot;: 2,\n    \&quot;Minor\&quot;: 1,\n    \&quot;Revision\&quot;: 0,\n    \&quot;VerString\&quot;: \&quot;SMB 2.1\&quot;\n  },\n  \&quot;NativeOs\&quot;: \&quot;\&quot;,\n  \&quot;NTLM\&quot;: \&quot;\&quot;,\n  \&quot;GroupName\&quot;: \&quot;\&quot;,\n  \&quot;Capabilities\&quot;: {\n    \&quot;DFSSupport\&quot;: true,\n    \&quot;Leasing\&quot;: true,\n    \&quot;LargeMTU\&quot;: true,\n    \&quot;MultiChan\&quot;: false,\n    \&quot;Persist\&quot;: false,\n    \&quot;DirLeasing\&quot;: false,\n    \&quot;Encryption\&quot;: false\n  },\n  \&quot;HasNTLM\&quot;: true,\n  \&quot;NegotiationLog\&quot;: {\n    \&quot;HeaderLog\&quot;: {\n      \&quot;ProtocolID\&quot;: [\n        0,\n        0,\n        0,\n        0,\n        254,\n        83,\n        77,\n        66\n      ],\n      \&quot;Status\&quot;: 0,\n      \&quot;Command\&quot;: 0,\n      \&quot;Credits\&quot;: 1,\n      \&quot;Flags\&quot;: 1\n    },\n    \&quot;ProtocolID\&quot;: [\n      0,\n      0,\n      0,\n      0,\n      254,\n      83,\n      77,\n      66\n    ],\n    \&quot;Status\&quot;: 0,\n    \&quot;Command\&quot;: 0,\n    \&quot;Credits\&quot;: 1,\n    \&quot;Flags\&quot;: 1,\n    \&quot;SecurityMode\&quot;: 3,\n    \&quot;DialectRevision\&quot;: 528,\n    \&quot;ServerGuid\&quot;: [\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      0,\n      244,\n      117,\n      7,\n      244,\n      85,\n      143,\n      174,\n      70,\n      151,\n      62,\n      59,\n      42,\n      30,\n      59,\n      134,\n      201\n    ],\n    \&quot;Capabilities\&quot;: 7,\n    \&quot;SystemTime\&quot;: 1788079385,\n    \&quot;ServerStartTime\&quot;: 1240428288,\n    \&quot;AuthenticationTypes\&quot;: [\n      \&quot;1.3.6.1.4.1.311.2.2.30\&quot;,\n      \&quot;1.3.6.1.4.1.311.2.2.10\&quot;\n    ]\n  },\n  \&quot;SessionSetupLog\&quot;: {\n    \&quot;HeaderLog\&quot;: {\n      \&quot;ProtocolID\&quot;: [\n        0,\n        0,\n        0,\n        0,\n        254,\n        83,\n        77,\n        66\n      ],\n      \&quot;Status\&quot;: 3221225494,\n      \&quot;Command\&quot;: 1,\n      \&quot;Credits\&quot;: 1,\n      \&quot;Flags\&quot;: 1\n    },\n    \&quot;ProtocolID\&quot;: [\n      0,\n      0,\n      0,\n      0,\n      254,\n      83,\n      77,\n      66\n    ],\n    \&quot;Status\&quot;: 3221225494,\n    \&quot;Command\&quot;: 1,\n    \&quot;Credits\&quot;: 1,\n    \&quot;Flags\&quot;: 1,\n    \&quot;SetupFlags\&quot;: 0,\n    \&quot;TargetName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n    \&quot;NegotiateFlags\&quot;: 2726953477\n  }\n}&quot;, &quot;extracted_results&quot;: [&quot;[\&quot;DFSSupport\&quot;,\&quot;LargeMTU\&quot;,\&quot;Leasing\&quot;]&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>c5d744d52201ab9f8fb223621c018597244cbd7adcb3ff9477f5893b75c5185d</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>12. SMB - Enum Domains</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>SMB enumeration of domains is often part of the reconnaissance phase, where security professionals or attackers attempt to gather information about the target network to identify potential vulnerabilities.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;smb-enum-domains&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:445&quot;, &quot;url&quot;: &quot;127.0.0.1:445&quot;, &quot;request&quot;: &quot;var m = require(\&quot;nuclei/smb\&quot;);\nvar c = new m.SMBClient();\nvar response = c.ListSMBv2Metadata(Host, Port);\nExport(response);&quot;, &quot;response&quot;: &quot;{\n  \&quot;SigningEnabled\&quot;: true,\n  \&quot;SigningRequired\&quot;: true,\n  \&quot;OSVersion\&quot;: \&quot;10.0.26100\&quot;,\n  \&quot;NetBIOSComputerName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n  \&quot;NetBIOSDomainName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n  \&quot;DNSComputerName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n  \&quot;DNSDomainName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n  \&quot;ForestName\&quot;: \&quot;\&quot;\n}&quot;, &quot;extracted_results&quot;: [&quot;DomainName: DESKTOP-VJ5O45D&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>8729f5e4ea0644e3a50ba50becab20bbbc45d587c684309da3f9573e7b80d086</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>13. SMB - Enumeration</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>SMS Information Extraction is a sophisticated and efficient system designed to retrieve critical information from a remote computer or device through short text messages. This technology enables users to remotely access essential details about a computer, such as its operating system (OS) version, computer name, and hostname,
+all via SMS communication.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;smb-enum&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:445&quot;, &quot;url&quot;: &quot;127.0.0.1:445&quot;, &quot;request&quot;: &quot;var m = require(\&quot;nuclei/smb\&quot;);\nvar c = m.SMBClient();\nvar response = c.ListSMBv2Metadata(Host, Port);\nExport(response);&quot;, &quot;response&quot;: &quot;{\n  \&quot;SigningEnabled\&quot;: true,\n  \&quot;SigningRequired\&quot;: true,\n  \&quot;OSVersion\&quot;: \&quot;10.0.26100\&quot;,\n  \&quot;NetBIOSComputerName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n  \&quot;NetBIOSDomainName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n  \&quot;DNSComputerName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n  \&quot;DNSDomainName\&quot;: \&quot;DESKTOP-VJ5O45D\&quot;,\n  \&quot;ForestName\&quot;: \&quot;\&quot;\n}&quot;, &quot;extracted_results&quot;: [&quot;NetBIOSComputerName: DESKTOP-VJ5O45D&quot;, &quot;NetBIOSDomainName: DESKTOP-VJ5O45D&quot;, &quot;DNSComputerNamen: DESKTOP-VJ5O45D&quot;, &quot;DNSComputerName: DESKTOP-VJ5O45D&quot;, &quot;ForestName: &quot;, &quot;OSVersion: 10.0.26100&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>03a6828e5e8773f18b34cd7d9efd5ac079eedb7514f137153c99f905d739ada7</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>14. SMB2 Server Time - Detection</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Trying to retrieve the present date of the system along with the initiation date of an SMB2 server.</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;smb2-server-time&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:445&quot;, &quot;url&quot;: &quot;127.0.0.1:445&quot;, &quot;request&quot;: &quot;var m = require(\&quot;nuclei/smb\&quot;);\nvar c = m.SMBClient();\nvar response = c.ConnectSMBInfoMode(Host, Port);\nvar systemTime = new Date(response.NegotiationLog.SystemTime * 1000).toISOString();\nvar serverstartTime = new Date(response.NegotiationLog.ServerStartTime * 1000).toISOString();\nvar result = \&quot;SystemTime: \&quot; + systemTime + \&quot; ServerStartTime: \&quot; + serverstartTime;\nresult&quot;, &quot;response&quot;: &quot;SystemTime: 2026-08-30T08:43:05.000Z ServerStartTime: 2009-04-22T19:24:48.000Z&quot;, &quot;extracted_results&quot;: [&quot;SystemTime: 2026-08-30T08:43:05.000Z ServerStartTime: 2009-04-22T19:24:48.000Z&quot;]}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>c50e590663f31308152ba9a468208ad8791b9097367e5ce3d141a15e74e33473</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>15. SMB Operating System - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: unknown</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A01:2021-Broken Access Control</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>Detect Operating System</p>
+<h4>Remediation</h4>
+<p>Apply input validation and least-privilege controls.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;smb-os-detect&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:445&quot;, &quot;url&quot;: &quot;127.0.0.1:445&quot;, &quot;request&quot;: &quot;var m = require(\&quot;nuclei/smb\&quot;);\nvar c = new m.SMBClient();\nvar response = c.ListSMBv2Metadata(Host, Port);\nif (response.OSVersion === \&quot;6.3.9600\&quot;) {\n    osInfo = \&quot;Windows 8.1\&quot;;\n} else if (response.OSVersion === \&quot;3.10.511\&quot;) {\n    osInfo = \&quot;Windows NT 3.1\&quot;;\n} else if (response.OSVersion === \&quot;3.50.807\&quot;) {\n    osInfo = \&quot;Windows NT 3.5\&quot;;\n} else if (response.OSVersion === \&quot;3.10.528\&quot;) {\n    osInfo = \&quot;Windows NT 3.1, Service Pack 3\&quot;;\n} else if (response.OSVersion === \&quot;3.51.1057\&quot;) {\n    osInfo = \&quot;Windows NT 3.51\&quot;;\n} else if (response.OSVersion === \&quot;4.00.950\&quot;) {\n    osInfo = \&quot;Windows 95\&quot;;\n} else if (response.OSVersion === \&quot;4.00.950A\&quot;) {\n    osInfo = \&quot;Windows 95 OEM Service Release 1\&quot;;\n} else if (response.OSVersion === \&quot;4.00.950B\&quot;) {\n    osInfo = \&quot;Windows 95 OEM Service Release 2\&quot;;\n} else if (response.OSVersion === \&quot;4.0.1381\&quot;) {\n    osInfo = \&quot;Windows NT 4.0\&quot;;\n} else if (response.OSVersion === \&quot;4.00.950B\&quot;) {\n    osInfo = \&quot;Windows 95 OEM Service Release 2.1\&quot;;\n} else if (response.OSVersion === \&quot;4.00.950C\&quot;) {\n    osInfo = \&quot;OEM Service Release 2.5\&quot;;\n} else if (response.OSVersion === \&quot;4.10.1998\&quot;) {\n    osInfo = \&quot;Windows 98\&quot;;\n} else if (response.OSVersion === \&quot;4.10.2222\&quot;) {\n    osInfo = \&quot;Windows 98 Second Edition (SE)\&quot;;\n} else if (response.OSVersion === \&quot;5.0.2195\&quot;) {\n    osInfo = \&quot;Windows 2000\&quot;;\n} else if (response.OSVersion === \&quot;4.90.3000\&quot;) {\n    osInfo = \&quot;Windows Me\&quot;;\n} else if (response.OSVersion === \&quot;5.1.2600\&quot;) {\n    osInfo = \&quot;Windows XP\&quot;;\n} else if (response.OSVersion === \&quot;5.1.2600.1105-1106\&quot;) {\n    osInfo = \&quot;Windows XP, Service Pack 1\&quot;;\n} else if (response.OSVersion === \&quot;5.2.3790\&quot;) {\n    osInfo = \&quot;Windows Server 2003\&quot;;\n} else if (response.OSVersion === \&quot;5.1.2600.2180\&quot;) {\n    osInfo = \&quot;Windows XP, Service Pack 2\&quot;;\n} else if (response.OSVersion === \&quot;5.2.3790.1180\&quot;) {\n    osInfo = \&quot;Windows Server 2003, Service Pack 1\&quot;;\n} else if (response.OSVersion === \&quot;5.2.3790\&quot;) {\n    osInfo = \&quot;Windows Server 2003 R2\&quot;;\n} else if (response.OSVersion === \&quot;6.0.6000\&quot;) {\n    osInfo = \&quot;Windows Vista\&quot;;\n} else if (response.OSVersion === \&quot;5.2.3790\&quot;) {\n    osInfo = \&quot;Windows Server 2003, Service Pack 2\&quot;;\n} else if (response.OSVersion === \&quot;5.2.4500\&quot;) {\n    osInfo = \&quot;Windows Home Server\&quot;;\n} else if (response.OSVersion === \&quot;6.0.6001\&quot;) {\n    osInfo = \&quot;Windows Vista, Service Pack 1\&quot;;\n} else if (response.OSVersion === \&quot;6.0.6001\&quot;) {\n    osInfo = \&quot;Windows Server 2008\&quot;;\n} else if (response.OSVersion === \&quot;5.1.2600\&quot;) {\n    osInfo = \&quot;Windows XP, Service Pack 3\&quot;;\n} else if (response.OSVersion === \&quot;6.0.6002\&quot;) {\n    osInfo = \&quot;Windows Vista, Service Pack 2\&quot;;\n} else if (response.OSVersion === \&quot;6.0.6002\&quot;) {\n    osInfo = \&quot;Windows Server 2008, Service Pack 2\&quot;;\n} else if (response.OSVersion === \&quot;6.1.7600\&quot;) {\n    osInfo = \&quot;Windows 7\&quot;;\n} else if (response.OSVersion === \&quot;6.1.7600\&quot;) {\n    osInfo = \&quot;Windows Server 2008 R2\&quot;;\n} else if (response.OSVersion === \&quot;6.1.7601\&quot;) {\n    osInfo = \&quot;Windows 7, Service Pack 1\&quot;;\n} else if (response.OSVersion === \&quot;6.1.7601\&quot;) {\n    osInfo = \&quot;Windows Server 2008 R2, Service Pack \&quot;;\n} else if (response.OSVersion === \&quot;6.1.8400\&quot;) {\n    osInfo = \&quot;Windows Home Server 2011\&quot;;\n} else if (response.OSVersion === \&quot;6.2.9200\&quot;) {\n    osInfo = \&quot;Windows Server 2012\&quot;;\n} else if (response.OSVersion === \&quot;6.2.9200\&quot;) {\n    osInfo = \&quot;Windows 8\&quot;;\n} else if (response.OSVersion === \&quot;6.3.9600\&quot;) {\n    osInfo = \&quot;Windows 8.1\&quot;;\n} else if (response.OSVersion === \&quot;6.3.9600\&quot;) {\n    osInfo = \&quot;Windows Server 2012 R2\&quot;;\n} else if (response.OSVersion === \&quot;10.0.10240\&quot;) {\n    osInfo = \&quot;Windows 10, Version 1507\&quot;;\n} else if (response.OSVersion === \&quot;10.0.10586\&quot;) {\n    osInfo = \&quot;Windows 10, Version 1511\&quot;;\n} else if (response.OSVersion === \&quot;10.0
+
+...[truncated 2415 chars — full evidence in the evidence vault; sha256 above covers the complete artifact]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>8b73531922013ff45a3f9e494b7a3e98dcb069300bc91b1832d3c4f82d51bf1b</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+<h3>16. PostgreSQL Authentication - Detect</h3>
+<ul>
+<li><strong>Severity</strong>: info</li>
+<li><strong>Type</strong>: sqli</li>
+<li><strong>Target</strong>: unknown</li>
+<li><strong>Attack Technique</strong>: T1190 - Exploit Public-Facing Application</li>
+<li><strong>OWASP</strong>: A03:2021-Injection</li>
+<li><strong>CVSS</strong>: 0.0 (Informational)</li>
+</ul>
+<h4>Description</h4>
+<p>PostgreSQL authentication error messages which could reveal information useful in formulating further attacks were detected.</p>
+<h4>Remediation</h4>
+<p>Use parameterized queries / prepared statements; never concatenate input.</p>
+<h4>Proof of Concept / Evidence</h4>
+<pre><code>[{&quot;type&quot;: &quot;nuclei_finding&quot;, &quot;template&quot;: &quot;pgsql-detect&quot;, &quot;matched_at&quot;: &quot;127.0.0.1:5432&quot;, &quot;url&quot;: &quot;127.0.0.1:5432&quot;, &quot;request&quot;: &quot;000000500003000075736572006e75636c6569006461746162617365006e75636c6569006170706c69636174696f6e5f6e616d65007073716c00636c69656e745f656e636f64696e67005554463800007000000036534352414d2d5348412d32353600000000206e2c2c6e3d2c723d000000000000000000000000000000000000000000000000&quot;, &quot;response&quot;: &quot;R\u0000\u0000\u0000\u0017\u0000\u0000\u0000\nSCRAM-SHA-256\u0000\u0000&quot;, &quot;extracted_results&quot;: null}]
+</code></pre>
+<p><strong>Artifact SHA-256 Hash</strong>: <code>1bebd15035da15f621acaa76086a1f75481119cbca179c6d3728136adf9098fe</code>
+<strong>Chain of Custody ID</strong>: <code>no-audit-event</code></p>
+<hr />
+</body>
+</html>

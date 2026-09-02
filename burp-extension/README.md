@@ -6,6 +6,20 @@ If Burp asks for the implementation class, use:
 
 `com.aiosop.burp.BurpMcpMontoyaExtension`
 
+## Community routing (v0.2.0 extension, 2026-08-31)
+
+The extension is edition-aware and used **strictly as licensed** on Burp Suite
+Community: every Pro-only capability it detects as unavailable is routed by the
+platform to AI-OSOP's own engines (nuclei-mcp + web_audit differential for
+active scanning, oast-mcp for out-of-band, graph+ledger for Organizer,
+deterministic intruder_fuzz for Intruder execution). Nothing is bypassed,
+patched, or unlocked. The authoritative matrix — including which capabilities
+come from Burp and which from AI-OSOP — lives in
+`docs/BURP_COMMUNITY_CAPABILITY_MATRIX.md`; the routing table in code is
+`src/ai_osop/adapters/burp_capabilities.py`. A regression suite proving the
+full Community workflow end-to-end lives at
+`tests/test_burp_community_workflow.py`.
+
 ## v0.2.0 — 2026-08-30
 
 Rebuilt against `montoya-api-2026.4.jar` (was 2023.1), which unlocks the modules

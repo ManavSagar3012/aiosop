@@ -220,23 +220,41 @@ async def assert_engagement_access(operator: Dict[str, Any], session_id: str) ->
 
 # ============== Request ID / Correlation Middleware ==============
 
+import contextvars
+
+_request_context_store: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
+    "request_context_store", default={}
+)
+
 
 class RequestContext:
-    """Lightweight request-scoped context holder for correlation IDs."""
-
-    _store: Dict[str, Any] = {}
+    """Lightweight request-scoped context holder for correlation IDs using contextvars."""
 
     @classmethod
     def get(cls, key: str, default: Any = None) -> Any:
-        return cls._store.get(key, default)
+        return _request_context_store.get().get(key, default)
 
     @classmethod
     def set(cls, key: str, value: Any) -> None:
-        cls._store[key] = value
+        store = dict(_request_context_store.get())
+        store[key] = value
+        _request_context_store.set(store)
+
+    @classmethod
+    def bind(cls, **kwargs: Any) -> None:
+        """Bind multiple key-value pairs into the current async context."""
+        store = dict(_request_context_store.get())
+        store.update(kwargs)
+        _request_context_store.set(store)
+
+    @classmethod
+    def get_all(cls) -> Dict[str, Any]:
+        """Return a copy of all context variables in the current async context."""
+        return dict(_request_context_store.get())
 
     @classmethod
     def clear(cls) -> None:
-        cls._store.clear()
+        _request_context_store.set({})
 
 
 def require_role(*allowed_roles: str):

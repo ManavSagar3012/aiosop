@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Graph - eng-20260709042637-ownership-b-tasks</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #05070a; color: #e0e0e0; }
+        .node circle { stroke: #fff; stroke-width: 1.5px; }
+        .node text { font: 10px sans-serif; pointer-events: none; text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff; fill: #000; }
+        .link { stroke: #999; stroke-opacity: .6; }
+    </style>
+</head>
+<body>
+    <h2>Engagement: eng-20260709042637-ownership-b-tasks</h2>
+    <div id="graph"></div>
+    <script>
+        const graphData = {"nodes": [{"id": "endpoint-a9b9f04336ce", "labels": ["Endpoint"]}, {"id": "endpoint-a6bf1757fff0", "labels": ["Endpoint"]}, {"id": "endpoint-c984d06aafbe", "labels": ["Endpoint"]}, {"id": "endpoint-182ccedb33a9", "labels": ["Endpoint"]}, {"id": "task-102249a4f8f5", "labels": ["Task"]}, {"id": "task-eab57d933688", "labels": ["Task"]}, {"id": "asset-eng-20260709042637-ownership-b-tasks-example.com", "labels": ["Asset"]}, {"id": "ep-871fa61f537f", "labels": ["Endpoint"]}, {"id": "ep-9a75c4d7e74b", "labels": ["Endpoint"]}, {"id": "ep-10e024dcf1d6", "labels": ["Endpoint"]}, {"id": "ep-8a5223a36f50", "labels": ["Endpoint"]}, {"id": "task-3852124e05a4", "labels": ["Task"]}, {"id": "task-c3476c03530e", "labels": ["Task"]}, {"id": "endpoint-eng-20260709042637-ownership-b-tasks-example.com", "labels": ["Endpoint"]}, {"id": "task-aa077b7b2c69", "labels": ["Task"]}], "edges": [{"source": "asset-eng-20260709042637-ownership-b-tasks-example.com", "target": "endpoint-eng-20260709042637-ownership-b-tasks-example.com", "type": "HAS_ENDPOINT"}]};
+        
+        const width = 800;
+        const height = 600;
+        const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+        
+        const simulation = d3.forceSimulation(graphData.nodes)
+            .force("link", d3.forceLink(graphData.edges).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(graphData.edges)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(graphData.nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 5)
+            .attr("fill", d => d.labels.includes("Vulnerability") ? "red" : "cyan");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr('x', 6)
+            .attr('y', 3);
+
+        simulation.nodes(graphData.nodes).on("tick", ticked);
+        simulation.force("link").links(graphData.edges);
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "AI-OSOP System Health",
+    "tags": ["ai-osop", "health"],
+    "timezone": "utc",
+    "schemaVersion": 36,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Running Tasks",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_running_tasks",
+            "legendFormat": "Running"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Queued Tasks",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_queued_tasks",
+            "legendFormat": "Queued"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Failed Tasks",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_failed_tasks",
+            "legendFormat": "Failed"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "Active Agents",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ai_osop_active_agents",
+            "legendFormat": "Agents"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "id": 5,
+        "title": "Task Completion Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(ai_osop_tasks_completed_total[5m])",
+            "legendFormat": "Completed/sec"
+          },
+          {
+            "expr": "rate(ai_osop_tasks_failed_total[5m])",
+            "legendFormat": "Failed/sec"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+      },
+      {
+        "id": 6,
+        "title": "Graph Write Latency",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_osop_graph_write_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(ai_osop_graph_write_duration_seconds_bucket[5m]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+      }
+    ]
+  }
+}
