@@ -69,7 +69,13 @@ class PhaseMonitor:
                     agent_type=AgentType.RECON,
                     payload={"domain": domain, "scope": session.scope.model_dump()},
                     engagement_id=session.session_id,
-                    timeout_seconds=900,
+                    # REASONING-LLM-001 (2026-09-01): 900s starved the 100B
+                    # thinking model — iterations take 15-40s of thinking before
+                    # each tool call, and the loop timed out on every retry
+                    # (observed live: full_recon failed 5/5 on TaskTimeout).
+                    # Operator decision: no speed optimization; give the model
+                    # the time it needs to actually find vulnerabilities.
+                    timeout_seconds=2700,
                 )
                 await self._orch.task_scheduler.schedule_task(task)
             url_hint = (
@@ -127,35 +133,68 @@ class PhaseMonitor:
                 assets = list(session.scope.domains)
                 logger.info("vuln_phase_seeded_from_scope", domains=assets)
 
+            # BURP-COMMUNITY-001 (2026-08-31): one capability probe for the whole
+            # phase — decides whether the standalone web_audit sweep below is
+            # scheduled (see the comment at its scheduling site). Never raises:
+            # an unreachable burp-mcp resolves to internal routing.
+            from ai_osop.adapters.burp_capabilities import detect_burp_capabilities
+            from ai_osop.core.config import settings as _scan_settings
+
+            _caps = await detect_burp_capabilities(self._orch.mcp_registry)
+
             for domain in assets:
+                # BURP-COMMUNITY-001 (2026-08-31): the burp_scan task is
+                # capability-driven. On Burp Community (or with burp-mcp down)
+                # it runs the internal engines INLINE — nuclei (fast profile,
+                # bounded by nuclei_mcp_timeout) + a web_audit differential
+                # pass — so its budget must cover both. 600s was the Pro-only
+                # budget; on Community a nuclei scan alone can legitimately
+                # take up to nuclei_mcp_timeout, and killing the task mid-scan
+                # retry-stormed the exact scans it was supposed to finish
+                # (AIOSOP-NUCLEI-TIMEOUT). Budget = nuclei + web_audit + the
+                # Burp passive layer + slack.
                 burp_task = Task(
                     type="burp_scan",
                     priority=7,
                     agent_type=AgentType.VULN_ANALYSIS,
                     payload={"url": self._orch.engagement_manager._domain_to_url(domain)},
                     engagement_id=session.session_id,
-                    timeout_seconds=600,
+                    timeout_seconds=max(600, _scan_settings.nuclei_mcp_timeout + 600),
                 )
                 await self._orch.task_scheduler.schedule_task(burp_task)
 
                 # WEB-AUDIT-001: integrated crawl -> probe -> differential audit per
                 # asset — the open-components active-scan button (katana crawl +
-                # in-process probe injection + behavioral-delta judgment). It
-                # complements burp_scan (proxy-based) and nuclei (template-based)
-                # with parameter-level differential coverage.
-                web_audit_task = Task(
-                    type="web_audit",
-                    priority=6,
-                    agent_type=AgentType.VULN_ANALYSIS,
-                    payload={
-                        "url": self._orch.engagement_manager._domain_to_url(domain),
-                        "max_urls": 25,
-                        "classes": ["sqli", "xss", "ssti"],
-                    },
-                    engagement_id=session.session_id,
-                    timeout_seconds=900,
-                )
-                await self._orch.task_scheduler.schedule_task(web_audit_task)
+                # in-process probe injection + behavioral-delta judgment).
+                #
+                # BURP-COMMUNITY-001: on Burp Pro this complements burp_scan
+                # (Burp's own audit + proxy layer) with parameter-level
+                # differential coverage. On Community the burp_scan task ALREADY
+                # runs web_audit inline (same max_urls=25 sweep — see
+                # _execute_burp_scan), so a second standalone web_audit here
+                # would duplicate every probe against the target. Schedule the
+                # standalone sweep only when Burp's native scanner handles the
+                # audit (Pro) or burp-mcp is down entirely (internal_routed mode
+                # runs a minimal inline audit; this restores the full sweep).
+                _schedule_standalone_audit = not _caps.reachable or _caps.active_scan_available
+                if _schedule_standalone_audit:
+                    web_audit_task = Task(
+                        type="web_audit",
+                        priority=6,
+                        agent_type=AgentType.VULN_ANALYSIS,
+                        payload={
+                            "url": self._orch.engagement_manager._domain_to_url(domain),
+                            "max_urls": 25,
+                            "classes": ["sqli", "xss", "ssti"],
+                        },
+                        engagement_id=session.session_id,
+                        # REASONING-LLM-001: 900s starved the 100B thinking model
+                        # in the cognitive-loop fallback path (deterministic
+                        # engine usually completes first, but when the loop
+                        # runs it must be allowed to finish its reasoning).
+                        timeout_seconds=2700,
+                    )
+                    await self._orch.task_scheduler.schedule_task(web_audit_task)
 
             # 2) Endpoint-aware, value-ordered, batched Nuclei scans.
             endpoints: List[Dict[str, Any]] = []

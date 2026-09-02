@@ -600,7 +600,13 @@ class LiteLLMClient:
                 await self.complete(
                     [{"role": "user", "content": "ok"}],
                     model=model,
-                    max_tokens=1,
+                    # REASONING-WARM-001 (2026-09-01): max_tokens=1 was fine for
+                    # instant models but is a GUARANTEED empty response on a
+                    # thinking model (its one token is always thinking) — the
+                    # empty-output retry ladder then burned minutes of retries
+                    # at startup. Give the warm-up enough budget to finish
+                    # thinking and emit text.
+                    max_tokens=2048,
                     timeout=max(settings.llm_completion_timeout, 180),
                 )
                 report[model] = {"seconds": round(_t.monotonic() - start, 1), "ok": True}
