@@ -115,6 +115,42 @@ def test_header_claim_partial_refined():
     assert "strict-transport-security" in rem  # lists the verified-absent ones
 
 
+def test_header_claim_json_string_evidence_parsed():
+    """Regression (found live on the qosmos graph): persisted evidence is a
+    JSON-encoded STRING. Unparsed, the check read 'no response' and declared
+    every header missing — the exact evidence-vs-claim inconsistency this
+    engine exists to catch. Here the response contains ALL headers, so the
+    claim must be REFUTED through a JSON-string evidence field."""
+    import json
+
+    resp = (
+        "HTTP/1.1 200 OK\r\nStrict-Transport-Security: max-age=63072000\r\n"
+        "X-Content-Type-Options: nosniff\r\nX-Frame-Options: SAMEORIGIN\r\n"
+        "Referrer-Policy: strict-origin\r\nContent-Security-Policy: default-src 'self'\r\n"
+        "Permissions-Policy: geolocation=()\r\nX-Permitted-Cross-Domain-Policies: none\r\n"
+        "Cross-Origin-Embedder-Policy: require-corp\r\nCross-Origin-Opener-Policy: same-origin\r\n"
+        "Cross-Origin-Resource-Policy: same-origin\r\n\r\n<body>"
+    )
+    f = _evidence_finding("HTTP Missing Security Headers", "qosmos.example.com:443")
+    f["evidence"] = json.dumps(
+        [{"type": "nuclei_finding", "matched_at": "qosmos.example.com:443", "response": resp}]
+    )
+    validate_finding(f, SCOPE)
+    assert f["security_class"] == C_FALSE_POSITIVE
+    assert "refuted" in f["validation_notes"]
+
+
+def test_header_claim_no_response_never_refutes():
+    """No parseable response in evidence => the claim is neither refined nor
+    refuted (never invent a verdict from missing data). The finding keeps its
+    class without an actual_missing list."""
+    f = _evidence_finding("HTTP Missing Security Headers", "qosmos.example.com:443")
+    validate_finding(f, SCOPE)
+    assert f["security_class"] == C_HARDENING
+    assert "actual_missing_headers" not in f
+    assert "passed all validation gates" in f["validation_notes"]
+
+
 def test_fingerprint_classification():
     for title in (
         "AWS Cloudfront service detection",

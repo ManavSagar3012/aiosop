@@ -24,6 +24,8 @@ No LLM anywhere in this chain: validation must happen BEFORE narrative.
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from ai_osop.safety.rule_factory import DefensiveRuleFactory
+
 # ---------------------------------------------------------------------------
 # Security classes — the report's top-level sections
 # ---------------------------------------------------------------------------
@@ -80,6 +82,18 @@ def _norm_text(finding: Dict[str, Any]) -> str:
 
 def _evidence_entries(finding: Dict[str, Any]) -> List[Dict[str, Any]]:
     ev = finding.get("evidence")
+    # Graph persistence stores the evidence list as a JSON-encoded string;
+    # parse it so the gates see the actual captured responses (found live on
+    # the qosmos evidence: an unparsed string read as "no response" and the
+    # header check then declared every header missing — the exact
+    # evidence-vs-claim inconsistency this engine exists to catch).
+    if isinstance(ev, str):
+        import json as _json
+
+        try:
+            ev = _json.loads(ev)
+        except (ValueError, TypeError):
+            return []
     if isinstance(ev, list):
         return [e for e in ev if isinstance(e, dict)]
     if isinstance(ev, dict):
@@ -183,12 +197,16 @@ def header_claim_check(finding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not any(p in _norm_text(finding) for p in ("missing security headers", "missing-security-headers")):
         return None
     present, missing = [], list(_HEADER_NAMES)
+    found_response = False
     for e in _evidence_entries(finding):
         resp = ""
         for key in ("response", "payload", "raw"):
             v = e.get(key)
             if isinstance(v, str) and len(v) > len(resp):
                 resp = v
+        if not resp:
+            continue
+        found_response = True
         low = resp.lower()
         for h in _HEADER_NAMES:
             if f"{h}:" in low:
@@ -196,8 +214,10 @@ def header_claim_check(finding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     missing.remove(h)
                 if h not in present:
                     present.append(h)
-    if not present and not missing:
-        return None  # no response in evidence — leave as-is (can't verify)
+    if not found_response:
+        # No parseable response in evidence — the claim can be neither
+        # verified nor refuted. Never refine or refute on missing data.
+        return None
     return {
         "actual_missing": missing,
         "actual_present": present,
@@ -268,6 +288,16 @@ def validate_finding(
     finding["validation_notes"] = "; ".join(notes) if notes else "passed all validation gates"
     if header and header.get("actual_missing") and not header["claim_refuted"]:
         finding["actual_missing_headers"] = header["actual_missing"]
+
+    if finding.get("security_class") == C_VALIDATED:
+        try:
+            target_url = str(finding.get("target") or finding.get("endpoint") or "")
+            parsed_path = urlparse(target_url).path if target_url else ""
+            rule = DefensiveRuleFactory.synthesize_rule(finding, endpoint=parsed_path)
+            finding["remediation_rule"] = rule.model_dump()
+        except Exception:  # noqa: BLE001 - rule synthesis is best-effort enhancement
+            pass
+
     return finding
 
 
