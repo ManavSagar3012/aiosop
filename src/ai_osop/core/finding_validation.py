@@ -158,11 +158,19 @@ def scope_check(finding: Dict[str, Any], scope_hosts: List[str]) -> Tuple[bool, 
             "out_of_scan_scope"
         ):
             return False, "evidence carries out_of_scan_scope signal"
-    bad = [t for t in _matched_targets(finding) if not _host_in_scope(t, scope_hosts)]
-    if bad and _host_in_scope(str(finding.get("target") or ""), scope_hosts) is False:
-        return False, f"matched target outside scope: {bad[0][:80]}"
-    if bad and not any(_host_in_scope(t, scope_hosts) for t in _matched_targets(finding)):
-        return False, f"all matched targets outside scope: {bad[0][:80]}"
+
+    def _real(t: str) -> bool:
+        # Placeholders must never fabricate a violation: the report path sets
+        # target from a missing endpoint_id as "unknown" — found live when all
+        # 28 genuinely in-scope findings were discarded on that placeholder.
+        return bool(t) and t.strip().lower() not in ("unknown", "n/a", "none")
+
+    matched = [t for t in _matched_targets(finding) if _real(t)]
+    if not matched:
+        return True, ""  # no real target info -> nothing to violate against
+    in_scope = [_host_in_scope(t, scope_hosts) for t in matched]
+    if not any(in_scope):
+        return False, f"all matched targets outside scope: {matched[0][:80]}"
     return True, ""
 
 

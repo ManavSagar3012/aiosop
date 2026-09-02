@@ -241,3 +241,29 @@ def test_funnel_counts():
     assert funnel["hardening_items"] == 14
     assert funnel["validated_vulnerabilities"] == 0
     assert funnel["unique_finding_families"] == 2
+
+
+def test_placeholder_target_never_fabricates_scope_violation():
+    """Regression (found live on the qosmos report): the report path sets
+    target="unknown" when endpoint_id is missing. The placeholder must not
+    read as an out-of-scope match — the finding stays classifiable by its
+    evidence."""
+    f = _evidence_finding("AWS Cloudfront service detection", "unknown")
+    validate_finding(f, SCOPE)
+    assert f["security_class"] != C_OUT_OF_SCOPE
+    assert f["security_class"] == C_FINGERPRINT
+
+
+def test_mixed_targets_in_scope_passes():
+    """A real in-scope match alongside a placeholder is NOT a violation."""
+    f = {
+        "title": "HTTP Missing Security Headers",
+        "vuln_type": "unknown",
+        "target": "unknown",  # report-path placeholder
+        "evidence": [
+            {"type": "nuclei_finding", "matched_at": "https://qosmos.example.com/"}
+        ],
+    }
+    validate_finding(f, SCOPE)
+    assert f["security_class"] == C_HARDENING
+    assert f["scope_status"] == "in_scope"

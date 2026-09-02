@@ -262,6 +262,36 @@ class ReportingAgent(BaseAgent):
         stats["out_of_scope_count"] = funnel["out_of_scope"]
         stats["false_positives_count"] = funnel["false_positives"]
 
+        # DEDUP-P0 (review #3, last mile): one finding family seen on N hosts
+        # is ONE issue affecting N targets — not N issues. Sections B/C render
+        # by family with the affected-target list; section A keeps per-target
+        # detail because each validated vulnerability is individually real.
+        families: List[Dict[str, Any]] = []
+        by_family: Dict[str, Dict[str, Any]] = {}
+        for f in findings:
+            key = str(f.get("title", ""))[:120]
+            fam = by_family.get(key)
+            if fam is None:
+                fam = {
+                    "title": f.get("title"),
+                    "security_class": f.get("security_class"),
+                    "target": f.get("target"),
+                    "affected_targets": list(f.get("affected_targets") or []),
+                    "duplicate_count": f.get("duplicate_count", 1),
+                    "remediation": f.get("remediation"),
+                    "description": f.get("description"),
+                    "evidence": f.get("evidence"),
+                    "actual_missing_headers": f.get("actual_missing_headers"),
+                    "validation_notes": f.get("validation_notes"),
+                }
+                by_family[key] = fam
+                families.append(fam)
+            else:
+                for t in f.get("affected_targets") or []:
+                    if t not in fam["affected_targets"]:
+                        fam["affected_targets"].append(t)
+                fam["duplicate_count"] += 1
+
         report_context = {
             "engagement_id": engagement_id,
             "date": datetime.utcnow().strftime("%Y-%m-%d"),
@@ -270,6 +300,7 @@ class ReportingAgent(BaseAgent):
             "stats": stats,
             "top_findings": findings[:5],
             "findings": findings,
+            "families": families,
         }
 
         try:

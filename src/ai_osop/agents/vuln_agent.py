@@ -987,6 +987,37 @@ class VulnAnalysisAgent(BaseAgent):
         from ai_osop.core.finding_intelligence import deduplicate_findings
 
         canonical_vulns, intel_stats = deduplicate_findings(vulns)
+        # P0 SCAN-TIME PERSIST (review 2026-09-02): validate each finding
+        # BEFORE persistence so the graph, findings API, and dashboards carry
+        # the honest security_class from creation — an out-of-scope or
+        # refuted observation never enters the corpus as a "vulnerability".
+        # The report engine re-validates at render time (defense in depth).
+        try:
+            from ai_osop.core.finding_validation import validate_finding
+
+            _scan_scope: List[str] = list(targets or [])
+            _scan_sid = payload.get("engagement_id") or ""
+            try:
+                _sess = await self.ctx.session_memory.load_session_state(_scan_sid)
+                _sc = getattr(_sess, "scope", None)
+                if _sc is not None and _sc.domains:
+                    _scan_scope = [f"{d}:443" for d in _sc.domains]
+            except Exception:  # noqa: BLE001 - scope context is best-effort
+                pass
+            for vuln in canonical_vulns:
+                _f = vuln.model_dump(mode="json")
+                validate_finding(_f, _scan_scope)
+                _ym = vuln.yield_metadata or {}
+                _ym["security_class"] = _f.get("security_class")
+                _ym["finding_status"] = _f.get("finding_status")
+                _ym["scope_status"] = _f.get("scope_status")
+                _ym["fp_probability"] = _f.get("fp_probability")
+                _ym["validation_notes"] = _f.get("validation_notes")
+                if _f.get("actual_missing_headers"):
+                    _ym["actual_missing_headers"] = _f["actual_missing_headers"]
+                vuln.yield_metadata = _ym
+        except Exception as _ve:  # noqa: BLE001 - validation is advisory here
+            logger.warning("scan_time_validation_failed", error=str(_ve))
         for vuln in canonical_vulns:
             await self.ctx.graph_memory.add_vulnerability(vuln)
             self.findings[vuln.id] = vuln

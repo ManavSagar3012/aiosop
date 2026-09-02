@@ -9,8 +9,8 @@
    the validation reasoning shown. #}
 
 {% set validated = findings | selectattr("security_class", "equalto", "validated_vulnerability") | list %}
-{% set hardening = findings | selectattr("security_class", "equalto", "hardening_item") | list %}
-{% set fingerprints = findings | selectattr("security_class", "equalto", "fingerprint_observation") | list %}
+{% set hardening = (families | selectattr("security_class", "equalto", "hardening_item") | list) if families else (findings | selectattr("security_class", "equalto", "hardening_item") | list) %}
+{% set fingerprints = (families | selectattr("security_class", "equalto", "fingerprint_observation") | list) if families else (findings | selectattr("security_class", "equalto", "fingerprint_observation") | list) %}
 {% set out_of_scope = findings | selectattr("security_class", "equalto", "out_of_scope") | list %}
 {% set false_positives = findings | selectattr("security_class", "equalto", "false_positive") | list %}
 
@@ -56,19 +56,15 @@ No hardening items identified.
 {% for vuln in hardening %}
 ### B.{{ loop.index }}. {{ vuln.title }}
 - **Status**: hardening recommendation (not a vulnerability)
-- **Target**: {{ vuln.target }}
-{% if vuln.affected_targets %}- **Affected targets**: {{ vuln.affected_targets | join(", ") }}
-{% endif %}{% if vuln.actual_missing_headers %}- **Verified absent (from captured evidence)**: {{ vuln.actual_missing_headers | join(", ") }}
+- **Affected targets**: {{ vuln.affected_targets | join(", ") if vuln.affected_targets else vuln.target }}
+- **Observed on**: {{ vuln.duplicate_count | default(1) }} target(s)
+{% if vuln.actual_missing_headers %}- **Verified absent (from captured evidence)**: {{ vuln.actual_missing_headers | join(", ") }}
 {% endif %}
 {{ vuln.description }}
 
 #### Remediation
 {{ vuln.remediation }}
 
-#### Evidence
-```
-{{ vuln.evidence }}
-```
 **Validation**: {{ vuln.validation_notes | default("passed all validation gates") }}
 
 ---
@@ -82,7 +78,7 @@ No technology observations.
 These are informational asset fingerprints (infrastructure, certificates, services).
 They are attack-surface metadata, not security issues.
 {% for vuln in fingerprints %}
-- {{ vuln.title }} (target: {{ vuln.target }}) — {{ vuln.remediation | default("informational", true) }}
+- {{ vuln.title }}{% if vuln.affected_targets %} (affects: {{ vuln.affected_targets | join(", ") }}){% elif vuln.target %} (target: {{ vuln.target }}){% endif %} — {{ vuln.remediation | default("informational", true) }}
 {% endfor %}
 
 ## D. Discarded Signals ({{ out_of_scope | length + false_positives | length }})
