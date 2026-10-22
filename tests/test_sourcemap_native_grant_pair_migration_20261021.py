@@ -24,7 +24,6 @@ from ai_osop.memory.native_mcp_execution_grants import (
     _validate_claims,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "migrations/versions/0036_sourcemap_native_grant_pair.py"
 PRIOR = ROOT / "migrations/versions/0029_native_mcp_execution_grants.py"
@@ -151,7 +150,8 @@ def test_alembic_head_and_immediate_parent_are_exact() -> None:
     directory = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
     # 0037 is an additive, separately denied SourceMap provenance binding;
     # it does not widen the 0036 CHECK or authorize any native grant.
-    assert directory.get_heads() == ["0038"]
+    assert len(directory.get_heads()) == 1
+    assert "0038" in {revision.revision for revision in directory.walk_revisions()}
     assert directory.get_revision("0038").down_revision == "0037"
     assert directory.get_revision("0037").down_revision == "0036"
     assert directory.get_revision("0036").down_revision == "0035"

@@ -8,11 +8,11 @@ Specialized for mobile API traffic, deep links, and client-side logic.
 # until either (a) registered for production use or (b) archived.
 __experimental__ = True
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
-from ai_osop.core.models import Observation, Severity, Task
+from ai_osop.core.models import Task
 
 
 class MobileAnalysisAgent(BaseAgent):
@@ -46,39 +46,21 @@ class MobileAnalysisAgent(BaseAgent):
         """
         Analyzes Android/iOS deep links for sensitive parameters or state bypass.
         """
-        bundle_id = payload.get("bundle_id")
-        links = payload.get("links", [])
-
-        await self.think(
-            f"Analyzing {len(links)} deep links for {bundle_id}. Checking for unauthenticated state transitions.",
-            ["mobile_security", "deep_link_analysis"],
-        )
-
-        # Simulate finding
-        findings = []
-        if any("reset" in l for l in links):
-            findings.append(
-                {
-                    "type": "insecure_deep_link",
-                    "link": "target://reset_password?token=XYZ",
-                    "risk": "Account Takeover via deep link token leakage",
-                }
-            )
-
-        return {"status": "success", "analyzed_count": len(links), "findings": findings}
+        return {
+            "status": "unsupported",
+            "error": "Deep-link target validation is not implemented",
+            "findings": [],
+        }
 
     async def _intercept_traffic(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analyzes mobile-specific API traffic patterns (e.g. pinned certs, non-browser headers).
         """
-        endpoint = payload.get("endpoint")
-
-        await self.think(
-            f"Intercepting mobile API traffic for {endpoint}. Checking for User-Agent spoofing and extra auth headers.",
-            ["mobile_api_security", "traffic_interception"],
-        )
-
-        return {"status": "success", "interception_active": True}
+        return {
+            "status": "unsupported",
+            "error": "Mobile traffic interception is not implemented",
+            "interception_active": False,
+        }
 
     async def _cleanup_resources(self) -> None:
         self.analyzed_deep_links.clear()

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.mcp_inventory_source import configured_server_nodes
+
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "src/ai_osop/api/main.py"
 CONFIG = ROOT / "src/ai_osop/core/config.py"
@@ -45,12 +47,7 @@ def _registered():
         for node in tree.body
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "register_optional_mcp_servers"
     )
-    servers = next(
-        node.value
-        for node in func.body
-        if isinstance(node, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "servers" for t in node.targets)
-    )
+    servers = configured_server_nodes(tree)
     critical = next(
         node.value
         for node in func.body

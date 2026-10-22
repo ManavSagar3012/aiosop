@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-osop-reports
+  namespace: ai-osop
+spec:
+  # The cluster must provision a ReadWriteMany-capable StorageClass/PV.
+  # Both orchestrator replicas must see the same immutable report bundles.
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi

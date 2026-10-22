@@ -7,8 +7,8 @@ is deliberately NOT counted as deployed-provider or target-effect evidence.
 
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import base64
 import importlib.util
 import json
@@ -34,7 +34,6 @@ from ai_osop.core.exceptions import MCPConnectionError, MCPException
 from ai_osop.core.models import ScopeDefinition
 from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.mcp.receipt_attestation import provider_receipt_is_signed
-
 
 ROOT = Path(__file__).resolve().parents[2]
 GO = {
@@ -75,16 +74,20 @@ def _module(name: str) -> Any:
 def test_eleven_live_registration_sources_route_to_expected_entrypoints() -> None:
     module = ast.parse(_source("src/ai_osop/api/main.py"))
     register = next(
-        node for node in module.body
+        node
+        for node in module.body
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "register_optional_mcp_servers"
     )
     arrays = [
-        node.value for node in ast.walk(register)
+        node.value
+        for node in ast.walk(register)
         if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id == "servers" for target in node.targets)
     ]
     assert len(arrays) == 1
-    names = [item.elts[0].value for item in arrays[0].elts]
+    from tests.mcp_inventory_source import configured_server_nodes
+
+    names = [item.elts[0].value for item in configured_server_nodes(module).elts]
     assert len(names) == len(set(names)) == 11
     assert set(names) == set(ALL)
     sdk = _source("mcp-servers/go/sdk/server.go")
@@ -162,12 +165,16 @@ async def _exercise_forged_registry_handshake(name: str) -> None:
         "version": "fake-test-only",
         "status": "ready",
         "capabilities": ["mcp_bound_receipts_v1", "mcp_cancel_request_v1"],
-        "tools": [{
-            "name": "fake_scan", "description": "fixture only",
-            "parameters": [], "returns": {},
-            "requires_approval": False,
-            "scope_check": True,
-        }],
+        "tools": [
+            {
+                "name": "fake_scan",
+                "description": "fixture only",
+                "parameters": [],
+                "returns": {},
+                "requires_approval": False,
+                "scope_check": True,
+            }
+        ],
     }
     async with _fake_local_mcp(document) as (port, counts):
         registry = MCPRegistry()
@@ -190,14 +197,21 @@ def test_actual_burp_adapter_refuses_fake_bound_handshake_with_missing_capabilit
 
 async def _exercise_burp_negotiation() -> None:
     document = {
-        "server_id": "burp-mcp", "version": "fixture", "status": "ready",
+        "server_id": "burp-mcp",
+        "version": "fixture",
+        "status": "ready",
         "capabilities": ["mcp_bound_receipts_v1"],  # no signed observation authority
-        "tools": [{
-            "name": "get_proxy_history", "description": "fixture",
-            "parameters": [], "returns": {},
-            "side_effect_class": "READ_ONLY", "requires_approval": True,
-            "scope_check": True,
-        }],
+        "tools": [
+            {
+                "name": "get_proxy_history",
+                "description": "fixture",
+                "parameters": [],
+                "returns": {},
+                "side_effect_class": "READ_ONLY",
+                "requires_approval": True,
+                "scope_check": True,
+            }
+        ],
     }
     async with _fake_local_mcp(document) as (port, counts):
         registry = MCPRegistry()
@@ -207,7 +221,8 @@ async def _exercise_burp_negotiation() -> None:
             )
             adapter = BurpMCPAdapter(registry)
             scope = ScopeDefinition(
-                engagement_id="eng-local-fixture", domains=["owned.invalid"],
+                engagement_id="eng-local-fixture",
+                domains=["owned.invalid"],
                 authorization_ref="signed-fixture-ref",
             )
             with pytest.raises(MCPException, match="declaration unavailable"):
@@ -228,19 +243,31 @@ def test_real_provider_signature_verifier_rejects_cross_service_replay_and_stale
     now = int(time.time())
     for name in ALL:
         claims = {
-            "request_id": "req-fixture", "engagement_id": "eng-fixture",
-            "task_id": "task-fixture", "server_id": name,
-            "status": "confirmed_stopped", "verified": True, "stopped": True,
+            "request_id": "req-fixture",
+            "engagement_id": "eng-fixture",
+            "task_id": "task-fixture",
+            "server_id": name,
+            "status": "confirmed_stopped",
+            "verified": True,
+            "stopped": True,
             "issued_at": now,
         }
         message = json.dumps(
-            claims, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            claims,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
             allow_nan=False,
         ).encode("utf-8")
-        signed = {**claims, "attestation": {
-            "kid": "fixture",
-            "signature": base64.urlsafe_b64encode(private.sign(message)).decode("ascii").rstrip("="),
-        }}
+        signed = {
+            **claims,
+            "attestation": {
+                "kid": "fixture",
+                "signature": base64.urlsafe_b64encode(private.sign(message))
+                .decode("ascii")
+                .rstrip("="),
+            },
+        }
         assert provider_receipt_is_signed(
             signed, name, "req-fixture", "eng-fixture", "task-fixture", now=now
         )
@@ -252,7 +279,12 @@ def test_real_provider_signature_verifier_rejects_cross_service_replay_and_stale
             signed, name, "req-fixture", "eng-fixture", "task-foreign", now=now
         )
         assert not provider_receipt_is_signed(
-            {**signed, "stopped": False}, name, "req-fixture", "eng-fixture", "task-fixture", now=now
+            {**signed, "stopped": False},
+            name,
+            "req-fixture",
+            "eng-fixture",
+            "task-fixture",
+            now=now,
         )
         assert not provider_receipt_is_signed(
             signed, name, "req-fixture", "eng-fixture", "task-fixture", now=now + 121
@@ -329,7 +361,8 @@ def test_real_mcp_response_decoder_rejects_ambiguous_success_and_nested_fake_pro
 
 @pytest.mark.parametrize("name", ALL)
 def test_forged_http200_cancel_never_claims_signed_physical_stop(
-    name: str, monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     asyncio.run(_exercise_fake_cancel(name, monkeypatch))
 
@@ -339,8 +372,13 @@ async def _exercise_fake_cancel(name: str, monkeypatch: pytest.MonkeyPatch) -> N
         protocol, "check_persisted_reconciliation_authorization", AsyncMock(return_value=None)
     )
     result = {
-        "request_id": "req-fake", "engagement_id": "eng-fake", "task_id": "task-fake",
-        "server_id": name, "status": "confirmed_stopped", "verified": True, "stopped": True,
+        "request_id": "req-fake",
+        "engagement_id": "eng-fake",
+        "task_id": "task-fake",
+        "server_id": name,
+        "status": "confirmed_stopped",
+        "verified": True,
+        "stopped": True,
         "issued_at": int(time.time()),
         "attestation": {"kid": "fabricated", "signature": "A" * 86},
     }
@@ -350,16 +388,27 @@ async def _exercise_fake_cancel(name: str, monkeypatch: pytest.MonkeyPatch) -> N
     connection._session = fake  # type: ignore[assignment]  # fake never opens a socket
     connection.set_execution_event_callback(AsyncMock(return_value=True))
     claim = {
-        "request_id": "req-fake", "engagement_id": "eng-fake", "task_id": "task-fake",
-        "server_id": name, "status": "cancel_requested",
-        "authorization_version": 1, "tool_name": "original-reviewed-fixture",
+        "request_id": "req-fake",
+        "engagement_id": "eng-fake",
+        "task_id": "task-fake",
+        "server_id": name,
+        "status": "cancel_requested",
+        "authorization_version": 1,
+        "tool_name": "original-reviewed-fixture",
     }
     status = await connection.cancel_persisted_execution(claim)
     assert status == {"status": "unknown", "server_id": name, "request_id": "req-fake"}
-    assert fake.calls == [(f"{FAKE}:1/mcp/cancel", {
-        "request_id": "req-fake", "engagement_id": "eng-fake",
-        "task_id": "task-fake", "server_id": name,
-    })]
+    assert fake.calls == [
+        (
+            f"{FAKE}:1/mcp/cancel",
+            {
+                "request_id": "req-fake",
+                "engagement_id": "eng-fake",
+                "task_id": "task-fake",
+                "server_id": name,
+            },
+        )
+    ]
     # A forged or cross-service *source* cancellation intent must never send
     # any control request; a fake callback here tests only downstream receipt.
     bad_claim = {**claim, "server_id": "foreign"}
@@ -386,15 +435,22 @@ async def _exercise_native_asgi(monkeypatch: pytest.MonkeyPatch) -> None:
         ) as client:
             health = await client.get("/health")
             init = await client.post("/mcp/initialize", json={"scope": {"approved": True}})
-            execution = await client.post("/mcp/execute", json={
-                "tool_name": "fake-success", "parameters": {"verified": True},
-                "request_id": "req-unauthorized",
-            })
+            execution = await client.post(
+                "/mcp/execute",
+                json={
+                    "tool_name": "fake-success",
+                    "parameters": {"verified": True},
+                    "request_id": "req-unauthorized",
+                },
+            )
             assert health.status_code == execution.status_code == 503
             assert init.json()["status"] == "unavailable"
-            assert execution.json() == {
-                "status": "error", "error": "server_unavailable", "execution_enabled": False
-            }
+            expected = (
+                {"status": "error", "error": "local_iac_unavailable"}
+                if name == "cloud-mcp"
+                else {"status": "error", "error": "server_unavailable", "execution_enabled": False}
+            )
+            assert execution.json() == expected
 
     assert browser.manager._started is False
     async with httpx.AsyncClient(
@@ -403,21 +459,34 @@ async def _exercise_native_asgi(monkeypatch: pytest.MonkeyPatch) -> None:
         assert (await client.get("/health")).status_code == 503
         init = await client.post("/mcp/initialize", json={"session_id": "api-bootstrap"})
         assert init.status_code == 401
-        action = await client.post("/mcp/execute", json={
-            "tool_name": "execute", "parameters": {
-                "url": "https://never-contact.invalid", "action": "navigate",
-                "user_label": "guest",
-            }, "request_id": "req-untrusted-browser",
-            "execution_binding": {
-                "request_id": "req-untrusted-browser", "engagement_id": "eng-untrusted",
-                "task_id": "task-untrusted", "server_id": "browser-mcp",
+        action = await client.post(
+            "/mcp/execute",
+            json={
+                "tool_name": "execute",
+                "parameters": {
+                    "url": "https://never-contact.invalid",
+                    "action": "navigate",
+                    "user_label": "guest",
+                },
+                "request_id": "req-untrusted-browser",
+                "execution_binding": {
+                    "request_id": "req-untrusted-browser",
+                    "engagement_id": "eng-untrusted",
+                    "task_id": "task-untrusted",
+                    "server_id": "browser-mcp",
+                },
             },
-        })
+        )
         assert action.status_code == 401
-        status = await client.post("/mcp/request/status", json={
-            "request_id": "req-untrusted-browser", "engagement_id": "eng-untrusted",
-            "task_id": "task-untrusted", "server_id": "browser-mcp",
-        })
+        status = await client.post(
+            "/mcp/request/status",
+            json={
+                "request_id": "req-untrusted-browser",
+                "engagement_id": "eng-untrusted",
+                "task_id": "task-untrusted",
+                "server_id": "browser-mcp",
+            },
+        )
         assert status.status_code == 401
         assert browser.manager._started is False
 
@@ -427,17 +496,25 @@ async def _exercise_native_asgi(monkeypatch: pytest.MonkeyPatch) -> None:
         assert (await client.get("/health")).status_code == 503
         init = await client.post("/mcp/initialize", json={})
         assert init.json()["status"] == "unavailable"
-        execution = await client.post("/mcp/execute", json={
-            "tool_name": "inspect_local_original_sourcemap",
-            "parameters": {"artifact_sha256": "a" * 64},
-            "request_id": "req-unauthorized-source",
-        })
+        execution = await client.post(
+            "/mcp/execute",
+            json={
+                "tool_name": "inspect_local_original_sourcemap",
+                "parameters": {"artifact_sha256": "a" * 64},
+                "request_id": "req-unauthorized-source",
+            },
+        )
         assert execution.status_code == 503
         assert execution.json()["error"] == "signed_original_source_unavailable"
-        status = await client.post("/mcp/request/status", json={
-            "request_id": "req-unauthorized-source", "engagement_id": "eng-untrusted",
-            "task_id": "task-untrusted", "server_id": "source-map-mcp",
-        })
+        status = await client.post(
+            "/mcp/request/status",
+            json={
+                "request_id": "req-unauthorized-source",
+                "engagement_id": "eng-untrusted",
+                "task_id": "task-untrusted",
+                "server_id": "source-map-mcp",
+            },
+        )
         assert status.status_code == 503
         assert status.json()["status"] == "unknown"
 
@@ -453,25 +530,40 @@ def test_real_go_payload_binary_does_not_dispatch_legacy_handler(tmp_path: Path)
     six.ensure_windows_opt_in()
     binary = tmp_path / "payload-mcp.exe"
     env = six.clean_child_environment()
-    env.update({
-        "GOPROXY": "off", "GOSUMDB": "off", "GOTOOLCHAIN": "local",
-        "GOWORK": "off", "GOOS": "windows", "GOARCH": "amd64", "CGO_ENABLED": "0",
-    })
+    env.update(
+        {
+            "GOPROXY": "off",
+            "GOSUMDB": "off",
+            "GOTOOLCHAIN": "local",
+            "GOWORK": "off",
+            "GOOS": "windows",
+            "GOARCH": "amd64",
+            "CGO_ENABLED": "0",
+        }
+    )
     built = subprocess.run(
         ["go", "build", "-trimpath", "-o", str(binary), "./cmd/payload-mcp"],
-        cwd=six.GO_ROOT, env=env, capture_output=True,
-        stdin=subprocess.DEVNULL, timeout=110, check=False,
+        cwd=six.GO_ROOT,
+        env=env,
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        timeout=110,
+        check=False,
     )
     assert built.returncode == 0 and binary.is_file(), "Offline Go payload build failed"
     with six.isolated_go_process("payload-mcp", binary, "unconfigured") as running:
         health_code, health = running.wait_for_health()
         assert health_code == 503 and health["execution_enabled"] is False
-        init_code, init = six.local_request(running.port, "/mcp/initialize", {
-            "scope": {}, "auth_credentials": {}, "session_id": "negative-runtime", "metadata": {}
-        })
+        init_code, init = six.local_request(
+            running.port,
+            "/mcp/initialize",
+            {"scope": {}, "auth_credentials": {}, "session_id": "negative-runtime", "metadata": {}},
+        )
         assert init_code == 200 and init["status"] == "unavailable"
-        execute_code, denied = six.local_request(running.port, "/mcp/execute", {
-            "tool_name": "generate_payload", "parameters": {}, "request_id": "req-local-deny"
-        })
+        execute_code, denied = six.local_request(
+            running.port,
+            "/mcp/execute",
+            {"tool_name": "generate_payload", "parameters": {}, "request_id": "req-local-deny"},
+        )
         assert execute_code == 503
         assert denied["error"] == "native_execution_not_authorized"

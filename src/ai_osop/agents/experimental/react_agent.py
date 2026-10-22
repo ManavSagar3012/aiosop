@@ -9,11 +9,11 @@ Specializes in identifying DOM-based vulnerabilities and component-level flaws i
 __experimental__ = True
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
-from ai_osop.core.models import Observation, Task
+from ai_osop.core.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ class ReactSpecialistAgent(BaseAgent):
 
     async def _probe_components(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Dynamically probe React components for state-based logic flaws."""
-        return {"status": "success", "msg": "Dynamic component probing initialized."}
+        return {"status": "unsupported", "error": "Dynamic component probing is not implemented"}
 
     async def _cleanup_resources(self) -> None:
         pass

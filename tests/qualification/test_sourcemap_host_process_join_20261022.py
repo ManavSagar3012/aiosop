@@ -404,7 +404,8 @@ def test_signature_tamper_cross_domain_replay_and_missing_proof_rejected(
         "supervisor_observation",
     ):
         case = copy.deepcopy(host_setup["proofs"])
-        case[key]["signature"] = "A" + case[key]["signature"][1:]
+        original = case[key]["signature"]
+        case[key]["signature"] = ("B" if original.startswith("A") else "A") + original[1:]
         with pytest.raises(join.SourceMapHostProcessJoinDenied):
             host_setup["join"].verify(**case)
     forged = copy.deepcopy(host_setup["proofs"])

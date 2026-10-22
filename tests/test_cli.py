@@ -5,6 +5,7 @@ import pytest
 from click.testing import CliRunner
 
 from ai_osop.cli import cli
+from tests.test_cli_signed_engagement import _envelope
 
 
 @pytest.fixture
@@ -12,8 +13,8 @@ def runner():
     return CliRunner()
 
 
-@patch("ai_osop.cli.httpx.post")
-def test_create_engagement(mock_post, runner):
+@patch("ai_osop.cli.httpx.request")
+def test_create_engagement(mock_post, runner, tmp_path):
     mock_post.return_value.status_code = 200
     mock_post.return_value.json.return_value = {
         "session_id": "test-session-id",
@@ -29,11 +30,9 @@ def test_create_engagement(mock_post, runner):
             "test",
             "engagement",
             "create",
-            "test-eng",
-            "--domain",
-            "test.com",
-            "--approval-for",
-            "rce",
+            "eng-cli",
+            "--signed-roe",
+            str(_envelope(tmp_path)),
         ],
     )
 
@@ -43,17 +42,21 @@ def test_create_engagement(mock_post, runner):
     mock_post.assert_called_once()
 
 
-def test_list_engagements(runner):
-    # CLI command `engagement list` doesn't actually make an API call in the current implementation
+@patch("ai_osop.cli.httpx.request")
+def test_list_engagements(mock_request, runner):
+    mock_request.return_value.status_code = 200
+    mock_request.return_value.json.return_value = [{"session_id": "eng-cli", "phase": "initialized"}]
     result = runner.invoke(
         cli, ["--api-url", "http://test", "--token", "test", "engagement", "list"]
     )
 
     assert result.exit_code == 0
     assert "Active engagements:" in result.output
+    assert "eng-cli initialized" in result.output
+    assert mock_request.call_args.args == ("GET", "http://test/engagements")
 
 
-@patch("ai_osop.cli.httpx.post")
+@patch("ai_osop.cli.httpx.request")
 def test_halt_engagement(mock_post, runner):
     mock_post.return_value.status_code = 200
     mock_post.return_value.json.return_value = {"status": "halted"}
@@ -78,7 +81,7 @@ def test_halt_engagement(mock_post, runner):
     mock_post.assert_called_once()
 
 
-@patch("ai_osop.cli.httpx.post")
+@patch("ai_osop.cli.httpx.request")
 def test_create_task(mock_post, runner):
     mock_post.return_value.status_code = 200
     mock_post.return_value.json.return_value = {"id": "task-1"}
@@ -108,7 +111,7 @@ def test_create_task(mock_post, runner):
     mock_post.assert_called_once()
 
 
-@patch("ai_osop.cli.httpx.get")
+@patch("ai_osop.cli.httpx.request")
 def test_list_agents(mock_get, runner):
     mock_get.return_value.status_code = 200
     mock_get.return_value.json.return_value = [
@@ -122,7 +125,7 @@ def test_list_agents(mock_get, runner):
     mock_get.assert_called_once()
 
 
-@patch("ai_osop.cli.httpx.get")
+@patch("ai_osop.cli.httpx.request")
 def test_list_approvals(mock_get, runner):
     mock_get.return_value.status_code = 200
     mock_get.return_value.json.return_value = [
@@ -136,7 +139,7 @@ def test_list_approvals(mock_get, runner):
     mock_get.assert_called_once()
 
 
-@patch("ai_osop.cli.httpx.post")
+@patch("ai_osop.cli.httpx.request")
 def test_resolve_approval(mock_post, runner):
     mock_post.return_value.status_code = 200
 
@@ -150,8 +153,8 @@ def test_resolve_approval(mock_post, runner):
     mock_post.assert_called_once()
 
 
-@patch("ai_osop.cli.httpx.post")
-def test_api_error_handling(mock_post, runner):
+@patch("ai_osop.cli.httpx.request")
+def test_api_error_handling(mock_post, runner, tmp_path):
     mock_post.return_value.status_code = 400
     mock_post.return_value.text = "Bad Request"
 
@@ -164,11 +167,12 @@ def test_api_error_handling(mock_post, runner):
             "test",
             "engagement",
             "create",
-            "test-eng",
-            "--domain",
-            "test.com",
+            "eng-cli",
+            "--signed-roe",
+            str(_envelope(tmp_path)),
         ],
     )
 
-    assert result.exit_code == 0
-    assert "Error: 400 - Bad Request" in result.output
+    assert result.exit_code != 0
+    assert "HTTP 400" in result.output
+    assert "Bad Request" not in result.output

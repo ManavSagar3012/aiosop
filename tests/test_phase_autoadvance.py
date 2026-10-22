@@ -88,3 +88,43 @@ async def test_recon_complete_when_task_finished():
     orch._tasks = {t.id: t}
     done = await orch._is_phase_complete("eng-x", EngagementPhase.RECONNAISSANCE)
     assert done is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status", ["awaiting_approval", "dispatching", "dispatch_unknown", "failed", "cancelled"]
+)
+async def test_unresolved_or_failed_phase_cannot_complete(status: str) -> None:
+    orch = _orch(vuln_count=0)
+    task = Task(type="full_recon", agent_type=AgentType.RECON, engagement_id="eng-x")
+    task.status = status
+    orch._tasks = {task.id: task}
+    assert await orch._is_phase_complete("eng-x", EngagementPhase.RECONNAISSANCE) is False
+
+
+@pytest.mark.asyncio
+async def test_graph_outage_does_not_mean_zero_findings() -> None:
+    orch = _orch(vuln_count=0)
+    orch.graph_memory.get_graph_stats.side_effect = RuntimeError("Graph unavailable")
+    assert (
+        await orch._resolve_auto_next(
+            "eng-x", EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stats",
+    [{}, None, {"vulnerabilities": False}, {"vulnerabilities": -1}, {"vulnerabilities": "0"}],
+)
+async def test_invalid_graph_statistics_block_auto_advance(stats: object) -> None:
+    orch = _orch(vuln_count=0)
+    orch.graph_memory.get_graph_stats.return_value = stats
+    assert (
+        await orch._resolve_auto_next(
+            "eng-x", EngagementPhase.VULNERABILITY_DISCOVERY, EngagementPhase.EXPLOITATION
+        )
+        is None
+    )

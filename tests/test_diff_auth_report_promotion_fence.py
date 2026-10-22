@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from ai_osop.api.routers import report_attestations as reports
 from ai_osop.agents.reporting_agent import ReportingAgent
+from ai_osop.api.routers import report_attestations as reports
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 from ai_osop.orchestrator.context_compaction import task_assignment_sha256
@@ -59,7 +59,7 @@ def _resign_snapshot(lineage, *, modify_json=None, modify_md=None):
         "artifacts": {key: hashes[key] for key in blobs},
         "attestation_sha256": hashes["attestation"],
     }
-    manifest_bytes = json.dumps(manifest).encode()
+    manifest_bytes = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     hashes["manifest"] = hashlib.sha256(manifest_bytes).hexdigest()
     for key, contents in {
         **blobs, "attestation": envelope, "manifest": manifest_bytes,

@@ -49,6 +49,8 @@ spec:
         env:
         - name: OSOP_ENV
           value: "production"
+        - name: OSOP_ATTESTED_REPORT_ROOT
+          value: "/app/reports"
         - name: OSOP_LOG_LEVEL
           value: "INFO"
         - name: OSOP_NEO4J_URI
@@ -100,6 +102,8 @@ spec:
           # Require 2 consecutive successes before marking ready
           successThreshold: 2
         volumeMounts:
+        - name: reports
+          mountPath: /app/reports
         - name: tmp
           mountPath: /tmp
         - name: vault-token
@@ -110,6 +114,9 @@ spec:
           subPath: log-retention.json
           readOnly: true
       volumes:
+      - name: reports
+        persistentVolumeClaim:
+          claimName: ai-osop-reports
       - name: tmp
         emptyDir: {}
       - name: vault-token

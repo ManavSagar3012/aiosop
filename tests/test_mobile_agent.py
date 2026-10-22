@@ -62,11 +62,8 @@ async def test_analyze_deep_links_with_reset(agent) -> None:
 
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert result["analyzed_count"] == 2
-    assert len(result["findings"]) == 1
-    assert result["findings"][0]["type"] == "insecure_deep_link"
-    assert "Account Takeover" in result["findings"][0]["risk"]
+    assert result["status"] == "unsupported"
+    assert result["findings"] == []
 
 
 @pytest.mark.asyncio
@@ -87,8 +84,7 @@ async def test_analyze_deep_links_no_reset(agent) -> None:
 
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert result["analyzed_count"] == 2
+    assert result["status"] == "unsupported"
     assert result["findings"] == []
 
 
@@ -107,8 +103,8 @@ async def test_intercept_mobile_traffic(agent) -> None:
 
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert result["interception_active"] is True
+    assert result["status"] == "unsupported"
+    assert result["interception_active"] is False
 
 
 @pytest.mark.asyncio

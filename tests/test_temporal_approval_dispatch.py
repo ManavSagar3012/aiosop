@@ -293,8 +293,9 @@ async def test_temporal_durable_executor_rebinds_flow_and_subtask(
     executor = (
         orch if durable_executor == "orchestrator" else orch.task_scheduler
     )
-    executor._find_available_agent = AsyncMock(return_value=agent)
-    executor._release_agent = lambda _id: None
+    # The extracted facade delegates execution to the canonical orchestrator.
+    orch._find_available_agent = AsyncMock(return_value=agent)
+    orch._release_agent = lambda _id: None
     task = scoped_task(approval_required=False)
     try:
         RequestContext.bind(flow_id="old-flow", subtask_id="old-subtask")

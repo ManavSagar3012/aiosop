@@ -6,16 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ai_osop.core.call_provenance import (
-    BestEffortProvenance,
-    action_provenance,
-    provider_usage,
-)
+from ai_osop.core.call_provenance import BestEffortProvenance, action_provenance, provider_usage
 from ai_osop.core.llm_client import LiteLLMClient
-from ai_osop.memory.model_usage import ModelOutcomeUncertain
 from ai_osop.core.models import ExecutionActionRecord
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.mcp.protocol import MCPConnection, MCPExecuteRequest, MCPRegistry
+from ai_osop.memory.model_usage import ModelOutcomeUncertain
 
 
 @pytest.fixture(autouse=True)
@@ -46,14 +42,15 @@ def _mock_mcp_connection(server_id="test-mcp", status="success"):
     conn._initialized = True
     conn._tools["safe_tool"] = SimpleNamespace(timeout_seconds=1)
     response = SimpleNamespace(
+        status=200,
         json=AsyncMock(
-            return_value={
-                "request_id": "req-test",
+            side_effect=lambda: {
+                "request_id": conn._session.post.call_args.kwargs["json"]["request_id"],
                 "status": status,
                 "result": {"authorization": "SECRET-result-content"},
-                "error": "SECRET-provider-error",
+                "error": "SECRET-provider-error" if status == "error" else None,
             }
-        )
+        ),
     )
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=response)

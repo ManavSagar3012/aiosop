@@ -23,8 +23,18 @@ from sqlalchemy import text
 from ai_osop.api import main
 from ai_osop.api.routers import durable_supervision_subscriptions as api
 from tests.qualification.test_durable_subscriptions_mounted_actual_pg_20261021 import (
-    ENG_A, ENG_B, JWT_SECRET, OWNER_A, SUB, TASK_A,
-    PgSession, QueryResult, mounted_real, private_pg, post, sql,
+    ENG_A,
+    ENG_B,
+    JWT_SECRET,
+    OWNER_A,
+    SUB,
+    TASK_A,
+    PgSession,
+    QueryResult,
+    mounted_real,
+    post,
+    private_pg,
+    sql,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,8 +65,9 @@ def test_ui_exact_manual_ack_envelope_and_mounted_contract_offline() -> None:
     routes = {
         r.path.rsplit("/", 1)[-1]: r for r in main.app.routes
         if r.path.startswith("/supervision/engagements/") and "/subscriptions/" in r.path
+        and r.endpoint.__module__ == api.__name__
     }
-    assert set(routes) == {"acquire", "read", "ack", "renew", "release", "revoke"}
+    assert set(routes) == {"acquire", "read", "ack", "renew", "release", "revoke", "cursor-readback"}
     assert routes["ack"].endpoint is api.acknowledge
 
 

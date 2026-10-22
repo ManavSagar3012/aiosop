@@ -33,9 +33,14 @@ CSRF injection:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import time
+from email.utils import parsedate_to_datetime
+from http.cookiejar import Cookie
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import httpx
+
+from ai_osop.core.exceptions import ScopeValidationError
 
 if TYPE_CHECKING:
     from ai_osop.auth.session_store import SessionStore, UserSession
@@ -69,19 +74,48 @@ class SessionClient:
         self.session = session
         self.store = store
         self.cookies_dirty = False
+        origin_url = base_url or session.metadata_blob.get("origin", "")
+        self._bound_origin = self._origin(httpx.URL(origin_url)) if origin_url else None
+        if base_url and session.metadata_blob.get("origin"):
+            if self._origin(httpx.URL(session.metadata_blob["origin"])) != self._bound_origin:
+                raise ScopeValidationError("Session origin does not match requested base URL")
 
         # Build httpx cookie jar from the session's cookies list
         cookies = httpx.Cookies()
         for c in session.cookies:
             try:
-                cookies.set(
-                    name=c["name"],
-                    value=c["value"],
-                    domain=c.get("domain") or "",
-                    path=c.get("path") or "/",
+                domain = c.get("domain") or (self._bound_origin[1] if self._bound_origin else "")
+                if not domain:
+                    raise ValueError("Cookie origin unavailable")
+                if not isinstance(domain, str) or ("secure" in c and type(c["secure"]) is not bool):
+                    raise ValueError("Invalid cookie security attributes")
+                expires = c.get("expires")
+                expiry = (
+                    int(expires) if isinstance(expires, (int, float)) and expires >= 0 else None
                 )
-            except (KeyError, TypeError) as e:
-                logger.debug("session.cookie_skip err=%s cookie=%r", e, c)
+                cookies.jar.set_cookie(
+                    Cookie(
+                        version=0,
+                        name=c["name"],
+                        value=c["value"],
+                        port=None,
+                        port_specified=False,
+                        domain=domain,
+                        domain_specified=bool(c.get("domain")) and not c.get("hostOnly", False),
+                        domain_initial_dot=domain.startswith("."),
+                        path=c.get("path") or "/",
+                        path_specified=True,
+                        secure=c.get("secure") is True,
+                        expires=expiry,
+                        discard=expiry is None,
+                        comment=None,
+                        comment_url=None,
+                        rest={"HttpOnly": None} if c.get("httpOnly") else {},
+                        rfc2109=False,
+                    )
+                )
+            except (KeyError, TypeError, ValueError, OverflowError):
+                logger.debug("session.cookie_skip: invalid cookie metadata")
 
         headers: Dict[str, str] = {}
         if session.user_agent:
@@ -102,7 +136,23 @@ class SessionClient:
             timeout=timeout,
             verify=verify,
             follow_redirects=follow_redirects,
+            max_redirects=10,
+            event_hooks={"request": [self._check_origin], "response": [self._capture_cookies]},
+            trust_env=False,
         )
+
+    @staticmethod
+    def _origin(url: httpx.URL) -> tuple[str, str, int]:
+        if url.scheme not in {"http", "https"} or not url.host or url.userinfo:
+            raise ScopeValidationError("An explicit HTTP(S) session origin is required")
+        return url.scheme, url.host.lower(), url.port or (443 if url.scheme == "https" else 80)
+
+    async def _check_origin(self, request: httpx.Request) -> None:
+        if self._bound_origin is None or self._origin(request.url) != self._bound_origin:
+            raise ScopeValidationError("Session request or redirect is outside its bound origin")
+
+    async def _capture_cookies(self, response: httpx.Response) -> None:
+        self._absorb_set_cookies(response)
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -152,7 +202,6 @@ class SessionClient:
             kwargs["headers"] = extra
 
         response = await self._client.request(method, url, **kwargs)
-        self._absorb_set_cookies(response)
         return response
 
     def _absorb_set_cookies(self, response: httpx.Response) -> None:
@@ -160,26 +209,42 @@ class SessionClient:
         # httpx's response.cookies is a Cookies jar; we walk the raw headers
         # because we need domain/path/expires that the jar normalizes away.
         for header_value in response.headers.get_list("set-cookie"):
-            parsed = _parse_set_cookie(header_value, default_domain=response.url.host)
+            response_path = response.url.path
+            default_path = response_path.rsplit("/", 1)[0] or "/"
+            parsed = _parse_set_cookie(
+                header_value, default_domain=response.url.host, default_path=default_path
+            )
             if parsed is None:
+                continue
+            host = response.url.host.lower()
+            domain = parsed["domain"].lstrip(".").lower()
+            if host != domain and not host.endswith("." + domain):
                 continue
             self._upsert_cookie(parsed)
 
     def _upsert_cookie(self, new_cookie: Dict[str, Any]) -> None:
         """Insert or replace a cookie in session.cookies (by name+domain+path)."""
         existing = self.session.cookies
-        match_key = (new_cookie["name"], new_cookie.get("domain", ""), new_cookie.get("path", "/"))
+        match_key = (
+            new_cookie["name"],
+            new_cookie.get("domain", "").lstrip(".").lower(),
+            new_cookie.get("path", "/"),
+        )
         for i, c in enumerate(existing):
             if (
                 c.get("name") == match_key[0]
-                and (c.get("domain") or "") == match_key[1]
+                and (c.get("domain") or "").lstrip(".").lower() == match_key[1]
                 and (c.get("path") or "/") == match_key[2]
             ):
-                existing[i] = new_cookie
+                if new_cookie.get("expires", float("inf")) <= time.time():
+                    existing.pop(i)
+                else:
+                    existing[i] = new_cookie
                 self.cookies_dirty = True
                 return
-        existing.append(new_cookie)
-        self.cookies_dirty = True
+        if new_cookie.get("expires", float("inf")) > time.time():
+            existing.append(new_cookie)
+            self.cookies_dirty = True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -187,7 +252,9 @@ class SessionClient:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _parse_set_cookie(header_value: str, *, default_domain: str = "") -> Optional[Dict[str, Any]]:
+def _parse_set_cookie(
+    header_value: str, *, default_domain: str = "", default_path: str = "/"
+) -> Optional[Dict[str, Any]]:
     """Parse a single Set-Cookie header into our cookie dict shape.
 
     Returns None if the header is malformed.
@@ -202,7 +269,8 @@ def _parse_set_cookie(header_value: str, *, default_domain: str = "") -> Optiona
         "name": name.strip(),
         "value": value.strip(),
         "domain": default_domain,
-        "path": "/",
+        "path": default_path,
+        "hostOnly": True,
     }
     for attr in parts[1:]:
         if "=" in attr:
@@ -211,15 +279,21 @@ def _parse_set_cookie(header_value: str, *, default_domain: str = "") -> Optiona
             v = v.strip()
             if k == "domain":
                 cookie["domain"] = v.lstrip(".")
+                cookie["hostOnly"] = False
             elif k == "path":
-                cookie["path"] = v or "/"
+                cookie["path"] = v if v.startswith("/") else default_path
             elif k == "expires":
                 # leave to caller — Playwright wants epoch float; we keep
                 # the header form so save_session can re-parse if needed.
                 cookie["expires_raw"] = v
+                try:
+                    cookie["expires"] = parsedate_to_datetime(v).timestamp()
+                except (TypeError, ValueError, OverflowError):
+                    pass
             elif k == "max-age":
                 try:
                     cookie["max_age"] = int(v)
+                    cookie["expires"] = time.time() + int(v)
                 except ValueError:
                     pass
             elif k == "samesite":
@@ -230,4 +304,6 @@ def _parse_set_cookie(header_value: str, *, default_domain: str = "") -> Optiona
                 cookie["secure"] = True
             elif flag == "httponly":
                 cookie["httpOnly"] = True
+    if "max_age" in cookie:
+        cookie["expires"] = time.time() + cookie["max_age"]
     return cookie

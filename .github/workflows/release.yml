@@ -1,4 +1,4 @@
-name: AI-OSOP Release Certification
+name: AI-OSOP Qualification Evidence
 
 on:
   push:
@@ -110,38 +110,21 @@ jobs:
           python-version: "3.11"
       - run: pip install poetry==1.8.3
       - run: poetry install
-      - name: Run qualification runner & generate certificate
+      - name: Run local qualification suites
         run: |
           poetry run python scripts/qualification/run_all.py
           poetry run python scripts/qualification/test_self_pentest.py
           poetry run python scripts/chaos/run_chaos.py
-          python -c "
-          from datetime import datetime
-          from pathlib import Path
-          content = f'''# AI-OSOP Release Certificate
-
-**Date:** {datetime.utcnow().isoformat()}Z
-**Git SHA:** ${{ github.sha }}
-**Release Decision:** PASS (Local Qualification & Boundary Defense)
-
-## CI & Qualification Matrix
-- Test Suite: PASS
-- Lint & Type Check: PASS
-- Security Qualification: 12/12 PASS
-- Reliability Qualification: 6/6 PASS
-- Ownership Qualification: 4/4 PASS
-- Scale Qualification: 6/6 PASS
-- Adversarial Self-Pentest: 5/5 PASS
-- Chaos Engineering: 8/8 PASS
-- K8s Manifest Validation: PASS
-- PostgreSQL 2.x Readiness: PASS
-- Database Backup & Restore: PASS
-- Migration Check: PASS
-'''
-          Path('RELEASE_CERTIFICATE.md').write_text(content, encoding='utf-8')
-          "
+      - name: Write explicitly noncertified readiness draft
+        run: |
+          set +e
+          poetry run python scripts/qualification/generate_release_certificate.py
+          result=$?
+          set -e
+          # The generator deliberately returns 2: local evidence cannot mint release authority.
+          test "$result" -eq 2
       - uses: actions/upload-artifact@v4
         with:
-          name: release-certificate
-          path: RELEASE_CERTIFICATE.md
+          name: noncertified-readiness-draft
+          path: RELEASE_READINESS_DRAFT.md
 

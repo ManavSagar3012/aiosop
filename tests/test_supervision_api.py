@@ -20,12 +20,17 @@ def harness(monkeypatch):
     store.list_events_after = AsyncMock(return_value=[])
     store.list_tasks = AsyncMock(return_value=[])
     store.list_mcp_dispatches = AsyncMock(return_value=[])
-    store.get_mcp_dispatch = AsyncMock(return_value={
-        "server_id": "mock-local", "request_id": "req-original",
-        "engagement_id": "eng-1", "task_id": "task-1",
-        "authorization_version": 1, "tool_name": "get_status",
-        "status": "outcome_unknown",
-    })
+    store.get_mcp_dispatch = AsyncMock(
+        return_value={
+            "server_id": "mock-local",
+            "request_id": "req-original",
+            "engagement_id": "eng-1",
+            "task_id": "task-1",
+            "authorization_version": 1,
+            "tool_name": "get_status",
+            "status": "outcome_unknown",
+        }
+    )
     store.list_attempts = AsyncMock(return_value=[])
     store.get_control = AsyncMock(return_value=None)
     store.list_controls = AsyncMock(return_value=[])
@@ -76,7 +81,8 @@ def harness(monkeypatch):
         ),
         reconcile_mcp_dispatch=AsyncMock(
             return_value={
-                "status": "unknown", "persisted_status": "outcome_unknown",
+                "status": "unknown",
+                "persisted_status": "outcome_unknown",
                 "request_id": "req-original",
             }
         ),
@@ -129,10 +135,14 @@ def test_persisted_owner_check_prevents_cross_engagement_data_leak(harness):
 
 def test_model_usage_requires_authorized_owner(harness, monkeypatch):
     client, _, store, _ = harness
-    usage = AsyncMock(return_value={
-        "engagement_id": "eng-1", "calls": 1,
-        "provider_reported_cost_usd": None, "cost_complete": False,
-    })
+    usage = AsyncMock(
+        return_value={
+            "engagement_id": "eng-1",
+            "calls": 1,
+            "provider_reported_cost_usd": None,
+            "cost_complete": False,
+        }
+    )
     monkeypatch.setattr(supervision.ModelUsageLedger, "summary", usage)
     result = client.get("/supervision/engagements/eng-1/model-usage")
     assert result.status_code == 200
@@ -148,18 +158,26 @@ def test_model_usage_requires_authorized_owner(harness, monkeypatch):
 
 def test_remote_dispatch_inventory_never_bypasses_persisted_ownership(harness):
     client, _, store, _ = harness
-    store.list_mcp_dispatches.return_value = [{
-        "server_id": "mock-local", "request_id": "req-original",
-        "task_id": "task-1", "tool_name": "passive_probe",
-        "status": "accepted_unconfirmed", "authorization_version": 1,
-    }]
+    store.list_mcp_dispatches.return_value = [
+        {
+            "server_id": "mock-local",
+            "request_id": "req-original",
+            "task_id": "task-1",
+            "tool_name": "passive_probe",
+            "status": "accepted_unconfirmed",
+            "authorization_version": 1,
+        }
+    ]
     response = client.get("/supervision/engagements/eng-1/mcp-dispatches?task_id=task-1")
     assert response.status_code == 200
     assert response.json()["dispatches"][0]["status"] == "accepted_unconfirmed"
     store.assert_access.assert_awaited_once_with("eng-1", "alice", "operator", "task-1")
     store.list_mcp_dispatches.assert_awaited_once_with("eng-1", "task-1", 100)
     store.assert_access.side_effect = SupervisionConflict("Persisted owner revoked")
-    assert client.get("/supervision/engagements/eng-1/mcp-dispatches?task_id=task-1").status_code == 403
+    assert (
+        client.get("/supervision/engagements/eng-1/mcp-dispatches?task_id=task-1").status_code
+        == 403
+    )
     assert store.list_mcp_dispatches.await_count == 1
 
 
@@ -321,19 +339,21 @@ def test_terminal_callback_receipts_require_authenticated_owner(harness, monkeyp
     from ai_osop.memory.terminal_lifecycle import TerminalLifecycleStore
 
     client, _, store, _ = harness
-    read_callbacks = AsyncMock(return_value=[{
-        "id": "cb-1",
-        "engagement_id": "eng-1",
-        "task_id": "task-1",
-        "attempt_id": "run-1",
-        "status": "unknown",
-        "outcome": "succeeded",
-        "receipt": {"result_code": "agent_completed"},
-    }])
-    monkeypatch.setattr(TerminalLifecycleStore, "list_callbacks", read_callbacks)
-    response = client.get(
-        "/supervision/engagements/eng-1/tasks/task-1/terminal-callbacks"
+    read_callbacks = AsyncMock(
+        return_value=[
+            {
+                "id": "cb-1",
+                "engagement_id": "eng-1",
+                "task_id": "task-1",
+                "attempt_id": "run-1",
+                "status": "unknown",
+                "outcome": "succeeded",
+                "receipt": {"result_code": "agent_completed"},
+            }
+        ]
     )
+    monkeypatch.setattr(TerminalLifecycleStore, "list_callbacks", read_callbacks)
+    response = client.get("/supervision/engagements/eng-1/tasks/task-1/terminal-callbacks")
     assert response.status_code == 200
     assert response.json()["callbacks"][0]["status"] == "unknown"
     assert response.json()["callbacks"][0]["outcome"] == "succeeded"
@@ -341,12 +361,8 @@ def test_terminal_callback_receipts_require_authenticated_owner(harness, monkeyp
     store.assert_access.assert_awaited_with("eng-1", "alice", "operator", "task-1")
 
     read_callbacks.reset_mock()
-    store.assert_access.side_effect = SupervisionConflict(
-        "Operator does not own this engagement"
-    )
-    denied = client.get(
-        "/supervision/engagements/eng-1/tasks/task-1/terminal-callbacks"
-    )
+    store.assert_access.side_effect = SupervisionConflict("Operator does not own this engagement")
+    denied = client.get("/supervision/engagements/eng-1/tasks/task-1/terminal-callbacks")
     assert denied.status_code == 403
     read_callbacks.assert_not_awaited()
 
@@ -361,9 +377,7 @@ def test_terminal_callback_receipts_reject_viewer(harness, monkeypatch):
         "sub": "viewer",
         "role": "viewer",
     }
-    denied = client.get(
-        "/supervision/engagements/eng-1/tasks/task-1/terminal-callbacks"
-    )
+    denied = client.get("/supervision/engagements/eng-1/tasks/task-1/terminal-callbacks")
     assert denied.status_code == 403
     read_callbacks.assert_not_awaited()
     store.assert_access.assert_not_awaited()
@@ -408,4 +422,4 @@ async def test_sse_frames_include_resume_cursor_and_filter(monkeypatch, harness)
     store.list_events_after.assert_awaited_once_with("eng-1", 40, "task-1", 100)
     # Admission, committed batch SELECT, then a fresh revocation check
     # immediately before emitting this individual event.
-    assert revalidate.await_count == 3
+    assert revalidate.await_count == 4

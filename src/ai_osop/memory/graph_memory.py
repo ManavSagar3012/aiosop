@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.graph import Node, Path, Relationship
-from neo4j.exceptions import ServiceUnavailable
 
 from ai_osop.core.config import settings
 from ai_osop.core.exceptions import GraphQueryError, MemoryException
@@ -33,7 +32,6 @@ from ai_osop.core.models import (
     WorkflowTransition,
 )
 from ai_osop.core.tracing import trace_span
-from ai_osop.reliability.retry import retry_with_backoff
 
 
 class GraphMemory:
@@ -56,29 +54,21 @@ class GraphMemory:
         self._initialized = False
 
     async def connect(self) -> None:
-        """Initialize Neo4j connection with exponential backoff retry.
+        """Create one verified driver; the startup coordinator owns retry policy."""
 
-        Sprint 7: Survives Neo4j restarts during startup without crashing the platform.
-        """
-
-        async def _connect() -> None:
-            self._driver = AsyncGraphDatabase.driver(
-                settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
-            )
-            await self._driver.verify_connectivity()
-            self._initialized = True
-
-        await retry_with_backoff(
-            _connect,
-            max_retries=5,
-            base_delay=1.0,
-            max_delay=30.0,
-            exceptions=(ServiceUnavailable, Exception),
-            retry_name="neo4j.connect",
+        driver = AsyncGraphDatabase.driver(
+            settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
         )
-
-        # Create indexes and constraints
-        await self._setup_schema()
+        self._driver = driver
+        try:
+            await driver.verify_connectivity()
+            await self._setup_schema()
+            self._initialized = True
+        except (Exception, asyncio.CancelledError):
+            self._initialized = False
+            self._driver = None
+            await driver.close()
+            raise
 
     async def _setup_schema(self) -> None:
         """Create indexes and constraints for performance."""

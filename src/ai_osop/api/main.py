@@ -126,6 +126,8 @@ async def connect_with_retry(
     max_retries: int = 10,
     base_delay: float = 1.0,
     max_delay: float = 30.0,
+    exceptions: tuple[type[Exception], ...] = (Exception,),
+    timeout_seconds: float = 120.0,
 ) -> bool:
     """Connect to a dependency with exponential backoff.
 
@@ -135,17 +137,21 @@ async def connect_with_retry(
     from ai_osop.reliability.retry import retry_with_backoff
 
     try:
-        await retry_with_backoff(
-            connector,
-            max_retries=max(0, max_retries - 1),
-            base_delay=base_delay,
-            max_delay=max_delay,
-            retry_name=f"{name}.connect",
+        await asyncio.wait_for(
+            retry_with_backoff(
+                connector,
+                max_retries=max(0, max_retries - 1),
+                base_delay=base_delay,
+                max_delay=max_delay,
+                retry_name=f"{name}.connect",
+                exceptions=exceptions,
+            ),
+            timeout=timeout_seconds,
         )
         logger.info(f"{name} connected successfully")
         return True
     except Exception as e:
-        logger.critical(f"{name} unavailable after {max(1, max_retries)} attempts: {e}")
+        logger.critical(f"{name} unavailable after bounded startup retries ({type(e).__name__})")
         return False
 
 
@@ -370,7 +376,11 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("Required session storage or schema migration unavailable")
 
         # 2. Neo4j (critical)
-        neo4j_ok = await connect_with_retry(graph_memory.connect, "neo4j", max_retries=10)
+        from neo4j.exceptions import ServiceUnavailable
+
+        neo4j_ok = await connect_with_retry(
+            graph_memory.connect, "neo4j", max_retries=5, exceptions=(ServiceUnavailable,)
+        )
         if neo4j_ok:
             health_status["neo4j"] = "healthy"
         else:

@@ -5,16 +5,13 @@ Handles engagement lifecycle: creation, halting, phase transitions, authenticate
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Dict, Optional
 
-from ai_osop.core.config import AgentType, EngagementPhase
-from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
-from ai_osop.core.tracing import trace_span
-from ai_osop.core.observability import record_engagement_started, record_engagement_halted
-from ai_osop.core.exceptions import WorkflowException, WorkflowTransitionError
-
 import structlog
+
+from ai_osop.core.config import EngagementPhase
+from ai_osop.core.exceptions import WorkflowException
+from ai_osop.core.models import ScopeDefinition, SessionState
 
 logger = structlog.get_logger("ai_osop.orchestrator.engagement_manager")
 
@@ -49,37 +46,8 @@ class EngagementManager:
         await self._orch.halt_engagement(session_id, reason)
 
     async def transition_phase(self, session_id: str, new_phase: EngagementPhase) -> SessionState:
-        """Transition engagement to new phase with validation."""
-        session = self._orch._sessions.get(session_id)
-        if not session:
-            raise WorkflowException(f"Session {session_id} not found")
-        current = EngagementPhase(session.phase)
-        if new_phase not in self._orch.VALID_TRANSITIONS.get(current, []):
-            raise WorkflowTransitionError(
-                f"Invalid transition: {current.value} -> {new_phase.value}"
-            )
-        if new_phase == EngagementPhase.EXPLOITATION:
-            stats = await self._orch.graph_memory.get_graph_stats(session_id)
-            if stats.get("vulnerabilities", 0) == 0:
-                raise WorkflowException("Cannot transition to exploitation without vulnerabilities")
-        session.phase = new_phase.value
-        session.updated_at = datetime.utcnow()
-        await self._orch.session_memory.store_session_state(session)
-        await self._orch.session_memory.persist_session_state(session)
-        await self._orch.phase_monitor._on_phase_enter(session, new_phase)
-        await self._orch._audit_log(
-            AuditEvent(
-                event_type="phase_transition",
-                severity="info",
-                actor_type="system",
-                actor_id="orchestrator",
-                action={"from_phase": current.value, "to_phase": new_phase.value},
-                result={"success": True},
-                context={"session_id": session_id},
-                engagement_id=session.scope.engagement_id,
-            )
-        )
-        return session
+        """Delegate state changes to the canonical lifecycle authority."""
+        return await self._orch.transition_phase(session_id, new_phase)
 
     async def _engagement_is_authenticated(self, engagement_id: str) -> bool:
         """Use imported session state, not a potentially stale graph projection."""
@@ -106,9 +74,7 @@ class EngagementManager:
             # signed source Task in PostgreSQL; a caller's username/source ID
             # cannot stand in for durable completion and current ROE.
             if source_task_id != "session-import":
-                source = await self._orch.session_memory.load_task_authoritative(
-                    source_task_id
-                )
+                source = await self._orch.session_memory.load_task_authoritative(source_task_id)
                 if (
                     source is None
                     or source.id != source_task_id

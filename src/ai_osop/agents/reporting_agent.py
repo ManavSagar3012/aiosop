@@ -12,7 +12,7 @@ import html
 import json
 import os
 import re
-import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -21,6 +21,7 @@ from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import EvidenceArtifact, Task
+from ai_osop.reporting.artifact_store import publish_report_bundle
 from ai_osop.reporting.attestation import (
     ReportAttestationError,
     hash_evidence_snapshot,
@@ -207,9 +208,7 @@ class ReportingAgent(BaseAgent):
         raw request/response, or unverifiable value into a report. Existing
         v2 report signing covers these extra JSON fields as exact artifact bytes.
         """
-        from ai_osop.memory.session_memory import (
-            SessionMemory, _checked_evidence_artifact,
-        )
+        from ai_osop.memory.session_memory import SessionMemory, _checked_evidence_artifact
 
         memory = self.ctx.session_memory
         if not isinstance(memory, SessionMemory):
@@ -230,7 +229,8 @@ class ReportingAgent(BaseAgent):
 
         async def check_report_authority() -> None:
             signed = await memory.assert_signed_authorization(
-                engagement_id, expected_version=expected_version,
+                engagement_id,
+                expected_version=expected_version,
             )
             generating = await memory.load_task_authoritative(task.id)
             if (
@@ -252,7 +252,8 @@ class ReportingAgent(BaseAgent):
             if flow_id is not None:
                 flow = await memory.load_flow(flow_id)
                 if (
-                    flow is None or flow.id != flow_id
+                    flow is None
+                    or flow.id != flow_id
                     or flow.engagement_id != engagement_id
                     or flow.status not in {"pending", "running"}
                     or type(flow.revision) is not int
@@ -337,27 +338,30 @@ class ReportingAgent(BaseAgent):
                             provider_event["provider_event_id"],
                         )
                         or not isinstance(provider_event.get("provider_receipt_sha256"), str)
-                        or not _SHA256_LOWER.fullmatch(
-                            provider_event["provider_receipt_sha256"]
-                        )
+                        or not _SHA256_LOWER.fullmatch(provider_event["provider_receipt_sha256"])
                     ):
                         raise ValueError("Signed navigation candidate source is stale")
                     flow = await memory.load_flow(source.flow_id)
                     if (
-                        flow is None or flow.id != source.flow_id
+                        flow is None
+                        or flow.id != source.flow_id
                         or flow.engagement_id != engagement_id
                         or flow.status not in {"pending", "running"}
                         or flow.revision != source.payload["_flow_revision"]
                     ):
                         raise ValueError("Signed navigation Flow changed")
                     if not await memory.is_task_approved(
-                        source.id, engagement_id, artifact.approval_id,
+                        source.id,
+                        engagement_id,
+                        artifact.approval_id,
                     ):
                         raise ValueError("Signed navigation human approval is not current")
                     # Fresh authority and source readback after the awaited
                     # Flow/approval calls; no post-factum graph claim upgrade.
                     fresh = await memory.load_task_authoritative(source_id)
-                    if fresh is None or fresh.model_dump(mode="json") != source.model_dump(mode="json"):
+                    if fresh is None or fresh.model_dump(mode="json") != source.model_dump(
+                        mode="json"
+                    ):
                         raise ValueError("Signed navigation source changed during read")
                     fresh_source_flow = await memory.load_flow(source.flow_id)
                     if (
@@ -369,18 +373,23 @@ class ReportingAgent(BaseAgent):
                     ):
                         raise ValueError("Signed navigation Flow changed after source reads")
                     await check_report_authority()
-                    refs.append({
-                        "schema": "ai-osop.candidate-artifact-reference.v1",
-                        "merkle_leaf_sha256": artifact.merkle_leaf_hash,
-                        "source_task_id_sha256": hashlib.sha256(
-                            b"ai-osop-report-navigation-source-v1\0"
-                            + engagement_id.encode("utf-8") + b"\0" + source_id.encode("utf-8")
-                        ).hexdigest(),
-                        "verification_state": "candidate_unverified",
-                        "independent_target_effect_verified": False,
-                    })
+                    refs.append(
+                        {
+                            "schema": "ai-osop.candidate-artifact-reference.v1",
+                            "merkle_leaf_sha256": artifact.merkle_leaf_hash,
+                            "source_task_id_sha256": hashlib.sha256(
+                                b"ai-osop-report-navigation-source-v1\0"
+                                + engagement_id.encode("utf-8")
+                                + b"\0"
+                                + source_id.encode("utf-8")
+                            ).hexdigest(),
+                            "verification_state": "candidate_unverified",
+                            "independent_target_effect_verified": False,
+                        }
+                    )
                 finding["candidate_evidence_artifacts"] = sorted(
-                    refs, key=lambda item: item["merkle_leaf_sha256"],
+                    refs,
+                    key=lambda item: item["merkle_leaf_sha256"],
                 )
                 await check_report_authority()
             await check_report_authority()
@@ -402,7 +411,7 @@ class ReportingAgent(BaseAgent):
             require_attestation and (not isinstance(signer_key_id, str) or not signer_key_id)
         ):
             raise AgentException("Signed reports require an explicit trusted signer key ID")
-        version = payload.get("version", "v1.0")
+        version = payload.get("version", "v-" + uuid.uuid4().hex)
         if (
             not isinstance(version, str)
             or not _SAFE_IDENTIFIER.fullmatch(version)
@@ -557,7 +566,10 @@ class ReportingAgent(BaseAgent):
             # synthetic unit memory without any durable PostgreSQL has no
             # artifact references and must not invent them.
             await self._attach_current_candidate_artifact_references(
-                engagement_id, task, findings, generation_binding,
+                engagement_id,
+                task,
+                findings,
+                generation_binding,
             )
 
         def graph_count(key: str) -> int:
@@ -692,28 +704,13 @@ class ReportingAgent(BaseAgent):
             manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
         digests["manifest"] = hashlib.sha256(contents["manifest"].encode("utf-8")).hexdigest()
-        reports_dir = Path("reports") / engagement_id
+        reports_root = Path(os.environ.get("OSOP_ATTESTED_REPORT_ROOT", "reports"))
+        if os.environ.get("OSOP_ENV", "development") == "production" and (
+            not os.environ.get("OSOP_ATTESTED_REPORT_ROOT") or not reports_root.is_absolute()
+        ):
+            raise AgentException("Production report storage requires a configured absolute root")
         try:
-            reports_dir.mkdir(parents=True, exist_ok=True)
-            artifacts: Dict[str, str] = {}
-            for extension, content in contents.items():
-                path = reports_dir / f"{report_id}.{extension}"
-                # A binary write makes SHA-256 portable on Windows (no CRLF
-                # transformation); replace avoids partially written reports.
-                temporary_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        mode="wb", dir=reports_dir, prefix=".report-", delete=False
-                    ) as temporary:
-                        temporary_path = Path(temporary.name)
-                        temporary.write(content.encode("utf-8"))
-                        temporary.flush()
-                        os.fsync(temporary.fileno())
-                    os.replace(temporary_path, path)
-                finally:
-                    if temporary_path is not None and temporary_path.exists():
-                        temporary_path.unlink()
-                artifacts[extension] = str(path.resolve())
+            artifacts = publish_report_bundle(reports_root, engagement_id, report_id, contents)
         except OSError as exc:
             raise AgentException("Report draft could not be persisted") from exc
 

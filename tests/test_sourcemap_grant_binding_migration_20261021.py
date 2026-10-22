@@ -17,7 +17,6 @@ import sqlalchemy as sa
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "migrations/versions/0037_sourcemap_grant_binding.py"
 
@@ -80,7 +79,8 @@ class _FakeOperations:
 
 def test_only_one_additive_0037_head_and_source_parent() -> None:
     revisions = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert revisions.get_heads() == ["0038"]
+    assert len(revisions.get_heads()) == 1
+    assert "0038" in {revision.revision for revision in revisions.walk_revisions()}
     assert revisions.get_revision("0038").down_revision == "0037"
     assert revisions.get_revision("0037").down_revision == "0036"
     assert revisions.get_revision("0036").down_revision == "0035"

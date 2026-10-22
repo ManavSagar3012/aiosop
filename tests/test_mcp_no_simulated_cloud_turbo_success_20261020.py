@@ -169,12 +169,10 @@ async def test_direct_http_execute_denies_all_tools_and_injected_credentials(
                         "X-OSOP-Native-Grant": "forged-inert-token",
                     },
                 )
-                assert response.status_code == 503
+                assert response.status_code == (422 if name == "cloud_mcp" else 503)
                 expected_body = {
                     "status": "error",
-                    "error": (
-                        "local_iac_unavailable" if name == "cloud_mcp" else "server_unavailable"
-                    ),
+                    "error": ("invalid_request" if name == "cloud_mcp" else "server_unavailable"),
                 }
                 if name != "cloud_mcp":
                     expected_body["execution_enabled"] = False

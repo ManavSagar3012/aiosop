@@ -107,6 +107,26 @@ async def test_cloud_agent_local_iac_does_not_promote_to_live_iam(agent) -> None
 
 
 @pytest.mark.asyncio
+async def test_cloud_iac_accepts_only_current_execution_metadata(agent) -> None:
+    task = Task(
+        type="scan_local_iac",
+        agent_type=AgentType.CLOUD_SPECIALIST,
+        engagement_id="test-session",
+        payload={"_authorization_version": 7},
+    )
+    agent.ctx.current_task = task
+    execution = task.model_copy(deep=True)
+    execution.payload["engagement_id"] = task.engagement_id
+    adapter = AsyncMock()
+    adapter.scan_local_iac.return_value = {"findings": [], "findings_count": 0}
+    with patch("ai_osop.adapters.cloud_mcp.CloudMCPAdapter", return_value=adapter):
+        assert (await agent._execute(execution))["status"] == "success"
+        execution.payload["_authorization_version"] = 8
+        assert (await agent._execute(execution))["status"] == "failed"
+    adapter.scan_local_iac.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_cloud_agent_local_iac_rejects_caller_paths(agent) -> None:
     result = await agent._scan_local_iac({"path": "arbitrary"})
     assert result["status"] == "failed"
@@ -126,8 +146,8 @@ async def test_cloud_agent_probe_metadata(agent) -> None:
     )
 
     result = await agent._execute(task)
-    assert result["status"] == "success"
-    assert "Metadata probing initialized" in result["msg"]
+    assert result["status"] == "unsupported"
+    assert "not implemented" in result["error"]
 
 
 @pytest.mark.asyncio

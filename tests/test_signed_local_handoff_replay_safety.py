@@ -4,7 +4,7 @@ All tests are deterministic adapters; no PostgreSQL or remote target runs.
 """
 
 import asyncio
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -36,6 +36,8 @@ def harness(*, signed=True):
     memory.claim_local_agent_start = AsyncMock(return_value=True)
     memory.store_hot = AsyncMock()
     memory.store_task = AsyncMock()
+    memory.acquire_lock = AsyncMock(return_value=True)
+    memory.release_lock = AsyncMock(return_value=True)
     graph = SimpleNamespace(upsert_task=AsyncMock())
     bus = SimpleNamespace(publish=AsyncMock())
     events = []
@@ -55,6 +57,8 @@ def harness(*, signed=True):
         _on_task_success=AsyncMock(),
         _on_task_failure=AsyncMock(),
     )
+    orch._find_available_agent = MethodType(Orchestrator._find_available_agent, orch)
+    orch._release_agent = MethodType(Orchestrator._release_agent, orch)
     return TaskScheduler(orch), task, orch, events, agent
 
 

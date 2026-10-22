@@ -9,11 +9,11 @@ Specializes in identifying NextJS-specific vulnerabilities, middleware bypasses,
 __experimental__ = True
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
-from ai_osop.core.models import Observation, Task
+from ai_osop.core.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +49,11 @@ class NextJSSpecialistAgent(BaseAgent):
 
     async def _audit_server_actions(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Audit NextJS Server Actions for missing authorization."""
-        target_url = payload.get("url")
-
-        await self.think(
-            f"Auditing Server Actions on {target_url}.", ["server_actions", "authorization_check"]
-        )
-
-        # Logic: Intercept form submissions, identify 'Next-Action' headers, and replay with different identities
-        return {"status": "success", "msg": "Server action audit complete. No direct IDOR found."}
+        return {"status": "unsupported", "error": "Server action validation is not implemented"}
 
     async def _test_middleware_bypass(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Test for common NextJS middleware bypass patterns."""
-        return {"status": "success", "msg": "Middleware bypass testing initialized."}
+        return {"status": "unsupported", "error": "Middleware bypass validation is not implemented"}
 
     async def _cleanup_resources(self) -> None:
         pass

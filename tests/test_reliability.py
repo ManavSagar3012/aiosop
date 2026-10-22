@@ -388,17 +388,23 @@ class TestAgentShutdown:
 # =============================================================================
 
 class TestGraphMemoryRetry:
-    """Verify GraphMemory.connect uses retry_with_backoff."""
+    """A single driver attempt is cleaned up; startup owns bounded retries."""
 
-    def test_connect_uses_retry_import(self):
-        """GraphMemory should import and use retry_with_backoff."""
-        import inspect
-
+    @pytest.mark.asyncio
+    async def test_failed_driver_is_closed_without_nested_retry(self, monkeypatch):
+        from unittest.mock import AsyncMock, Mock
+        from neo4j.exceptions import ServiceUnavailable
         from ai_osop.memory.graph_memory import GraphMemory
-
-        source = inspect.getsource(GraphMemory.connect)
-        assert "retry_with_backoff" in source
-        assert "_connect" in source
+        driver = Mock(verify_connectivity=AsyncMock(side_effect=ServiceUnavailable("offline")), close=AsyncMock())
+        create = Mock(return_value=driver)
+        monkeypatch.setattr("ai_osop.memory.graph_memory.AsyncGraphDatabase.driver", create)
+        graph = GraphMemory()
+        with pytest.raises(ServiceUnavailable):
+            await graph.connect()
+        create.assert_called_once()
+        driver.verify_connectivity.assert_awaited_once()
+        driver.close.assert_awaited_once()
+        assert graph._driver is None and graph._initialized is False
 
 
 # =============================================================================

@@ -166,7 +166,9 @@ def report_api(tmp_path, monkeypatch):
     for extension, contents in {
         **files,
         "attestation": envelope_bytes,
-        "manifest": json.dumps(manifest).encode(),
+        "manifest": json.dumps(
+            manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode(),
     }.items():
         (folder / f"{RID}.{extension}").write_bytes(contents)
 

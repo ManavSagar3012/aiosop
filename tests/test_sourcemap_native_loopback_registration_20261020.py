@@ -10,7 +10,7 @@ from ai_osop.mcp.protocol import MCPConnection, MCPRegistry
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "host", ["source-map-mcp", "192.0.2.42", "example.invalid", "0.0.0.0", "127.0.0.2"]
+    "host", ["localhost", "source-map-mcp", "192.0.2.42", "example.invalid", "0.0.0.0", "127.0.0.2"]
 )
 async def test_source_map_registry_refuses_remote_bearer_before_network(host):
     registry = MCPRegistry()
@@ -34,7 +34,7 @@ async def test_direct_source_map_connection_refuses_remote_before_http_session()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+@pytest.mark.parametrize("host", ["127.0.0.1"])
 async def test_source_map_registry_loopback_retains_existing_registration(host):
     registry = MCPRegistry()
     with patch.object(MCPConnection, "connect", new_callable=AsyncMock) as connect:

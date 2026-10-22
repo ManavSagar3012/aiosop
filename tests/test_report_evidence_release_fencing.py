@@ -10,40 +10,46 @@ import pytest
 
 from ai_osop.api.routers import report_attestations
 from ai_osop.reporting.attestation import (
-    ReportAttestationError,
     SCHEMA_V2,
+    ReportAttestationError,
     hash_evidence_snapshot,
     sign_report_attestation,
 )
 from ai_osop.safety.approval_binding import task_payload_sha256
-from tests.test_report_attestations_api import (
-    EVIDENCE, FID, RID, SID, _get, _Result, report_api,
-)
+from tests.test_report_attestations_api import EVIDENCE, FID, RID, SID, _get, _Result, report_api
 
 
 def _signed_generator(report_api, monkeypatch):
     """Construct the actual producer bytes plus a mocked *durable* Task row."""
     payload = {
-        "version": "v1", "require_attestation": True,
-        "signer_key_id": "attester-key-1", "_authorization_version": 3,
+        "version": "v1",
+        "require_attestation": True,
+        "signer_key_id": "attester-key-1",
+        "_authorization_version": 3,
     }
     digest = hash_evidence_snapshot(EVIDENCE)
     artifacts = dict(report_api.paths)
-    artifacts["json"] = json.dumps({
-        "engagement_id": SID,
-        "requires_approval": True,
-        "signature_status": "ed25519_signed",
-        "verification_status": "verified_findings_only",
-        "findings": [{"id": FID, "evidence_hash": digest}],
-    }).encode()
+    artifacts["json"] = json.dumps(
+        {
+            "engagement_id": SID,
+            "requires_approval": True,
+            "signature_status": "ed25519_signed",
+            "verification_status": "verified_findings_only",
+            "findings": [{"id": FID, "evidence_hash": digest}],
+        }
+    ).encode()
     signed = sign_report_attestation(
-        engagement_id=SID, report_id=RID,
+        engagement_id=SID,
+        report_id=RID,
         signer_key_id="attester-key-1",
         artifacts=artifacts,
-        evidence_provenance=[{
-            "finding_id": FID, "source_type": "validated_engagement_graph",
-            "evidence_sha256": digest,
-        }],
+        evidence_provenance=[
+            {
+                "finding_id": FID,
+                "source_type": "validated_engagement_graph",
+                "evidence_sha256": digest,
+            }
+        ],
         generation_binding={
             "task_id": "task-report-fixture",
             "authorization_version": 3,
@@ -56,32 +62,47 @@ def _signed_generator(report_api, monkeypatch):
     hashes = {ext: hashlib.sha256(value).hexdigest() for ext, value in artifacts.items()}
     hashes["attestation"] = hashlib.sha256(envelope_bytes).hexdigest()
     manifest = {
-        "engagement_id": SID, "report_id": RID,
-        "hash_algorithm": "sha256", "signature_status": "ed25519_signed",
+        "engagement_id": SID,
+        "report_id": RID,
+        "hash_algorithm": "sha256",
+        "signature_status": "ed25519_signed",
         "artifacts": {key: hashes[key] for key in artifacts},
         "attestation_sha256": hashes["attestation"],
     }
-    manifest_bytes = json.dumps(manifest).encode()
+    manifest_bytes = json.dumps(
+        manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     hashes["manifest"] = hashlib.sha256(manifest_bytes).hexdigest()
     for ext, value in {
-        **artifacts, "attestation": envelope_bytes, "manifest": manifest_bytes,
+        **artifacts,
+        "attestation": envelope_bytes,
+        "manifest": manifest_bytes,
     }.items():
         (report_api.folder / f"{RID}.{ext}").write_bytes(value)
 
     now = datetime.now(timezone.utc)
     row = {
-        "id": "task-report-fixture", "engagement_id": SID,
-        "type": "generate_report", "agent_type": "reporting",
-        "status": "completed", "started_at": now,
-        "completed_at": now, "payload": payload, "approval_required": True,
+        "id": "task-report-fixture",
+        "engagement_id": SID,
+        "type": "generate_report",
+        "agent_type": "reporting",
+        "status": "completed",
+        "started_at": now,
+        "completed_at": now,
+        "payload": payload,
+        "approval_required": True,
         "result": {
-            "status": "success", "report_id": RID,
-            "signature_status": "ed25519_signed", "requires_approval": True,
+            "status": "success",
+            "report_id": RID,
+            "signature_status": "ed25519_signed",
+            "requires_approval": True,
             "artifact_sha256": hashes,
         },
     }
     report_api.guard.return_value = SimpleNamespace(
-        session_id=SID, version=3, policy_sha256="a" * 64,
+        session_id=SID,
+        version=3,
+        policy_sha256="a" * 64,
     )
     report_api.db.generator_row = row
     original_execute = report_api.db.execute
@@ -121,16 +142,35 @@ def test_v2_release_requires_signed_task_and_all_artifact_receipts(report_api, m
     assert len(report_api.db.calls) == 2
 
 
-@pytest.mark.parametrize("attack", [
-    "wrong_engagement", "absent_task", "running", "unknown", "cancelled",
-    "failed", "wrong_type", "wrong_agent", "no_start", "no_completion",
-    "wrong_task_roeversion", "changed_task_target", "wrong_signer",
-    "no_signature_intent", "wrong_report_id", "unsettled_result",
-    "missing_approval_boundary", "wrong_manifest_receipt", "wrong_json_receipt",
-    "missing_receipt",
-])
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "wrong_engagement",
+        "absent_task",
+        "running",
+        "unknown",
+        "cancelled",
+        "failed",
+        "wrong_type",
+        "wrong_agent",
+        "no_start",
+        "no_completion",
+        "wrong_task_roeversion",
+        "changed_task_target",
+        "wrong_signer",
+        "no_signature_intent",
+        "wrong_report_id",
+        "unsettled_result",
+        "missing_approval_boundary",
+        "wrong_manifest_receipt",
+        "wrong_json_receipt",
+        "missing_receipt",
+    ],
+)
 def test_v2_rejects_foreign_stale_unknown_or_unsigned_generation(
-    report_api, monkeypatch, attack,
+    report_api,
+    monkeypatch,
+    attack,
 ):
     row = _signed_generator(report_api, monkeypatch)
     if attack == "wrong_engagement":
@@ -175,7 +215,9 @@ def test_v2_rejects_foreign_stale_unknown_or_unsigned_generation(
 
 @pytest.mark.parametrize("attack", ["version", "digest"])
 def test_v2_rejects_current_signed_policy_rotation_before_task_read(
-    report_api, monkeypatch, attack,
+    report_api,
+    monkeypatch,
+    attack,
 ):
     _signed_generator(report_api, monkeypatch)
     if attack == "version":
@@ -189,31 +231,47 @@ def test_v2_rejects_current_signed_policy_rotation_before_task_read(
 
 def test_v2_cross_tenant_json_cannot_be_signed(report_api):
     artifacts = dict(report_api.paths)
-    artifacts["json"] = json.dumps({
-        "engagement_id": "eng-foreign", "requires_approval": True,
-        "findings": [{"id": FID, "evidence_hash": hash_evidence_snapshot(EVIDENCE)}],
-    }).encode()
+    artifacts["json"] = json.dumps(
+        {
+            "engagement_id": "eng-foreign",
+            "requires_approval": True,
+            "findings": [{"id": FID, "evidence_hash": hash_evidence_snapshot(EVIDENCE)}],
+        }
+    ).encode()
     with pytest.raises(ReportAttestationError, match="references"):
         sign_report_attestation(
-            engagement_id=SID, report_id=RID,
-            signer_key_id="attester-key-1", artifacts=artifacts,
-            evidence_provenance=[{
-                "finding_id": FID, "source_type": "validated_engagement_graph",
-                "evidence_sha256": hash_evidence_snapshot(EVIDENCE),
-            }],
+            engagement_id=SID,
+            report_id=RID,
+            signer_key_id="attester-key-1",
+            artifacts=artifacts,
+            evidence_provenance=[
+                {
+                    "finding_id": FID,
+                    "source_type": "validated_engagement_graph",
+                    "evidence_sha256": hash_evidence_snapshot(EVIDENCE),
+                }
+            ],
             generation_binding={
-                "task_id": "task-report-fixture", "authorization_version": 3,
+                "task_id": "task-report-fixture",
+                "authorization_version": 3,
                 "authorization_sha256": "a" * 64,
                 "task_payload_sha256": "b" * 64,
             },
         )
 
 
-@pytest.mark.parametrize("claim", [
-    "operator_approved", "report_approved", "certified",
-    "source_authenticity_verified", "exploit_success_verified",
-    "completeness_verified", "production_ready",
-])
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "operator_approved",
+        "report_approved",
+        "certified",
+        "source_authenticity_verified",
+        "exploit_success_verified",
+        "completeness_verified",
+        "production_ready",
+    ],
+)
 def test_even_trusted_signer_cannot_assert_unsupported_certification(report_api, claim):
     artifacts = copy.deepcopy(report_api.paths)
     data = json.loads(artifacts["json"])
@@ -221,12 +279,17 @@ def test_even_trusted_signer_cannot_assert_unsupported_certification(report_api,
     artifacts["json"] = json.dumps(data).encode()
     with pytest.raises(ReportAttestationError, match="references"):
         sign_report_attestation(
-            engagement_id=SID, report_id=RID,
-            signer_key_id="attester-key-1", artifacts=artifacts,
-            evidence_provenance=[{
-                "finding_id": FID, "source_type": "validated_engagement_graph",
-                "evidence_sha256": hash_evidence_snapshot(EVIDENCE),
-            }],
+            engagement_id=SID,
+            report_id=RID,
+            signer_key_id="attester-key-1",
+            artifacts=artifacts,
+            evidence_provenance=[
+                {
+                    "finding_id": FID,
+                    "source_type": "validated_engagement_graph",
+                    "evidence_sha256": hash_evidence_snapshot(EVIDENCE),
+                }
+            ],
         )
 
 
@@ -240,12 +303,17 @@ def test_duplicate_json_fields_cannot_be_attested(report_api):
     )
     with pytest.raises(ReportAttestationError, match="references"):
         sign_report_attestation(
-            engagement_id=SID, report_id=RID, signer_key_id="attester-key-1",
+            engagement_id=SID,
+            report_id=RID,
+            signer_key_id="attester-key-1",
             artifacts=artifacts,
-            evidence_provenance=[{
-                "finding_id": FID, "source_type": "validated_engagement_graph",
-                "evidence_sha256": hash_evidence_snapshot(EVIDENCE),
-            }],
+            evidence_provenance=[
+                {
+                    "finding_id": FID,
+                    "source_type": "validated_engagement_graph",
+                    "evidence_sha256": hash_evidence_snapshot(EVIDENCE),
+                }
+            ],
         )
 
 

@@ -9,11 +9,11 @@ Specializes in identifying cloud-specific vulnerabilities, IAM trust relationshi
 __experimental__ = True
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
-from ai_osop.core.models import Observation, Task
+from ai_osop.core.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,16 @@ class CloudSpecialistAgent(BaseAgent):
 
     async def _scan_local_iac(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Use the approved local scanner without claiming a live IAM finding."""
-        if payload:
+        parameters = dict(payload)
+        current = self.ctx.current_task
+        if isinstance(current, Task):
+            if parameters.get("engagement_id") == current.engagement_id:
+                parameters.pop("engagement_id", None)
+            if type(parameters.get("_authorization_version")) is int and parameters[
+                "_authorization_version"
+            ] == current.payload.get("_authorization_version"):
+                parameters.pop("_authorization_version")
+        if parameters:
             return {"status": "failed", "error": "Local IaC scan accepts no target or path"}
         from ai_osop.adapters.cloud_mcp import CloudMCPAdapter
 
@@ -119,13 +128,7 @@ class CloudSpecialistAgent(BaseAgent):
 
     async def _probe_cloud_metadata(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Probe for Cloud Metadata SSRF vulnerabilities."""
-        target_url = payload.get("url")
-
-        await self.think(
-            f"Probing {target_url} for Cloud Metadata SSRF.", ["ssrf", "cloud_metadata"]
-        )
-
-        return {"status": "success", "msg": "Metadata probing initialized."}
+        return {"status": "unsupported", "error": "Cloud metadata probing is not implemented"}
 
     async def _cleanup_resources(self) -> None:
         pass

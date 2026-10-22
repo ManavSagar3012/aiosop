@@ -26,6 +26,7 @@ import pytest
 from aiohttp import web
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -41,14 +42,13 @@ from ai_osop.mcp.protocol import MCPRegistry
 from ai_osop.memory.authorization_store import AuthorizationStore
 from ai_osop.memory.flow_mcp_action_dispatch import FlowMCPActionStore, MCPActionDenied
 from ai_osop.memory.native_mcp_execution_grants import (
-    NativeMCPExecutionGrantStore,
     _NATIVE_BUILTIN,
+    NativeMCPExecutionGrantStore,
     _native_manifest_sha256,
 )
 from ai_osop.memory.session_memory import SessionMemory
 from ai_osop.safety.approval_binding import pinned_evidence
 from tests.test_authorization_store import make_signed_session
-
 
 _OPT_IN = "OSOP_DISPOSABLE_NATIVE_0029_PG"
 _IMAGE = "pgvector/pgvector:pg16"
@@ -126,7 +126,11 @@ async def disposable_native_pg():
             # The disposable test must migrate the full CURRENT original
             # working-tree chain, including immutable Browser 0034,
             # SourceMap 0035, and current supervision schema 0040.
-            assert version == "0040"
+            migration_config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+            migration_config.set_main_option(
+                "script_location", str(Path(__file__).resolve().parents[2] / "migrations")
+            )
+            assert version == ScriptDirectory.from_config(migration_config).get_current_head()
             for table, trigger in (
                 ("flow_mcp_action_dispatch_events", "trg_flow_mcp_action_events_immutable"),
                 ("native_mcp_execution_grant_events", "trg_native_mcp_grant_events_immutable"),

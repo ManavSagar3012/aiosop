@@ -23,14 +23,16 @@ async def main():
     print("AI-OSOP QUALIFICATION SUITE - MASTER RUNNER")
     print("=" * 60)
 
-    all_passed = True
+    all_passed = bool(SUITES)
     for suite in SUITES:
         if not Path(suite).exists():
-            print(f"\nWARNING: {suite} not found, skipping")
+            print(f"\nERROR: required suite {suite} not found")
+            all_passed = False
             continue
         print(f"\n--- Running {suite} ---")
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, suite,
+            sys.executable,
+            suite,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -49,12 +51,15 @@ async def main():
     # Generate report
     print("\nGenerating report...")
     report_proc = await asyncio.create_subprocess_exec(
-        sys.executable, "scripts/qualification/generate_report.py",
+        sys.executable,
+        "scripts/qualification/generate_report.py",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
     stdout, _ = await report_proc.communicate()
     print(stdout.decode("utf-8", errors="replace"))
+    if report_proc.returncode != 0:
+        all_passed = False
 
     return 0 if all_passed else 1
 

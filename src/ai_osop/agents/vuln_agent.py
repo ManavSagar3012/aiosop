@@ -79,7 +79,7 @@ class VulnAnalysisAgent(BaseAgent):
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute vulnerability analysis task."""
         task_type = task.type
-        payload = task.payload
+        payload = dict(task.payload)
         # PATCH (REL-016, 2026-06-15): inject engagement_id into payload so
         # downstream helpers don't depend on self.ctx.current_task (which can
         # race to None when retries fire concurrently — see BaseAgent.handle_task

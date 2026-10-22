@@ -3,8 +3,8 @@ services:
     image: neo4j:5.18-community
     container_name: ai-osop-neo4j
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     environment:
       - NEO4J_AUTH=neo4j/${OSOP_NEO4J_PASSWORD:-change-me-local}
       - NEO4J_PLUGINS=["apoc"]
@@ -18,7 +18,7 @@ services:
     image: pgvector/pgvector:pg15
     container_name: ai-osop-postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_USER=osop
       - POSTGRES_PASSWORD=osop
@@ -32,7 +32,7 @@ services:
     image: redis:7-alpine
     container_name: ai-osop-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -54,6 +54,8 @@ services:
     environment:
       - OSOP_ENV=development
       - OSOP_NEO4J_URI=bolt://neo4j:7687
+      - OSOP_NEO4J_PASSWORD=${OSOP_NEO4J_PASSWORD:-change-me-local}
+      - OSOP_ATTESTED_REPORT_ROOT=/app/reports
       - OSOP_POSTGRES_URI=postgresql+asyncpg://osop:osop@postgres:5432/osop
       - OSOP_REDIS_URI=redis://redis:6379/0
       - OSOP_THREAT_INTEL_MCP_HOST=threat-intel-mcp
@@ -66,6 +68,7 @@ services:
       - ai-osop
     volumes:
       - ./src:/app/src
+      - reports_data:/app/reports
 
   threat-intel-mcp:
     build:
@@ -85,6 +88,7 @@ services:
       - ai-osop
 
 volumes:
+  reports_data:
   neo4j_data:
   neo4j_logs:
   postgres_data:

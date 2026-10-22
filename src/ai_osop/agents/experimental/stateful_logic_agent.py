@@ -8,12 +8,12 @@ Analyzes business process state machines and identifies invalid transition paths
 # until either (a) registered for production use or (b) archived.
 __experimental__ = True
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from ai_osop.agents.base import AgentContext, BaseAgent
+from ai_osop.agents.base import BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.governance import BusinessLogicEngine
-from ai_osop.core.models import AuditEvent, BusinessInvariant, ProcessState, Task
+from ai_osop.core.models import ProcessState, Task
 
 
 class StatefulLogicAgent(BaseAgent):
@@ -102,7 +102,8 @@ class StatefulLogicAgent(BaseAgent):
             "status": "success",
             "states_mapped": len(process_states),
             "invariants_discovered": len(invariants),
-            "violation_tasks_queued": len(violation_tasks),
+            "violation_tasks_queued": 0,
+            "violation_tasks_proposed": len(violation_tasks),
         }
 
     async def _violate_invariant(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,33 +111,15 @@ class StatefulLogicAgent(BaseAgent):
         Attempt an 'Impossible' transition.
         e.g. Call /api/ship/123 without the 'paid' flag in session.
         """
-        strategy = payload.get("strategy")
-
-        # Reasoning using V6 Business Logic skills
-        reasoning = await self.think(
-            f"Attempting to violate business rule using {strategy} strategy.",
-            ["business_logic_bypass", "state_machine_exploitation"],
-        )
-
-        # Flag the persisted invariant as violated so the dashboard reflects it
-        # (best-effort: must never break the violation attempt).
-        invariant_id = payload.get("invariant_id")
-        if invariant_id:
-            try:
-                await self.ctx.graph_memory.mark_invariant_violated(invariant_id)
-            except Exception as e:
-                print(f"WARN: failed to mark invariant {invariant_id} violated: {e}")
-
         return {
-            "status": "success",
-            "violation_successful": True,  # Simulated
-            "impact": "High (Financial Loss)",
-            "reasoning": reasoning,
+            "status": "unsupported",
+            "error": "Target-backed invariant violation is not implemented",
+            "violation_successful": False,
         }
 
     async def _analyze_drift(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Detect when a resource's state changes unexpectedly."""
-        return {"status": "success", "drift_detected": False}
+        return {"status": "unsupported", "error": "State drift observation is not implemented"}
 
     async def _cleanup_resources(self) -> None:
         self.active_processes.clear()

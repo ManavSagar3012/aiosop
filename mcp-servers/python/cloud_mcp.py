@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.routing import APIRoute
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict
 
 app = FastAPI(title="Local IaC MCP")
@@ -112,6 +113,12 @@ def _response(status_code: int, content: Dict[str, Any]) -> JSONResponse:
     return JSONResponse(
         content=content, status_code=status_code, headers={"Cache-Control": "no-store"}
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid_schema(request: Request, error: RequestValidationError) -> JSONResponse:
+    """Pydantic validation details can contain caller credential values."""
+    return _response(422, {"status": "error", "error": "invalid_request"})
 
 
 def _safe_path(path: Path, *, root: Optional[Path] = None) -> None:

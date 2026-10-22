@@ -66,7 +66,8 @@ async def test_map_business_process_pay_ship(agent) -> None:
     assert result["states_mapped"] == 2
     # "pay" + "ship" triggers the "Payment Required Before Shipping" invariant
     assert result["invariants_discovered"] >= 1
-    assert result["violation_tasks_queued"] >= 1
+    assert result["violation_tasks_queued"] == 0
+    assert result["violation_tasks_proposed"] >= 1
     agent.ctx.graph_memory.get_workflow_steps.assert_awaited_once_with("wf-001")
 
 
@@ -173,11 +174,9 @@ async def test_violate_invariant_with_id(agent) -> None:
 
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert result["violation_successful"] is True
-    assert result["impact"] == "High (Financial Loss)"
-    assert "reasoning" in result
-    agent.ctx.graph_memory.mark_invariant_violated.assert_awaited_once_with("inv-001")
+    assert result["status"] == "unsupported"
+    assert result["violation_successful"] is False
+    agent.ctx.graph_memory.mark_invariant_violated.assert_not_awaited()
 
 
 # ------------------------------------------------------------------
@@ -197,8 +196,8 @@ async def test_violate_invariant_without_id(agent) -> None:
 
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert result["violation_successful"] is True
+    assert result["status"] == "unsupported"
+    assert result["violation_successful"] is False
     # mark_invariant_violated should NOT be called when no invariant_id
     agent.ctx.graph_memory.mark_invariant_violated.assert_not_awaited()
 
@@ -223,8 +222,9 @@ async def test_violate_invariant_mark_failure_swallowed(agent) -> None:
     # Should NOT raise — the agent swallows the error
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert result["violation_successful"] is True
+    assert result["status"] == "unsupported"
+    assert result["violation_successful"] is False
+    agent.ctx.graph_memory.mark_invariant_violated.assert_not_awaited()
 
 
 # ------------------------------------------------------------------
@@ -244,8 +244,8 @@ async def test_analyze_state_drift(agent) -> None:
 
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert result["drift_detected"] is False
+    assert result["status"] == "unsupported"
+    assert "drift_detected" not in result
 
 
 # ------------------------------------------------------------------

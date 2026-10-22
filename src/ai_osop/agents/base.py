@@ -120,7 +120,9 @@ class BaseAgent(ABC):
 
     def supports_task_type(self, task_type: str) -> bool:
         """Check if this agent supports the specified task type."""
-        return True
+        from ai_osop.agents.capabilities import AGENT_TASK_TYPES
+
+        return task_type in AGENT_TASK_TYPES.get(type(self).__name__, frozenset())
 
     async def initialize(self) -> None:
         """Initialize agent state from persistent memory."""
@@ -355,6 +357,8 @@ class BaseAgent(ABC):
                 if isinstance(validated_result, dict) and validated_result.get("status") in (
                     "failed",
                     "error",
+                    "unsupported",
+                    "not_executed",
                 ):
                     err_msg = (
                         validated_result.get("error")
@@ -763,15 +767,15 @@ class BaseAgent(ABC):
             # enter the prompt. A graph outage, stale ROE or mismatched durable
             # source denies inference before the provider can be contacted.
             from ai_osop.memory.graph_research_context import (
-                research_enabled, verified_graph_research_context,
+                research_enabled,
+                verified_graph_research_context,
             )
 
             if research_enabled():
                 topic = " ".join(
                     message["content"][:2048]
                     for message in messages
-                    if message.get("role") == "user"
-                    and isinstance(message.get("content"), str)
+                    if message.get("role") == "user" and isinstance(message.get("content"), str)
                 )[:4096]
                 research = await asyncio.wait_for(
                     verified_graph_research_context(
@@ -793,8 +797,12 @@ class BaseAgent(ABC):
                 if research:
                     messages = [dict(message) for message in messages]
                     last_user = next(
-                        (index for index in reversed(range(len(messages)))
-                         if messages[index].get("role") == "user"), None,
+                        (
+                            index
+                            for index in reversed(range(len(messages)))
+                            if messages[index].get("role") == "user"
+                        ),
+                        None,
                     )
                     if last_user is None:
                         messages.append({"role": "user", "content": research})

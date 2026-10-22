@@ -84,18 +84,30 @@ jobs:
         OSOP_REDIS_URI: redis://localhost:6379/0
         OSOP_JWT_SECRET: test-secret-for-ci-only
         OSOP_API_TOKEN: test-token-for-ci-only
-      run: poetry run pytest tests/test_smoke.py tests/test_postgres_readiness_sql.py tests/test_backup_restore.py tests/test_engagement_transition_error.py tests/test_observability_middleware.py -v --cov=ai_osop --cov-report=xml --cov-report=term
+      run: poetry run pytest tests/ --timeout=120 --cov=ai_osop --cov-report=xml --cov-report=term
 
     - name: Build Docker image
       run: docker build -t ai-osop:test .
 
-    - name: Check Dockerfile health
+    - name: Check database-backed development container startup
       run: |
-        docker run -d --name ai-osop-test -p 8200:8200 ai-osop:test
-        sleep 10
-        curl -f http://localhost:8200/health || exit 1
-        docker stop ai-osop-test
-        docker rm ai-osop-test
+        trap 'docker logs ai-osop-test; docker rm -f ai-osop-test' EXIT
+        docker run -d --name ai-osop-test --network host \
+          -e OSOP_ENV=development \
+          -e OSOP_NEO4J_URI=bolt://127.0.0.1:7687 \
+          -e OSOP_NEO4J_PASSWORD=test-password \
+          -e OSOP_POSTGRES_URI=postgresql+asyncpg://osop:osop@127.0.0.1:5432/osop \
+          -e OSOP_REDIS_URI=redis://127.0.0.1:6379/0 \
+          -e OSOP_JWT_SECRET=test-secret-for-ci-only \
+          ai-osop:test
+        for attempt in $(seq 1 60); do
+          if curl -sf http://127.0.0.1:8200/ready > /tmp/ai-osop-ready.json; then
+            python -c "import json; d=json.load(open('/tmp/ai-osop-ready.json')); assert all(d['checks'][x]['status']=='healthy' for x in ('postgres','redis','neo4j'))"
+            exit 0
+          fi
+          sleep 2
+        done
+        exit 1
 
   ui-build-and-lint:
     runs-on: ubuntu-latest
@@ -108,6 +120,8 @@ jobs:
         run: npm --prefix ui ci
       - name: UI Typecheck
         run: npm --prefix ui run typecheck
+      - name: UI contract tests
+        run: node --test ui/tests/*.test.mjs
       - name: UI Build
         run: npm --prefix ui run build
 

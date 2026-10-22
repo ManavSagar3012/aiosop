@@ -4,9 +4,9 @@ FROM python:3.11-slim AS builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends     gcc     libpq-dev     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir poetry==1.8.3
+RUN python -m venv /opt/poetry && /opt/poetry/bin/pip install --no-cache-dir poetry==1.8.3
 COPY pyproject.toml poetry.lock ./
-RUN poetry config virtualenvs.create false     && poetry install --no-interaction --no-ansi --no-root --only main --sync
+RUN python -m venv /opt/venv && VIRTUAL_ENV=/opt/venv /opt/poetry/bin/poetry install --no-interaction --no-ansi --no-root --only main --sync
 
 # Production stage
 FROM python:3.11-slim AS production
@@ -20,20 +20,23 @@ RUN groupadd -r osop && useradd -r -g osop osop
 RUN apt-get update && apt-get install -y --no-install-recommends     libpq5     iputils-ping     nmap     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /opt/venv /opt/venv
 
 # Copy application code
 COPY src/ ./src/
 COPY mcp-servers/python/threat_intel_mcp.py ./mcp-servers/python/threat_intel_mcp.py
 COPY README.md ./
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 
 # Set permissions
-RUN chown -R osop:osop /app
+RUN mkdir -p /app/reports && chown -R osop:osop /app
 USER osop
 
 # Environment
 ENV PYTHONPATH=/app/src
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 

@@ -8,10 +8,8 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel
 
-from ai_osop.api.routers.durable_supervision_subscriptions import (
-    _BoundedSubscriptionRoute,
-    router as durable_router,
-)
+from ai_osop.api.routers.durable_supervision_subscriptions import _BoundedSubscriptionRoute
+from ai_osop.api.routers.durable_supervision_subscriptions import router as durable_router
 
 
 class _Payload(BaseModel):
@@ -105,5 +103,5 @@ def test_six_actual_mounted_mutating_subscription_routes_use_preparse_fence():
     routes = [
         route for route in durable_router.routes if "POST" in getattr(route, "methods", set())
     ]
-    assert len(routes) == 6
+    assert len(routes) == 7
     assert all(type(route) is _BoundedSubscriptionRoute for route in routes)

@@ -471,7 +471,13 @@ class Orchestrator:
         if new_phase == EngagementPhase.EXPLOITATION:
             # Check if findings exist
             stats = await self.graph_memory.get_graph_stats(session_id)
-            if stats.get("vulnerabilities", 0) == 0:
+            if (
+                not isinstance(stats, dict)
+                or type(stats.get("vulnerabilities")) is not int
+                or stats["vulnerabilities"] < 0
+            ):
+                raise WorkflowException("Cannot transition without valid vulnerability statistics")
+            if stats["vulnerabilities"] == 0:
                 raise WorkflowException("Cannot transition to exploitation without vulnerabilities")
 
         session.phase = new_phase.value
@@ -1648,7 +1654,7 @@ class Orchestrator:
             task.payload.pop("operator_approved", None)
             task.payload.pop("approval_id", None)
 
-    _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
+    _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled", "unsupported", "not_executed"}
 
     async def _maybe_retry(self, task: Task, result: Dict[str, Any]) -> bool:
         """Requeue a failed task if it still has retry budget (Phase 2 reliability).
@@ -3553,8 +3559,15 @@ class Orchestrator:
                 logger.error(
                     "resolve_auto_next_graph_stats_failed", session_id=session_id, error=str(e)
                 )
-                stats = {}
-            if stats.get("vulnerabilities", 0) == 0:
+                return None
+            if (
+                not isinstance(stats, dict)
+                or type(stats.get("vulnerabilities")) is not int
+                or stats["vulnerabilities"] < 0
+            ):
+                logger.error("resolve_auto_next_invalid_graph_stats", session_id=session_id)
+                return None
+            if stats["vulnerabilities"] == 0:
                 fallback = EngagementPhase.REPORTING
                 if fallback in self.VALID_TRANSITIONS.get(phase, []):
                     logger.info(
@@ -3581,7 +3594,7 @@ class Orchestrator:
         }
 
         # Pass-through phases: _on_phase_enter() schedules NO work of its own for
-        # these, so "no tasks" must mean "nothing to wait on" — otherwise the
+        # these, so "no tasks" must mean "nothing to wait on" â€” otherwise the
         # monitor hangs here forever (POST_EXPLOITATION never schedules a WORKFLOW
         # task, so it would never be considered complete). For these phases, treat
         # absence of in-flight tasks as complete. (AIOSOP-AUTO-2026-06-16)
@@ -3597,7 +3610,7 @@ class Orchestrator:
             return phase in PASS_THROUGH_PHASES
 
         # Complete only if none of the phase tasks are pending or running
-        return all(t.status not in ["pending", "running"] for t in phase_tasks)
+        return all(t.status == "completed" for t in phase_tasks)
 
     async def shutdown(self) -> None:
         """Graceful shutdown."""

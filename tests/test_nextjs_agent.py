@@ -52,8 +52,8 @@ async def test_nextjs_agent_audit_server_actions(agent) -> None:
 
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert "Server action audit complete" in result["msg"]
+    assert result["status"] == "unsupported"
+    assert "not implemented" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -70,8 +70,8 @@ async def test_nextjs_agent_test_middleware(agent) -> None:
 
     result = await agent._execute(task)
 
-    assert result["status"] == "success"
-    assert "Middleware bypass testing initialized" in result["msg"]
+    assert result["status"] == "unsupported"
+    assert "not implemented" in result["error"]
 
 
 @pytest.mark.asyncio

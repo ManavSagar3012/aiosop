@@ -101,8 +101,8 @@ async def test_react_agent_probe_components(agent) -> None:
     )
 
     result = await agent._execute(task)
-    assert result["status"] == "success"
-    assert result["msg"] == "Dynamic component probing initialized."
+    assert result["status"] == "unsupported"
+    assert "not implemented" in result["error"]
 
 
 @pytest.mark.asyncio

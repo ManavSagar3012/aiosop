@@ -25,7 +25,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from playwright.async_api import async_playwright
 
-
 ENGAGEMENT = "eng-native-local-browser"
 FOREIGN = "eng-native-foreign"
 TASK = "task-native-local-browser"
@@ -97,7 +96,10 @@ async def _bind_app(app: web.Application) -> tuple[web.AppRunner, int]:
 
 @asynccontextmanager
 async def native_browser_local(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    legacy_fixture: bool = False,
 ) -> AsyncIterator[NativeBrowserFixture]:
     """Own exactly one headless Chromium and two disposable 127.0.0.1 listeners."""
     executable, status = await real_chromium_executable()
@@ -108,11 +110,14 @@ async def native_browser_local(
     tenant = tenant_root / ENGAGEMENT
     tenant.mkdir(parents=True)
     (tenant_root / FOREIGN).mkdir()
-    descriptor = json.dumps({
-        "engagement_id": ENGAGEMENT,
-        "mount_id": "real-local-chromium-20261020",
-        "container_image_sha256": "a" * 64,
-    }, separators=(",", ":")).encode("utf-8")
+    descriptor = json.dumps(
+        {
+            "engagement_id": ENGAGEMENT,
+            "mount_id": "real-local-chromium-20261020",
+            "container_image_sha256": "a" * 64,
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
     (tenant / ".osop-har-mount.json").write_bytes(descriptor)
     journal = tmp_path / "signed_journal"
     journal.mkdir()
@@ -120,22 +125,39 @@ async def native_browser_local(
     private = Ed25519PrivateKey.generate()
     raw_private = private.private_bytes_raw()
     raw_public = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-    monkeypatch.setenv("OSOP_ENVIRONMENT", "production")
+    # Legacy transport tests explicitly use the existing test-only mode.
+    # The joined real-PG source qualification keeps the production default.
+    monkeypatch.setenv("OSOP_ENVIRONMENT", "test" if legacy_fixture else "production")
     monkeypatch.setenv("OSOP_BROWSER_MCP_BEARER_TOKEN", TOKEN)
-    monkeypatch.setenv("OSOP_BROWSER_MCP_RECEIPT_PRIVATE_KEY_B64", base64.b64encode(raw_private).decode())
+    monkeypatch.setenv(
+        "OSOP_BROWSER_MCP_RECEIPT_PRIVATE_KEY_B64", base64.b64encode(raw_private).decode()
+    )
     monkeypatch.setenv("OSOP_BROWSER_MCP_RECEIPT_KID", KID)
-    monkeypatch.setenv("OSOP_MCP_RECEIPT_TRUSTED_KEYS_JSON", json.dumps({
-        "browser-mcp": {KID: base64.b64encode(raw_public).decode()},
-    }))
+    monkeypatch.setenv(
+        "OSOP_MCP_RECEIPT_TRUSTED_KEYS_JSON",
+        json.dumps(
+            {
+                "browser-mcp": {KID: base64.b64encode(raw_public).decode()},
+            }
+        ),
+    )
     monkeypatch.setenv("OSOP_BROWSER_MCP_JOURNAL_ROOT", str(journal))
     monkeypatch.setenv("OSOP_AUTHENTICATED_HAR_ROOT", str(tenant_root))
-    monkeypatch.setenv("OSOP_AUTHENTICATED_HAR_MOUNT_DIGESTS", json.dumps({
-        ENGAGEMENT: hashlib.sha256(descriptor).hexdigest(),
-    }))
+    monkeypatch.setenv(
+        "OSOP_AUTHENTICATED_HAR_MOUNT_DIGESTS",
+        json.dumps(
+            {
+                ENGAGEMENT: hashlib.sha256(descriptor).hexdigest(),
+            }
+        ),
+    )
     monkeypatch.setenv("OSOP_EVIDENCE_ROOT", str(tmp_path / "unsigned_evidence"))
 
     state = NativeBrowserFixture(
-        native=_load_browser_module(), browser=None, tenant=tenant, journal=journal,
+        native=_load_browser_module(),
+        browser=None,
+        tenant=tenant,
+        journal=journal,
         base_url="",
     )
     state.native.EVIDENCE_ROOT = str(tmp_path / "unsigned_evidence")
@@ -173,9 +195,14 @@ async def native_browser_local(
     state.base_url = f"http://127.0.0.1:{page_port}"
     # An independently configured native tenant-origin constraint is separate
     # from caller request fields and from the source-side Flow authority gap.
-    monkeypatch.setenv("OSOP_BROWSER_MCP_SIGNED_ORIGINS_JSON", json.dumps({
-        ENGAGEMENT: [state.base_url],
-    }))
+    monkeypatch.setenv(
+        "OSOP_BROWSER_MCP_SIGNED_ORIGINS_JSON",
+        json.dumps(
+            {
+                ENGAGEMENT: [state.base_url],
+            }
+        ),
+    )
     playwright = None
     browser = None
     try:
@@ -205,7 +232,11 @@ async def native_browser_local(
                 uri = route.request.url
                 state.intercepted.append(uri)
                 target = urlsplit(uri)
-                if target.scheme == "http" and target.hostname == "127.0.0.1" and target.port == page_port:
+                if (
+                    target.scheme == "http"
+                    and target.hostname == "127.0.0.1"
+                    and target.port == page_port
+                ):
                     await route.continue_()
                 else:
                     state.blocked.append(uri)

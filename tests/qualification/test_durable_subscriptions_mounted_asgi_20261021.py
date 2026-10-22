@@ -196,6 +196,7 @@ def test_registered_production_paths_have_single_actual_endpoint() -> None:
         item.path: item
         for item in main.app.routes
         if item.path.startswith("/supervision/engagements/") and "/subscriptions/" in item.path
+        and item.endpoint.__module__ == api.__name__
     }
     assert set(targets) == {_path(action, "{subscriber_id}", "{engagement_id}") for action in _OPS}
     from fastapi.routing import APIRoute

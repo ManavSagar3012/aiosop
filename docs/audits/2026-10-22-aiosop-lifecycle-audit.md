@@ -160,14 +160,17 @@ each `(agent type, task type)` pair before scheduling. **Acceptance:** every
 advertised task routes to an implementation, unsupported tasks are rejected
 before persistence/approval, and registration order cannot change routing.
 
-### F08 — P1: execution mutates the signed/approved task payload
+### F08 — P2: direct vulnerability helper mutates its input task payload
 
-**Reproduced digest change.** `src/ai_osop/agents/vuln_agent.py:79–90` adds
+**Direct-call digest change; scope corrected during repair.** `src/ai_osop/agents/vuln_agent.py:79–90` adds
 `engagement_id` directly to `task.payload`. The fingerprint in
 `src/ai_osop/safety/approval_binding.py:24` covers that field; only two approval
 grant fields are excluded. The same task's digest changed when its real
-executor entered a mocked downstream Nuclei helper. This can invalidate later
-approval/provenance equality checks. No signature bypass was demonstrated.
+executor entered a mocked downstream Nuclei helper. However, normal
+`BaseAgent.execute` already makes a deep execution copy before calling this
+helper. The direct-call reproduction did not demonstrate mutation of the
+canonical signed task in the normal execution path or a signature bypass.
+The repair also copies helper arguments, covering direct callers.
 
 **Fix:** treat admitted payloads as immutable. Build a separate execution
 context or copied helper arguments; keep the canonical signed bytes unchanged.

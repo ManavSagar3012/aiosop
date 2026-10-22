@@ -12,3 +12,12 @@ docs
 .env
 .env.*
 *.log
+.runtime
+.runlogs
+evidence_vault
+reports
+certs
+**/.claude-flow
+**/.mimosa
+*.exe
+*.zip

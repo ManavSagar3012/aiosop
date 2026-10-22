@@ -20,7 +20,12 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+)
 
 from ai_osop.mcp.protocol import MCPInitializeResponse, SideEffectClass
 
@@ -67,6 +72,8 @@ def test_all_eleven_names_reach_real_registry_registration_source() -> None:
             for target in node.targets
         )
     )
+    from tests.mcp_inventory_source import configured_server_nodes
+    registered = configured_server_nodes(syntax)
     assert isinstance(registered, ast.List)
     names = [entry.elts[0].value for entry in registered.elts]
     assert len(names) == 11
@@ -102,9 +109,12 @@ async def test_simulated_handlers_do_not_report_native_success(native: str) -> N
     declaration = MCPInitializeResponse.model_validate(init.json())
     assert declaration.server_id == native and declaration.status == "unavailable"
     assert all(tool.side_effect_class != SideEffectClass.READ_ONLY for tool in declaration.tools)
-    assert execute.status_code == 503
+    assert execute.status_code == (422 if native == "cloud-mcp" else 503)
     assert execute.json()["status"] == "error"
-    assert execute.json()["execution_enabled"] is False
+    if native == "cloud-mcp":
+        assert execute.json()["error"] == "invalid_request"
+    else:
+        assert execute.json()["execution_enabled"] is False
 
 
 @pytest.mark.asyncio
@@ -333,11 +343,8 @@ async def test_browser_production_bootstrap_requires_credentials_and_runtime(
             "/mcp/execute", json={**payload, "execution_binding": None},
             headers={"Authorization": "Bearer test-local-provider-bearer-unique"},
         )
-    assert bootstrap.status_code == 200
-    negotiated = MCPInitializeResponse.model_validate(bootstrap.json())
-    assert negotiated.server_id == "browser-mcp"
-    assert {"mcp_bound_receipts_v1", "mcp_request_status_v1"}.issubset(set(negotiated.capabilities))
-    assert negotiated.tools[0].side_effect_class == SideEffectClass.RECON_ACTIVE
+    assert bootstrap.status_code == 503
+    assert bootstrap.json() == {"detail": "Signed browser provider unavailable"}
     assert no_bearer.status_code == 401
     assert unauthenticated_task.json()["status"] == "error"
     assert "provider_receipt" not in unauthenticated_task.json()

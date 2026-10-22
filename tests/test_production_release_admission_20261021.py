@@ -37,6 +37,13 @@ FINDING = "finding-original-source"
 NOW = int(time.time())
 
 
+@pytest.fixture(autouse=True)
+def current_fixture_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These short-lived signatures must be minted at execution time, not
+    # collection time several minutes before the full suite reaches this file.
+    monkeypatch.setattr(sys.modules[__name__], "NOW", int(time.time()))
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"

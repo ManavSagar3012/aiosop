@@ -16,9 +16,9 @@ import structlog
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import WorkflowException
 from ai_osop.core.models import ApprovalRequest, AuditEvent, Task
+from ai_osop.core.observability import record_task, update_task_counts
 from ai_osop.core.telemetry import RequestContext
 from ai_osop.core.tracing import trace_span
-from ai_osop.core.observability import record_task, update_task_counts
 
 logger = structlog.get_logger("ai_osop.orchestrator.task_scheduler")
 
@@ -27,7 +27,7 @@ class TaskScheduler:
     """Schedule, assign, execute, and retry tasks."""
 
     # Terminal failure statuses that should not trigger retry success path
-    _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled"}
+    _FAILURE_STATUSES = {"failed", "error", "timeout", "cancelled", "unsupported", "not_executed"}
 
     def __init__(self, orchestrator: Any) -> None:
         self._orch = orchestrator
@@ -421,52 +421,8 @@ class TaskScheduler:
         }
 
     async def _execute_task_durable(self, task: Task) -> Dict[str, Any]:
-        """Execute task durably, waiting for an available agent if necessary, with timeout."""
-        RequestContext.bind(
-            task_id=task.id,
-            engagement_id=task.engagement_id,
-            flow_id=task.flow_id or "",
-            subtask_id=task.subtask_id or "",
-        )
-        self._orch._tasks[task.id] = task
-        start_time = asyncio.get_event_loop().time()
-        timeout = task.timeout_seconds or 300
-
-        while True:
-            agent = await self._find_available_agent(task.agent_type, task.type)
-            if agent:
-                task.assigned_agent_id = agent.ctx.agent_id
-                task.status = "running"
-                try:
-                    result = await agent.execute_task(task)
-                    status = result.get("status") if isinstance(result, dict) else None
-                    if status in self._FAILURE_STATUSES:
-                        task.status = "failed"
-                        task.result = result
-                    else:
-                        task.status = "completed"
-                        task.result = (
-                            result
-                            if isinstance(result, dict)
-                            else {"status": "success", "raw": result}
-                        )
-                    await self._orch.session_memory.store_task(task)
-                    return task.result
-                except Exception as e:
-                    task.status = "failed"
-                    task.result = {"status": "failed", "error": str(e)}
-                    await self._orch.session_memory.store_task(task)
-                    return task.result
-                finally:
-                    self._release_agent(agent.ctx.agent_id)
-
-            if asyncio.get_event_loop().time() - start_time > timeout:
-                task.status = "failed"
-                task.result = {"status": "failed", "error": "Timeout waiting for agent"}
-                await self._orch.session_memory.store_task(task)
-                return task.result
-
-            await asyncio.sleep(0.5)
+        """Keep Temporal/alternate callers on the canonical execution path."""
+        return await self._orch._execute_task_durable(task)
 
     async def _assign_task(self, task: Task) -> None:
         """Assign task to appropriate agent."""
@@ -645,22 +601,12 @@ class TaskScheduler:
     async def _find_available_agent(
         self, agent_type: AgentType, task_type: str = ""
     ) -> Optional[Any]:
-        """Find and atomically claim an idle agent."""
-        for agent in self._orch._agents.values():
-            if agent.ctx.agent_id in self._orch._busy_agents:
-                continue
-            if agent.ctx.agent_type == agent_type and agent.ctx.status == "idle":
-                if task_type and hasattr(agent, "supports_task_type"):
-                    if not agent.supports_task_type(task_type):
-                        continue
-                self._orch._busy_agents.add(agent.ctx.agent_id)
-                return agent
-        return None
+        """Use the canonical distributed agent claim implementation."""
+        return await self._orch._find_available_agent(agent_type, task_type)
 
     def _release_agent(self, agent_id: Optional[str]) -> None:
-        """Release an agent claim."""
-        if agent_id:
-            self._orch._busy_agents.discard(agent_id)
+        """Release the same local and distributed ownership that was claimed."""
+        self._orch._release_agent(agent_id)
 
     @staticmethod
     def _strip_stale_approval(task: Task) -> None:
@@ -980,9 +926,7 @@ class TaskScheduler:
             # TaskORM and calls the canonical PG-first discovery admission.
             # Graph session flags, availability hints and vanished legacy
             # scheduling entrypoints must not gate/recreate this child.
-            await self._orch.engagement_manager.claim_auto_discovery(
-                engagement_id, "", task.id
-            )
+            await self._orch.engagement_manager.claim_auto_discovery(engagement_id, "", task.id)
             return
         if not await self._orch.engagement_manager._engagement_is_authenticated(engagement_id):
             return

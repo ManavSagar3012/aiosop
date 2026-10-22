@@ -43,6 +43,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 from ai_osop.api import deps, main
+from ai_osop.api.routers import durable_supervision_subscriptions as api
 from ai_osop.api.routers import supervision
 from ai_osop.core import config as core_config
 from ai_osop.memory.supervision_store import SupervisionConflict
@@ -687,6 +688,7 @@ def test_real_main_route_registration_no_pg() -> None:
         route
         for route in main.app.routes
         if "/subscriptions/" in route.path and route.path.startswith("/supervision/engagements/")
+        and route.endpoint.__module__ == api.__name__
     ]
     assert len(targets) == 7
     assert {route.path.rsplit("/", 1)[-1] for route in targets} == {

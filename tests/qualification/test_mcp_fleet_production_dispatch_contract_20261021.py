@@ -24,6 +24,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from ai_osop.core.exceptions import MCPException
 from ai_osop.mcp.protocol import (
     MCPConnection,
     MCPConnectionError,
@@ -32,7 +33,6 @@ from ai_osop.mcp.protocol import (
     MCPToolDefinition,
     SideEffectClass,
 )
-from ai_osop.core.exceptions import MCPException
 from ai_osop.mcp.receipt_attestation import provider_receipt_is_signed
 from ai_osop.memory.flow_mcp_action_dispatch import MCPActionDenied, _safe_parameters
 from ai_osop.orchestrator.flow_mcp_action_executor import (
@@ -97,7 +97,13 @@ def _decl(
 def test_exact_eleven_main_registered_services_and_real_entrypoints() -> None:
     """Inventory is exactly the real registry list, not eleven live services."""
     source = _source("src/ai_osop/api/main.py")
-    block = source.split("servers = [", 1)[1].split("critical_mcps =", 1)[0]
+    helper = next(
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "configured_mcp_server_specs"
+    )
+    block = ast.get_source_segment(source, helper)
+    assert isinstance(block, str)
     discovered = re.findall(r'["\x27]([\w-]+(?:-mcp)?)["\x27]\s*,\s*settings\.', block)
     # Multiline tuples (Browser, SourceMap, Turbo) are included by AST instead.
     mod = ast.parse(source)
@@ -112,7 +118,9 @@ def test_exact_eleven_main_registered_services_and_real_entrypoints() -> None:
         if isinstance(n, ast.Assign)
         and any(isinstance(t, ast.Name) and t.id == "servers" for t in n.targets)
     )
-    names = [entry.elts[0].value for entry in assigned.elts]
+    from tests.mcp_inventory_source import configured_server_nodes
+
+    names = [entry.elts[0].value for entry in configured_server_nodes(mod).elts]
     assert set(names) == set(GO) | set(PYTHON) | set(EXTERNAL)
     assert len(names) == len(set(names)) == 11
     assert set(discovered).issubset(set(names))

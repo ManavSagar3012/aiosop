@@ -20,10 +20,7 @@ from ai_osop.core.config import AgentType
 from ai_osop.core.models import Task
 from ai_osop.memory.graph_research_projection import verify_signed_action_event
 from ai_osop.orchestrator.context_compaction import task_assignment_sha256
-from ai_osop.reporting.attestation import (
-    hash_evidence_snapshot,
-    sign_report_attestation,
-)
+from ai_osop.reporting.attestation import hash_evidence_snapshot, sign_report_attestation
 from ai_osop.reporting.attested_storage import AttestedStorageUnavailable
 from tests.test_report_attestations_api import EVIDENCE, FID, RID, SID, report_api
 from tests.test_report_evidence_release_fencing import _signed_generator
@@ -108,7 +105,9 @@ def lineage(report_api, monkeypatch):
         "artifacts": {name: hashes[name] for name in blobs},
         "attestation_sha256": hashes["attestation"],
     }
-    manifest_bytes = json.dumps(manifest).encode()
+    manifest_bytes = json.dumps(
+        manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     hashes["manifest"] = hashlib.sha256(manifest_bytes).hexdigest()
     for name, blob in {
         **blobs,

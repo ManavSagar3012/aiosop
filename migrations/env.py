@@ -4,24 +4,35 @@ Async SQLAlchemy support for AI-OSOP.
 """
 
 import asyncio
+import os
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from alembic import context
+from ai_osop.auth.session_store import Base as AuthBase
 
 # Import all models so Alembic can discover them
 from ai_osop.memory.session_memory import Base as SessionMemoryBase
-from ai_osop.auth.session_store import Base as AuthBase
 
 # Combine metadata from all bases
 target_metadata = SessionMemoryBase.metadata
 
 config = context.config
 
+# CLI migrations must use the same database as API startup. Respect an
+# explicitly supplied Config URL (e.g. a disposable qualification database).
+configured_uri = os.environ.get("OSOP_POSTGRES_URI")
+if (
+    configured_uri
+    and config.get_main_option("sqlalchemy.url")
+    == "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_osop"
+):
+    config.set_main_option("sqlalchemy.url", configured_uri.replace("%", "%%"))
+
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 
 def run_migrations_offline() -> None:

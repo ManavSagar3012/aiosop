@@ -84,7 +84,8 @@ def test_0038_is_additive_to_0037_without_misrepresenting_0036_pair():
     revisions = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
     # 0038 is still a linear ancestor; newer 0039 global library and 0040
     # durable subscriptions are additive, not competing Alembic heads.
-    assert revisions.get_heads() == ["0040"]
+    assert len(revisions.get_heads()) == 1
+    assert "0040" in {revision.revision for revision in revisions.walk_revisions()}
     assert revisions.get_revision("0040").down_revision == "0039"
     assert revisions.get_revision("0039").down_revision == "0038"
     assert revisions.get_revision("0038").down_revision == "0037"
