@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/ai-osop/mcp-servers/sdk"
 )
 
@@ -49,7 +51,7 @@ func main() {
 		},
 	})
 
-    // DNS Enumeration (Amass Active)
+	// DNS Enumeration (Amass Active)
 	server.Register(sdk.Tool{
 		Name:           "amass_active",
 		Description:    "Active subdomain enumeration via Amass.",
@@ -57,7 +59,7 @@ func main() {
 		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "domain", "type": "string", "description": "Domain to enumerate", "required": true},
-            {"name": "depth", "type": "integer", "description": "Recursion depth", "required": false},
+			{"name": "depth", "type": "integer", "description": "Recursion depth", "required": false},
 		},
 		Returns: map[string]any{"subdomains": "array"},
 		Handler: func(params map[string]any) any {
@@ -79,18 +81,18 @@ func main() {
 			return map[string]any{
 				"hosts": []map[string]any{
 					{
-                        "ip": "127.0.0.1",
-                        "ports": []map[string]any{
-					        {"port": 80, "service": "http", "state": "open"},
-					        {"port": 443, "service": "https", "state": "open"},
-				        },
-                    },
+						"ip": "127.0.0.1",
+						"ports": []map[string]any{
+							{"port": 80, "service": "http", "state": "open"},
+							{"port": 443, "service": "https", "state": "open"},
+						},
+					},
 				},
 			}
 		},
 	})
 
-    // Tech Fingerprint Tool
+	// Tech Fingerprint Tool
 	server.Register(sdk.Tool{
 		Name:           "tech_fingerprint",
 		Description:    "Identify technologies on targets.",
@@ -102,8 +104,8 @@ func main() {
 		Returns: map[string]any{"fingerprints": "object"},
 		Handler: func(params map[string]any) any {
 			return map[string]any{
-                "fingerprints": map[string]any{},
-            }
+				"fingerprints": map[string]any{},
+			}
 		},
 	})
 
@@ -122,7 +124,7 @@ func main() {
 		},
 	})
 
-    // HTTPX Probe Tool
+	// HTTPX Probe Tool
 	server.Register(sdk.Tool{
 		Name:           "httpx_probe",
 		Description:    "Mock HTTPX probe tool.",
@@ -137,7 +139,7 @@ func main() {
 		},
 	})
 
-    // Wayback Machine Tool
+	// Wayback Machine Tool
 	server.Register(sdk.Tool{
 		Name:           "wayback_urls",
 		Description:    "Mock Wayback Machine tool.",
@@ -152,5 +154,16 @@ func main() {
 		},
 	})
 
-	_ = server.Run(":8082")
+	// Real, optional passive search. The SearxNG backend is operator-configured;
+	// no public search API, paid credits, or synthetic findings are assumed.
+	registerWebSearch(server)
+
+	// This starter SDK has no inbound signed ROE or client-auth verifier. Its
+	// ScopeCheck metadata is enforced by AI-OSOP's gateway, not by this Go HTTP
+	// listener. Exposing it to the LAN would bypass that authorization boundary.
+	// Until an authenticated transport is implemented, bind loopback only.
+	// An invalid independent grant/supervisor trust or failed listener MUST
+	// terminate nonzero. Never advertise healthy process exit after bootstrap
+	// failed closed; all consequential handlers remain disabled in the SDK.
+	log.Fatal(server.Run(reconListenAddress()))
 }

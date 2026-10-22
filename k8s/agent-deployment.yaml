@@ -19,20 +19,21 @@ spec:
         component: agents
     spec:
       serviceAccountName: ai-osop
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
       containers:
       - name: agent-pool
-        image: ai-osop/agents:latest
-        imagePullPolicy: Always
+        image: ai-osop/agents:v1.0.0
+        imagePullPolicy: IfNotPresent
         env:
         - name: OSOP_ENV
           value: "production"
         - name: AGENT_POOL_SIZE
           value: "10"
         - name: OSOP_ORCHESTRATOR_URL
-          value: "http://ai-osop-orchestrator.ai-osop.svc.cluster.local"
+          value: "http://ai-osop-orchestrator.ai-osop.svc.cluster.local:8200"
         resources:
           requests:
             memory: "1Gi"

@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { API_BASE } from '../services/api';
+import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
 import { 
-    GitMerge, AlertOctagon, ArrowRightCircle, ShieldAlert,
-    Activity, Play, CheckCircle2, DollarSign
+    GitMerge, AlertOctagon, ShieldAlert,
+    Activity, CheckCircle2, DollarSign
 } from 'lucide-react';
 
 interface Invariant {
@@ -24,7 +24,7 @@ export const ResearchIntelligence: React.FC = () => {
     const fetchLatest = async () => {
       try {
         const response = await fetch(`${API_BASE}/engagements`, {
-          headers: { 'Authorization': 'Bearer dev-token' }
+          headers: authHeaders()
         });
         if (response.ok) {
           const sessions = await response.json();
@@ -37,12 +37,12 @@ export const ResearchIntelligence: React.FC = () => {
             });
 
             const invRes = await fetch(`${API_BASE}/engagements/${current.session_id}/invariants`, {
-               headers: { 'Authorization': 'Bearer dev-token' }
+               headers: authHeaders()
             });
             if (invRes.ok) setInvariants(await invRes.json());
 
             const payRes = await fetch(`${API_BASE}/engagements/${current.session_id}/payouts`, {
-                headers: { 'Authorization': 'Bearer dev-token' }
+                headers: authHeaders()
             });
             if (payRes.ok) setPayouts(await payRes.json());
           }
@@ -55,26 +55,14 @@ export const ResearchIntelligence: React.FC = () => {
   const handleGeneratePoC = async (invId: string) => {
      if (!sessionId) return;
      try {
-        await fetch(`${API_BASE}/engagements/${sessionId}/poc/generate?finding_id=${invId}`, {
+        const response = await fetch(`${API_BASE}/engagements/${encodeURIComponent(sessionId)}/poc/generate?finding_id=${encodeURIComponent(invId)}`, {
            method: 'POST',
-           headers: { 'Authorization': 'Bearer dev-token' }
+           headers: authHeaders()
         });
-        alert("PoC generation task queued for ExploitAgent.");
+        if (!response.ok) throw new Error(`PoC request rejected (HTTP ${response.status})`);
+        alert("PoC request accepted. Check the persisted approval and execution state.");
      } catch (e) {
         console.error("PoC task failed", e);
-     }
-  };
-
-  const handleReplay = async () => {
-     if (!sessionId) return;
-     try {
-        await fetch(`${API_BASE}/engagements/${sessionId}/workflows/checkout-flow/replay`, {
-           method: 'POST',
-           headers: { 'Authorization': 'Bearer dev-token' }
-        });
-        alert("Workflow replay initiated in browser sandbox.");
-     } catch (e) {
-        console.error("Replay failed", e);
      }
   };
 

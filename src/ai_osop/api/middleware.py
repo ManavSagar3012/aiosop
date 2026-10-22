@@ -77,13 +77,13 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             ):
                 # 5. Process request
                 response = await call_next(request)
+                # A failed downstream handler has no response. Do not mask
+                # its original exception with an UnboundLocalError in finally.
+                response.headers["X-Request-ID"] = request_id
+                return response
         finally:
-            # 6. Attach request ID to response
-            response.headers["X-Request-ID"] = request_id
-            # 7. Cleanup contextvars for this request
+            # 6. Cleanup even when downstream raises before a response exists.
             RequestContext.clear()
-
-        return response
 
     @staticmethod
     def _extract_request_id(request: Request) -> str:

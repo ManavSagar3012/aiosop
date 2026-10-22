@@ -63,6 +63,50 @@ async def test_compare_unauthorized_success(engine) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "denied_body",
+    [
+        {"error": "Access denied", "id": "INV-100"},
+        {"message": "Permission denied", "email": "a@test.com"},
+        {"success": False, "id": "INV-100"},
+    ],
+)
+async def test_compare_suppresses_denial_hidden_in_http_200(engine, denied_body) -> None:
+    resource = Resource(
+        id="res-1",
+        type="invoice",
+        value="INV-100",
+        owner_identity_id="user_a",
+        engagement_id="eng-1",
+    )
+    owner = {"status_code": 200, "body": {"id": "INV-100"}, "user_label": "user_a"}
+    other = {"status_code": 200, "body": denied_body, "user_label": "user_b"}
+
+    assert await engine.compare(owner, other, resource, expected_allowed=False) is None
+
+
+@pytest.mark.asyncio
+async def test_compare_keeps_proven_access_with_non_denial_message(engine) -> None:
+    resource = Resource(
+        id="res-1",
+        type="invoice",
+        value="INV-100",
+        owner_identity_id="user_a",
+        engagement_id="eng-1",
+    )
+    owner = {"status_code": 200, "body": {"id": "INV-100"}, "user_label": "user_a"}
+    other = {
+        "status_code": 200,
+        "body": {"id": "INV-100", "message": "Invoice loaded"},
+        "user_label": "user_b",
+    }
+
+    finding = await engine.compare(owner, other, resource, expected_allowed=False)
+    assert finding is not None
+    assert finding.evidence_diff["ownership_proof"] is True
+
+
+@pytest.mark.asyncio
 async def test_compare_data_leakage(engine) -> None:
     # Setup
     resource = Resource(

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { API_BASE } from '../services/api';
 import { Card } from '../components/shared/Card';
-import { BookOpen, Zap, Target, DollarSign, Layers, Search, BarChart, Activity } from 'lucide-react';
+import { Zap, Target, DollarSign, Layers, Search } from 'lucide-react';
+import { authHeaders } from '../services/api';
 
 interface SkillStats {
   loaded_skills: number;
@@ -38,21 +39,12 @@ export const SkillIntelligence: React.FC = () => {
   const [stats, setStats] = useState<SkillStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const sessionResponse = await fetch(`${API_BASE}/engagements`, {
-          headers: { 'Authorization': 'Bearer dev-token' }
-        });
-        if (sessionResponse.ok) {
-          const sessions = await sessionResponse.json();
-          if (sessions.length > 0) setSessionId(sessions[0].session_id);
-        }
-
         const response = await fetch(`${API_BASE}/system/skills/stats`, {
-          headers: { 'Authorization': 'Bearer dev-token' }
+          headers: authHeaders()
         });
         if (response.ok) {
           const data = await response.json();
@@ -87,6 +79,10 @@ export const SkillIntelligence: React.FC = () => {
         <div className="font-code-sm text-primary tracking-widest uppercase">INITIALIZING SKILL INTELLIGENCE CORE...</div>
       </div>
     );
+  }
+
+  if (error && !stats) {
+    return <div role="alert" className="p-6 text-error">Skill statistics unavailable: {error}</div>;
   }
 
   const safeStats = stats || {

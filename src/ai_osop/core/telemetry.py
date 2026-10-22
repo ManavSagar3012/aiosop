@@ -32,6 +32,8 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 REQUEST_ID_CTX_VAR = contextvars.ContextVar("request_id", default="")
 ENGAGEMENT_ID_CTX_VAR = contextvars.ContextVar("engagement_id", default="")
 TASK_ID_CTX_VAR = contextvars.ContextVar("task_id", default="")
+FLOW_ID_CTX_VAR = contextvars.ContextVar("flow_id", default="")
+SUBTASK_ID_CTX_VAR = contextvars.ContextVar("subtask_id", default="")
 USER_ID_CTX_VAR = contextvars.ContextVar("user_id", default="")
 TRACE_ID_CTX_VAR = contextvars.ContextVar("trace_id", default="")
 
@@ -57,6 +59,8 @@ class RequestContext:
         request_id: Optional[str] = None,
         engagement_id: Optional[str] = None,
         task_id: Optional[str] = None,
+        flow_id: Optional[str] = None,
+        subtask_id: Optional[str] = None,
         user_id: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> None:
@@ -79,6 +83,12 @@ class RequestContext:
         if task_id is not None:
             TASK_ID_CTX_VAR.set(task_id)
             ctx["task_id"] = task_id
+        if flow_id is not None:
+            FLOW_ID_CTX_VAR.set(flow_id)
+            ctx["flow_id"] = flow_id
+        if subtask_id is not None:
+            SUBTASK_ID_CTX_VAR.set(subtask_id)
+            ctx["subtask_id"] = subtask_id
         if user_id is not None:
             USER_ID_CTX_VAR.set(user_id)
             ctx["user_id"] = user_id
@@ -95,6 +105,8 @@ class RequestContext:
             "request_id": REQUEST_ID_CTX_VAR.get(),
             "engagement_id": ENGAGEMENT_ID_CTX_VAR.get(),
             "task_id": TASK_ID_CTX_VAR.get(),
+            "flow_id": FLOW_ID_CTX_VAR.get(),
+            "subtask_id": SUBTASK_ID_CTX_VAR.get(),
             "user_id": USER_ID_CTX_VAR.get(),
             "trace_id": TRACE_ID_CTX_VAR.get() or _get_current_trace_id(),
         }
@@ -105,6 +117,8 @@ class RequestContext:
         REQUEST_ID_CTX_VAR.set("")
         ENGAGEMENT_ID_CTX_VAR.set("")
         TASK_ID_CTX_VAR.set("")
+        FLOW_ID_CTX_VAR.set("")
+        SUBTASK_ID_CTX_VAR.set("")
         USER_ID_CTX_VAR.set("")
         TRACE_ID_CTX_VAR.set("")
         structlog.contextvars.clear_contextvars()

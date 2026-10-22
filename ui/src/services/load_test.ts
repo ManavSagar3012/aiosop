@@ -7,7 +7,7 @@ import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 
 export class SwarmLoadTest {
-  private timer: NodeJS.Timeout | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
 
   start(eventsPerSecond: number = 1000) {
     console.log(`[LoadTest] Starting stress test at ${eventsPerSecond} events/sec`);

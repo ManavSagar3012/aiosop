@@ -118,22 +118,105 @@ class ScaleQualification:
 
         start = time.perf_counter()
         for _ in range(1000):
-            _ = session.dict()
+            _ = session.model_dump()
         elapsed = time.perf_counter() - start
         avg_ms = (elapsed / 1000) * 1000
         self._record("session_serialize_1000", True, f"1000 serializations in {elapsed:.3f}s (avg {avg_ms:.3f}ms)")
+
+    # -------------------- Service / Concurrency Load Testing --------------------
+
+    async def test_concurrent_api_throughput(self) -> None:
+        """Measure API concurrency and throughput across 100 concurrent requests."""
+        from fastapi import FastAPI
+        from httpx import ASGITransport, AsyncClient
+        from ai_osop.api.health import router as health_router
+
+        test_app = FastAPI()
+        test_app.include_router(health_router)
+
+        num_requests = 100
+        concurrency = 20
+        latencies: list[float] = []
+
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def worker(client: AsyncClient):
+            async with semaphore:
+                t0 = time.perf_counter()
+                resp = await client.get("/health")
+                latencies.append(time.perf_counter() - t0)
+                assert resp.status_code == 200
+
+        start = time.perf_counter()
+        async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://testserver") as client:
+            await asyncio.gather(*(worker(client) for _ in range(num_requests)))
+        total_time = time.perf_counter() - start
+
+        latencies.sort()
+        p50 = latencies[int(len(latencies) * 0.50)] * 1000
+        p95 = latencies[int(len(latencies) * 0.95)] * 1000
+        p99 = latencies[int(len(latencies) * 0.99)] * 1000
+        rps = num_requests / total_time if total_time > 0 else 0
+
+        detail = f"{num_requests} reqs in {total_time:.3f}s ({rps:.0f} req/s), p50={p50:.2f}ms, p95={p95:.2f}ms, p99={p99:.2f}ms"
+        passed = p95 < 200.0  # p95 under 200ms
+        self._record("concurrent_api_throughput", passed, detail)
+
+    async def test_concurrent_task_queue_concurrency(self) -> None:
+        """Concurrently schedule 200 tasks under contention."""
+        from ai_osop.orchestrator.task_scheduler import TaskScheduler
+        from ai_osop.core.models import Task
+        from ai_osop.core.config import AgentType
+
+        mock_orch = MagicMock()
+        mock_orch._bind_task_authorization = AsyncMock()
+        mock_orch._sessions = {}
+        mock_orch._agents = {}
+        mock_orch.rate_limiter = None
+        mock_orch.temporal_enabled = False
+        mock_orch.graph_memory = AsyncMock()
+        mock_orch.coordination_bus = AsyncMock()
+        mock_orch.session_memory = AsyncMock()
+
+        scheduler = TaskScheduler(orchestrator=mock_orch)
+        num_tasks = 200
+        start = time.perf_counter()
+
+        tasks = [
+            Task(
+                id=f"task-scale-{i}",
+                type="recon",
+                agent_type=AgentType.RECON,
+                payload={"target": f"target-{i}.test"},
+                engagement_id="eng-scale",
+                priority=random.randint(1, 10),
+            )
+            for i in range(num_tasks)
+        ]
+
+        async def schedule_worker(task):
+            await scheduler.schedule_task(task)
+
+        await asyncio.gather(*(schedule_worker(t) for t in tasks))
+        elapsed = time.perf_counter() - start
+        rate = num_tasks / elapsed if elapsed > 0 else 0
+
+        assert mock_orch.session_memory.push_task_queue.await_count == num_tasks
+        self._record("concurrent_task_scheduling", True, f"{num_tasks} tasks scheduled concurrently in {elapsed:.3f}s ({rate:.0f} tasks/s)")
 
     # -------------------- Orchestrator --------------------
 
     async def run_all(self) -> None:
         print("=" * 60)
-        print("AI-OSOP Scale Qualification Suite")
+        print("AI-OSOP Scale & Concurrency Qualification Suite")
         print("=" * 60)
 
         self.test_engage_creation_100()
         self.test_task_creation_1000()
         self.test_vuln_creation_10k()
         await self.test_session_memory_read_latency()
+        await self.test_concurrent_api_throughput()
+        await self.test_concurrent_task_queue_concurrency()
 
         print("-" * 60)
         for r in self.results:

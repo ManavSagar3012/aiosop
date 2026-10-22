@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -92,6 +93,7 @@ class GraphMemory:
             "CREATE CONSTRAINT workflow_id IF NOT EXISTS FOR (w:Workflow) REQUIRE w.id IS UNIQUE",
             "CREATE CONSTRAINT step_id IF NOT EXISTS FOR (s:Step) REQUIRE s.id IS UNIQUE",
             "CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
+            "CREATE CONSTRAINT tool_action_id IF NOT EXISTS FOR (a:ToolAction) REQUIRE a.id IS UNIQUE",
             "CREATE CONSTRAINT engagement_id IF NOT EXISTS FOR (e:Engagement) REQUIRE e.engagement_id IS UNIQUE",
             "CREATE CONSTRAINT auto_discovery_claim_eid IF NOT EXISTS FOR (c:AutoDiscoveryClaim) REQUIRE c.engagement_id IS UNIQUE",
         ]
@@ -172,7 +174,9 @@ class GraphMemory:
     async def add_endpoint(self, endpoint: Endpoint) -> str:
         """Add or update an Endpoint node. Handles both web and api endpoint types."""
         cypher = """
-        MERGE (e:Endpoint {id: $id})
+        // Endpoint IDs are globally unique. A duplicate foreign ID must
+        // raise a uniqueness conflict rather than changing ownership.
+        MERGE (e:Endpoint {id: $id, engagement_id: $engagement_id})
         SET e.url = $url,
             e.method = $method,
             e.type = $type,
@@ -337,6 +341,35 @@ class GraphMemory:
         async with self._driver.session() as session:
             await session.run(cypher, {"vid": vuln_id, "ts": datetime.utcnow().isoformat()})
 
+    async def override_vulnerability_status(
+        self,
+        vuln_id: str,
+        status: str,
+        reason: str,
+        operator_id: str,
+    ) -> None:
+        """Record a human operator override decision on a vulnerability."""
+        cypher = """
+        MATCH (v:Vulnerability {id: $vid})
+        SET v.finding_status = $status,
+            v.validated = ($status = 'verified'),
+            v.override_reason = $reason,
+            v.override_by = $operator_id,
+            v.override_at = $ts
+        RETURN v.id
+        """
+        async with self._driver.session() as session:
+            await session.run(
+                cypher,
+                {
+                    "vid": vuln_id,
+                    "status": status,
+                    "reason": reason,
+                    "operator_id": operator_id,
+                    "ts": datetime.utcnow().isoformat(),
+                },
+            )
+
     async def add_exploit(self, exploit: Exploit) -> str:
         """Add an Exploit and link to Vulnerability and Payload."""
         cypher = """
@@ -486,6 +519,96 @@ class GraphMemory:
 
             return paths
 
+    async def find_tenant_attack_paths(
+        self,
+        *,
+        engagement_id: str,
+        entry_node_id: str,
+        goal_types: List[str],
+        max_depth: int = 5,
+    ) -> List[AttackPath]:
+        """Bounded, read-only paths with *every* node and relationship tenant-scoped.
+
+        No APOC shortest-path call: a post-hoc tenant check on APOC traversal
+        could traverse another tenant's graph before applying the filter.
+        """
+        ident = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
+        if (
+            not isinstance(engagement_id, str)
+            or not re.fullmatch(r"eng-[A-Za-z0-9._-]{1,60}", engagement_id)
+            or not isinstance(entry_node_id, str)
+            or not ident.fullmatch(entry_node_id)
+            or type(max_depth) is not int
+            or not 1 <= max_depth <= 8
+            or not isinstance(goal_types, list)
+            or not 1 <= len(goal_types) <= 12
+            or any(not isinstance(goal, str) or not ident.fullmatch(goal) for goal in goal_types)
+        ):
+            raise GraphQueryError("Invalid bounded tenant graph path request")
+        # Every edge's two endpoints AND its relationship must be labeled with
+        # the same signed tenant. No public or owner-unknown bridge is allowed.
+        query = """
+        MATCH p=(start {id:$entry_id, engagement_id:$sid})
+          -[:HAS_ENDPOINT|HAS_VULNERABILITY|LEADS_TO*1..8]->(goal:Vulnerability)
+        WHERE length(p) <= $max_depth
+          AND goal.engagement_id = $sid
+          AND goal.impact IN $goal_types
+          AND all(n IN nodes(p) WHERE n.engagement_id = $sid)
+          AND all(r IN relationships(p) WHERE r.engagement_id = $sid)
+        RETURN [n IN nodes(p) | n.id] AS node_ids,
+               [r IN relationships(p) | type(r)] AS edge_types,
+               start.id AS entry_id, goal.id AS goal_id,
+               reduce(duration=0, r IN relationships(p) |
+                 duration + coalesce(r.time_estimate, 60)) AS total_time
+        ORDER BY goal.id LIMIT 11
+        """
+        if self._driver is None:
+            raise GraphQueryError("Tenant graph database unavailable")
+        async with self._driver.session() as session:
+            result = await session.run(
+                query,
+                {
+                    "sid": engagement_id,
+                    "entry_id": entry_node_id,
+                    "goal_types": goal_types,
+                    "max_depth": max_depth,
+                },
+            )
+            records = [row async for row in result]
+        if len(records) > 10:
+            raise GraphQueryError("Tenant path result exceeds bounded limit")
+        paths = []
+        for row in records:
+            nodes, edges = row["node_ids"], row["edge_types"]
+            if (
+                not isinstance(nodes, list)
+                or len(nodes) < 2
+                or len(nodes) > max_depth + 1
+                or len(edges) != len(nodes) - 1
+                or nodes[0] != entry_node_id
+                or nodes[-1] != row["goal_id"]
+                or any(not isinstance(node, str) or not ident.fullmatch(node) for node in nodes)
+                or any(
+                    edge not in {"HAS_ENDPOINT", "HAS_VULNERABILITY", "LEADS_TO"} for edge in edges
+                )
+            ):
+                raise GraphQueryError("Malformed tenant path provenance")
+            paths.append(
+                AttackPath(
+                    node_ids=nodes,
+                    edge_ids=[f"{edge}-{i}" for i, edge in enumerate(edges)],
+                    confidence=0.0,
+                    risk_score=0.0,
+                    total_time_estimate=row["total_time"],
+                    detection_risk=0.0,
+                    validated=False,
+                    entry_node_id=entry_node_id,
+                    goal_node_id=nodes[-1],
+                    engagement_id=engagement_id,
+                )
+            )
+        return paths
+
     async def get_attack_surface(self, node_id: str) -> List[Dict[str, Any]]:
         """Get all reachable nodes from a given position."""
         cypher = """
@@ -573,11 +696,13 @@ class GraphMemory:
     async def add_workflow(self, workflow: Workflow) -> str:
         """Persist a Workflow node."""
         cypher = """
-        MERGE (w:Workflow {id: $id})
+        // ID is globally unique. A foreign tenant's existing Workflow ID
+        // must collide with its uniqueness constraint, not transfer owner.
+        MERGE (w:Workflow {id: $id, engagement_id: $engagement_id})
         SET w.name = $name,
             w.role = $role,
             w.engagement_id = $engagement_id,
-            w.created_at = $created_at
+            w.created_at = coalesce(w.created_at, $created_at)
         RETURN w.id AS id
         """
         async with self._driver.session() as session:
@@ -597,23 +722,22 @@ class GraphMemory:
     async def add_workflow_step(self, step: WorkflowStep) -> str:
         """Persist a WorkflowStep node and link to its parent Workflow."""
         cypher = """
-        MERGE (s:Step {id: $id})
+        // A dangling Step without a same-tenant Workflow/Endpoint must not
+        // be reported as a successfully admitted workflow observation.
+        MATCH (w:Workflow {id: $workflow_id, engagement_id: $engagement_id})
+        MATCH (e:Endpoint {id: $endpoint_id, engagement_id: $engagement_id})
+        // Prevent an existing same-tenant step ID from being reassigned to
+        // another workflow/endpoint by a late or conflicting graph writer.
+        MERGE (s:Step {id: $id, engagement_id: $engagement_id,
+                       workflow_id: $workflow_id, endpoint_id: $endpoint_id})
         SET s.workflow_id = $workflow_id,
             s.endpoint_id = $endpoint_id,
             s.order = $order,
             s.action_type = $action_type,
             s.engagement_id = $engagement_id,
-            s.created_at = $created_at
-        WITH s
-        OPTIONAL MATCH (w:Workflow {id: $workflow_id})
-        FOREACH (x IN CASE WHEN w IS NOT NULL THEN [w] ELSE [] END |
-            MERGE (w)-[:HAS_STEP]->(s)
-        )
-        WITH s
-        OPTIONAL MATCH (e:Endpoint {id: $endpoint_id})
-        FOREACH (x IN CASE WHEN e IS NOT NULL THEN [e] ELSE [] END |
-            MERGE (s)-[:TARGETS_ENDPOINT]->(e)
-        )
+            s.created_at = coalesce(s.created_at, $created_at)
+        MERGE (w)-[:HAS_STEP]->(s)
+        MERGE (s)-[:TARGETS_ENDPOINT]->(e)
         RETURN s.id AS id
         """
         async with self._driver.session() as session:
@@ -630,12 +754,15 @@ class GraphMemory:
                 },
             )
             record = await result.single()
+            if record is None:
+                raise ValueError("Workflow step source is absent or outside engagement")
             return record["id"]
 
     async def add_workflow_transition(self, transition: WorkflowTransition) -> str:
         """Persist a transition edge between two WorkflowSteps."""
         cypher = """
-        MATCH (a:Step {id: $from_step_id}), (b:Step {id: $to_step_id})
+        MATCH (a:Step {id: $from_step_id, engagement_id: $engagement_id}),
+              (b:Step {id: $to_step_id, engagement_id: $engagement_id})
         MERGE (a)-[r:TRANSITION {id: $id}]->(b)
         SET r.trigger = $trigger,
             r.engagement_id = $engagement_id
@@ -653,7 +780,9 @@ class GraphMemory:
                 },
             )
             record = await result.single()
-            return record["id"] if record else transition.id
+            if record is None:
+                raise ValueError("Workflow transition has no same-tenant source and destination")
+            return record["id"]
 
     async def add_diff_auth_finding(self, finding: DiffAuthFinding) -> str:
         """Persist a DiffAuthFinding and link it to the affected Resource/Endpoint."""
@@ -891,12 +1020,21 @@ class GraphMemory:
                 logger.error("upsert_task failed for task %s after retries: %s", task.id, e)
                 return False
 
-    async def task_has_spawned(self, task_id: str) -> bool:
-        """True if this task already has a SPAWNED chain child (durable dedupe marker)."""
+    async def task_has_spawned(self, task_id: str, engagement_id: str) -> bool:
+        """Check a SPAWNED child without admitting another tenant's graph edge."""
+        if (
+            not isinstance(task_id, str)
+            or not isinstance(engagement_id, str)
+            or not task_id.startswith("task-")
+            or not engagement_id.startswith("eng-")
+        ):
+            return False
         try:
             async with self._driver.session() as s:
                 res = await s.run(
-                    "MATCH (t:Task {id:$id})-[:SPAWNED]->() RETURN count(*) AS c", {"id": task_id}
+                    "MATCH (t:Task {id:$id, engagement_id:$eid})-[:SPAWNED]->"
+                    "(c:Task {engagement_id:$eid}) RETURN count(*) AS c",
+                    {"id": task_id, "eid": engagement_id},
                 )
                 rec = await res.single()
                 return bool(rec and rec["c"] > 0)
@@ -962,19 +1100,34 @@ class GraphMemory:
         except Exception as e:
             logger.debug("mark_task_status_failed", error=str(e))
 
-    async def find_incomplete_chains(self) -> List[Dict[str, Any]]:
-        """Completed chain parents missing their next SPAWNED child — candidates to resume."""
+    async def find_incomplete_chains(
+        self, *, include_spawned: bool = False, limit: int = 500
+    ) -> List[Dict[str, Any]]:
+        """Bounded graph hints for chain recovery, never execution authority.
+
+        For signed PostgreSQL recovery include historical graph-only SPAWNED
+        edges: the old writer created the edge before admitting its child to
+        TaskORM, and a crash left a false deduplication marker. The caller
+        must verify the authoritative completed parent and deterministic child.
+        Legacy graph-only recovery retains its earlier missing-edge filter.
+        """
+        limit = max(1, min(int(limit), 500))
         cypher = """
         MATCH (t:Task {status:'completed'})
-        WHERE t.type IN ['map_workflow','capture_authenticated_surface']
-          AND NOT (t)-[:SPAWNED]->(:Task)
+        WHERE t.type IN ['map_workflow','capture_authenticated_surface','extract_har_api_inventory']
+          AND ($include_spawned OR NOT (t)-[:SPAWNED]->(:Task))
         RETURN t.id AS id, t.type AS type, t.engagement_id AS engagement_id,
                t.result_summary AS result_summary
+        ORDER BY t.created_at DESC, t.id
+        LIMIT $limit
         """
         out: List[Dict[str, Any]] = []
         try:
             async with self._driver.session() as s:
-                res = await s.run(cypher)
+                res = await s.run(
+                    cypher,
+                    {"include_spawned": bool(include_spawned), "limit": limit},
+                )
                 async for rec in res:
                     out.append(dict(rec))
         except Exception as e:
@@ -994,23 +1147,19 @@ class GraphMemory:
         Returns the evidence node id. Idempotent on (step_id, path)."""
         evidence_id = f"ev-{hashlib.sha1(f'{step_id}|{path}'.encode()).hexdigest()[:16]}"
         cypher = """
-        MERGE (ev:Evidence {id: $id})
+        // Never write unattached evidence and then falsely return its ID.
+        MATCH (w:Workflow {id: $workflow_id, engagement_id: $engagement_id})
+            -[:HAS_STEP]->(s:Step {id: $step_id, engagement_id: $engagement_id,
+                                   workflow_id: $workflow_id})
+        MERGE (ev:Evidence {id: $id, engagement_id: $engagement_id})
         SET ev.type = $type,
             ev.path = $path,
             ev.engagement_id = $engagement_id,
             ev.workflow_id = $workflow_id,
             ev.extra = $extra,
-            ev.created_at = $created_at
-        WITH ev
-        OPTIONAL MATCH (s:Step {id: $step_id})
-        FOREACH (x IN CASE WHEN s IS NOT NULL THEN [s] ELSE [] END |
-            MERGE (s)-[:HAS_EVIDENCE]->(ev)
-        )
-        WITH ev
-        OPTIONAL MATCH (w:Workflow {id: $workflow_id})
-        FOREACH (x IN CASE WHEN w IS NOT NULL THEN [w] ELSE [] END |
-            MERGE (w)-[:HAS_EVIDENCE]->(ev)
-        )
+            ev.created_at = coalesce(ev.created_at, $created_at)
+        MERGE (s)-[:HAS_EVIDENCE]->(ev)
+        MERGE (w)-[:HAS_EVIDENCE]->(ev)
         RETURN ev.id AS id
         """
         async with self._driver.session() as session:
@@ -1028,6 +1177,8 @@ class GraphMemory:
                 },
             )
             record = await result.single()
+            if record is None:
+                raise ValueError("Workflow evidence has no same-tenant source step")
             return record["id"]
 
     async def add_business_invariant(
@@ -1092,6 +1243,186 @@ class GraphMemory:
                     }
                 )
         return out
+
+    async def project_signed_tool_action(self, proof: Dict[str, Any]) -> bool:
+        """Persist an inert successful-tool receipt index; PostgreSQL is truth.
+
+        Called only after independently verifying the signed MCP event and
+        completed Flow Task. A pre-existing node belonging to a different
+        source cannot be overwritten. Retrying the same projection is safe.
+        """
+        from ai_osop.memory.graph_research_context import _TOOL_KINDS
+
+        digest_fields = (
+            "authorization_sha256",
+            "source_task_sha256",
+            "receipt_sha256",
+            "provider_receipt_sha256",
+            "provider_signer_key_sha256",
+        )
+        identity_fields = ("id", "engagement_id", "flow_id", "source_task_id", "source_event_id")
+        if (
+            not isinstance(proof, dict)
+            or any(
+                not isinstance(proof.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", proof[key])
+                for key in digest_fields
+            )
+            or any(
+                not isinstance(proof.get(key), str)
+                or len(proof[key]) > 80
+                or not re.fullmatch(r"[A-Za-z0-9_.-]+", proof[key])
+                for key in identity_fields
+            )
+            or not proof["id"].startswith("action-")
+            or not proof["engagement_id"].startswith("eng-")
+            or not proof["flow_id"].startswith("flow-")
+            or not proof["source_task_id"].startswith("task-")
+            or not proof["source_event_id"].startswith("evt-")
+            or not isinstance(proof.get("provider_server_id"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", proof["provider_server_id"])
+            or not isinstance(proof.get("provider_signing_kid"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:@-]{1,96}", proof["provider_signing_kid"])
+            or proof.get("tool_kind") not in _TOOL_KINDS
+            or proof.get("outcome") != "succeeded"
+            or type(proof.get("authorization_version")) is not int
+            or proof["authorization_version"] < 1
+            or type(proof.get("flow_revision")) is not int
+            or proof["flow_revision"] < 0
+        ):
+            raise ValueError("Malformed signed graph projection")
+        if self._driver is None:
+            raise RuntimeError("Signed graph projection store unavailable")
+        cypher = """
+        MERGE (a:ToolAction {id:$id})
+        ON CREATE SET
+          a.engagement_id=$engagement_id, a.flow_id=$flow_id,
+          a.flow_revision=$flow_revision,
+          a.authorization_version=$authorization_version,
+          a.authorization_sha256=$authorization_sha256,
+          a.source_task_id=$source_task_id,
+          a.source_task_sha256=$source_task_sha256,
+          a.source_event_id=$source_event_id,
+          a.tool_kind=$tool_kind, a.receipt_sha256=$receipt_sha256,
+          a.provider_receipt_sha256=$provider_receipt_sha256,
+          a.provider_server_id=$provider_server_id,
+          a.provider_signing_kid=$provider_signing_kid,
+          a.provider_signer_key_sha256=$provider_signer_key_sha256,
+          a.outcome=$outcome
+        WITH a
+        WHERE a.engagement_id=$engagement_id AND a.flow_id=$flow_id
+          AND a.flow_revision=$flow_revision
+          AND a.authorization_version=$authorization_version
+          AND a.authorization_sha256=$authorization_sha256
+          AND a.source_task_id=$source_task_id
+          AND a.source_task_sha256=$source_task_sha256
+          AND a.source_event_id=$source_event_id
+          AND a.tool_kind=$tool_kind
+          AND a.receipt_sha256=$receipt_sha256
+          AND a.provider_receipt_sha256=$provider_receipt_sha256
+          AND a.provider_server_id=$provider_server_id
+          AND a.provider_signing_kid=$provider_signing_kid
+          AND a.provider_signer_key_sha256=$provider_signer_key_sha256
+          AND a.outcome='succeeded'
+        RETURN a.id AS id
+        """
+        async with self._driver.session() as session:
+            result = await session.run(cypher, proof)
+            row = await result.single()
+            return bool(row and row["id"] == proof["id"])
+
+    async def read_signed_research_candidates(
+        self,
+        engagement_id: str,
+        flow_id: str,
+        authorization_version: int,
+        authorization_sha256: str,
+        *,
+        limit: int = 12,
+        topics: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Read only tightly bound graph *candidates*, never attest them.
+
+        Neo4j graph properties are NOT authority: callers must independently
+        verify signed ROE, active Flow/current Task, each originating durable
+        Task and cryptographic receipt fingerprints. Graph Vulnerability nodes
+        are ineligible until a source-authenticating evidence writer exists.
+
+        Parameterized queries constrain both node labels, tenant, Flow and
+        version before projection. Deliberately excludes titles, descriptions,
+        target URLs, commands, raw tool outputs and agent prose.
+        """
+        if (
+            not isinstance(engagement_id, str)
+            or not engagement_id.startswith("eng-")
+            or not isinstance(flow_id, str)
+            or not flow_id.startswith("flow-")
+            or type(authorization_version) is not int
+            or authorization_version < 1
+            or not isinstance(authorization_sha256, str)
+            or len(authorization_sha256) != 64
+            or type(limit) is not int
+            or not 1 <= limit <= 16
+            or not isinstance(topics, (list, type(None)))
+            or (
+                topics is not None
+                and (
+                    len(topics) > 24
+                    or any(
+                        not isinstance(t, str)
+                        or not t.isascii()
+                        or not t.islower()
+                        or not t.isalpha()
+                        or not 2 <= len(t) <= 24
+                        for t in topics
+                    )
+                )
+            )
+        ):
+            raise ValueError("Invalid signed graph research boundary")
+        if self._driver is None:
+            raise RuntimeError("Graph research store unavailable")
+        query = """
+        MATCH (a:ToolAction {
+            engagement_id:$eid, flow_id:$fid,
+            authorization_version:$version,
+            authorization_sha256:$digest
+        })
+        WHERE a.outcome = 'succeeded' AND a.source_task_id IS NOT NULL
+        RETURN 'action' AS kind, a.id AS id,
+               a.engagement_id AS engagement_id, a.flow_id AS flow_id,
+               a.flow_revision AS flow_revision,
+               a.authorization_version AS authorization_version,
+               a.authorization_sha256 AS authorization_sha256,
+               a.source_task_id AS source_task_id,
+               a.source_task_sha256 AS source_task_sha256,
+               a.tool_kind AS classification,
+               a.receipt_sha256 AS receipt_sha256,
+               a.outcome AS outcome, a.source_event_id AS source_event_id,
+               a.provider_receipt_sha256 AS provider_receipt_sha256,
+               a.provider_server_id AS provider_server_id,
+               a.provider_signing_kid AS provider_signing_kid,
+               a.provider_signer_key_sha256 AS provider_signer_key_sha256
+        ORDER BY CASE WHEN classification IN $topics THEN 0 ELSE 1 END,
+                 kind, id LIMIT $limit
+        """
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    query,
+                    {
+                        "eid": engagement_id,
+                        "fid": flow_id,
+                        "version": authorization_version,
+                        "digest": authorization_sha256,
+                        "limit": limit,
+                        "topics": topics or [],
+                    },
+                )
+                return [dict(record) async for record in result]
+        except Exception as exc:
+            # Caller MUST stop inference rather than promoting incomplete or
+            # cross-tenant graph responses into authoritative prompt context.
+            raise RuntimeError("Signed graph research retrieval unavailable") from exc
 
     async def close(self) -> None:
         if self._driver:

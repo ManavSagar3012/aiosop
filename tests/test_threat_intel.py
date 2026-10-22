@@ -113,3 +113,27 @@ async def test_exploitdb_csv_search_returns_matching_cves(mock_httpx_client):
             "source": "exploitdb",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_cisa_kev_distinguishes_absence_from_unavailable(mock_httpx_client):
+    adapter = ThreatIntelAdapter()
+    adapter.client = mock_httpx_client
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        "vulnerabilities": [{"cveID": "CVE-2024-1234"}]
+    }
+    mock_httpx_client.get.return_value = response
+
+    assert await adapter.check_cisa_kev("CVE-2024-1234") is True
+    assert await adapter.check_cisa_kev("CVE-2024-5678") is False
+    mock_httpx_client.get.assert_awaited_once()
+
+    adapter.cache.clear()
+    response.status_code = 503
+    assert await adapter.check_cisa_kev("CVE-2024-5678") is None
+
+    response.status_code = 200
+    response.json.return_value = {"vulnerabilities": "invalid"}
+    assert await adapter.check_cisa_kev("CVE-2024-5678") is None

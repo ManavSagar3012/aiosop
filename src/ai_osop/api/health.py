@@ -15,14 +15,18 @@ Sprint 8 enhancements:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import deque
 from datetime import datetime
 from typing import Any, Deque, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
 
 from ai_osop.api.deps import state
+from ai_osop.api.mcp_fleet_readiness import _FLEET
+from ai_osop.core.config import settings
 from ai_osop.core.metrics import READY_STATUS
 from ai_osop.core.telemetry import RequestContext
 
@@ -30,6 +34,7 @@ router = APIRouter(tags=["health"])
 
 # Sprint 8: readiness history for flapping detection
 _readiness_history: Deque[Dict[str, Any]] = deque(maxlen=5)
+_DEPENDENCY_TIMEOUT_SECONDS = 3.0
 
 
 async def _check_redis() -> Dict[str, Any]:
@@ -42,10 +47,13 @@ async def _check_redis() -> Dict[str, Any]:
         if not redis:
             return {"status": "unhealthy", "error": "redis client not connected"}
         start = time.monotonic()
-        await redis.ping()
+        async with asyncio.timeout(_DEPENDENCY_TIMEOUT_SECONDS):
+            await redis.ping()
         return {"status": "healthy", "latency_ms": round((time.monotonic() - start) * 1000, 2)}
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+    except Exception:
+        # Driver exceptions may contain connection strings and credentials.
+        # A public readiness probe must not echo remote exception bodies.
+        return {"status": "unhealthy", "error": "redis connectivity unavailable"}
 
 
 async def _check_neo4j() -> Dict[str, Any]:
@@ -58,10 +66,11 @@ async def _check_neo4j() -> Dict[str, Any]:
         if not driver:
             return {"status": "unhealthy", "error": "neo4j driver not connected"}
         start = time.monotonic()
-        await driver.verify_connectivity()
+        async with asyncio.timeout(_DEPENDENCY_TIMEOUT_SECONDS):
+            await driver.verify_connectivity()
         return {"status": "healthy", "latency_ms": round((time.monotonic() - start) * 1000, 2)}
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+    except Exception:
+        return {"status": "unhealthy", "error": "neo4j connectivity unavailable"}
 
 
 async def _check_postgres() -> Dict[str, Any]:
@@ -74,15 +83,18 @@ async def _check_postgres() -> Dict[str, Any]:
         if not engine:
             return {"status": "unhealthy", "error": "postgres engine not initialized"}
         start = time.monotonic()
-        async with engine.connect() as conn:
-            await conn.execute("SELECT 1")
+        async with asyncio.timeout(_DEPENDENCY_TIMEOUT_SECONDS):
+            async with engine.connect() as conn:
+                # SQLAlchemy 2.x rejects unwrapped SQL strings.  The previous
+                # probe incorrectly reported a healthy database as unavailable.
+                await conn.execute(text("SELECT 1"))
         return {"status": "healthy", "latency_ms": round((time.monotonic() - start) * 1000, 2)}
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+    except Exception:
+        return {"status": "unhealthy", "error": "postgres connectivity unavailable"}
 
 
 async def _check_mcp_registry() -> Dict[str, Any]:
-    """Check MCP registry health (how many servers are ready)."""
+    """Report trusted fleet initialization, not merely open HTTP sessions."""
     try:
         orch = state.get("orchestrator")
         if not orch or not orch.mcp_registry:
@@ -96,15 +108,59 @@ async def _check_mcp_registry() -> Dict[str, Any]:
             if conn and conn._session:
                 healthy += 1
             else:
-                errors.append(f"{server_id}: not connected")
+                # Registry keys are operator-controlled and need not be
+                # exposed on the unauthenticated readiness response.
+                errors.append("MCP server not connected")
+        bootstrap = state.get("mcp_bootstrap_readiness")
+        if isinstance(bootstrap, dict) and bootstrap:
+            expected = {server_id: role == "critical" for server_id, role in _FLEET}
+            exact_roster = set(bootstrap) == set(expected) and all(
+                type(bootstrap.get(server_id)) is dict
+                and bootstrap[server_id].get("critical") is critical
+                for server_id, critical in expected.items()
+            )
+            critical = [record for record in bootstrap.values() if record.get("critical") is True]
+            initialized = sum(
+                record.get("initialized") is True and record.get("status") == "initialized"
+                for record in critical
+            )
+            runtime_verified = sum(
+                record.get("runtime_health_verified") is True for record in critical
+            )
+            all_initialized = sum(
+                record.get("initialized") is True and record.get("status") == "initialized"
+                for record in bootstrap.values()
+            )
+            all_runtime_verified = sum(
+                record.get("runtime_health_verified") is True for record in bootstrap.values()
+            )
+            return {
+                "status": (
+                    "healthy"
+                    if exact_roster
+                    and len(bootstrap) == 11
+                    and len(critical) == 5
+                    and initialized == runtime_verified == len(critical)
+                    and all_initialized == all_runtime_verified == len(bootstrap)
+                    else "degraded"
+                ),
+                "total_servers": len(bootstrap),
+                "healthy_servers": healthy,
+                "critical_required": len(critical),
+                "critical_initialized": initialized,
+                "critical_runtime_verified": runtime_verified,
+                "fleet_initialized": all_initialized,
+                "fleet_runtime_verified": all_runtime_verified,
+                "errors": errors,
+            }
         return {
             "status": "healthy" if healthy > 0 else "degraded",
             "total_servers": len(servers),
             "healthy_servers": healthy,
             "errors": errors,
         }
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+    except Exception:
+        return {"status": "unhealthy", "error": "MCP registry connectivity unavailable"}
 
 
 @router.get("/health", status_code=status.HTTP_200_OK)
@@ -131,34 +187,63 @@ async def ready() -> Dict[str, Any]:
     - Tracks last 5 checks for flapping detection
     - Reports degraded (not not_ready) when only non-critical deps are unhealthy
     """
+    # Parallelize individually deadline-bounded probes. Serial probes could
+    # stall a pod's readiness response for three full dependency deadlines.
+    redis, neo4j, postgres, mcp_registry = await asyncio.gather(
+        _check_redis(),
+        _check_neo4j(),
+        _check_postgres(),
+        _check_mcp_registry(),
+    )
     checks = {
-        "redis": await _check_redis(),
-        "neo4j": await _check_neo4j(),
-        "postgres": await _check_postgres(),
-        "mcp_registry": await _check_mcp_registry(),
+        "redis": redis,
+        "neo4j": neo4j,
+        "postgres": postgres,
+        "mcp_registry": mcp_registry,
     }
 
-    # Critical dependencies: Redis, Neo4j, Postgres
+    # Missing/not-yet-initialized dependencies are NOT evidence of health.
+    # Earlier logic let UNKNOWN count as healthy, advertising a new pod
+    # ready before its durable execution fences existed.
     critical_unhealthy = any(
-        c["status"] == "unhealthy"
+        c["status"] != "healthy"
         for name, c in checks.items()
         if name in ("redis", "neo4j", "postgres")
     )
+    # Startup only proves registration and schema negotiation. In particular,
+    # a live HTTP client session is not a running, authorized MCP provider.
+    # Development deployments can inspect a degraded fleet, but production
+    # must not advertise HTTP 200 readiness if even one of the eleven
+    # configured MCPs lacks independently verified runtime health. An absent
+    # bootstrap manifest must never fall back to a nonempty registry's sockets.
+    production = settings.environment.strip().lower() in {"production", "prod"}
+    if production and (
+        mcp_registry["status"] != "healthy"
+        or mcp_registry.get("total_servers") != 11
+        or mcp_registry.get("critical_required") != 5
+        or mcp_registry.get("critical_initialized") != 5
+        or mcp_registry.get("critical_runtime_verified") != 5
+        or mcp_registry.get("fleet_initialized") != 11
+        or mcp_registry.get("fleet_runtime_verified") != 11
+    ):
+        critical_unhealthy = True
 
     # Non-critical: MCP registry
     non_critical_degraded = any(
-        c["status"] in ("degraded", "unhealthy")
+        c["status"] != "healthy"
         for name, c in checks.items()
         if name not in ("redis", "neo4j", "postgres")
     )
 
     if critical_unhealthy:
         READY_STATUS.set(0.0)
-        _readiness_history.append({
-            "timestamp": datetime.utcnow().isoformat(),
-            "status": "not_ready",
-            "checks": {name: c["status"] for name, c in checks.items()},
-        })
+        _readiness_history.append(
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "status": "not_ready",
+                "checks": {name: c["status"] for name, c in checks.items()},
+            }
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -177,11 +262,13 @@ async def ready() -> Dict[str, Any]:
         overall_status = "ready"
         READY_STATUS.set(1.0)
 
-    _readiness_history.append({
-        "timestamp": datetime.utcnow().isoformat(),
-        "status": overall_status,
-        "checks": {name: c["status"] for name, c in checks.items()},
-    })
+    _readiness_history.append(
+        {
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": overall_status,
+            "checks": {name: c["status"] for name, c in checks.items()},
+        }
+    )
 
     return {
         "status": overall_status,

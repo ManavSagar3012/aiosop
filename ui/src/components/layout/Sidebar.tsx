@@ -11,7 +11,9 @@ import {
     Fingerprint,
     HelpCircle,
     Clock,
-    FileText
+    FileText,
+    GitBranch,
+    BookOpen,
 } from 'lucide-react';
 import { NetworkHealth } from '../shared/NetworkHealth';
 import { useIntelligenceStore } from '../../store/useIntelligenceStore';
@@ -22,9 +24,11 @@ export const Sidebar: React.FC = () => {
   const navItems = [
     { path: '/', label: 'Overview', icon: <LayoutDashboard size={18} /> },
     { path: '/mission-control', label: 'Mission Control', icon: <Crosshair size={18} /> },
+    { path: '/flows', label: 'Flow Operations', icon: <GitBranch size={18} /> },
     { path: '/timeline', label: 'Mission Timeline', icon: <Clock size={18} /> },
     { path: '/intelligence', label: 'Research Intelligence', icon: <Brain size={18} /> },
     { path: '/knowledge-graphs', label: 'Knowledge Graphs', icon: <Network size={18} /> },
+    { path: '/user-library', label: 'My Library', icon: <BookOpen size={18} /> },
     { path: '/skills', label: 'Skill Intelligence', icon: <Brain size={18} /> },
     { path: '/auth-audit', label: 'Authorization Audit', icon: <ShieldCheck size={18} /> },
     { path: '/findings', label: 'Finding Pipeline', icon: <ShieldCheck size={18} /> },

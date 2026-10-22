@@ -98,10 +98,11 @@ class DiffAuthAnalyzer:
     async def _load_endpoints(self, engagement_id: str, workflow_id: str) -> List[Dict[str, Any]]:
         if workflow_id:
             cypher = (
-                "MATCH (w:Workflow {id:$wid})-[:CALLED]->(a:Endpoint {type: 'api'}) "
+                "MATCH (w:Workflow {id:$wid, engagement_id:$eid})"
+                "-[:CALLED]->(a:Endpoint {type: 'api', engagement_id:$eid}) "
                 "RETURN a.id AS id, a.method AS method, a.url AS url, a.path AS path"
             )
-            params = {"wid": workflow_id}
+            params = {"wid": workflow_id, "eid": engagement_id}
         else:
             cypher = (
                 "MATCH (a:Endpoint {type: 'api', engagement_id:$eid}) "

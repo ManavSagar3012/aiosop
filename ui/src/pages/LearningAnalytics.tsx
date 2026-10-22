@@ -4,15 +4,12 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     BarChart, Bar, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, DollarSign, Target, UserCheck, ShieldCheck, Activity } from 'lucide-react';
+import { TrendingUp, DollarSign, Target, ShieldCheck, Activity } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
-import { useSwarmStore } from '../store/useSwarmStore';
 
-const COLORS = ['#39ff14', '#00f1fd', '#ff3131', '#ff9f00', '#a259ff'];
 
 export const LearningAnalytics: React.FC = () => {
   const { skillStats, findings } = useIntelligenceStore();
-  const { agents } = useSwarmStore();
 
   const safeStats = skillStats || {
     total_revenue: 0,

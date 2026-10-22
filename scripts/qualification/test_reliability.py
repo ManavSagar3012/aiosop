@@ -60,10 +60,15 @@ class ReliabilityQualification:
         conn._failure_count = 5
 
         conn._circuit_breaker_check()
-        if not conn._circuit_open and conn._failure_count == 0:
-            self._record("mcp_circuit_recovers", True, "Circuit breaker recovered after 31s")
-        else:
-            self._record("mcp_circuit_recovers", False, f"Still open={conn._circuit_open}, count={conn._failure_count}")
+        # When recovery time elapses, circuit transitions to half-open to allow probe executions
+        if not conn._circuit_open and conn._half_open:
+            # Simulate successful recovery probes to fully close the circuit
+            for _ in range(conn.CIRCUIT_HALF_OPEN_SUCCESS_REQUIRED):
+                conn._record_success()
+            if not conn._circuit_open and not conn._half_open and conn._failure_count == 0:
+                self._record("mcp_circuit_recovers", True, "Circuit breaker transitioned half-open then recovered to closed")
+                return
+        self._record("mcp_circuit_recovers", False, f"Still open={conn._circuit_open}, count={conn._failure_count}")
 
     async def test_mcp_circuit_breaker_blocks_execution(self) -> None:
         """When circuit is open, execute must return 'circuit_open' status."""

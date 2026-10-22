@@ -218,6 +218,12 @@ class PayloadFitnessEvaluator:
         - efficiency_score (10%): Payload compactness
         - novelty_bonus (10%): New bypass technique
         """
+        # MCP clients must return decoded result dictionaries. A transport
+        # wrapper, accidentally unawaited mock, or unknown provider value is
+        # not evidence of a successful validation. Treat it as no response
+        # rather than calling arbitrary .get() methods or granting fitness.
+        if not isinstance(response, dict):
+            response = {}
         success = PayloadFitnessEvaluator._success_indicator(response, waf_detected)
         quality = PayloadFitnessEvaluator._response_quality(response)
         stealth = 1.0 if not waf_detected else 0.3

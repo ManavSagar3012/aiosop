@@ -6,11 +6,22 @@
 import { useSwarmStore } from '../store/useSwarmStore';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { SwarmEvent } from './types';
-
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8081";
-const WS_BASE = import.meta.env.VITE_WS_BASE || "ws://127.0.0.1:8081";
+import { API_BASE, WS_BASE, authHeaders, getRuntimeToken, subscribeOperator } from './api';
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error';
+
+/** Never transmit a bearer over a plaintext WS to a non-loopback server. */
+export function isSafeWebSocketBase(base: string): boolean {
+  try {
+    const url = new URL(base);
+    if (url.username || url.password || url.search || url.hash) return false;
+    return url.protocol === 'wss:' || (
+      url.protocol === 'ws:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
 
 export class NetworkService {
   private ws: WebSocket | null = null;
@@ -22,10 +33,19 @@ export class NetworkService {
   private eventCount = 0;
   private lastLatency = 0;
   private eventThroughput = 0;
-  private throughputTimer: NodeJS.Timeout | null = null;
+  private throughputTimer: ReturnType<typeof setInterval> | null = null;
+  private authTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private socketGeneration = 0;
+  private authenticated = false;
+  private intentionallyDisconnected = false;
+  private unsubscribeAuth: (() => void) | null = null;
 
   constructor(onStatusChange: (status: ConnectionStatus) => void) {
     this.onStatusChange = onStatusChange;
+    this.unsubscribeAuth = subscribeOperator((identity) => {
+      if (!identity) this.disconnect();
+    });
     this.startThroughputMonitor();
   }
 
@@ -33,47 +53,85 @@ export class NetworkService {
    * Initial Data Hydration from REST API
    */
   async hydrate(sessionId: string) {
-    console.log(`[Network] Hydrating session: ${sessionId}`);
+    const credential = getRuntimeToken();
+    if (!credential || !/^[a-zA-Z0-9_-]{1,64}$/.test(sessionId)) return;
+    const stillAuthorized = () => getRuntimeToken() === credential;
     useIntelligenceStore.getState().setSessionId(sessionId);
-    const headers = { "Authorization": "Bearer dev-token" };
+    const headers = authHeaders();
     try {
       // 1. Session Info
       const sessionRes = await fetch(`${API_BASE}/engagements/${sessionId}`, { headers });
       if (sessionRes.ok) {
          const sessionData = await sessionRes.json();
+         if (!stillAuthorized()) return;
          useSwarmStore.getState().setPhase(sessionData.phase || 'INITIALIZING');
          useSwarmStore.getState().setObjective(sessionData.scope?.domains?.[0] || 'ACTIVE MISSION');
       }
 
       // 2. Agents
       const agentsRes = await fetch(`${API_BASE}/agents`, { headers });
-      if (agentsRes.ok) useSwarmStore.getState().setAgents(await agentsRes.json());
+      if (!stillAuthorized()) return;
+      if (agentsRes.ok) {
+        const agents = await agentsRes.json();
+        if (!stillAuthorized()) return;
+        useSwarmStore.getState().setAgents(agents);
+      }
 
       // 3. Findings
       const findingsRes = await fetch(`${API_BASE}/engagements/${sessionId}/findings`, { headers });
-      if (findingsRes.ok) useIntelligenceStore.getState().setFindings(await findingsRes.json());
+      if (!stillAuthorized()) return;
+      if (findingsRes.ok) {
+        const findings = await findingsRes.json();
+        if (!stillAuthorized()) return;
+        useIntelligenceStore.getState().setFindings(findings);
+      }
       
       // 4. Skill Stats
       const skillsRes = await fetch(`${API_BASE}/system/skills/stats`, { headers });
-      if (skillsRes.ok) useIntelligenceStore.getState().setSkillStats(await skillsRes.json());
+      if (!stillAuthorized()) return;
+      if (skillsRes.ok) {
+        const skills = await skillsRes.json();
+        if (!stillAuthorized()) return;
+        useIntelligenceStore.getState().setSkillStats(skills);
+      }
 
       // 5. Audit Log
       const auditRes = await fetch(`${API_BASE}/engagements/${sessionId}/audit-log`, { headers });
-      if (auditRes.ok) useIntelligenceStore.getState().setAuditLog(await auditRes.json());
+      if (!stillAuthorized()) return;
+      if (auditRes.ok) {
+        const audit = await auditRes.json();
+        if (!stillAuthorized()) return;
+        useIntelligenceStore.getState().setAuditLog(audit);
+      }
 
       // 6. Diff Auth
       const diffRes = await fetch(`${API_BASE}/engagements/${sessionId}/diff-auth`, { headers });
-      if (diffRes.ok) useIntelligenceStore.getState().setDiffAuthFindings(await diffRes.json());
+      if (!stillAuthorized()) return;
+      if (diffRes.ok) {
+        const findings = await diffRes.json();
+        if (!stillAuthorized()) return;
+        useIntelligenceStore.getState().setDiffAuthFindings(findings);
+      }
 
       // 7. Uncertainty
       const uncRes = await fetch(`${API_BASE}/engagements/${sessionId}/uncertainty`, { headers });
-      if (uncRes.ok) useIntelligenceStore.getState().setUncertainties(await uncRes.json());
+      if (!stillAuthorized()) return;
+      if (uncRes.ok) {
+        const uncertainties = await uncRes.json();
+        if (!stillAuthorized()) return;
+        useIntelligenceStore.getState().setUncertainties(uncertainties);
+      }
 
       // 8. Graph Data
       const graphRes = await fetch(`${API_BASE}/engagements/${sessionId}/graph`, { headers });
-      if (graphRes.ok) useIntelligenceStore.getState().setGraphData(await graphRes.json());
-    } catch (e) {
-      console.error("[Network] Hydration failed", e);
+      if (!stillAuthorized()) return;
+      if (graphRes.ok) {
+        const graph = await graphRes.json();
+        if (!stillAuthorized()) return;
+        useIntelligenceStore.getState().setGraphData(graph);
+      }
+    } catch {
+      // Do not log transport exceptions: some libraries echo credentials.
     }
   }
 
@@ -81,44 +139,149 @@ export class NetworkService {
    * Establish WebSocket Connection
    */
   connect(sessionId: string) {
+    if (!this.unsubscribeAuth) {
+      this.unsubscribeAuth = subscribeOperator((identity) => {
+        if (!identity) this.disconnect();
+      });
+    }
+    // Fetch the current, server-verified bearer at every connection attempt.
+    // It is intentionally never captured at module initialization.
+    const credential = getRuntimeToken();
+    if (
+      !/^[a-zA-Z0-9_-]{1,64}$/.test(sessionId)
+      || !credential || credential.length > 4096
+      || !isSafeWebSocketBase(WS_BASE)
+    ) {
+      this.disconnect();
+      this.updateStatus('error');
+      return;
+    }
+    if (!this.throughputTimer) this.startThroughputMonitor();
+    this.intentionallyDisconnected = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.authTimer) {
+      clearTimeout(this.authTimer);
+      this.authTimer = null;
+    }
+    this.authenticated = false;
+    const generation = ++this.socketGeneration;
+    const old = this.ws;
+    this.ws = null;
+    if (old && (old.readyState === WebSocket.OPEN || old.readyState === WebSocket.CONNECTING)) {
+      old.close();
+    }
     this.updateStatus('reconnecting');
-    console.log(`[Network] Connecting to WS: ${WS_BASE}/ws/engagements/${sessionId}`);
     
     try {
-      this.ws = new WebSocket(`${WS_BASE}/ws/engagements/${sessionId}?token=dev-token`);
+      // Authentication is carried in a private first WS data frame, not the
+      // URL, request logs, browser history, or Sec-WebSocket-Protocol header.
+      const socket = new WebSocket(
+        `${WS_BASE}/ws/engagements/${encodeURIComponent(sessionId)}`
+      );
+      this.ws = socket;
 
-      this.ws.onopen = () => {
-        console.log("[Network] WS Connected");
-        this.updateStatus('connected');
-        this.reconnectAttempts = 0;
-        this.reconnectDelay = 1000;
+      socket.onopen = () => {
+        if (generation !== this.socketGeneration || this.intentionallyDisconnected) return;
+        if (!getRuntimeToken() || getRuntimeToken() !== credential) {
+          socket.close(1008);
+          return;
+        }
+        try {
+          socket.send(JSON.stringify({ type: 'auth', token: credential }));
+        } catch {
+          this.updateStatus('error');
+          socket.close(1008);
+          return;
+        }
+        this.authTimer = setTimeout(() => {
+          if (generation !== this.socketGeneration || this.authenticated) return;
+          this.updateStatus('error');
+          socket.close(1008);
+        }, 5000);
       };
 
-      this.ws.onmessage = (event) => {
-        this.eventCount++;
+      socket.onmessage = (event) => {
+        if (generation !== this.socketGeneration || this.intentionallyDisconnected) return;
         try {
-          const data: SwarmEvent = JSON.parse(event.data);
-          this.handleEvent(data);
-        } catch (e) {
-          console.error("[Network] Failed to parse event", e);
+          const data: unknown = JSON.parse(event.data);
+          if (!data || typeof data !== 'object' || Array.isArray(data)) {
+            socket.close(1008);
+            return;
+          }
+          const frame = data as Record<string, unknown>;
+          if (!this.authenticated) {
+            if (frame.type !== 'auth_ready' || frame.session_id !== sessionId) {
+              this.updateStatus('error');
+              socket.close(1008);
+              return;
+            }
+            this.authenticated = true;
+            if (this.authTimer) clearTimeout(this.authTimer);
+            this.authTimer = null;
+            this.reconnectAttempts = 0;
+            this.reconnectDelay = 1000;
+            this.updateStatus('connected');
+            return;
+          }
+          if (frame.type === 'auth_ready') return; // Duplicate ack is inert.
+          if (typeof frame.event_type !== 'string' || frame.engagement_id !== sessionId) {
+            // The service also carries pong/status control replies; neither
+            // is an audit event or a source of fabricated state.
+            if (frame.type === 'pong' || frame.type === 'status' || frame.type === 'halt_requested') return;
+            socket.close(1008);
+            return;
+          }
+          this.eventCount++;
+          this.handleEvent(data as SwarmEvent);
+        } catch {
+          // Avoid logging potentially sensitive report/event frame content.
+          this.updateStatus('error');
+          socket.close(1008);
         }
       };
 
-      this.ws.onclose = () => {
-        console.warn("[Network] WS Closed");
+      socket.onclose = (event) => {
+        if (generation !== this.socketGeneration) return;
+        if (this.authTimer) clearTimeout(this.authTimer);
+        this.authTimer = null;
+        this.authenticated = false;
+        this.ws = null;
         this.updateStatus('disconnected');
-        this.attemptReconnect(sessionId);
+        // 1008/1009: policy violation/invalid authentication/oversized frame.
+        // Retrying with the same credential indefinitely cannot fix this.
+        if (!this.intentionallyDisconnected && event.code !== 1008 && event.code !== 1009) {
+          this.attemptReconnect(sessionId);
+        }
       };
 
-      this.ws.onerror = (e) => {
-        console.error("[Network] WS Error", e);
+      socket.onerror = () => {
+        if (generation !== this.socketGeneration) return;
         this.updateStatus('error');
       };
 
-    } catch (e) {
+    } catch {
       this.updateStatus('error');
       this.attemptReconnect(sessionId);
     }
+  }
+
+  /** Enqueue nothing until the server has acknowledged identity and ownership. */
+  sendCommand(action: 'ping' | 'status' | 'halt', reason?: string): boolean {
+    if (
+      !this.authenticated || this.intentionallyDisconnected
+      || !this.ws || this.ws.readyState !== WebSocket.OPEN
+    ) return false;
+    if (action === 'halt' && reason !== undefined &&
+        (!reason || reason.length > 128 || /[\u0000-\u001f\u007f]/.test(reason))) {
+      return false;
+    }
+    this.ws.send(JSON.stringify(
+      action === 'halt' && reason !== undefined ? { action, reason } : { action }
+    ));
+    return true;
   }
 
   private handleEvent(event: SwarmEvent) {
@@ -154,12 +317,16 @@ export class NetworkService {
         break;
       case 'graph_update':
         // Re-fetch graph data on update signal
+        const credential = getRuntimeToken();
+        if (!credential) break;
         fetch(`${API_BASE}/engagements/${event.engagement_id}/graph`, {
-            headers: { "Authorization": "Bearer dev-token" }
+            headers: authHeaders()
         })
         .then(res => res.json())
-        .then(data => intel.setGraphData(data))
-        .catch(e => console.error("Failed to sync graph on update", e));
+        .then(data => {
+          if (getRuntimeToken() === credential) intel.setGraphData(data);
+        })
+        .catch(() => {});
         break;
       case 'agent_observation':
         // Update specific stores based on observation type
@@ -171,18 +338,25 @@ export class NetworkService {
   }
 
   private attemptReconnect(sessionId: string) {
+    if (this.intentionallyDisconnected || this.reconnectTimer) return;
+    if (!getRuntimeToken()) {
+      this.disconnect();
+      return;
+    }
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error("[Network] Max reconnect attempts reached");
+      this.updateStatus('error');
       return;
     }
 
     this.reconnectAttempts++;
-    console.log(`[Network] Reconnecting in ${this.reconnectDelay}ms (Attempt ${this.reconnectAttempts})`);
-    
-    setTimeout(() => {
-      this.reconnectDelay *= 2; // Exponential backoff
+    const delay = this.reconnectDelay;
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+    this.updateStatus('reconnecting');
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.intentionallyDisconnected) return;
       this.connect(sessionId);
-    }, this.reconnectDelay);
+    }, delay);
   }
 
   private updateStatus(status: ConnectionStatus) {
@@ -206,7 +380,20 @@ export class NetworkService {
   }
 
   disconnect() {
-    if (this.ws) this.ws.close();
+    this.unsubscribeAuth?.();
+    this.unsubscribeAuth = null;
+    this.intentionallyDisconnected = true;
+    this.authenticated = false;
+    ++this.socketGeneration;
+    if (this.authTimer) clearTimeout(this.authTimer);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.authTimer = null;
+    this.reconnectTimer = null;
+    const socket = this.ws;
+    this.ws = null;
+    if (socket && socket.readyState !== WebSocket.CLOSED) socket.close();
     if (this.throughputTimer) clearInterval(this.throughputTimer);
+    this.throughputTimer = null;
+    this.updateStatus('disconnected');
   }
 }

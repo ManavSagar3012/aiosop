@@ -5,7 +5,7 @@ export interface Finding {
   title: string
   category: string
   severity: 'low' | 'medium' | 'high' | 'critical'
-  status: 'hypothesis' | 'validated' | 'verified' | 'report_ready'
+  status: 'hypothesis' | 'validated' | 'verified' | 'report_ready' | 'rejected'
   evScore: number
   confidence: number
   historicalConfidence: number
@@ -23,6 +23,10 @@ export interface VerificationRequest {
   evidenceSources: string[]
   agreedAgents: string[]
   requiredSources: number
+  provenance?: 'live' | 'derived' | 'unverified'
+  stages?: Array<{ name: string; status: string }>
+  evidenceChainScore?: number
+  replayable?: boolean
 }
 
 export interface Uncertainty {

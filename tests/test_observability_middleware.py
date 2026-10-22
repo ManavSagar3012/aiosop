@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from starlette.middleware.base import BaseHTTPMiddleware
 
 import pytest
@@ -30,7 +30,9 @@ class TestCorrelationIdMiddleware:
 
     @pytest.fixture
     async def client(self, app: FastAPI) -> AsyncClient:
-        async with AsyncClient(app=app, base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
             yield client
 
     async def test_generates_request_id_when_missing(self, client: AsyncClient) -> None:
@@ -73,3 +75,48 @@ class TestCorrelationIdMiddleware:
         # After request completes, middleware clears contextvars
         ctx = structlog.contextvars.get_contextvars()
         assert ctx.get("request_id") is None or ctx.get("request_id") == ""
+
+    async def test_exception_path_preserves_original_exception(self) -> None:
+        """If downstream handler raises an exception, it is preserved and not masked by UnboundLocalError."""
+        app = FastAPI()
+        app.add_middleware(CorrelationIdMiddleware)
+
+        @app.get("/error")
+        async def failing_endpoint():
+            raise RuntimeError("Database connection suddenly dropped")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.get("/error")
+            # Starlette converts unhandled exception to 500 when raise_app_exceptions=False
+            assert response.status_code == 500
+
+        # Verify contextvars are cleanly cleared in finally
+        assert RequestContext.get()["request_id"] == ""
+
+    def test_prometheus_metrics_collapses_dynamic_ids(self) -> None:
+        """Prometheus metrics template collapsing prevents label cardinality explosion."""
+        from ai_osop.api.main import PrometheusMetricsMiddleware
+        from unittest.mock import MagicMock
+
+        paths_and_expected = [
+            ("/engagements/eng-12345/tasks", "/engagements/eng-{id}/tasks"),
+            ("/engagements/eng-abcd-ef01/status", "/engagements/eng-{id}/status"),
+            ("/findings/vuln-998877/verify", "/findings/vuln-{id}/verify"),
+            ("/tasks/task-001/cancel", "/tasks/task-{id}/cancel"),
+            ("/approvals/apr-123456", "/approvals/apr-{id}"),
+            ("/dlq/dlq-999", "/dlq/dlq-{id}"),
+            ("/items/123e4567-e89b-12d3-a456-426614174000", "/items/{id}"),
+            ("/health", "/health"),
+            ("/ready", "/ready"),
+        ]
+
+        for raw_path, expected in paths_and_expected:
+            req = MagicMock(spec=Request)
+            req.scope = {}
+            req.url.path = raw_path
+            result = PrometheusMetricsMiddleware._get_path_template(req)
+            assert result == expected, f"Failed for {raw_path}: got {result}, expected {expected}"
+

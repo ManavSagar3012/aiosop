@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_osop.core.models import ApprovalRequest, Task
+from ai_osop.core.config import AgentType
+from ai_osop.core.models import ApprovalRequest, ScopeDefinition, SessionState, Task
 from ai_osop.orchestrator.orchestrator import Orchestrator
 
 
@@ -33,6 +34,26 @@ async def test_approval_workflow_success(mock_orchestrator):
         risk_assessment="high",
         engagement_id="eng-001",
     )
+    mock_orchestrator._sessions["eng-001"] = SessionState(
+        session_id="eng-001",
+        phase="reconnaissance",
+        scope=ScopeDefinition(
+            engagement_id="eng-001",
+            domains=["example.com"],
+            authorization_ref="test-roe",
+        ),
+    )
+    mock_orchestrator._tasks["task-123"] = Task(
+        id="task-123",
+        type="sql_injection",
+        agent_type=AgentType.EXPLOIT_VALIDATION,
+        engagement_id="eng-001",
+        approval_required=True,
+        status="awaiting_approval",
+    )
+    # This test verifies only the persisted approval decision; live execution
+    # is exercised by the Temporal/dispatch suites under an explicit scope.
+    mock_orchestrator._assign_task = AsyncMock()
 
     # Coroutine to resolve the approval after a delay
     async def resolve_delayed():

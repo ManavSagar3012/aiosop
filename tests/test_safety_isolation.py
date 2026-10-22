@@ -21,6 +21,9 @@ def mock_docker():
 @patch("subprocess.run")
 async def test_create_sandbox(mock_subproc, mock_docker) -> None:
     # Setup
+    # Sandbox firewall installation must receive a real zero exit status;
+    # an unconfigured MagicMock is not proof that the host rules succeeded.
+    mock_subproc.return_value.returncode = 0
     manager = SandboxManager()
     sandbox_id = "sb-123"
     policy = {"egress": {"allowed_cidrs": ["10.0.0.0/8"]}}

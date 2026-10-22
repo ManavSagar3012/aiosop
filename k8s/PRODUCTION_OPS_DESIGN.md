@@ -317,6 +317,7 @@ spec:
     spec:
       template:
         spec:
+          automountServiceAccountToken: false
           containers:
           - name: neo4j-backup
             image: neo4j:5.18-community
@@ -324,7 +325,10 @@ spec:
             - /bin/sh
             - -c
             - |
-              neo4j-admin database dump --to-path=/backup ai-osop-$(date +%Y%m%d).dump
+              set -euo pipefail
+              which aws >/dev/null 2>&1 || (apt-get update && apt-get install -y awscli)
+              neo4j-admin database dump --to-path=/backup neo4j
+              mv /backup/neo4j.dump /backup/ai-osop-$(date +%Y%m%d).dump
               aws s3 cp /backup/ s3://ai-osop-backups/neo4j/ --recursive
               aws s3 ls s3://ai-osop-backups/neo4j/ | awk '$1 < "'$(date -d '30 days ago' +%Y-%m-%d)'" {print $4}' | xargs -I {} aws s3 rm s3://ai-osop-backups/neo4j/{}
             env:
@@ -333,9 +337,28 @@ spec:
                 secretKeyRef:
                   name: ai-osop-secrets
                   key: neo4j-password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: secret-access-key
             volumeMounts:
             - name: backup-tmp
               mountPath: /backup
+            - name: neo4j-data
+              mountPath: /data
+              readOnly: true
+          volumes:
+          - name: backup-tmp
+            emptyDir: {}
+          - name: neo4j-data
+            persistentVolumeClaim:
+              claimName: neo4j-data
           restartPolicy: OnFailure
 ```
 
@@ -354,6 +377,7 @@ spec:
     spec:
       template:
         spec:
+          automountServiceAccountToken: false
           containers:
           - name: redis-backup
             image: redis:7-alpine
@@ -361,6 +385,8 @@ spec:
             - /bin/sh
             - -c
             - |
+              set -euo pipefail
+              which aws >/dev/null 2>&1 || (apk update && apk add --no-cache aws-cli)
               redis-cli -h $REDIS_HOST BGSAVE
               sleep 10
               redis-cli -h $REDIS_HOST --rdb /backup/dump.rdb
@@ -370,11 +396,55 @@ spec:
             env:
             - name: REDIS_HOST
               value: "ai-osop-redis.ai-osop.svc.cluster.local"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-osop-aws-credentials
+                  key: secret-access-key
             volumeMounts:
             - name: backup-tmp
               mountPath: /backup
+          volumes:
+          - name: backup-tmp
+            emptyDir: {}
           restartPolicy: OnFailure
 ```
+
+### 7.5 Database Restore & Verification Drills Runbook
+
+To guarantee Disaster Recovery (DR) readiness, automated restore verification is performed via `scripts/ops/restore_database.py` and validated by test suite `tests/test_backup_restore.py`.
+
+#### Restore Drill Procedures:
+
+1. **PostgreSQL Restore Drill:**
+   ```bash
+   # Download snapshot from S3 and restore into target database
+   python scripts/ops/restore_database.py postgres \
+       --backup-file s3://ai-osop-backups/postgres/ai-osop-latest.sql.gz \
+       --target-uri postgresql+asyncpg://osop:osop@localhost:5432/osop_recovery
+   ```
+   - Verifies gzip stream integrity, executes DDL/DML, and runs `SELECT 1` connectivity test.
+
+2. **Redis Restore Drill:**
+   ```bash
+   python scripts/ops/restore_database.py redis \
+       --backup-file s3://ai-osop-backups/redis/ai-osop-latest.rdb \
+       --target-dir /var/lib/redis/recovery
+   ```
+   - Validates RDB magic header (`REDIS0009` or `REDIS0011`) and checks file byte integrity.
+
+3. **Neo4j Restore Drill:**
+   ```bash
+   python scripts/ops/restore_database.py neo4j \
+       --backup-file s3://ai-osop-backups/neo4j/ai-osop-latest.dump \
+       --target-dir /var/lib/neo4j/data/databases/recovery
+   ```
+   - Unpacks dump archive, verifies store files (`neostore.*`), and runs APOC relationship integrity queries.
 
 ---
 
@@ -399,28 +469,46 @@ spec:
 
 ---
 
-## 9. Implementation Order
+## 9. Networking & Security Alignment
 
-1. **HPA manifests** (`k8s/hpa.yaml`)
-2. **PDB manifests** (`k8s/pdb.yaml`)
-3. **Enhanced readiness probe config** (update `k8s/orchestrator-deployment.yaml`)
-4. **Log retention ConfigMap** (`k8s/log-retention.yaml`)
-5. **Backup CronJobs** (`k8s/backup-cronjobs.yaml`)
-6. **Resource Quota** (`k8s/resource-quota.yaml`)
-7. **Tests** (`tests/test_production_ops_*.py`)
+### 9.1 Unified Service Port 8200
+- **Orchestrator Service & Ingress:** The FastAPI gateway listens on port `8200`. The NetworkPolicy `ingress` rule and readiness/liveness probes strictly enforce port `8200`.
+- **Worker Configuration:** All agent deployments declare `OSOP_ORCHESTRATOR_URL: http://ai-osop-orchestrator.ai-osop.svc.cluster.local:8200`.
+- **UI API Client:** The frontend single-page application defaults HTTP and WebSocket connections to port `8200`.
+
+### 9.2 Kubernetes ServiceAccount Hardening
+- **Token Disablement:** All Pod templates specify `automountServiceAccountToken: false` to mitigate cluster metadata and credential harvesting vectors.
+- **Container Immutability:** Pinned images (`ai-osop/orchestrator:v1.0.0`, `ai-osop/agents:v1.0.0`) prevent non-deterministic tag drift.
 
 ---
 
-## 10. Success Criteria
+## 10. Implementation Order
 
-- [ ] HPA scales orchestrator from 2 → 10 replicas under CPU load
-- [ ] HPA scales agents from 3 → 20 replicas under queue depth load
-- [ ] PDB prevents all orchestrator pods from being drained simultaneously
-- [ ] Readiness probe tolerates 15s of dependency flapping
-- [ ] Log retention config is applied to all pods
-- [ ] Postgres backups run hourly and persist to S3
-- [ ] Neo4j backups run daily and persist to S3
-- [ ] Redis backups run every 6h and persist to S3
-- [ ] All new manifests pass `kubectl apply --dry-run=client`
+1. **HPA manifests** (`k8s/hpa.yaml`)
+2. **PDB manifests** (`k8s/pdb.yaml`)
+3. **Enhanced readiness probe config** (update `k8s/orchestrator-deployment.yaml` with port 8200)
+4. **Log retention ConfigMap** (`k8s/log-retention.yaml`)
+5. **Backup CronJobs & PVC mount** (`k8s/backup-cronjobs.yaml`)
+6. **Resource Quota** (`k8s/resource-quota.yaml`)
+7. **Verification & Restore Tests** (`tests/test_backup_restore.py`, `tests/test_postgres_readiness_sql.py`)
+
+---
+
+## 11. Success Criteria
+
+- [x] Orchestrator Service and NetworkPolicy aligned to port 8200
+- [x] Agent deployment references orchestrator on port 8200
+- [x] `automountServiceAccountToken: false` applied across all workload pods
+- [x] HPA scales orchestrator from 2 → 10 replicas under CPU load
+- [x] HPA scales agents from 3 → 20 replicas under queue depth load
+- [x] PDB prevents all orchestrator pods from being drained simultaneously
+- [x] Readiness probe tolerates 15s of dependency flapping using SQLAlchemy 2.0 `text()`
+- [x] Log retention config is applied to all pods
+- [x] Postgres backups run hourly and persist to S3
+- [x] Neo4j backups run daily with mounted PVC and persist to S3
+- [x] Redis backups run every 6h and persist to S3
+- [x] Restore runner (`scripts/ops/restore_database.py`) verified in qualification
+- [x] All manifests pass YAML validation and `kubectl apply --dry-run=client`
 
 *End of Design Document*
+

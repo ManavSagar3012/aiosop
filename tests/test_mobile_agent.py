@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.experimental.mobile_agent import MobileAnalysisAgent
@@ -27,9 +28,14 @@ def mock_context():
     return ctx
 
 
-@pytest.fixture
-def agent(mock_context):
-    return MobileAnalysisAgent(mock_context)
+@pytest_asyncio.fixture
+async def agent(mock_context):
+    instance = MobileAnalysisAgent(mock_context)
+    try:
+        yield instance
+    finally:
+        if instance._running:
+            await instance.shutdown()
 
 
 # ──────────────────── tests ────────────────────

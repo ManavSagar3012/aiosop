@@ -1,0 +1,28 @@
+# Migration 0040: mounted current-cursor readback after an ambiguous HTTP ACK
+
+**Date:** 2026-10-21  
+**Scope:** Original shared dirty `/burp_mcp/ai-osop` only.  
+**Release:** NOT PRODUCTION CERTIFIED / NOT READY.
+
+## Substantive production integration
+
+The mounted `POST /supervision/engagements/{engagement_id}/subscriptions/{subscriber_id}/cursor-readback` accepts only the same strict `LeaseBinding` used for the existing named subscription. It invokes the original current signed human `operator` bearer, engagement/Task ownership, current ROE authorization, and existing 0040 PostgreSQL subscription store without any fabricated signer or new authority.
+
+`DurableSupervisionSubscriptions.read_committed_cursor()` performs a **non-mutating database transaction**. Its existing `_transaction` revalidates bearer and signed ROE, fences 0014 revocation insert phantoms with PostgreSQL SHARE NOWAIT, and verifies revocation again before committing the read transaction. `_active` selects and locks the exact subscription row, verifies current owner, issuer, Task, authorization version/digest, replica ID, one-use lease ID, generation and lease expiry. The caller's previous cursor may be older than the actual durable cursor because an HTTP ACK response may be lost **after the cursor UPDATE committed**. The method returns the persisted cursor without repeating ACK, incrementing a lease, or dispatching an MCP tool.
+
+The mounted router independently rechecks current human bearer/Flow scope and ROE after the database read, then runs an additional separate `_transaction(principal)` **including the actual final PostgreSQL 0014 revocation-insert fence** immediately before returning only the new lease with `cursor_readback=committed_database_state_only`, `acknowledgement_delivered_to_client_verified=false`, `safe_to_retry_unknown_ack=false`, and `target_effect_verified=false`. The unavoidable final database-check-to-HTTP-publication window remains. A revoked, expired, replaced or foreign lease denies and must not reveal the saved cursor.
+
+`ui/src/services/durableSupervisionSubscribers.ts` now validates the exact bounded response fields and verifies the readback matches the last original lease ID, replica, generation, tenant and a nondecreasing cursor. `DurableSupervisionSubscribersPanel.tsx` remembers the last lease **only when a manual ACK becomes ambiguous**, clears optimistic local lease state, and exposes a separate human-clicked **READ BACK CURSOR AFTER UNKNOWN ACK (NO RETRY)** control. Successful readback updates the displayed persisted cursor without resending the lost ACK. Revocation and sign-out still deny. No automatic retry, user-facing exactly-once or target-effect claim was introduced.
+
+## Verified qualification
+
+- **Actual disposable PostgreSQL16 + actual mounted FastAPI ASGI (opt-in):** `tests/qualification/test_0040_cursor_readback_actual_pg_20261021.py::test_actual_pg16_mounted_current_cursor_readback_never_retries_ambiguous_ack` **1 passed in 29.77 seconds**. The fixture runs the real 0009/0014/0040 migrations on a newly owned private **nonroot Unix-socket-only** WSL PostgreSQL instance, real guard_sql signed ROE verifier with **synthetic ephemeral Ed25519 fixture keys**, real subscriber store and mounted production router. The test confirmed genuine `cursor_sequence=11` after deliberately disregarding an ACK HTTP response; readback using last cursor `0` returned committed `11`, left generation unchanged and did not replay. Duplicated ACK denied 409; foreign operator denied 403; wrong replica/lease denied 409; signer-backed ROE revocation denied 409. SQL readback confirmed no cursor write by reconciliation. The test's SQLite/ORM substitutions and fixture keys are not live deployed signers or full application schema qualification.
+- **Default mode:** test route mounts exactly once; the real PostgreSQL test skips without explicit `OSOP_DURABLE_MOUNTED_ACTUAL_PG16=1`, no app DB access. `tests/qualification/test_durable_subscriptions_mounted_actual_pg_20261021.py` existing route roster was updated from six to seven routes and the test helper's action whitelist includes the new route.
+- **React/UI contract:** `node --test ui/tests/durable-supervision-subscriber-20261021.test.mjs` **8/8 passed**, including independent response validation, no ACK retry, forged target-effect/forged delivery rejection, user session changes, malformed leases, oversized response and role/scope checks. TypeScript `npm --prefix ui run typecheck` succeeded; Vite build after the UI edits succeeded (2,661 transformed modules).
+- **Post-final-revocation-fence genuine PostgreSQL rerun:** After adding the final independent `_transaction(principal)` check to the mounted readback route, the *same* opt-in private nonroot PG16 qualification was rerun: **1 passed in 24.61 seconds**. Thus the final guarded router behavior, not merely the earlier first version, was exercised against the disposable database. Scoped Black checks passed.
+
+## Remaining limits
+
+This improves at-least-once crash/ACK ambiguity readback but cannot make an HTTP ACK and PostgreSQL COMMIT atomic. Receipt at the client, physical multi-host failover, real independently enrolled issuer and vault roots, signed senior release, replicated temporal execution and independently authenticated target-owner effect are **not** established. Existing HTTP `http.disconnect` after UPDATE has an unavoidable final-COMMIT observation gap; prior private fixture-client cancellation sometimes had bridge-specific SQL lock cleanup ambiguity. Do not represent this as exactly-once, guaranteed rollback after client disconnect, replay permission, or production release certification.
+
+**Release classification: NOT PRODUCTION CERTIFIED / NOT READY.**

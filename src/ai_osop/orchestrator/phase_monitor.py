@@ -9,7 +9,7 @@ from typing import Any
 
 import structlog
 
-from ai_osop.core.config import AgentType, EngagementPhase
+from ai_osop.core.config import AgentType, EngagementPhase, settings
 from ai_osop.core.models import SessionState, Task
 from ai_osop.core.tracing import trace_span
 
@@ -59,6 +59,9 @@ class PhaseMonitor:
                         agent_type=AgentType.VULN_ANALYSIS,
                         payload={"targets": [f"https://{domain}"]},
                         engagement_id=session.session_id,
+                        # The MCP HTTP call itself runs up to nuclei_mcp_timeout;
+                        # the task-level default (300s) killed healthy scans first.
+                        timeout_seconds=settings.nuclei_mcp_timeout + 60,
                     )
                     await self._orch.task_scheduler.schedule_task(nuclei_task)
 

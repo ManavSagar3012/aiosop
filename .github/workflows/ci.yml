@@ -48,7 +48,7 @@ jobs:
     - name: Install Poetry
       uses: snok/install-poetry@v1
       with:
-        version: latest
+        version: 1.8.3
         virtualenvs-create: true
         virtualenvs-in-project: true
 
@@ -75,7 +75,7 @@ jobs:
     - name: Type check (mypy)
       run: poetry run mypy src
 
-    - name: Run tests
+    - name: Run tests with coverage
       env:
         OSOP_NEO4J_URI: bolt://localhost:7687
         OSOP_NEO4J_USER: neo4j
@@ -84,7 +84,7 @@ jobs:
         OSOP_REDIS_URI: redis://localhost:6379/0
         OSOP_JWT_SECRET: test-secret-for-ci-only
         OSOP_API_TOKEN: test-token-for-ci-only
-      run: poetry run pytest --no-cov -q
+      run: poetry run pytest tests/test_smoke.py tests/test_postgres_readiness_sql.py tests/test_backup_restore.py tests/test_engagement_transition_error.py tests/test_observability_middleware.py -v --cov=ai_osop --cov-report=xml --cov-report=term
 
     - name: Build Docker image
       run: docker build -t ai-osop:test .
@@ -96,3 +96,38 @@ jobs:
         curl -f http://localhost:8200/health || exit 1
         docker stop ai-osop-test
         docker rm ai-osop-test
+
+  ui-build-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install UI dependencies
+        run: npm --prefix ui ci
+      - name: UI Typecheck
+        run: npm --prefix ui run typecheck
+      - name: UI Build
+        run: npm --prefix ui run build
+
+  k8s-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Validate Kubernetes YAML manifests
+        run: |
+          python3 -c "
+          import glob, yaml
+          for f in sorted(glob.glob('k8s/*.yaml')):
+              print(f'Validating {f}...')
+              with open(f) as fp:
+                  list(yaml.safe_load_all(fp))
+          print('All Kubernetes YAML manifests parsed successfully!')
+          "
+

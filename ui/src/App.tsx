@@ -1,21 +1,25 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/layout/Layout';
-import { Overview } from './pages/Overview';
-import { MissionControl } from './pages/MissionControl';
-import { ResearchIntelligence } from './pages/ResearchIntelligence';
-import { KnowledgeGraphs } from './pages/KnowledgeGraphs';
-import { FindingsVerification } from './pages/FindingsVerification';
-import { LearningAnalytics } from './pages/LearningAnalytics';
-import { DifferentialAuth } from './pages/DifferentialAuth';
-import { VisualContext } from './pages/VisualContext';
-import { UncertaintyEngine } from './pages/UncertaintyEngine';
-import { RealityVerificationCenter } from './pages/RealityVerificationCenter';
-import { Administration } from './pages/Administration';
-import { SkillIntelligence } from './pages/SkillIntelligence';
-import { AuthAudit } from './pages/AuthAudit';
-import { MissionTimeline } from './pages/MissionTimeline';
-import { MissionReport } from './pages/MissionReport';
+// Load only the requested route's feature graph. This avoids bundling every
+// report/graph/visualization dependency into the authentication entrypoint.
+const Overview = React.lazy(() => import('./pages/Overview').then(m => ({ default: m.Overview })));
+const MissionControl = React.lazy(() => import('./pages/MissionControl').then(m => ({ default: m.MissionControl })));
+const ResearchIntelligence = React.lazy(() => import('./pages/ResearchIntelligence').then(m => ({ default: m.ResearchIntelligence })));
+const KnowledgeGraphs = React.lazy(() => import('./pages/KnowledgeGraphs').then(m => ({ default: m.KnowledgeGraphs })));
+const FindingsVerification = React.lazy(() => import('./pages/FindingsVerification').then(m => ({ default: m.FindingsVerification })));
+const LearningAnalytics = React.lazy(() => import('./pages/LearningAnalytics').then(m => ({ default: m.LearningAnalytics })));
+const DifferentialAuth = React.lazy(() => import('./pages/DifferentialAuth').then(m => ({ default: m.DifferentialAuth })));
+const VisualContext = React.lazy(() => import('./pages/VisualContext').then(m => ({ default: m.VisualContext })));
+const UncertaintyEngine = React.lazy(() => import('./pages/UncertaintyEngine').then(m => ({ default: m.UncertaintyEngine })));
+const RealityVerificationCenter = React.lazy(() => import('./pages/RealityVerificationCenter').then(m => ({ default: m.RealityVerificationCenter })));
+const Administration = React.lazy(() => import('./pages/Administration').then(m => ({ default: m.Administration })));
+const SkillIntelligence = React.lazy(() => import('./pages/SkillIntelligence').then(m => ({ default: m.SkillIntelligence })));
+const AuthAudit = React.lazy(() => import('./pages/AuthAudit').then(m => ({ default: m.AuthAudit })));
+const MissionTimeline = React.lazy(() => import('./pages/MissionTimeline').then(m => ({ default: m.MissionTimeline })));
+const MissionReport = React.lazy(() => import('./pages/MissionReport').then(m => ({ default: m.MissionReport })));
+const FlowOperations = React.lazy(() => import('./pages/FlowOperations').then(m => ({ default: m.FlowOperations })));
+const UserLibrary = React.lazy(() => import('./pages/UserLibrary').then(m => ({ default: m.UserLibrary })));
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
   constructor(props: any) {
@@ -43,12 +47,15 @@ export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
+        <React.Suspense fallback={<div role="status" className="p-8 font-code-sm text-on-surface-variant">Loading the requested view...</div>}>
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<Overview />} />
             <Route path="mission-control" element={<MissionControl />} />
+            <Route path="flows" element={<FlowOperations />} />
             <Route path="intelligence" element={<ResearchIntelligence />} />
             <Route path="knowledge-graphs" element={<KnowledgeGraphs />} />
+            <Route path="user-library" element={<UserLibrary />} />
             <Route path="findings" element={<FindingsVerification />} />
             <Route path="verification" element={<RealityVerificationCenter />} />
             <Route path="uncertainty" element={<UncertaintyEngine />} />
@@ -63,6 +70,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
+        </React.Suspense>
       </BrowserRouter>
     </ErrorBoundary>
   );

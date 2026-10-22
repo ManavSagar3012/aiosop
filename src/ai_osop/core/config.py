@@ -150,6 +150,11 @@ class Settings(BaseSettings):
     app_name: str = "ai-osop"
     environment: str = Field(default="development", validation_alias="OSOP_ENV")
     log_level: LogLevel = Field(default=LogLevel.INFO, validation_alias="OSOP_LOG_LEVEL")
+    # Production audit HMAC key must be injected from the operator's secret
+    # manager; the legacy development-only constant cannot attest events.
+    audit_hmac_key: Optional[str] = Field(
+        default=None, validation_alias="OSOP_AUDIT_HMAC_KEY"
+    )
 
     # Database
     neo4j_uri: str = Field(default="bolt://localhost:7687", validation_alias="OSOP_NEO4J_URI")
@@ -169,12 +174,25 @@ class Settings(BaseSettings):
     llm_fallback_model: str = Field(
         default="gpt-4o-mini", validation_alias="OSOP_LLM_FALLBACK_MODEL"
     )
+    llm_embedding_model: str = Field(
+        default="text-embedding-3-small", validation_alias="OSOP_LLM_EMBEDDING_MODEL"
+    )
     llm_api_key_path: str = Field(
         default="secret/data/llm/openai", validation_alias="OSOP_LLM_KEY_PATH"
     )
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.1  # Low temperature for deterministic security reasoning
     mock_llm: bool = Field(default=True, validation_alias="OSOP_MOCK_LLM")
+    # Custom Anthropic-compatible endpoint (e.g. a self-hosted model behind a
+    # tunnel). Applied to primary/fallback calls using the `anthropic/` prefix.
+    llm_api_base: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_API_BASE")
+    llm_api_key: Optional[str] = Field(default=None, validation_alias="OSOP_LLM_API_KEY")
+    # Bound each LLM call so a wedged remote endpoint degrades to the fallback
+    # instead of hanging the agent (AIOSOP-LLM-TIMEOUT-001, re-applied to the
+    # Sprint-8 baseline which had lost the timeout kwarg).
+    llm_completion_timeout: int = Field(
+        default=120, validation_alias="OSOP_LLM_COMPLETION_TIMEOUT"
+    )
 
     # MCP
     mcp_server_host: str = "0.0.0.0"
@@ -227,6 +245,42 @@ class Settings(BaseSettings):
     jwt_audience: Optional[str] = Field(default=None, validation_alias="OSOP_JWT_AUDIENCE")
     jwt_issuer: Optional[str] = Field(default=None, validation_alias="OSOP_JWT_ISSUER")
 
+    # Optional externally signed operator JWTs. Provision all three settings
+    # together; a trusted IdP role/group must be explicitly mapped to one of
+    # AI-OSOP's operator roles. The JWKS is trusted by its configured HTTPS
+    # URL and verified key, never by token-controlled jku/x5u headers.
+    # Example OSOP_OIDC_ROLE_MAP_JSON: {"osop-team":"operator","osop-leads":"senior_operator"}
+    oidc_issuer: Optional[str] = Field(default=None, validation_alias="OSOP_OIDC_ISSUER")
+    oidc_audience: Optional[str] = Field(default=None, validation_alias="OSOP_OIDC_AUDIENCE")
+    oidc_jwks_url: Optional[str] = Field(default=None, validation_alias="OSOP_OIDC_JWKS_URL")
+    oidc_algorithms: str = Field(default="RS256", validation_alias="OSOP_OIDC_ALGORITHMS")
+    # RFC 9068 access-token profile. Legacy providers using typ=JWT require an
+    # explicit opt-in; their tokens still need the dedicated API audience.
+    oidc_token_typ: str = Field(default="at+jwt", validation_alias="OSOP_OIDC_TOKEN_TYP")
+    oidc_role_claim: str = Field(default="groups", validation_alias="OSOP_OIDC_ROLE_CLAIM")
+    oidc_role_map_json: str = Field(default="{}", validation_alias="OSOP_OIDC_ROLE_MAP_JSON")
+    oidc_jwks_cache_seconds: int = Field(default=300, ge=30, le=3600, validation_alias="OSOP_OIDC_JWKS_CACHE_SECONDS")
+    oidc_max_token_seconds: int = Field(default=3600, ge=60, le=86400, validation_alias="OSOP_OIDC_MAX_TOKEN_SECONDS")
+    # Configure all three to require live RFC7662 IdP introspection for EVERY
+    # OIDC access token before accepting it. No stale active-token cache.
+    # Requires an IdP that supplies an authenticated active status and subject.
+    # Unconfigured JWT-only mode does NOT promise prompt credential revocation.
+    oidc_introspection_url: Optional[str] = Field(
+        default=None, validation_alias="OSOP_OIDC_INTROSPECTION_URL",
+    )
+    oidc_introspection_client_id: Optional[str] = Field(
+        default=None, validation_alias="OSOP_OIDC_INTROSPECTION_CLIENT_ID",
+    )
+    oidc_introspection_client_secret: Optional[str] = Field(
+        default=None, validation_alias="OSOP_OIDC_INTROSPECTION_CLIENT_SECRET",
+    )
+    # When enabled, every signed operator bearer must pass a FRESH shared
+    # PostgreSQL revocation check. No Redis or process-local allow cache.
+    # Deploy migration 0014 before enabling; DB failures deny admission.
+    operator_revocation_required: bool = Field(
+        default=False, validation_alias="OSOP_OPERATOR_REVOCATION_REQUIRED",
+    )
+
     recon_mcp_host: str = Field(default="localhost", validation_alias="OSOP_RECON_MCP_HOST")
     recon_mcp_port: int = Field(default=8082, validation_alias="OSOP_RECON_MCP_PORT")
     payload_mcp_host: str = Field(default="localhost", validation_alias="OSOP_PAYLOAD_MCP_HOST")
@@ -251,6 +305,11 @@ class Settings(BaseSettings):
 
     browser_mcp_host: str = Field(default="localhost", validation_alias="OSOP_BROWSER_MCP_HOST")
     browser_mcp_port: int = Field(default=8091, validation_alias="OSOP_BROWSER_MCP_PORT")
+    browser_mcp_auth_token: Optional[str] = Field(
+        default=None,
+        repr=False,
+        validation_alias="OSOP_BROWSER_MCP_BEARER_TOKEN",
+    )
     security_bridge_host: str = Field(
         default="localhost", validation_alias="OSOP_SECURITY_BRIDGE_HOST"
     )
@@ -260,11 +319,17 @@ class Settings(BaseSettings):
     )
     threat_intel_mcp_port: int = Field(default=8086, validation_alias="OSOP_THREAT_INTEL_MCP_PORT")
     source_map_mcp_host: str = Field(
-        default="localhost", validation_alias="OSOP_SOURCE_MAP_MCP_HOST"
+        default="127.0.0.1", validation_alias="OSOP_SOURCE_MAP_MCP_HOST"
     )
     source_map_mcp_port: int = Field(default=8096, validation_alias="OSOP_SOURCE_MAP_MCP_PORT")
     cloud_mcp_host: str = Field(default="localhost", validation_alias="OSOP_CLOUD_MCP_HOST")
     cloud_mcp_port: int = Field(default=8097, validation_alias="OSOP_CLOUD_MCP_PORT")
+    # Loopback Cloud static-IaC service authenticates every execute with its
+    # operator-provisioned bearer. This is a transport credential ONLY: it is
+    # never a signed Flow/ROE/Task grant or live cloud-account credential.
+    cloud_mcp_auth_token: Optional[str] = Field(
+        default=None, repr=False, validation_alias="OSOP_CLOUD_MCP_BEARER_TOKEN"
+    )
     turbo_intruder_mcp_host: str = Field(
         default="localhost", validation_alias="OSOP_TURBO_INTRUDER_MCP_HOST"
     )

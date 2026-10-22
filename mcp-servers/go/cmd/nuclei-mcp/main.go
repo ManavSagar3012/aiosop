@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"os/exec"
 	"strings"
 
@@ -13,7 +14,7 @@ func main() {
 		Name:           "scan",
 		Description:    "Run nuclei against scoped targets.",
 		TimeoutSeconds: 900,
-		ScopeCheck:      true,
+		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "targets", "type": "array", "description": "Target URLs or hosts", "required": true},
 			{"name": "templates", "type": "array", "description": "Optional template IDs or paths", "required": false},
@@ -35,7 +36,11 @@ func main() {
 			return map[string]any{"findings": strings.Split(strings.TrimSpace(string(output)), "\n")}
 		},
 	})
-	_ = server.Run(":8084")
+	address, err := sdk.LocalPortAddress(8084)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(server.Run(address))
 }
 
 func stringSlice(value any) []string {

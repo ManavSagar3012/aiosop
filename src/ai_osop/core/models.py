@@ -66,6 +66,34 @@ class Endpoint(BaseModel):
     confidence: float = Field(0.5, ge=0.0, le=1.0)
 
 
+class FindingStatus(str, Enum):
+    CANDIDATE = "candidate"
+    VALIDATION_PENDING = "validation_pending"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+    INCONCLUSIVE = "inconclusive"
+
+
+class EvidenceArtifact(BaseModel):
+    id: str = Field(default_factory=lambda: f"ev-{uuid.uuid4().hex[:12]}")
+    engagement_id: str
+    finding_id: str
+    source_tool: str
+    source_tool_version: str = "1.0.0"
+    target_url: str
+    http_method: str = "GET"
+    request_headers_sha256: str
+    request_body_sha256: str
+    response_status: int
+    response_headers_sha256: str
+    response_body_sha256: str
+    raw_storage_uri: str = ""
+    approval_id: Optional[str] = None
+    replay_recipe: Dict[str, Any] = Field(default_factory=dict)
+    merkle_leaf_hash: str
+    captured_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Vulnerability(BaseModel):
     id: str = Field(default_factory=lambda: f"vuln-{uuid.uuid4().hex[:12]}")
     cwe: Optional[str] = None
@@ -82,6 +110,11 @@ class Vulnerability(BaseModel):
     entry_point: bool = False  # Can be reached from unauthenticated position
     requires_auth: bool = False
     validated: bool = False
+    finding_status: FindingStatus = FindingStatus.CANDIDATE
+    validation_authority: Optional[str] = None
+    validation_state: Optional[str] = None
+    evidence_artifact_ids: List[str] = Field(default_factory=list)
+    merkle_leaf_hash: Optional[str] = None
     exploitability: str = "unknown"  # high, medium, low, unknown
     impact: str = "unknown"
     correlated_ids: List[str] = Field(default_factory=list)
@@ -157,6 +190,59 @@ class Task(BaseModel):
     assigned_agent_id: Optional[str] = None
     # Sprint 6: trace context propagation across async boundaries
     trace_context: Dict[str, Any] = Field(default_factory=dict)
+    # Persistent execution lineage; optional for existing scheduled tasks.
+    flow_id: Optional[str] = None
+    subtask_id: Optional[str] = None
+    parent_task_id: Optional[str] = None
+
+
+class FlowRecord(BaseModel):
+    """Persistent container for related objectives in one authorized engagement."""
+
+    id: str = Field(default_factory=lambda: f"flow-{uuid.uuid4().hex[:12]}")
+    engagement_id: str
+    objective: str = Field(min_length=1, max_length=2048)
+    status: str = "pending"
+    revision: int = Field(0, ge=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SubtaskRecord(BaseModel):
+    """One bounded, dependency-aware step under a task objective."""
+
+    id: str = Field(default_factory=lambda: f"subtask-{uuid.uuid4().hex[:12]}")
+    engagement_id: str
+    flow_id: str
+    task_id: str
+    title: str = Field(min_length=1, max_length=256)
+    description: str = Field("", max_length=4096)
+    task_type: str = Field("recon", max_length=128)
+    agent_type: AgentType = AgentType.RECON
+    approval_required: bool = False
+    order: int = Field(0, ge=0)
+    dependencies: List[str] = Field(default_factory=list)
+    status: str = "pending"
+    refinement_count: int = Field(0, ge=0, le=3)
+    result_summary: Optional[str] = Field(None, max_length=4096)
+    execution_task_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExecutionActionRecord(BaseModel):
+    """Redacted tool/action provenance; never stores raw arguments or responses."""
+
+    id: str = Field(default_factory=lambda: f"action-{uuid.uuid4().hex[:12]}")
+    engagement_id: str
+    flow_id: Optional[str] = None
+    task_id: Optional[str] = None
+    subtask_id: Optional[str] = None
+    tool_name: str = Field(max_length=128)
+    outcome: str = Field(max_length=32)
+    duration_ms: Optional[int] = Field(None, ge=0)
+    safe_metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ApprovalRequest(BaseModel):

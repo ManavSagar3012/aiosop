@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.core.config import settings
+from ai_osop.core.exceptions import MCPException
 from ai_osop.core.models import Asset, Endpoint
 from ai_osop.mcp.protocol import MCPExecuteResponse, MCPRegistry
 
@@ -53,18 +54,16 @@ class ReconMCPAdapter:
         # Passive enumeration first
         passive_tasks = [self._subfinder_enum(domain), self._amass_passive(domain)]
 
-        passive_results = await asyncio.gather(*passive_tasks, return_exceptions=True)
+        passive_results = await asyncio.gather(*passive_tasks)
 
         all_subdomains = []
         for result in passive_results:
-            if isinstance(result, list):
-                all_subdomains.extend(result)
+            all_subdomains.extend(result)
 
         # Active enumeration if enabled
         if active:
             active_result = await self._amass_active(domain, depth)
-            if isinstance(active_result, list):
-                all_subdomains.extend(active_result)
+            all_subdomains.extend(active_result)
 
         # Deduplicate and normalize
         assets = self._deduplicate_subdomains(all_subdomains, domain)
@@ -91,7 +90,7 @@ class ReconMCPAdapter:
         )
 
         if response.status != "success" or not response.result:
-            return []
+            raise MCPException("Recon MCP port scan unavailable")
 
         return self._normalize_nmap_output(response.result)
 
@@ -116,7 +115,7 @@ class ReconMCPAdapter:
         )
 
         if response.status != "success" or not response.result:
-            return []
+            raise MCPException("Recon MCP service probe unavailable")
 
         return self._normalize_httpx_output(response.result)
 
@@ -132,7 +131,7 @@ class ReconMCPAdapter:
         )
 
         if response.status != "success" or not response.result:
-            return []
+            raise MCPException("Recon MCP OSINT lookup unavailable")
 
         return self._normalize_shodan_output(response.result, domain)
 
@@ -148,7 +147,7 @@ class ReconMCPAdapter:
         )
 
         if response.status != "success" or not response.result:
-            return []
+            raise MCPException("Recon MCP historical URLs unavailable")
 
         return self._normalize_wayback_output(response.result, domain)
 
@@ -164,8 +163,11 @@ class ReconMCPAdapter:
         )
 
         if response.status == "success" and response.result:
-            return response.result.get("fingerprints", {})
-        return {}
+            fingerprints = response.result.get("fingerprints")
+            if isinstance(fingerprints, dict):
+                return fingerprints
+            raise MCPException("Recon MCP technology fingerprint result malformed")
+        raise MCPException("Recon MCP technology fingerprint unavailable")
 
     # ============== PRIVATE HELPERS ==============
 
@@ -174,24 +176,33 @@ class ReconMCPAdapter:
             self.SERVER_ID, "subfinder_enum", {"domain": domain}
         )
         if response.status == "success" and response.result:
-            return response.result.get("subdomains", [])
-        return []
+            subdomains = response.result.get("subdomains")
+            if isinstance(subdomains, list):
+                return subdomains
+            raise MCPException("Recon MCP Subfinder result malformed")
+        raise MCPException("Recon MCP Subfinder enumeration unavailable")
 
     async def _amass_passive(self, domain: str) -> List[Dict[str, Any]]:
         response = await self.registry.execute_tool(
             self.SERVER_ID, "amass_passive", {"domain": domain}
         )
         if response.status == "success" and response.result:
-            return response.result.get("subdomains", [])
-        return []
+            subdomains = response.result.get("subdomains")
+            if isinstance(subdomains, list):
+                return subdomains
+            raise MCPException("Recon MCP passive Amass result malformed")
+        raise MCPException("Recon MCP passive Amass enumeration unavailable")
 
     async def _amass_active(self, domain: str, depth: int) -> List[Dict[str, Any]]:
         response = await self.registry.execute_tool(
             self.SERVER_ID, "amass_active", {"domain": domain, "depth": depth}
         )
         if response.status == "success" and response.result:
-            return response.result.get("subdomains", [])
-        return []
+            subdomains = response.result.get("subdomains")
+            if isinstance(subdomains, list):
+                return subdomains
+            raise MCPException("Recon MCP active Amass result malformed")
+        raise MCPException("Recon MCP active Amass enumeration unavailable")
 
     def _deduplicate_subdomains(
         self, raw_subdomains: List[Dict[str, Any]], parent_domain: str
@@ -245,7 +256,12 @@ class ReconMCPAdapter:
     def _normalize_nmap_output(self, result: Dict[str, Any]) -> List[Asset]:
         """Convert Nmap XML/JSON output to Asset models."""
         assets = []
-        for host in result.get("hosts", []):
+        hosts = result.get("hosts")
+        if not isinstance(hosts, list):
+            raise MCPException("Recon MCP Nmap result malformed")
+        for host in hosts:
+            if not isinstance(host, dict) or not isinstance(host.get("ip"), str):
+                raise MCPException("Recon MCP Nmap host malformed")
             asset = Asset(
                 type="host",
                 value=host.get("ip"),
@@ -264,7 +280,12 @@ class ReconMCPAdapter:
     def _normalize_httpx_output(self, result: Dict[str, Any]) -> List[Endpoint]:
         """Convert httpx JSON output to Endpoint models."""
         endpoints = []
-        for entry in result.get("results", []):
+        entries = result.get("endpoints", result.get("results"))
+        if not isinstance(entries, list):
+            raise MCPException("Recon MCP HTTP probe result malformed")
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("url"), str):
+                raise MCPException("Recon MCP HTTP probe endpoint malformed")
             ep = Endpoint(
                 url=entry.get("url"),
                 method=entry.get("method", "GET"),
@@ -285,7 +306,12 @@ class ReconMCPAdapter:
     def _normalize_shodan_output(self, result: Dict[str, Any], domain: str) -> List[Asset]:
         """Convert Shodan output to Asset models."""
         assets = []
-        for match in result.get("matches", []):
+        matches = result.get("matches")
+        if not isinstance(matches, list):
+            raise MCPException("Recon MCP Shodan result malformed")
+        for match in matches:
+            if not isinstance(match, dict) or not isinstance(match.get("ip_str"), str):
+                raise MCPException("Recon MCP Shodan match malformed")
             asset = Asset(
                 type="host",
                 value=match.get("ip_str"),
@@ -306,7 +332,12 @@ class ReconMCPAdapter:
     def _normalize_wayback_output(self, result: Dict[str, Any], domain: str) -> List[Endpoint]:
         """Convert Wayback output to Endpoint models."""
         endpoints = []
-        for entry in result.get("urls", []):
+        entries = result.get("urls")
+        if not isinstance(entries, list):
+            raise MCPException("Recon MCP Wayback result malformed")
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("url"), str):
+                raise MCPException("Recon MCP Wayback URL malformed")
             ep = Endpoint(
                 url=entry.get("url"),
                 method=entry.get("method", "GET"),
@@ -314,11 +345,6 @@ class ReconMCPAdapter:
                 source="wayback",
                 confidence=0.80,
                 engagement_id="",
-                metadata={
-                    "first_seen": entry.get("first_seen"),
-                    "last_seen": entry.get("last_seen"),
-                    "domain": domain,
-                },
             )
             endpoints.append(ep)
         return endpoints

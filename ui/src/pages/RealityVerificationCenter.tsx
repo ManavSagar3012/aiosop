@@ -1,7 +1,7 @@
 import React from 'react';
 import { Card } from '../components/shared/Card';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
-import { ShieldCheck, UserCheck, Microscope, Clock, History, Fingerprint } from 'lucide-react';
+import { ShieldCheck, Fingerprint } from 'lucide-react';
 
 export const RealityVerificationCenter: React.FC = () => {
   const { verifications } = useIntelligenceStore();
@@ -15,11 +15,15 @@ export const RealityVerificationCenter: React.FC = () => {
          </div>
          <div className="flex items-center gap-6">
             <div className="text-right">
-               <div className="font-code-sm text-primary text-[14px]">82%</div>
+               <div className="font-code-sm text-primary text-[14px]">
+                 {verifications.length
+                   ? `${Math.round(100 * verifications.filter(v => v.agreedAgents.length >= v.requiredSources).length / verifications.length)}%`
+                   : '—'}
+               </div>
                <div className="font-label-caps text-on-surface-variant text-[9px]">OVERALL VERIFICATION RATE</div>
             </div>
             <div className="text-right border-l border-outline-variant pl-6">
-               <div className="font-code-sm text-error text-[14px]">3</div>
+               <div className="font-code-sm text-error text-[14px]">—</div>
                <div className="font-label-caps text-on-surface-variant text-[9px]">REJECTED HYPOTHESES</div>
             </div>
          </div>
@@ -56,7 +60,7 @@ export const RealityVerificationCenter: React.FC = () => {
                                  v.provenance === 'derived' ? 'border-secondary text-secondary bg-secondary/5' :
                                  'border-error text-error bg-error/5 glow-red animate-pulse'
                               }`}>
-                                 {v.provenance?.toUpperCase() || 'LIVE'} PROVENANCE
+                                 {v.provenance?.toUpperCase() || 'UNVERIFIED'} PROVENANCE
                               </span>
                            </div>
                         </div>
@@ -82,13 +86,13 @@ export const RealityVerificationCenter: React.FC = () => {
                            <div className="bg-black/40 border border-outline-variant p-4 space-y-3">
                               <div className="flex justify-between items-end">
                                  <span className="text-[10px] font-code-sm text-on-surface-variant">CHAIN STRENGTH</span>
-                                 <span className={`text-[16px] font-display-lg ${v.evidenceChainScore > 80 ? 'text-primary-fixed' : v.evidenceChainScore > 50 ? 'text-secondary' : 'text-error'}`}>
-                                    {v.evidenceChainScore || 0}%
+                                 <span className={`text-[16px] font-display-lg ${(v.evidenceChainScore ?? 0) > 80 ? 'text-primary-fixed' : (v.evidenceChainScore ?? 0) > 50 ? 'text-secondary' : 'text-on-surface-variant'}`}>
+                                    {v.evidenceChainScore == null ? '—' : `${v.evidenceChainScore}%`}
                                  </span>
                               </div>
                               <div className="h-1.5 bg-surface-variant w-full overflow-hidden">
-                                 <div className={`h-full transition-all duration-1000 ${v.evidenceChainScore > 80 ? 'bg-primary-fixed glow-green' : v.evidenceChainScore > 50 ? 'bg-secondary glow-cyan' : 'bg-error glow-red'}`} 
-                                      style={{ width: `${v.evidenceChainScore || 0}%` }}></div>
+                                 <div className={`h-full transition-all duration-1000 ${(v.evidenceChainScore ?? 0) > 80 ? 'bg-primary-fixed glow-green' : (v.evidenceChainScore ?? 0) > 50 ? 'bg-secondary glow-cyan' : 'bg-surface-variant'}`}
+                                      style={{ width: `${v.evidenceChainScore ?? 0}%` }}></div>
                               </div>
                               <div className="flex gap-2">
                                  {v.replayable && <span className="text-[9px] font-code-sm text-primary-fixed flex items-center gap-1"><ShieldCheck size={10} /> REPLAYABLE</span>}

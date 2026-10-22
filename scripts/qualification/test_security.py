@@ -102,6 +102,36 @@ class SecurityQualification:
         except jwt.JWTError:
             self._record("jwt_wrong_secret", True, "Token with wrong secret rejected")
 
+    def test_jwt_missing_exp(self) -> None:
+        """JWT without exp claim must be rejected when require_exp is true."""
+        secret = settings.jwt_secret or "test-jwt-secret"
+        payload = {"sub": "operator-1", "role": "senior_operator"}
+        token = jwt.encode(payload, secret, algorithm="HS256")
+        try:
+            jwt.decode(token, secret, algorithms=["HS256"], options={"require_exp": True})
+            self._record("jwt_missing_exp", False, "Token without exp claim was accepted")
+        except jwt.JWTError:
+            self._record("jwt_missing_exp", True, "Token without exp claim correctly rejected")
+
+    async def test_verify_token_requires_exp(self) -> None:
+        """verify_token dependency must reject tokens without exp claim."""
+        from fastapi.security import HTTPAuthorizationCredentials
+        from ai_osop.api.deps import verify_token
+        secret = settings.jwt_secret or "test-jwt-secret"
+        with patch.object(settings, "jwt_secret", secret):
+            # Token without exp claim
+            payload = {"sub": "operator-1", "role": "operator"}
+            token = jwt.encode(payload, secret, algorithm="HS256")
+            creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+            try:
+                await verify_token(credentials=creds)
+                self._record("verify_token_requires_exp", False, "verify_token accepted token without exp")
+            except HTTPException as e:
+                if e.status_code == 401:
+                    self._record("verify_token_requires_exp", True, f"verify_token rejected missing exp: {e.detail}")
+                else:
+                    self._record("verify_token_requires_exp", False, f"Unexpected status code: {e.status_code}")
+
     # -------------------- RBAC Tests --------------------
 
     async def test_rbac_require_role(self) -> None:
@@ -251,6 +281,8 @@ class SecurityQualification:
         self.test_jwt_expired_token()
         self.test_jwt_algorithm_none()
         self.test_jwt_wrong_secret()
+        self.test_jwt_missing_exp()
+        await self.test_verify_token_requires_exp()
 
         # RBAC
         await self.test_rbac_require_role()

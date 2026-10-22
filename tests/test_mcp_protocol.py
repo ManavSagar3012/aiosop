@@ -16,6 +16,9 @@ from ai_osop.mcp.protocol import (
 def mock_aiohttp_session():
     with patch("aiohttp.ClientSession") as mock_session_class:
         session_instance = MagicMock()
+        # Real aiohttp.ClientSession.close is awaitable. A real reconnect must
+        # close its preceding session before negotiating another manifest.
+        session_instance.close = AsyncMock()
         mock_session_class.return_value = session_instance
 
         # Mock get as a method that returns an async context manager
@@ -61,6 +64,7 @@ async def test_mcp_connection_initialize(mock_aiohttp_session):
     await conn.connect()
 
     mock_response = AsyncMock()
+    mock_response.status = 200
     mock_response.json.return_value = {
         "server_id": "test-mcp",
         "version": "1.0",
@@ -73,7 +77,8 @@ async def test_mcp_connection_initialize(mock_aiohttp_session):
                 "returns": {},
                 "timeout_seconds": 30,
                 "requires_approval": False,
-                "scope_check": False,
+                "scope_check": True,
+                "side_effect_class": "READ_ONLY",
             }
         ],
         "status": "ready",
@@ -115,6 +120,7 @@ async def test_mcp_connection_execute(mock_aiohttp_session):
     conn._tools["test_tool"] = tool_mock
 
     mock_response = AsyncMock()
+    mock_response.status = 200
     mock_response.json.return_value = {
         "request_id": "req-1",
         "status": "success",
@@ -160,6 +166,7 @@ async def test_mcp_registry_register_and_execute(mock_aiohttp_session):
     conn._tools["test_tool"] = tool_mock
 
     mock_response = AsyncMock()
+    mock_response.status = 200
     mock_response.json.return_value = {
         "request_id": "req-1",
         "status": "success",

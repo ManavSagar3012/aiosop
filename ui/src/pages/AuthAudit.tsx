@@ -1,47 +1,60 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE } from '../services/api';
+import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
-import { ShieldCheck, ShieldAlert, User, Database, Lock, Unlock, Eye, BarChart } from 'lucide-react';
+import { ShieldCheck, User, Lock, Unlock, Eye } from 'lucide-react';
 
 interface AuthControl {
   endpoint: string;
   workflow: string;
   roleRequired: string;
-  observedEnforcement: 'ENFORCED' | 'BYPASSED' | 'MISSING';
+  observedEnforcement: 'ENFORCED' | 'BYPASSED' | 'UNKNOWN';
   confidence: number;
+}
+
+/** A graph-only lead is never an observed authorization outcome. */
+export function graphFindingAsUnverifiedControl(value: unknown): AuthControl {
+  const data = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  return {
+    endpoint: typeof data.endpoint_id === 'string' && data.endpoint_id.trim()
+      ? data.endpoint_id : 'Unattributed endpoint',
+    workflow: typeof data.title === 'string' && data.title.trim()
+      ? data.title : 'Unattributed workflow',
+    roleRequired: typeof data.role_required === 'string' && data.role_required.trim()
+      ? data.role_required : 'Unverified',
+    observedEnforcement: 'UNKNOWN',
+    confidence: typeof data.confidence === 'number' && Number.isFinite(data.confidence)
+      ? data.confidence : 0,
+  };
 }
 
 export const AuthAudit: React.FC = () => {
   const [controls, setControls] = useState<AuthControl[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionStats, setSessionStats] = useState<any>(null);
 
   useEffect(() => {
     const fetchLatest = async () => {
       try {
         const response = await fetch(`${API_BASE}/engagements`, {
-          headers: { 'Authorization': 'Bearer dev-token' }
+          headers: authHeaders()
         });
         if (response.ok) {
           const sessions = await response.json();
           if (sessions.length > 0) {
             const current = sessions[0];
-            setSessionId(current.session_id);
             setSessionStats(current);
 
-            // Re-using findings for now to populate enforcement matrix if real audit engine is still processing
+            // Graph findings are unverified research leads, not proof of
+            // effective controls or a real cross-identity bypass. Never
+            // derive enforcement from Neo4j's mutable validated flag.
             const findRes = await fetch(`${API_BASE}/engagements/${current.session_id}/findings`, {
-               headers: { 'Authorization': 'Bearer dev-token' }
+               headers: authHeaders()
             });
             if (findRes.ok) {
                 const findings = await findRes.json();
-                setControls(findings.map((f: any) => ({
-                    endpoint: f.endpoint_id || '/api/v1/unknown',
-                    workflow: f.title,
-                    roleRequired: f.severity === 'high' ? 'Admin' : 'User',
-                    observedEnforcement: f.status === 'verified' ? 'ENFORCED' : 'BYPASSED',
-                    confidence: f.confidence
-                })));
+                setControls(Array.isArray(findings)
+                  ? findings.slice(0, 500).map(graphFindingAsUnverifiedControl)
+                  : []);
             }
           }
         }
@@ -70,8 +83,8 @@ export const AuthAudit: React.FC = () => {
          </div>
          <div className="flex flex-col gap-2 p-5 bg-surface-container border-l-4 border-error">
             <span className="font-label-caps text-[9px] text-on-surface-variant opacity-60">BYPASS DRIFT</span>
-            <span className="font-display-lg text-error text-[32px]">{controls.filter(c => c.observedEnforcement === 'BYPASSED').length || 0}</span>
-            <span className="font-code-sm text-[10px] text-on-surface">ACTIVE VULNERABILITIES</span>
+            <span className="font-display-lg text-error text-[32px]">—</span>
+            <span className="font-code-sm text-[10px] text-on-surface">INDEPENDENT BYPASS EVIDENCE NOT AVAILABLE</span>
          </div>
          <div className="flex flex-col gap-2 p-5 bg-surface-container border-l-4 border-secondary">
             <span className="font-label-caps text-[9px] text-on-surface-variant opacity-60">OBSERVED ROLES</span>
@@ -119,7 +132,8 @@ export const AuthAudit: React.FC = () => {
                              c.observedEnforcement === 'BYPASSED' ? 'border-error text-error bg-error/5 glow-red' :
                              'border-on-surface-variant text-on-surface-variant opacity-50'
                           }`}>
-                             {c.observedEnforcement === 'ENFORCED' ? <Lock size={10} /> : <Unlock size={10} />}
+                             {c.observedEnforcement === 'ENFORCED' ? <Lock size={10} /> :
+                              c.observedEnforcement === 'BYPASSED' ? <Unlock size={10} /> : <Eye size={10} />}
                              {c.observedEnforcement}
                           </span>
                        </td>
@@ -135,35 +149,11 @@ export const AuthAudit: React.FC = () => {
            )}
         </Card>
 
-        <Card title="Identity Relationship Graph">
-           <div className="flex flex-col h-full gap-8 py-4">
-              <div className="space-y-4">
-                 <div className="bg-black/40 border border-outline-variant p-4">
-                    <div className="font-label-caps text-[10px] text-primary-fixed mb-2 uppercase tracking-widest">Admin Persona</div>
-                    <div className="text-[11px] text-on-surface-variant leading-relaxed">
-                       Can access <span className="text-primary">{controls.length > 0 ? '98%' : '...'}</span> of resources. 
-                       <br />Detected <span className="text-error">{controls.filter(c => c.roleRequired === 'Admin' && c.observedEnforcement === 'BYPASSED').length} Leaks</span> via Differential Auth.
-                    </div>
-                 </div>
-                 
-                 <div className="bg-black/40 border border-outline-variant p-4">
-                    <div className="font-label-caps text-[10px] text-secondary mb-2 uppercase tracking-widest">Guest Persona</div>
-                    <div className="text-[11px] text-on-surface-variant leading-relaxed">
-                       Restricted to <span className="text-primary">{controls.length > 0 ? '12%' : '...'}</span> of resources. 
-                       <br /><span className="text-error">{controls.filter(c => c.roleRequired === 'User' && c.observedEnforcement === 'BYPASSED').length > 0 ? 'BFLA Detected' : 'Analyzing...'}</span> on discovered routes.
-                    </div>
-                 </div>
-              </div>
-
-              <div className="mt-auto pt-6 border-t border-outline-variant">
-                 <div className="flex justify-between items-end mb-2">
-                    <span className="font-label-caps text-on-surface-variant text-[9px] uppercase tracking-tighter">Auth Reasoning Integrity</span>
-                    <span className="font-label-caps text-primary-fixed text-[11px]">{controls.length > 0 ? 'VERIFIED' : 'CALCULATING'}</span>
-                 </div>
-                 <div className="h-1.5 bg-surface-variant w-full overflow-hidden">
-                    <div className="h-full bg-primary-fixed glow-cyan" style={{ width: controls.length > 0 ? '100%' : '10%' }}></div>
-                 </div>
-              </div>
+        <Card title="Identity Relationship Verification">
+           <div className="flex flex-col h-full gap-4 py-4 text-[12px] text-on-surface-variant">
+              <p>Authorization roles, effective access percentages, and BOLA/BFLA conclusions are not independently established by graph findings alone.</p>
+              <p>{controls.length} graph-origin research leads. All enforcement outcomes remain UNKNOWN until separately authorized response comparisons and attributable provider receipts are verified.</p>
+              <p>Human review of a graph record does not certify a vulnerability, target-side effect, or completed security assessment.</p>
            </div>
         </Card>
       </div>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card } from '../components/shared/Card';
-import { Clock, Shield, Zap, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Clock, Shield, Zap, Search, CheckCircle2 } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 
 export const MissionTimeline: React.FC = () => {

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/ai-osop/mcp-servers/sdk"
@@ -76,5 +77,9 @@ func main() {
 		},
 	})
 
-	_ = server.Run(":8086")
+	address, err := sdk.LocalPortAddress(8086)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(server.Run(address))
 }

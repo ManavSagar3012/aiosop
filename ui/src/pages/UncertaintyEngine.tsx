@@ -1,8 +1,8 @@
 import React from 'react';
-import { API_BASE } from '../services/api';
+import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
-import { HelpCircle, AlertOctagon, Lightbulb, Search, ArrowRight } from 'lucide-react';
+import { AlertOctagon, Lightbulb, Search, ArrowRight } from 'lucide-react';
 
 export const UncertaintyEngine: React.FC = () => {
   const { uncertainties, sessionId } = useIntelligenceStore();
@@ -10,11 +10,12 @@ export const UncertaintyEngine: React.FC = () => {
   const handleLaunchSwarm = async () => {
      if (!sessionId) return;
      try {
-        await fetch(`${API_BASE}/engagements/${sessionId}/discovery/trigger`, {
+        const response = await fetch(`${API_BASE}/engagements/${encodeURIComponent(sessionId)}/discovery/trigger`, {
            method: 'POST',
-           headers: { 'Authorization': 'Bearer dev-token' }
+           headers: authHeaders()
         });
-        alert("Discovery swarm successfully deployed to target asset.");
+        if (!response.ok) throw new Error(`Discovery request rejected (HTTP ${response.status})`);
+        alert("Discovery request accepted. Confirm actual execution in the task ledger.");
      } catch (e) {
         console.error("Discovery trigger failed", e);
      }

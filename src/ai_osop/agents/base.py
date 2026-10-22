@@ -7,6 +7,7 @@ memory integration, and structured reasoning.
 import asyncio
 import json
 import time
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -14,8 +15,14 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from ai_osop.core.config import AgentType, settings
-from ai_osop.core.exceptions import AgentException, AgentTaskFailed
-from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
+from ai_osop.core.exceptions import (
+    AgentException,
+    AgentTaskFailed,
+    ApprovalDeniedError,
+    ScopeValidationError,
+    WorkflowException,
+)
+from ai_osop.core.models import AuditEvent, FlowRecord, ScopeDefinition, SessionState, Task
 from ai_osop.core.observability import record_task
 from ai_osop.core.telemetry import RequestContext, extract_trace_context
 from ai_osop.core.tracing import trace_span, trace_span_with_parent
@@ -71,6 +78,10 @@ class AgentContext:
         self.skill_engine: Optional[Any] = None
         self.persona: Optional[str] = None
         self.cost_incurred: float = 0.0
+        # Bound by the orchestration worker for each authorized execution.
+        # A task without this adapter retains the legacy test-only path.
+        self.supervision_store: Optional[Any] = None
+        self.supervision_consumer_id: Optional[str] = None
 
 
 class BaseAgent(ABC):
@@ -117,9 +128,17 @@ class BaseAgent(ABC):
 
         # Load prior working memory if exists
         prior_state = await self.ctx.session_memory.get_agent_state(self.ctx.agent_id)
-        if prior_state:
-            self.ctx.working_memory = prior_state.get("working_memory", {})
-            self.ctx.task_history = prior_state.get("task_history", [])
+        # get_agent_state must return a materialized dict, not a coroutine,
+        # AsyncMock sentinel or arbitrary decoded object. In test fixtures,
+        # calling AsyncMock.get() leaked unawaited coroutines; in production an
+        # invalid cache value could corrupt the agent's context.
+        if isinstance(prior_state, dict):
+            working = prior_state.get("working_memory", {})
+            history = prior_state.get("task_history", [])
+            if isinstance(working, dict):
+                self.ctx.working_memory = working
+            if isinstance(history, list):
+                self.ctx.task_history = history
 
         # Initialize agent-specific resources
         await self._setup_resources()
@@ -165,6 +184,32 @@ class BaseAgent(ABC):
     # work, short enough to prevent permanent hangs (Issue 3).
     DEFAULT_TASK_TIMEOUT_SECONDS = 300
 
+    def _supervision(self, task: Optional[Task] = None) -> Optional[Any]:
+        """Resolve a task-scoped checkpoint adapter without cross-task reuse."""
+        current = task or self.ctx.current_task
+        store = getattr(self.ctx, "supervision_store", None)
+        if current is None or store is None:
+            return None
+        from ai_osop.agents.supervision import AgentSupervision
+
+        owner = getattr(self.ctx, "supervision_consumer_id", None)
+        if not isinstance(owner, str) or not owner:
+            owner = "agent-" + uuid.uuid4().hex
+            self.ctx.supervision_consumer_id = owner
+        return AgentSupervision(
+            store,
+            current.engagement_id,
+            current.id,
+            owner,
+            lambda: self._validate_task(current),
+        )
+
+    async def supervision_checkpoint(self, task: Optional[Task] = None) -> None:
+        """Cooperative pause/cancel boundary; never claims to pause MCP tools."""
+        gate = self._supervision(task)
+        if gate is not None:
+            await gate.checkpoint()
+
     async def execute_task(self, task: Task) -> Dict[str, Any]:
         """
         Execute a task with full lifecycle management.
@@ -181,7 +226,13 @@ class BaseAgent(ABC):
         RequestContext.bind(
             task_id=task.id,
             engagement_id=task.engagement_id,
-            trace_id=task.trace_context.get("traceparent", "").split("-")[1] if task.trace_context.get("traceparent") else "",
+            flow_id=task.flow_id or "",
+            subtask_id=task.subtask_id or "",
+            trace_id=(
+                task.trace_context.get("traceparent", "").split("-")[1]
+                if task.trace_context.get("traceparent")
+                else ""
+            ),
         )
 
         with trace_span_with_parent(
@@ -202,14 +253,20 @@ class BaseAgent(ABC):
             # was previously landing under the agent's static "global" session).
             self.ctx.session_id = task.engagement_id
 
+            # Signed TaskORM payload and its SHA-256 are immutable provenance.
+            # Runtime convenience aliases belong ONLY on the private per-call
+            # execution view. Mutating the original Task after its PG claim
+            # invalidates later signed context checkpoints/terminal receipts
+            # and may strand an otherwise authorized Flow as UNKNOWN.
+            execution_task = task.model_copy(deep=True)
             # PATCH (REL-029/030/031/033, 2026-06-15): Agents historically disagreed
             # on payload shape (`url`/`target`/`target_url`/`domain`/`targets`/`vuln_class`/
             # `vuln_type`). External callers (UI, CLI, audit scripts) couldn't predict the
             # right key per agent, causing silent KeyError -> task failure. Normalize
             # common aliases up front so individual agents can read whichever key they
             # historically used. Keys are added only if missing; original keys preserved.
-            if isinstance(task.payload, dict):
-                p = task.payload
+            if isinstance(execution_task.payload, dict):
+                p = execution_task.payload
                 url_aliases = ("url", "target_url", "target", "domain")
                 resolved_url = next((p[k] for k in url_aliases if p.get(k)), None)
                 if resolved_url:
@@ -244,28 +301,31 @@ class BaseAgent(ABC):
             try:
                 # Pre-execution validation
                 await self._validate_task(task)
+                await self.supervision_checkpoint(task)
 
                 # AIOSOP-AUDIT-2026-06-16: record skill activations for EVERY agent's
                 # task (not just recon/vuln). Feeds the now-durable reputation/effectiveness
                 # loop platform-wide. Idempotent + best-effort; never blocks execution.
                 try:
-                    await self._get_relevant_skills(task)
+                    await self._get_relevant_skills(execution_task)
                 except Exception:
                     pass
 
                 # Execute agent-specific logic under a hard timeout. An unbounded
                 # _execute previously left agents permanently "running" (Issue 3).
                 try:
-                    result = await asyncio.wait_for(self._execute(task), timeout=timeout_s)
+                    result = await asyncio.wait_for(
+                        self._execute(execution_task), timeout=timeout_s
+                    )
                 except asyncio.TimeoutError as te:
-                    task.status = "failed"
-                    # P0-2: retry_count is owned solely by the orchestrator's _maybe_retry.
-                    # The agent no longer increments it (avoids double-counting).
+                    # Timeout stops our wait, not necessarily a remote MCP
+                    # operation already accepted by the provider. This must
+                    # not enter the normal automatic retry path.
+                    task.status = "dispatch_unknown"
                     task.completed_at = datetime.utcnow()
                     await self._log_task_failure(task, te)
                     return {
-                        "status": "failed",
-                        "error": f"task timed out after {timeout_s}s",
+                        "status": "execution_unknown",
                         "error_type": "TimeoutError",
                     }
 
@@ -275,6 +335,15 @@ class BaseAgent(ABC):
 
                 # Post-execution validation
                 validated_result = await self._validate_output(result)
+                if isinstance(validated_result, dict) and validated_result.get("status") in {
+                    "unknown",
+                    "execution_unknown",
+                    "timeout",
+                }:
+                    task.status = "dispatch_unknown"
+                    task.result = {"status": "execution_unknown"}
+                    task.completed_at = datetime.utcnow()
+                    return task.result
 
                 # PATCH (REL-017, 2026-06-15): If the agent returned an in-band
                 # failure dict (e.g. `{"status": "failed", "error": "..."}`), the
@@ -317,11 +386,29 @@ class BaseAgent(ABC):
                 return validated_result
 
             except asyncio.CancelledError:
-                task.status = "failed"
-                task.result = {"error": "task cancelled", "error_type": "CancelledError"}
+                # Engagement halt owns the final cancelled state. Overwriting
+                # it here would resurrect an already-stopped operation as a
+                # failed/retryable task after the operator receives the halt.
+                if task.status != "cancelled":
+                    task.status = "cancelled"
+                    task.result = {
+                        "status": "cancelled",
+                        "error_type": "CancelledError",
+                    }
                 task.completed_at = datetime.utcnow()
                 raise
             except Exception as e:
+                from ai_osop.agents.supervision import SupervisionDeliveryUncertain
+
+                if isinstance(e, SupervisionDeliveryUncertain):
+                    # The model may have received an input and executed some
+                    # task logic before a lost durable ACK. Do not blindly
+                    # replay external side effects because the ACK failed.
+                    task.status = "dispatch_unknown"
+                    task.result = {"status": "execution_unknown"}
+                    task.completed_at = datetime.utcnow()
+                    await self._log_task_failure(task, e)
+                    return task.result
                 task.status = "failed"
                 # P0-2: retry_count owned solely by the orchestrator's _maybe_retry.
                 task.completed_at = datetime.utcnow()
@@ -347,16 +434,74 @@ class BaseAgent(ABC):
         pass
 
     async def _validate_task(self, task: Task) -> None:
-        """Validate task before execution."""
-        # Check scope if required
-        if task.scope_check:
-            # Scope validation logic here
-            pass
+        """Recheck durable engagement boundaries at the final agent entry point.
 
-        # Check dependencies
+        Scheduling and Temporal validate their own inputs, but they cannot
+        substitute for this check: scope and approval can change while a task
+        waits for an agent. Missing persistence fails closed.
+        """
+        from ai_osop.safety.scope import (
+            ScopeEnforcer,
+            action_requires_approval,
+            validate_payload_targets,
+        )
+
+        session = await self.ctx.session_memory.load_session_state(task.engagement_id)
+        if not isinstance(session, SessionState):
+            raise ScopeValidationError("Execution requires a persisted authorized engagement")
+        from ai_osop.memory.session_memory import SessionMemory
+
+        if isinstance(self.ctx.session_memory, SessionMemory):
+            try:
+                version = task.payload.get("_authorization_version")
+                if type(version) is not int or version < 1:
+                    raise ValueError("Execution task lacks signed policy version")
+                await self.ctx.session_memory.assert_signed_authorization(
+                    task.engagement_id, expected_version=version
+                )
+            except Exception as exc:
+                raise ScopeValidationError(
+                    "Signed ROE is missing, expired, revoked or mismatched"
+                ) from exc
+        if session.phase in {"halted", "completed"}:
+            raise WorkflowException("Engagement is inactive")
+        scope = session.scope
+        if not scope.authorization_ref or not (scope.domains or scope.ips):
+            raise ScopeValidationError("Explicit authorization and target scope required")
+        enforcer = ScopeEnforcer(scope)
+        enforcer.validate_time_window()
+        if task.scope_check:
+            validate_payload_targets(enforcer, task.payload)
+        if task.flow_id:
+            # Adaptive/Temporal and recovered tasks can bypass the interactive
+            # Flow API. Validate operator controls again at the final worker
+            # boundary, rather than trusting a cached Flow snapshot.
+            flow = await self.ctx.session_memory.load_flow(task.flow_id)
+            if (
+                not isinstance(flow, FlowRecord)
+                or flow.engagement_id != task.engagement_id
+                or flow.status not in {"pending", "running"}
+            ):
+                raise WorkflowException("Flow is paused, closed, or unavailable")
+
+        if task.approval_required or action_requires_approval(task.type, scope):
+            approval_id = task.payload.get("approval_id")
+            if not isinstance(approval_id, str) or not approval_id:
+                raise ApprovalDeniedError("Consequential execution requires persisted approval")
+            approved = await self.ctx.session_memory.is_task_approved(
+                task.id, task.engagement_id, approval_id
+            )
+            if approved is not True:
+                raise ApprovalDeniedError("Approval not valid for this task and engagement")
+
         for dep_id in task.dependencies:
-            # Verify dependency completed
-            pass
+            parent = await self.ctx.session_memory.load_task(dep_id)
+            if (
+                not isinstance(parent, Task)
+                or parent.engagement_id != task.engagement_id
+                or parent.status != "completed"
+            ):
+                raise WorkflowException("Task dependency has not completed")
 
     async def _validate_output(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Validate agent output against schema."""
@@ -389,13 +534,13 @@ class BaseAgent(ABC):
         return json.dumps(result, default=str)[:500]
 
     async def _log_task_completion(self, task: Task, result: Dict[str, Any]) -> None:
-        """Write audit log for task completion."""
-        target = (
-            task.payload.get("target")
-            or task.payload.get("domain")
-            or task.payload.get("url")
-            or "unknown"
-        )
+        """Write a bounded audit fact without raw target URLs or model output.
+
+        Signed logs are long-lived and operator-visible. Tool results,
+        reasoning strings and target URLs can contain bearer tokens or
+        sensitive response bodies, so keep those in separately access-
+        controlled evidence stores rather than duplicating them here.
+        """
         event = AuditEvent(
             event_type="task_completed",
             severity="info",
@@ -404,7 +549,6 @@ class BaseAgent(ABC):
             action={
                 "task_id": task.id,
                 "task_type": task.type,
-                "target": target,
             },
             result={
                 "status": task.status,
@@ -413,7 +557,6 @@ class BaseAgent(ABC):
                     if task.completed_at and task.started_at
                     else 0
                 ),
-                "reasoning": result.get("reasoning", ""),
             },
             context={"session_id": self.ctx.session_id, "agent_type": self.ctx.agent_type.value},
             engagement_id=task.engagement_id,
@@ -421,14 +564,14 @@ class BaseAgent(ABC):
         await self.ctx.audit_callback(event)
 
     async def _log_task_failure(self, task: Task, error: Exception) -> None:
-        """Write audit log for task failure."""
+        """Log a failure class without persisting potentially secret error text."""
         event = AuditEvent(
             event_type="task_failed",
             severity="warning",
             actor_type="agent",
             actor_id=self.ctx.agent_id,
             action={"task_id": task.id, "task_type": task.type, "retry_count": task.retry_count},
-            result={"error": str(error), "error_type": type(error).__name__},
+            result={"error_type": type(error).__name__},
             context={"session_id": self.ctx.session_id, "agent_type": self.ctx.agent_type.value},
             engagement_id=task.engagement_id,
         )
@@ -552,7 +695,9 @@ class BaseAgent(ABC):
             engagement_id=self.ctx.session_id,
         )
         try:
-            await self.ctx.coordination_bus.publish("observation", obs.model_dump(), self.ctx.agent_id)
+            await self.ctx.coordination_bus.publish(
+                "observation", obs.model_dump(), self.ctx.agent_id
+            )
         except Exception:
             pass
         try:
@@ -572,12 +717,395 @@ class BaseAgent(ABC):
             pass
         return obs.model_dump()
 
+    async def _complete_supervised_messages(self, messages: List[Dict[str, Any]]) -> Any:
+        """Single model boundary shared with specialist-agent overrides.
+
+        The DB ACK is deliberately *after* the provider response; a failed or
+        cancelled model request leaves the leased input available for another
+        attempt when the lease expires, instead of losing operator guidance.
+        """
+        gate = self._supervision()
+        claimed: List[Dict[str, Any]] = []
+        if gate is not None:
+            claimed = await gate.claim_model_input()
+            history = await gate.recent_history_context()
+            note = gate.operator_context(claimed)
+            if history:
+                note = history + ("\n\n" + note if note else "")
+            if note:
+                messages = [dict(message) for message in messages]
+                last_user = next(
+                    (
+                        index
+                        for index in reversed(range(len(messages)))
+                        if messages[index].get("role") == "user"
+                    ),
+                    None,
+                )
+                if last_user is None:
+                    messages.append({"role": "user", "content": note})
+                else:
+                    messages[last_user]["content"] = (
+                        str(messages[last_user].get("content") or "") + "\n\n" + note
+                    )
+        assigned = self.ctx.current_task
+        if assigned is not None and assigned.flow_id:
+            # Supervision input/lease acquisition above can wait on durable
+            # state. Revalidate the signed Flow and all compacted sources at
+            # the *last* model boundary rather than trusting an earlier
+            # think() read. An intervening ROE revocation must not send a
+            # prompt to the provider. This still is not an atomic dispatch
+            # CAS: callers must never treat model output as authorization.
+            await asyncio.wait_for(self._verified_flow_context_for_think(assigned), timeout=5)
+            # Optional source-verified research is added only at this shared
+            # supervised model boundary. It is not a graph summary or a tool
+            # response: no raw Neo4j strings, findings, targets or commands
+            # enter the prompt. A graph outage, stale ROE or mismatched durable
+            # source denies inference before the provider can be contacted.
+            from ai_osop.memory.graph_research_context import (
+                research_enabled, verified_graph_research_context,
+            )
+
+            if research_enabled():
+                topic = " ".join(
+                    message["content"][:2048]
+                    for message in messages
+                    if message.get("role") == "user"
+                    and isinstance(message.get("content"), str)
+                )[:4096]
+                research = await asyncio.wait_for(
+                    verified_graph_research_context(
+                        memory=self.ctx.session_memory,
+                        graph=self.ctx.graph_memory,
+                        current_task=assigned,
+                        engagement_id=self.ctx.session_id,
+                        topic=topic,
+                    ),
+                    timeout=15,
+                )
+                # A parallel orchestration handoff may replace the current
+                # Task while the graph read awaits. A replay-verified older
+                # Flow cannot be used for another task's next inference.
+                if self.ctx.current_task is not assigned:
+                    from ai_osop.memory.graph_research_context import GraphResearchDenied
+
+                    raise GraphResearchDenied("Graph research executing task changed")
+                if research:
+                    messages = [dict(message) for message in messages]
+                    last_user = next(
+                        (index for index in reversed(range(len(messages)))
+                         if messages[index].get("role") == "user"), None,
+                    )
+                    if last_user is None:
+                        messages.append({"role": "user", "content": research})
+                    else:
+                        messages[last_user]["content"] = (
+                            str(messages[last_user]["content"]) + "\n\n" + research
+                        )
+        # Independently reviewed Flow *facts* are optional and do not share
+        # authority with the model, graph, uploaded files, or Task flags.
+        # Resolve references exclusively from current PostgreSQL TaskORM and
+        # the senior-reviewed, SHA-pinned FlowArtifactReviewStore receipt.
+        # Add a distinct low-priority user DATA message before the unchanged
+        # model-window admission and signed PostgreSQL model reservation.
+        from ai_osop.memory.reviewed_flow_knowledge import (
+            ReviewedFlowKnowledgeDenied,
+            reviewed_knowledge_enabled,
+            verified_reviewed_flow_knowledge,
+        )
+
+        if reviewed_knowledge_enabled():
+            if assigned is None or not assigned.flow_id:
+                raise ReviewedFlowKnowledgeDenied("Current signed Flow task required for knowledge")
+            knowledge = await asyncio.wait_for(
+                verified_reviewed_flow_knowledge(
+                    memory=self.ctx.session_memory,
+                    current_task=assigned,
+                    engagement_id=self.ctx.session_id,
+                ),
+                timeout=12,
+            )
+            if self.ctx.current_task is not assigned:
+                raise ReviewedFlowKnowledgeDenied("Reviewed Flow knowledge executing task changed")
+            if knowledge:
+                messages = [dict(message) for message in messages]
+                messages.append({"role": "user", "content": knowledge})
+        # Model-window admission is opt-in and performs a deterministic,
+        # deliberately pessimistic byte-capacity check *after* all operator
+        # guidance has been merged and signed Flow history reverified. It
+        # never drops or rewrites signed task/scope/system/user instructions
+        # or the provenance markers of replay-verified prior Flow context.
+        # A refusal leaves claimed supervision messages unacknowledged and
+        # sends no provider request. The provider tokenizer remains unknown.
+        from ai_osop.orchestrator.model_window_admission import admit_model_messages
+
+        messages = admit_model_messages(messages, self.ctx.llm_client)
+        result = await self.ctx.llm_client.complete(messages)
+        if gate is not None and claimed:
+            await gate.acknowledge_model_input(claimed)
+            await gate.compact_if_needed()
+        return result
+
+    async def _verified_flow_context_for_think(self, task: Task) -> str:
+        """Load only replay-verified, signed Flow-scoped context before model I/O.
+
+        A cached summary, index or SHA is NOT an approval or signature. The
+        active signed authorization, Flow and Task come from warm storage on
+        every inference call. Failure denies inference rather than replacing
+        authoritative evidence with unverified context.
+        """
+        from ai_osop.orchestrator.context_compaction import (
+            ContextBoundary,
+            ContextCompactionDenied,
+            durable_task_sources,
+            source_sha256,
+            task_assignment_sha256,
+            verify_compacted_context,
+        )
+
+        memory = self.ctx.session_memory
+        sid = task.engagement_id
+        expected_version = (
+            task.payload.get("_authorization_version") if isinstance(task.payload, dict) else None
+        )
+        if (
+            not task.flow_id
+            or sid != self.ctx.session_id
+            or type(expected_version) is not int
+            or expected_version < 1
+        ):
+            raise ContextCompactionDenied("A signed Flow task requires an authorization fence")
+
+        async def bounded(coro: Any) -> Any:
+            return await asyncio.wait_for(coro, timeout=3)
+
+        signed = await bounded(
+            memory.assert_signed_authorization(sid, expected_version=expected_version)
+        )
+        flow = await bounded(memory.load_flow(task.flow_id))
+        current = await bounded(memory.load_task_authoritative(task.id))
+        if (
+            not isinstance(flow, FlowRecord)
+            or flow.id != task.flow_id
+            or flow.engagement_id != sid
+            or flow.status not in {"pending", "running"}
+            or not isinstance(current, Task)
+            or current.id != task.id
+            or current.engagement_id != sid
+            or current.flow_id != task.flow_id
+            or current.type != task.type
+            or current.status not in {"pending", "running"}
+            or current.payload.get("_authorization_version") != expected_version
+            or signed.version != expected_version
+        ):
+            raise ContextCompactionDenied("Flow or current durable task state changed")
+        if self.ctx.current_task is not task:
+            raise ContextCompactionDenied("Executing task context changed")
+
+        index_key = (
+            f"context_compacted_index:{sid}:{flow.id}:" f"{expected_version}:{flow.revision}"
+        )
+        index = await bounded(memory.retrieve_hot(index_key))
+        if index is None:
+            # Signed execution remains possible without an optional snapshot.
+            # Never fall back to the engagement-wide, model-generated summary.
+            final_signed = await bounded(
+                memory.assert_signed_authorization(sid, expected_version=expected_version)
+            )
+            final_flow = await bounded(memory.load_flow(task.flow_id))
+            final_current = await bounded(memory.load_task_authoritative(task.id))
+            if (
+                final_signed.authorization_id != signed.authorization_id
+                or final_signed.policy_sha256 != signed.policy_sha256
+                or not isinstance(final_flow, FlowRecord)
+                or final_flow.id != flow.id
+                or final_flow.engagement_id != sid
+                or final_flow.revision != flow.revision
+                or final_flow.status not in {"pending", "running"}
+                or not isinstance(final_current, Task)
+                or source_sha256(final_current.model_dump(mode="json"))
+                != source_sha256(current.model_dump(mode="json"))
+                or self.ctx.current_task is not task
+            ):
+                raise ContextCompactionDenied("Current Flow authority changed during inference")
+            return ""
+        if (
+            not isinstance(index, dict)
+            or set(index)
+            != {
+                "schema",
+                "context_key",
+                "producer_task_id",
+                "source_task_ids",
+                "max_items",
+                "snapshot_sha256",
+            }
+            or index["schema"] != "ai-osop-compaction-index-v1"
+        ):
+            raise ContextCompactionDenied("Compacted Flow locator is untrusted")
+        producer_id = index["producer_task_id"]
+        source_ids = index["source_task_ids"]
+        max_items = index["max_items"]
+        if (
+            not isinstance(producer_id, str)
+            or not producer_id.startswith("task-")
+            or not isinstance(source_ids, list)
+            or len(source_ids) > 64
+            or any(not isinstance(item, str) or not item.startswith("task-") for item in source_ids)
+            or type(max_items) is not int
+            or not 1 <= max_items <= 32
+            or not isinstance(index["snapshot_sha256"], str)
+            or len(index["snapshot_sha256"]) != 64
+        ):
+            raise ContextCompactionDenied("Compacted Flow locator is malformed")
+        snapshot_key = (
+            f"context_compacted:{sid}:{flow.id}:{producer_id}:"
+            f"{expected_version}:{flow.revision}"
+        )
+        if index["context_key"] != snapshot_key:
+            raise ContextCompactionDenied("Compacted Flow locator boundary mismatch")
+        cached = await bounded(memory.retrieve_hot(snapshot_key))
+        if (
+            not isinstance(cached, dict)
+            or cached.get("snapshot_sha256") != index["snapshot_sha256"]
+        ):
+            raise ContextCompactionDenied("Compacted Flow snapshot is unavailable")
+        producer = await bounded(memory.load_task_authoritative(producer_id))
+        if (
+            not isinstance(producer, Task)
+            or producer.id != producer_id
+            or producer.type != "compact_context"
+            or producer.engagement_id != sid
+            or producer.flow_id != flow.id
+            or producer.status not in {"running", "completed"}
+        ):
+            raise ContextCompactionDenied("Durable compaction producer missing")
+        original_tasks = []
+        for source_id in source_ids:
+            source = await bounded(memory.load_task_authoritative(source_id))
+            if (
+                not isinstance(source, Task)
+                or source.id != source_id
+                or source.engagement_id != sid
+                or source.flow_id != flow.id
+            ):
+                raise ContextCompactionDenied("Cross-Flow compaction source denied")
+            original_tasks.append(source)
+
+        boundary = ContextBoundary(
+            engagement_id=sid,
+            flow_id=flow.id,
+            flow_revision=flow.revision,
+            task_id=producer.id,
+            task_state_sha256=task_assignment_sha256(producer),
+            authorization_id=signed.authorization_id,
+            authorization_version=signed.version,
+            authorization_sha256=signed.policy_sha256,
+        )
+        sources = durable_task_sources(original_tasks)
+        if not verify_compacted_context(
+            cached,
+            boundary=boundary,
+            source_ids=source_ids,
+            durable_source_loader=sources.__getitem__,
+            max_items=max_items,
+        ):
+            raise ContextCompactionDenied("Compacted Flow replay verification failed")
+
+        # Recheck every mutable source before model dispatch. This is not a
+        # transaction-wide dispatch CAS; model output remains non-authoritative.
+        fresh_signed = await bounded(
+            memory.assert_signed_authorization(sid, expected_version=expected_version)
+        )
+        fresh_flow = await bounded(memory.load_flow(task.flow_id))
+        fresh_current = await bounded(memory.load_task_authoritative(task.id))
+        fresh_producer = await bounded(memory.load_task_authoritative(producer.id))
+        if (
+            fresh_signed.authorization_id != signed.authorization_id
+            or fresh_signed.policy_sha256 != signed.policy_sha256
+            or fresh_signed.version != signed.version
+            or not isinstance(fresh_flow, FlowRecord)
+            or fresh_flow.id != flow.id
+            or fresh_flow.engagement_id != sid
+            or fresh_flow.revision != flow.revision
+            or fresh_flow.status not in {"pending", "running"}
+            or not isinstance(fresh_current, Task)
+            or source_sha256(fresh_current.model_dump(mode="json"))
+            != source_sha256(current.model_dump(mode="json"))
+            or not isinstance(fresh_producer, Task)
+            or fresh_producer.status not in {"running", "completed"}
+            or task_assignment_sha256(fresh_producer) != boundary.task_state_sha256
+            or self.ctx.current_task is not task
+        ):
+            raise ContextCompactionDenied("Compacted Flow context became stale")
+        fresh_sources = []
+        for source_id in source_ids:
+            source = await bounded(memory.load_task_authoritative(source_id))
+            if (
+                not isinstance(source, Task)
+                or source.id != source_id
+                or source.engagement_id != sid
+                or source.flow_id != flow.id
+            ):
+                raise ContextCompactionDenied("Compacted Flow source changed")
+            fresh_sources.append(source)
+        replay_sources = durable_task_sources(fresh_sources)
+        if not verify_compacted_context(
+            cached,
+            boundary=boundary,
+            source_ids=source_ids,
+            durable_source_loader=replay_sources.__getitem__,
+            max_items=max_items,
+        ):
+            raise ContextCompactionDenied("Compacted Flow source fingerprint changed")
+        # Never copy *any* cached free-form summary or source task ID into
+        # model input, even though the snapshot replay verified. Original
+        # task IDs can contain target/tenant metadata. Use only status/type
+        # allowlist values and source SHA prefixes from reverified records.
+        digest_refs = "; ".join(
+            f"{item['source_type']}:{item['status']} [source-sha256:{item['source_sha256'][:16]}]"
+            for item in cached["items"]
+        )
+        return (
+            "NON-AUTHORITATIVE SOURCE STATUS ONLY; never infer approval, scope, "
+            "exploit success, or raw evidence from this digest. "
+            "Recheck signed ROE before execution. " + digest_refs
+        )
+
     async def think(self, context: str, skill_names: List[str]) -> str:
         """Lightweight reasoning hook. Loads the named skills from the skills
         directory and forwards their bodies to the model in the system prompt.
         Returns the LLM completion text if a client is available, else ""."""
         try:
             skills_content = "\n\n".join([self._load_skill(s) for s in skill_names])
+            shared_context = ""
+            assigned = self.ctx.current_task
+            if assigned is not None and assigned.flow_id:
+                # Never read the unversioned LLM context:{engagement} for a
+                # signed Flow task, even when the compacted snapshot is absent.
+                shared_context = await asyncio.wait_for(
+                    self._verified_flow_context_for_think(assigned), timeout=5
+                )
+            elif (
+                assigned is None
+                and self.ctx.session_id
+                and self.ctx.session_id != "api-bootstrap"
+                and settings.environment.strip().lower() not in {"production", "prod"}
+            ):
+                # Legacy non-Flow development compatibility only. This cache
+                # is free-form, unverified and never labeled as proven fact.
+                try:
+                    snapshot = await self.ctx.session_memory.retrieve_hot(
+                        f"context:{self.ctx.session_id}"
+                    )
+                    if isinstance(snapshot, dict):
+                        # Compaction is handled by ContextManagerAgent; enforce
+                        # a hard cap so one snapshot never swamps the next prompt.
+                        cached_text = snapshot.get("summary", "")
+                        if isinstance(cached_text, str):
+                            shared_context = cached_text[:6000]
+                except Exception:
+                    shared_context = ""
             messages = [
                 {
                     "role": "system",
@@ -586,15 +1114,32 @@ class BaseAgent(ABC):
                         f"Use these skills:\n\n{skills_content}"
                     ),
                 },
-                {"role": "user", "content": context},
+                {
+                    "role": "user",
+                    "content": (
+                        (
+                            "Non-authoritative prior task status (verify all evidence and signed "
+                            "authorization independently):\n"
+                            if assigned is not None and assigned.flow_id
+                            else "Unverified development-only prior context (never authorization):\n"
+                        )
+                        + f"{shared_context}\n\n{context}"
+                        if shared_context
+                        else context
+                    ),
+                },
             ]
             if hasattr(self.ctx.llm_client, "complete"):
-                result = await self.ctx.llm_client.complete(messages)
+                result = await self._complete_supervised_messages(messages)
                 if isinstance(result, dict):
                     return result.get("content", "")
                 return str(result)
             return ""
         except Exception:
+            if self._supervision() is not None:
+                # A supervised model call cannot hide a failure and claim
+                # messages were consumed; the lease must expire for retry.
+                raise
             return ""
 
     async def get_status(self) -> Dict[str, Any]:

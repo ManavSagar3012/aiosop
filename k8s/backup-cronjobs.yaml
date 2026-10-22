@@ -18,6 +18,7 @@ spec:
       template:
         spec:
           serviceAccountName: ai-osop-backup
+          automountServiceAccountToken: false
           containers:
           - name: postgres-backup
             image: postgres:15-alpine
@@ -26,6 +27,7 @@ spec:
             - -c
             - |
               set -e
+              which aws >/dev/null 2>&1 || apk add --no-cache aws-cli
               BACKUP_FILE="ai-osop-$(date +%Y%m%d-%H%M%S).sql.gz"
               pg_dump "$DATABASE_URL" | gzip > /backup/"$BACKUP_FILE"
               aws s3 cp /backup/"$BACKUP_FILE" s3://ai-osop-backups/postgres/
@@ -87,6 +89,7 @@ spec:
       template:
         spec:
           serviceAccountName: ai-osop-backup
+          automountServiceAccountToken: false
           containers:
           - name: neo4j-backup
             image: neo4j:5.18-community
@@ -95,6 +98,7 @@ spec:
             - -c
             - |
               set -e
+              which aws >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends awscli && rm -rf /var/lib/apt/lists/*)
               BACKUP_FILE="ai-osop-$(date +%Y%m%d).dump"
               neo4j-admin database dump --to-path=/backup neo4j
               mv /backup/neo4j.dump /backup/"$BACKUP_FILE"
@@ -132,9 +136,15 @@ spec:
             volumeMounts:
             - name: backup-tmp
               mountPath: /backup
+            - name: neo4j-data
+              mountPath: /data
+              readOnly: true
           volumes:
           - name: backup-tmp
             emptyDir: {}
+          - name: neo4j-data
+            persistentVolumeClaim:
+              claimName: ai-osop-neo4j-data
           restartPolicy: OnFailure
 ---
 apiVersion: batch/v1
@@ -157,6 +167,7 @@ spec:
       template:
         spec:
           serviceAccountName: ai-osop-backup
+          automountServiceAccountToken: false
           containers:
           - name: redis-backup
             image: redis:7-alpine
@@ -165,6 +176,7 @@ spec:
             - -c
             - |
               set -e
+              which aws >/dev/null 2>&1 || apk add --no-cache aws-cli
               # Trigger BGSAVE on the Redis server
               redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" BGSAVE
               # Wait for BGSAVE to complete (poll for lastsave to change)

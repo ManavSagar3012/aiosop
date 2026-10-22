@@ -6,6 +6,7 @@
 from ai_osop.api.routers import (
     agents,
     approvals,
+    diagnostics,
     engagements,
     findings,
     intelligence,
@@ -19,6 +20,7 @@ __all__ = [
     "tasks",
     "agents",
     "approvals",
+    "diagnostics",
     "sessions",
     "findings",
     "intelligence",

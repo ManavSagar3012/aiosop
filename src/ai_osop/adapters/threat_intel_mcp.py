@@ -102,31 +102,40 @@ class ThreatIntelAdapter:
                 return float(metric[0].get("cvssData", {}).get("baseScore", 0.0))
         return 0.0
 
-    async def check_cisa_kev(self, cve_id: str) -> bool:
-        """Check if CVE is in CISA KEV catalog."""
+    async def check_cisa_kev(self, cve_id: str) -> Optional[bool]:
+        """Return UNKNOWN when the public KEV catalog cannot be verified."""
         cve_id = self._normalize_cve_id(cve_id)
         if not cve_id:
-            return False
+            return None
 
         cache_key = "cisa_kev"
         kev_data = self._get_cache(cache_key)
-        if not kev_data:
+        if kev_data is None:
             try:
                 resp = await self.client.get(
                     "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
                 )
                 if resp.status_code == 200:
-                    kev_data = {
-                        item["cveID"]: True for item in resp.json().get("vulnerabilities", [])
-                    }
+                    document = resp.json()
+                    entries = document.get("vulnerabilities") if isinstance(document, dict) else None
+                    if not isinstance(entries, list) or any(
+                        not isinstance(item, dict)
+                        or not isinstance(item.get("cveID"), str)
+                        or not _CVE_PATTERN.fullmatch(item["cveID"])
+                        for item in entries
+                    ):
+                        logger.warning("CISA KEV catalog was malformed")
+                        return None
+                    kev_data = {item["cveID"].upper(): True for item in entries}
                     self._set_cache(cache_key, kev_data)
                 else:
                     logger.warning("CISA KEV lookup returned HTTP %s", resp.status_code)
+                    return None
             except Exception as e:
                 logger.warning("CISA KEV fetch failed: %s", e)
-                kev_data = {}
+                return None
 
-        return cve_id in (kev_data or {})
+        return cve_id in kev_data
 
     async def search_exploitdb(self, cve_id: str) -> List[Dict]:
         """Search ExploitDB's public CSV mirror for PoC availability."""

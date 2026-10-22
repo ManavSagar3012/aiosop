@@ -10,13 +10,15 @@ import {
     NodeMouseHandler,
     Panel,
     Handle,
-    Position
+    Position,
+    type Node,
+    type Edge
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { 
   Server, Globe, ShieldAlert, Cloud, Activity, 
-  Database, Key, Box, FileJson, AlertTriangle, Search
+  Box, FileJson, AlertTriangle, Search
 } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 
@@ -60,8 +62,8 @@ const nodeTypes = { custom: CustomNode };
 
 export const KnowledgeGraphs: React.FC = () => {
   const [activeGraph, setActiveGraph] = useState<'attack' | 'workflow' | 'cloud' | 'learning'>('attack');
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<any>>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<any>>([]);
   const { graphData } = useIntelligenceStore();
   const [selectedNode, setSelectedNode] = useState<any>(null);
   const [isRelayouting, setIsRelayouting] = useState(false);
@@ -226,7 +228,7 @@ export const KnowledgeGraphs: React.FC = () => {
             style: { stroke: '#baccb0', strokeWidth: 1.5, opacity: 0.4 },
             labelStyle: { fill: '#e5e2e3', fontSize: 10, fontFamily: 'JetBrains Mono' },
             labelBgStyle: { fill: '#0a0a0b', fillOpacity: 0.9 },
-            labelBgPadding: [6, 4],
+            labelBgPadding: [6, 4] as [number, number],
             labelBgBorderRadius: 2
         };
     });
@@ -238,7 +240,7 @@ export const KnowledgeGraphs: React.FC = () => {
     setTimeout(() => setIsRelayouting(false), 100);
   }, [graphData, activeGraph, setNodes, setEdges, highlightedNodes]);
 
-  const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
+  const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
       setSelectedNode((node as any).__raw);
   }, []);
 

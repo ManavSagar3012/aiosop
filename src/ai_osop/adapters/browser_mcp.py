@@ -49,8 +49,21 @@ class BrowserMCPAdapter:
             self.SERVER_ID, "execute", body, timeout_override=settings.browser_mcp_timeout
         )
         if response.status != "success":
-            raise MCPException(f"Browser action '{action}' failed: {response.error}")
-        return response.result or {}
+            # Provider error text can include cookies, target URLs, HTML or
+            # request bodies. The remote outcome may also be uncertain.
+            raise MCPException("Browser provider action unavailable; outcome unconfirmed")
+        result = response.result
+        if not isinstance(result, dict) or (
+            result.get("isError") is True
+            or result.get("success") is False
+            or result.get("status") in {
+                "error", "failed", "unknown", "execution_unknown", "duplicate_request"
+            }
+            or result.get("error")
+        ):
+            # Transport-level success does not certify a nested action.
+            raise MCPException("Browser provider result unavailable; outcome unconfirmed")
+        return result
 
     async def navigate(
         self,

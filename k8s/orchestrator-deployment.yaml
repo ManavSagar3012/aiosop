@@ -27,14 +27,15 @@ spec:
         prometheus.io/port: "8200"
     spec:
       serviceAccountName: ai-osop
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
       containers:
       - name: orchestrator
-        image: ai-osop/orchestrator:latest
-        imagePullPolicy: Always
+        image: ai-osop/orchestrator:v1.0.0
+        imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -160,7 +161,7 @@ spec:
           name: ai-osop
     ports:
     - protocol: TCP
-      port: 8080
+      port: 8200
     - protocol: TCP
       port: 9090
   egress:

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/ai-osop/mcp-servers/sdk"
 )
 
@@ -34,18 +36,18 @@ func main() {
 		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "payload", "type": "object", "description": "Payload object", "required": true},
-            {"name": "strategy", "type": "string", "description": "Mutation strategy", "required": true},
+			{"name": "strategy", "type": "string", "description": "Mutation strategy", "required": true},
 		},
 		Returns: map[string]any{"payload": "object"},
 		Handler: func(params map[string]any) any {
-            p, _ := params["payload"].(map[string]any)
+			p, _ := params["payload"].(map[string]any)
 			return map[string]any{
-				"payload":  p,
+				"payload": p,
 			}
 		},
 	})
 
-    // Evaluate Fitness Tool
+	// Evaluate Fitness Tool
 	server.Register(sdk.Tool{
 		Name:           "evaluate_fitness",
 		Description:    "Evaluate payload fitness.",
@@ -53,7 +55,7 @@ func main() {
 		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "payload", "type": "object", "description": "Payload object", "required": true},
-            {"name": "result", "type": "object", "description": "Exploit result", "required": true},
+			{"name": "result", "type": "object", "description": "Exploit result", "required": true},
 		},
 		Returns: map[string]any{"fitness_score": "number"},
 		Handler: func(params map[string]any) any {
@@ -63,5 +65,9 @@ func main() {
 		},
 	})
 
-	_ = server.Run(":8083")
+	address, err := sdk.LocalPortAddress(8083)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(server.Run(address))
 }

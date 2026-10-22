@@ -1,9 +1,9 @@
 import React from 'react';
-import { API_BASE } from '../services/api';
+import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 import { ShieldCheck, UserCheck, Microscope, FileText, Package, Rocket, TrendingUp, Link as LinkIcon, Zap } from 'lucide-react';
-import { useParams, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { EvidenceVaultModal } from '../components/shared/EvidenceVaultModal';
 
 const VALIDATION_STAGES = [
@@ -25,7 +25,7 @@ export const FindingsVerification: React.FC = () => {
      setSelectedFinding(finding);
      try {
         const res = await fetch(`${API_BASE}/engagements/${sessionId}/findings/${finding.id}/vault`, {
-           headers: { 'Authorization': 'Bearer dev-token' }
+           headers: authHeaders()
         });
         if (res.ok) {
            setVaultData(await res.json());
@@ -39,11 +39,12 @@ export const FindingsVerification: React.FC = () => {
   const handleVerify = async (fid: string) => {
      if (!sessionId) return;
      try {
-        await fetch(`${API_BASE}/engagements/${sessionId}/findings/${fid}/verify`, {
+        const response = await fetch(`${API_BASE}/engagements/${encodeURIComponent(sessionId)}/findings/${encodeURIComponent(fid)}/verify`, {
            method: 'POST',
-           headers: { 'Authorization': 'Bearer dev-token' }
+           headers: authHeaders()
         });
-        alert("Finding manually verified in graph ledger.");
+        if (!response.ok) throw new Error(`Verification rejected (HTTP ${response.status})`);
+        alert("Graph review recorded only. Source authenticity, target effects and vulnerability verification remain unconfirmed until independent evidence checks pass.");
         window.location.reload();
      } catch (e) {
         console.error("Verification failed", e);
@@ -53,11 +54,12 @@ export const FindingsVerification: React.FC = () => {
   const handleReplay = async (fid: string) => {
      if (!sessionId) return;
      try {
-        await fetch(`${API_BASE}/engagements/${sessionId}/findings/${fid}/replay`, {
+        const response = await fetch(`${API_BASE}/engagements/${encodeURIComponent(sessionId)}/findings/${encodeURIComponent(fid)}/replay`, {
            method: 'POST',
-           headers: { 'Authorization': 'Bearer dev-token' }
+           headers: authHeaders()
         });
-        alert("Replay task queued in execution sandbox.");
+        if (!response.ok) throw new Error(`Replay rejected (HTTP ${response.status})`);
+        alert("Replay request accepted. Check the execution ledger for actual outcome.");
      } catch (e) {
         console.error("Replay failed", e);
      }
@@ -102,7 +104,7 @@ export const FindingsVerification: React.FC = () => {
          </div>
          <div className="bg-surface-container p-4 border-l-4 border-secondary">
             <div className="flex items-center gap-2 mb-1">
-               <Link size={14} className="text-secondary" />
+               <LinkIcon size={14} className="text-secondary" />
                <span className="font-label-caps text-[10px] text-on-surface-variant uppercase">Evidence Chain Score</span>
             </div>
             <div className="font-display-lg text-secondary text-[24px]">88/100</div>

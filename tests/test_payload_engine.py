@@ -6,6 +6,7 @@ import pytest
 from ai_osop.core.config import VulnClass
 from ai_osop.core.models import Payload
 from ai_osop.payload_engine.engine import AdaptivePayloadEngine
+from ai_osop.payload_engine.engine import PayloadFitnessEvaluator
 
 
 @pytest.fixture
@@ -75,6 +76,18 @@ async def test_evolve_population(engine) -> None:
     assert any(p.strategy == "genetic" for p in evolved)
     # Fitness scores should be populated
     assert all(p.fitness_score >= 0.0 for p in evolved)
+
+
+def test_invalid_provider_response_never_earns_unverified_success():
+    candidate = Payload(
+        vuln_type=VulnClass.SQLI,
+        content="SELECT 1",
+        content_hash="test",
+        context={},
+        engagement_id="eng-unit-test",
+    )
+    invalid = AsyncMock()
+    assert PayloadFitnessEvaluator.evaluate(candidate, invalid) < 0.4
 
 
 @pytest.mark.asyncio

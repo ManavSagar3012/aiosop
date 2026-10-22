@@ -36,4 +36,7 @@ class NucleiMCPAdapter:
         )
         if response.status != "success":
             raise MCPException(f"nuclei scan failed: {response.error}")
-        return response.result or {"findings": []}
+        result = response.result
+        if not isinstance(result, dict) or not isinstance(result.get("findings"), list):
+            raise MCPException("nuclei scan returned no valid findings envelope")
+        return result

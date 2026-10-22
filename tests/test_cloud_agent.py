@@ -1,4 +1,5 @@
 import pytest
+import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from ai_osop.agents.base import AgentContext
@@ -26,9 +27,14 @@ def mock_context():
     return ctx
 
 
-@pytest.fixture
-def agent(mock_context):
-    return CloudSpecialistAgent(mock_context)
+@pytest_asyncio.fixture
+async def agent(mock_context):
+    instance = CloudSpecialistAgent(mock_context)
+    try:
+        yield instance
+    finally:
+        if instance._running:
+            await instance.shutdown()
 
 
 @pytest.mark.asyncio

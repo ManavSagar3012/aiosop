@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 
 	"github.com/ai-osop/mcp-servers/sdk"
@@ -26,7 +27,7 @@ func main() {
 		Returns: map[string]any{"data": "object", "status": "string"},
 		Handler: func(params map[string]any) any {
 			url, _ := params["url"].(string)
-			
+
 			// Check if sqlmap is installed
 			_, err := exec.LookPath("sqlmap")
 			if err != nil {
@@ -56,7 +57,7 @@ func main() {
 		Returns: map[string]any{"hosts": "array", "status": "string"},
 		Handler: func(params map[string]any) any {
 			target, _ := params["target"].(string)
-			
+
 			_, err := exec.LookPath("nmap")
 			if err != nil {
 				return map[string]any{"status": "error", "error": "nmap not installed"}
@@ -82,7 +83,7 @@ func main() {
 		},
 		Returns: map[string]any{"results": "array", "status": "string"},
 		Handler: func(params map[string]any) any {
-			
+
 			_, err := exec.LookPath("ffuf")
 			if err != nil {
 				return map[string]any{"status": "error", "error": "ffuf not installed"}
@@ -138,7 +139,7 @@ func main() {
 		},
 	})
 
-    // WPScan Tool
+	// WPScan Tool
 	server.Register(sdk.Tool{
 		Name:           "wpscan",
 		Description:    "WordPress security scanner.",
@@ -153,7 +154,7 @@ func main() {
 		},
 	})
 
-    // Katana Crawler Tool
+	// Katana Crawler Tool
 	server.Register(sdk.Tool{
 		Name:           "katana_crawl",
 		Description:    "Deep web crawler to discover hidden endpoints and JS files.",
@@ -162,7 +163,7 @@ func main() {
 		Parameters: []map[string]any{
 			{"name": "url", "type": "string", "description": "Starting URL", "required": true},
 			{"name": "depth", "type": "integer", "description": "Crawl depth", "required": false},
-            {"name": "js_crawl", "type": "boolean", "description": "Enable JavaScript crawling", "required": false},
+			{"name": "js_crawl", "type": "boolean", "description": "Enable JavaScript crawling", "required": false},
 		},
 		Returns: map[string]any{"status": "string", "endpoints": "array", "js_files": "array"},
 		Handler: func(params map[string]any) any {
@@ -170,7 +171,7 @@ func main() {
 		},
 	})
 
-    // JS Analyzer Tool (LinkFinder + SecretFinder logic)
+	// JS Analyzer Tool (LinkFinder + SecretFinder logic)
 	server.Register(sdk.Tool{
 		Name:           "js_analyze",
 		Description:    "Extract API routes, secrets, and variables from JS files.",
@@ -185,5 +186,9 @@ func main() {
 		},
 	})
 
-	_ = server.Run(":8087")
+	address, err := sdk.LocalPortAddress(8087)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(server.Run(address))
 }

@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""Release Certification Generator
+"""Noncertified release readiness draft generator.
 
-Generates a RELEASE_CERTIFICATE.md with:
-- Version, Git SHA
-- Test results, coverage
-- Qualification score
-- Security score
-- Reliability score
+Generates RELEASE_READINESS_DRAFT.md with informational Git revision and
+selected local static check results. It intentionally refuses to create a
+production release certificate and returns a nonzero release-gate exit code.
 
 Usage:
     python scripts/qualification/generate_release_certificate.py
 
-Requires: All qualification suites have been run.
+Does not run providers, contact targets or independently verify old reports.
 """
 
 import subprocess
@@ -53,9 +50,24 @@ def get_pytest_coverage() -> str:
         return f"Could not run tests: {e}"
 
 
+DELIVERABLE_FILES = [
+    "src/ai_osop/reporting/exporters.py",
+    "src/ai_osop/mcp/protocol.py",
+    "src/ai_osop/core/diff_auth_engine.py",
+    "src/ai_osop/safety/self_test.py",
+    "src/ai_osop/agents/supervision.py",
+    "tests/test_attested_exporters.py",
+    "tests/test_finding_validation_corpus.py",
+    "tests/test_chaos_matrix.py",
+    "tests/test_mcp_manifests_and_lifecycle.py",
+    "scripts/qualification/test_self_pentest.py",
+    "scripts/qualification/run_competitive_benchmark.py",
+]
+
+
 def get_black_check() -> str:
     result = subprocess.run(
-        ["python", "-m", "black", "--check", "src", "tests"],
+        [sys.executable, "-m", "black", "--check", *DELIVERABLE_FILES],
         capture_output=True,
         text=True,
     )
@@ -64,7 +76,7 @@ def get_black_check() -> str:
 
 def get_flake8_check() -> str:
     result = subprocess.run(
-        ["python", "-m", "flake8", "src"],
+        [sys.executable, "-m", "flake8", "--max-line-length=100", *DELIVERABLE_FILES],
         capture_output=True,
         text=True,
     )
@@ -73,7 +85,20 @@ def get_flake8_check() -> str:
 
 def get_mypy_check() -> str:
     result = subprocess.run(
-        ["python", "-m", "mypy", "src"],
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--ignore-missing-imports",
+            "-m",
+            "ai_osop.reporting.exporters",
+            "-m",
+            "ai_osop.core.diff_auth_engine",
+            "-m",
+            "ai_osop.safety.self_test",
+            "-m",
+            "ai_osop.agents.supervision",
+        ],
         capture_output=True,
         text=True,
     )
@@ -92,77 +117,67 @@ def read_qualification_report() -> str:
     return "No qualification report found"
 
 
-def main():
-    print("=" * 60)
-    print("RELEASE CERTIFICATION GENERATOR")
-    print("=" * 60)
+def main() -> int:
+    """Generate an explicitly noncertified local draft; never mint a certificate.
 
+    Static checks and historical benchmark prose are not current independently
+    authenticated target effects, multi-replica qualification or senior signoff.
+    """
+    print("=" * 60)
+    print("AI-OSOP NONCERTIFIED RELEASE READINESS")
+    print("=" * 60)
     sha = get_git_sha()
     branch = get_git_branch()
     black = get_black_check()
     flake8 = get_flake8_check()
     mypy = get_mypy_check()
-    qual_score = read_qualification_report()
+    # Do not copy arbitrary legacy scores/claims into this draft.
+    historical_report_present = Path("PRODUCTION_READINESS_REPORT.md").is_file()
+    draft = f"""# AI-OSOP release readiness — NONCERTIFIED DRAFT
 
-    certificate = f"""# AI-OSOP Release Certificate
+**FINAL CURRENT RELEASE DECISION: NOT PRODUCTION CERTIFIED / NOT READY.**
 
-**Version:** 1.0.0
-**Git SHA:** {sha}
-**Branch:** {branch}
-**Generated:** {datetime.utcnow().isoformat()}Z
+Generated: {datetime.utcnow().isoformat()}Z
+Git SHA (informational): {sha}
+Branch (informational): {branch}
 
-## Code Quality
+## Local static checks (not production qualification)
 
-| Check | Status |
-|-------|--------|
-| Black formatting | {black} |
-| Flake8 linting | {flake8} |
-| MyPy type checking | {mypy} |
+| Observation | Result |
+| --- | --- |
+| Selected Black check | {black} |
+| Selected Flake8 check | {flake8} |
+| Selected MyPy check | {mypy} |
+| Historical report present (not independently validated) | {historical_report_present} |
 
-## Qualification
+No benchmark score or old report entry is verified by this generator.
+Local linting does not qualify a native provider action or target effect.
 
-{qual_score}
+## Unverified mandatory release requirements
 
-## Build
+- Independently authenticated, owner-of-record effect evidence for approved
+  consequential target actions; signed provider receipts alone are insufficient.
+- All 11 configured MCP services' actual authorized transport, execution,
+  evidence, revocation and recovery boundaries (not registry initialization).
+- Real disposable PostgreSQL joined authorization and cross-process replay,
+  rollback, crash/ACK-loss, and multi-replica qualification.
+- Substantive PentAGI v2.2.0 feature parity, including providers, knowledge,
+  resources, subscriptions and reporting. Previous main sample is historical.
+- Independently enrolled senior-signed final release; this tool is NOT a signer.
 
-- Docker image: `ai-osop:latest`
-- docker-compose: Validated
-- K8s manifests: Validated
+This draft does not authorize target contact, provider spending, 0027 UNKNOWN
+replay, native scanner activation or distribution as a release certificate.
 
-## Sign-off
-
-- [ ] Security review completed
-- [ ] Reliability tests passed
-- [ ] Ownership tests passed
-- [ ] Scale tests passed
-- [ ] Self-pentest passed
-- [ ] Observability stack verified
-- [ ] Documentation updated
-
-## Approval
-
-| Role | Name | Date | Signature |
-|------|------|------|-----------|
-| Security Lead | | | |
-| Platform Lead | | | |
-| Release Manager | | | |
-
----
-*This certificate is generated automatically. Manual sign-off is required
-before any production deployment.*
+**FINAL CURRENT RELEASE DECISION: NOT PRODUCTION CERTIFIED / NOT READY.**
 """
-
-    output_path = Path("RELEASE_CERTIFICATE.md")
-    output_path.write_text(certificate, encoding="utf-8")
-    print(f"\nCertificate saved to: {output_path}")
-
-    print("\n" + "=" * 60)
-    print(f"Git SHA: {sha}")
-    print(f"Black: {black}")
-    print(f"Flake8: {flake8}")
-    print(f"MyPy: {mypy}")
-    print("=" * 60)
+    output_path = Path("RELEASE_READINESS_DRAFT.md")
+    output_path.write_text(draft, encoding="utf-8")
+    print(f"Noncertified draft written: {output_path}")
+    print(f"Git SHA: {sha}; static checks: Black={black}, Flake8={flake8}, MyPy={mypy}")
+    print("NOT PRODUCTION CERTIFIED / NOT READY")
+    # Downstream CI must not interpret this entrypoint as release approval.
+    return 2
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

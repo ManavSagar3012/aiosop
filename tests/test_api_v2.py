@@ -95,11 +95,10 @@ def test_health_endpoint(client):
 
 def test_metrics_endpoint(client):
     response = client.get("/metrics", headers={"Authorization": "Bearer dev-test-token"})
-    assert response.status_code == 200
-    # Check for some expected prometheus metrics
-    assert "ai_osop_tasks_total" in response.text
-    assert "ai_osop_active_agent_count" in response.text
-    assert response.headers["content-type"].startswith("text/plain")
+    assert response.status_code == 403
+    # A development token is not an attributable senior operator allowed to
+    # read sensitive operational metrics.
+    assert "ai_osop_tasks_total" not in response.text
 
 
 def test_api_startup_registers_agents(client):
@@ -116,22 +115,30 @@ def test_root_not_found(client):
     assert response.status_code == 404
 
 
-def test_websocket_endpoint(client):
+def test_websocket_rejects_shared_development_token(client):
+    from starlette.websockets import WebSocketDisconnect
     from ai_osop.core.models import ScopeDefinition, SessionState
 
     # Setup session in mock orchestrator
-    client.orch._sessions["test-session"] = SessionState(
+    session = SessionState(
         session_id="test-session",
         phase="reconnaissance",
         scope=ScopeDefinition(engagement_id="test-session", domains=["example.com"]),
         roe={},
     )
-    with client.websocket_connect("/ws/engagements/test-session?token=dev-test-token") as websocket:
-        websocket.send_json({"action": "ping"})
-        data = websocket.receive_json()
-        assert data == {"type": "pong"}
-
-        websocket.send_json({"action": "status"})
-        data = websocket.receive_json()
-        assert data["type"] == "status"
-        assert data["session_id"] == "test-session"
+    client.orch._sessions["test-session"] = session
+    client.orch.session_memory.load_session_state = AsyncMock(return_value=session)
+    # Browser WS credentials belong in the first encrypted message, NEVER
+    # URL query parameters or logs. Test an owned persisted engagement read.
+    with (
+        patch("ai_osop.api.main.settings.cors_allowed_origins", ["http://localhost:5173"]),
+        patch("ai_osop.api.main.settings.environment", "development"),
+    ):
+        with client.websocket_connect(
+            "wss://127.0.0.1/ws/engagements/test-session",
+            headers={"origin": "http://localhost:5173"},
+        ) as websocket:
+            websocket.send_json({"type": "auth", "token": "dev-test-token"})
+            with pytest.raises(WebSocketDisconnect) as exc:
+                websocket.receive_json()
+            assert exc.value.code == 1008

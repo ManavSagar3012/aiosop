@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ai_osop.core.config import VulnClass
+from ai_osop.core.exceptions import MCPException
 from ai_osop.core.models import Payload
 from ai_osop.mcp.protocol import MCPRegistry
 
@@ -65,8 +66,7 @@ class PayloadMCPAdapter:
         if response.status == "success" and response.result:
             return self._normalize_payload(response.result, vuln_type, context)
 
-        # Fallback to basic template
-        return self._generate_fallback_payload(vuln_type, context, encoding)
+        raise MCPException("Payload MCP generation unavailable; no provider payload was produced")
 
     async def mutate_payload(
         self, payload: Payload, strategy: str = "encoding_variation", generation: int = 0
@@ -98,7 +98,7 @@ class PayloadMCPAdapter:
             mutated.generation = generation
             return mutated
 
-        return payload  # Return original if mutation fails
+        raise MCPException("Payload MCP mutation unavailable; no mutated payload was produced")
 
     async def analyze_response(
         self, payload: Payload, response: Dict[str, Any], waf_signature: Optional[str] = None
@@ -124,12 +124,7 @@ class PayloadMCPAdapter:
         if result.status == "success" and result.result:
             return result.result
 
-        return {
-            "success_indicator": 0.0,
-            "waf_detected": False,
-            "error_extracted": None,
-            "behavior_class": "unknown",
-        }
+        raise MCPException("Payload MCP response analysis unavailable")
 
     async def get_payload_history(
         self, vuln_type: VulnClass, target_hash: str, min_fitness: float = 0.0
@@ -148,13 +143,15 @@ class PayloadMCPAdapter:
                 self._normalize_payload(p, vuln_type, {})
                 for p in response.result.get("payloads", [])
             ]
-        return []
+        raise MCPException("Payload MCP history unavailable")
 
     def _normalize_payload(
         self, raw: Dict[str, Any], vuln_type: VulnClass, context: Dict[str, Any]
     ) -> Payload:
         """Convert raw payload response to Payload model."""
-        content = raw.get("content", "")
+        content = raw.get("content")
+        if not isinstance(content, str) or not content:
+            raise MCPException("Payload MCP returned no usable payload content")
         return Payload(
             vuln_type=vuln_type,
             content=content,
@@ -165,41 +162,4 @@ class PayloadMCPAdapter:
             strategy=raw.get("strategy", "template"),
             fitness_score=raw.get("fitness_score", 0.0),
             engagement_id=raw.get("engagement_id", ""),
-        )
-
-    def _generate_fallback_payload(
-        self, vuln_type: VulnClass, context: Dict[str, Any], encoding: Optional[List[str]]
-    ) -> Payload:
-        """Generate minimal fallback payload when MCP fails."""
-        templates = {
-            VulnClass.SQLI: "' OR '1'='1",
-            VulnClass.XSS: "<script>alert(1)</script>",
-            VulnClass.SSRF: "http://169.254.169.254/latest/meta-data/",
-            VulnClass.SSTI: "{{7*7}}",
-            VulnClass.IDOR: "../../etc/passwd",
-            VulnClass.JWT_ABUSE: "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.",
-        }
-
-        content = templates.get(vuln_type, "test")
-
-        # Apply basic encoding if requested
-        if encoding:
-            for enc in encoding:
-                if enc == "url":
-                    import urllib.parse
-
-                    content = urllib.parse.quote(content)
-                elif enc == "base64":
-                    import base64
-
-                    content = base64.b64encode(content.encode()).decode()
-
-        return Payload(
-            vuln_type=vuln_type,
-            content=content,
-            content_hash=hashlib.sha256(content.encode()).hexdigest()[:16],
-            encoding_chain=encoding or [],
-            context=context,
-            strategy="fallback",
-            engagement_id="",
         )

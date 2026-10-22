@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -50,6 +51,7 @@ async def test_generate_payloads(mock_context):
         payload={"vuln_type": "sqli", "context": {"param": "id"}, "count": 1},
         engagement_id="test-session",
     )
+    mock_context.current_task = task
 
     result = await agent._execute(task)
 
@@ -83,10 +85,19 @@ async def test_process_feedback(mock_context):
         priority=5,
         agent_type=AgentType.PAYLOAD_MUTATION,
         payload={
+            "_authorization_version": 3,
+            "engagement_id": "test-session",
             "payload": payload_obj.model_dump(),
             "result": {"status": "success", "waf_blocked": False, "target": "example.com"},
         },
         engagement_id="test-session",
+        status="running",
+    )
+    mock_context.current_task = task
+    mock_context.status = "running"
+    mock_context.session_memory = SimpleNamespace(
+        load_task_authoritative=AsyncMock(return_value=task.model_copy(deep=True)),
+        assert_signed_authorization=AsyncMock(return_value=SimpleNamespace(version=3)),
     )
 
     result = await agent._execute(task)

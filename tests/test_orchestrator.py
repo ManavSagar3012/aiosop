@@ -7,6 +7,7 @@ import pytest
 from ai_osop.core.config import AgentType
 from ai_osop.core.models import AuditEvent, ScopeDefinition, SessionState, Task
 from ai_osop.orchestrator.orchestrator import EngagementPhase, Orchestrator
+from ai_osop.core.exceptions import WorkflowException
 
 
 @pytest.fixture
@@ -30,13 +31,10 @@ def dummy_scope():
 
 @pytest.mark.asyncio
 async def test_create_engagement(mock_orchestrator, dummy_scope):
-    session = await mock_orchestrator.create_engagement(dummy_scope, {})
-    assert session.phase == EngagementPhase.INITIALIZED.value
-    assert session.scope.engagement_id == "test-eng"
-    assert session.session_id.startswith("eng-")
-
-    mock_orchestrator.session_memory.store_session_state.assert_called_once()
-    mock_orchestrator.session_memory.persist_session_state.assert_called_once()
+    with pytest.raises(WorkflowException, match="Signed ROE"):
+        await mock_orchestrator.create_engagement(dummy_scope, {})
+    mock_orchestrator.session_memory.store_session_state.assert_not_awaited()
+    mock_orchestrator.session_memory.persist_session_state.assert_not_awaited()
 
 
 @pytest.mark.asyncio

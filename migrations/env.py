@@ -63,5 +63,10 @@ def do_run_migrations(connection) -> None:
 
 if context.is_offline_mode():
     run_migrations_offline()
+elif config.attributes.get("connection") is not None:
+    # API startup already owns an asyncpg connection and a PostgreSQL
+    # transaction. Reuse its sync facade so stamp+upgrade are atomic and do
+    # not create another event loop or independent migration transaction.
+    do_run_migrations(config.attributes["connection"])
 else:
     asyncio.run(run_migrations_online())

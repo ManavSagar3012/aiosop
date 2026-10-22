@@ -1,67 +1,262 @@
 import React, { useEffect, useState } from 'react';
-import { API_BASE } from '../services/api';
 import { useParams, Link } from 'react-router-dom';
+import { ChevronLeft, Download, FileText, Printer, Shield, RefreshCw } from 'lucide-react';
+import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
-import { ChevronLeft, Download, Shield, FileText, Printer, Share2 } from 'lucide-react';
 
-interface ReportData {
+export type ReportAvailability = 'limited_verified_summary' | 'no_verified_evidence';
+
+export interface PrintableMissionReport {
   report_id: string;
+  availability: ReportAvailability;
   markdown: string;
-  html?: string;
-  body_html?: string;
+  verified_record_count: number;
 }
+
+const MAX_PRINTABLE_CHARACTERS = 32_000;
+const GENERIC_REPORT_ERROR = 'Could not load the engagement summary. Try again.';
+const SAFE_REPORT_MESSAGES = new Set([
+  'The report service returned an invalid summary.',
+  'Select a valid engagement to view its evidence summary.',
+  'Report access denied. Check your operator authorization.',
+  'This engagement is not available to your account.',
+  'Verified evidence is temporarily unavailable. Try again later.',
+  GENERIC_REPORT_ERROR,
+]);
+
+/** Never reflect fetch/JSON parser exceptions, which may contain response snippets. */
+export function reportFetchErrorMessage(reason: unknown): string {
+  return reason instanceof Error && SAFE_REPORT_MESSAGES.has(reason.message)
+    ? reason.message
+    : GENERIC_REPORT_ERROR;
+}
+
+/** Reject unexpected responses instead of interpreting arbitrary HTML or report drafts. */
+export function parsePrintableMissionReport(value: unknown): PrintableMissionReport {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('The report service returned an invalid summary.');
+  }
+  const report = value as Record<string, unknown>;
+  const availability = report.availability;
+  const count = report.verified_record_count;
+  if (
+    (availability !== 'limited_verified_summary' && availability !== 'no_verified_evidence')
+    || typeof report.report_id !== 'string'
+    || !/^summary-[a-f0-9]{64}$/.test(report.report_id)
+    || typeof report.markdown !== 'string'
+    || !report.markdown.trim()
+    || report.markdown.length > MAX_PRINTABLE_CHARACTERS
+    || typeof count !== 'number'
+    || !Number.isSafeInteger(count)
+    || count < 0
+    || count > 200
+    || (availability === 'no_verified_evidence' && count !== 0)
+    || (availability === 'limited_verified_summary' && count === 0)
+  ) {
+    throw new Error('The report service returned an invalid summary.');
+  }
+  return {
+    report_id: report.report_id,
+    availability,
+    markdown: report.markdown,
+    verified_record_count: count,
+  };
+}
+
+/** Uses only the API's authenticated, bounded summary. Never fetches arbitrary URLs. */
+export async function fetchMissionReport(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<PrintableMissionReport> {
+  if (!sessionId || !/^[a-zA-Z0-9_-]{1,96}$/.test(sessionId)) {
+    throw new Error('Select a valid engagement to view its evidence summary.');
+  }
+  const response = await fetch(
+    `${API_BASE}/engagements/${encodeURIComponent(sessionId)}/report`,
+    {
+      headers: authHeaders({ Accept: 'application/json' }),
+      cache: 'no-store',
+      signal,
+    },
+  );
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('Report access denied. Check your operator authorization.');
+    }
+    if (response.status === 404) {
+      throw new Error('This engagement is not available to your account.');
+    }
+    if (response.status === 503) {
+      throw new Error('Verified evidence is temporarily unavailable. Try again later.');
+    }
+    throw new Error('Could not load the engagement summary. Try again.');
+  }
+  return parsePrintableMissionReport(await response.json() as unknown);
+}
+
+/** The browser provides the print/PDF destination picker; no fake PDF download. */
+export function openMissionReportPrintDialog(): void {
+  window.print();
+}
+
+export const MissionReportDocument: React.FC<{
+  report: PrintableMissionReport;
+  sessionId: string;
+}> = ({ report, sessionId }) => {
+  const hasQualifiedEvidence = report.availability === 'limited_verified_summary';
+  return (
+    <article
+      id="mission-report-print-area"
+      aria-label="Printable engagement evidence summary"
+      className="max-w-4xl w-full bg-surface-container-high p-8 md:p-12 shadow-xl border border-outline-variant relative text-on-surface"
+    >
+      <header className="border-b border-outline-variant pb-6 mb-8">
+        <p className="font-label-caps text-[11px] tracking-widest text-on-surface-variant">
+          AI-OSOP · Engagement evidence summary
+        </p>
+        <h1 className="font-headline-md text-[25px] mt-3 break-words">
+          Engagement {sessionId}
+        </h1>
+        <p className="font-code-sm text-[11px] text-on-surface-variant mt-3 break-all">
+          Summary reference (not a signature): {report.report_id}
+        </p>
+      </header>
+
+      <div
+        role="status"
+        aria-live="polite"
+        className="bg-surface-container-low border-l-4 border-primary-fixed p-5 mb-8"
+      >
+        <h2 className="font-headline-md text-[17px]">
+          {hasQualifiedEvidence ? 'Limited evidence summary available' : 'No verified evidence available'}
+        </h2>
+        <p className="text-[14px] text-on-surface-variant mt-2">
+          {hasQualifiedEvidence
+            ? `The graph contains ${report.verified_record_count} validated record${report.verified_record_count === 1 ? '' : 's'} with stored evidence. This does not independently establish exploit success.`
+            : 'No qualifying verified records were available. This does not mean the engagement is secure or free of findings.'}
+        </p>
+      </div>
+
+      <section aria-label="Evidence summary text">
+        <h2 className="font-headline-md text-[18px] mb-4">Available summary</h2>
+        <pre className="whitespace-pre-wrap break-words font-code-sm text-on-surface-variant text-[14px] leading-relaxed bg-black/20 p-6 border border-outline-variant">
+          {report.markdown}
+        </pre>
+      </section>
+
+      <footer className="mt-10 border-t border-outline-variant pt-5 text-[12px] text-on-surface-variant">
+        This is an automatically retrieved summary, not an approved or signed final
+        security report. Its content has not been independently reverified by this
+        page; no cryptographic signature is asserted.
+      </footer>
+    </article>
+  );
+};
+
+/** Print only the safely escaped React text, without surrounding console chrome. */
+const REPORT_PRINT_STYLES = `
+  @media print {
+    @page { margin: 15mm; }
+    html, body, #root { height: auto !important; overflow: visible !important; }
+    body * { visibility: hidden !important; }
+    #mission-report-print-area, #mission-report-print-area * {
+      visibility: visible !important;
+    }
+    #mission-report-print-area {
+      position: absolute !important;
+      left: 0 !important;
+      top: 0 !important;
+      width: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      min-height: 0 !important;
+      background: white !important;
+      color: black !important;
+      border: 0 !important;
+      box-shadow: none !important;
+    }
+    #mission-report-print-area * {
+      color: black !important;
+      border-color: #aaa !important;
+      background: white !important;
+      overflow-wrap: anywhere !important;
+    }
+    #mission-report-print-area pre {
+      white-space: pre-wrap !important;
+      overflow: visible !important;
+      font-size: 11pt !important;
+    }
+    .mission-report-no-print { display: none !important; }
+  }
+`;
 
 export const MissionReport: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const [report, setReport] = useState<ReportData | null>(null);
+  const [report, setReport] = useState<PrintableMissionReport | null>(null);
+  const [reportSessionId, setReportSessionId] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
-
-  const handlePrint = () => {
-    window.print();
-  };
+  const [error, setError] = useState<string | null>(null);
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
-    const fetchReport = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/engagements/${sessionId}/report`, {
-          headers: { 'Authorization': 'Bearer dev-token' }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setReport(data);
-        }
-      } catch (e) {
-        console.error("Failed to fetch report", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (sessionId) {
-      fetchReport();
+    const controller = new AbortController();
+    let current = true;
+    setLoading(true);
+    setError(null);
+    setReport(null);
+    setReportSessionId(sessionId);
+    if (!sessionId) {
+      setError('Select an engagement to view its evidence summary.');
+      setLoading(false);
+      return () => { controller.abort(); };
     }
-  }, [sessionId]);
 
-  if (loading) {
+    void fetchMissionReport(sessionId, controller.signal)
+      .then((loaded) => {
+        if (current) setReport(loaded);
+      })
+      .catch((reason: unknown) => {
+        if (current && !controller.signal.aborted) {
+          setError(reportFetchErrorMessage(reason));
+        }
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [sessionId, reloadCount]);
+
+  // Printable responses contain no HTML, including legacy body_html/html fields.
+  if (loading || reportSessionId !== sessionId) {
     return (
-      <div className="h-full flex items-center justify-center">
+      <div className="h-full flex items-center justify-center" role="status" aria-live="polite">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-primary-fixed border-t-transparent rounded-full animate-spin"></div>
-          <div className="font-code-sm text-primary-fixed animate-pulse tracking-widest">COMPILING MISSION DATA...</div>
+          <div aria-hidden="true" className="w-12 h-12 border-4 border-primary-fixed border-t-transparent rounded-full animate-spin" />
+          <div className="font-code-sm text-primary-fixed animate-pulse tracking-widest">LOADING EVIDENCE SUMMARY...</div>
         </div>
       </div>
     );
   }
-
   if (!report) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <Card title="ERROR" glow="red">
-          <div className="p-6 text-center">
-            <Shield className="text-error mx-auto mb-4" size={48} />
-            <div className="font-headline-md text-on-surface mb-2">REPORT_NOT_FOUND</div>
-            <div className="text-on-surface-variant mb-6 text-[14px]">The requested mission report could not be located in the vault.</div>
-            <Link to="/" className="px-6 py-2 bg-error text-white font-label-caps">RETURN TO OVERVIEW</Link>
+      <div className="h-full flex items-center justify-center p-6">
+        <Card title="Report unavailable" glow="red">
+          <div className="p-6 text-center space-y-5">
+            <Shield aria-hidden="true" className="text-error mx-auto" size={44} />
+            <p role="alert" className="text-on-surface-variant text-[14px]">
+              {error ?? 'No validated engagement summary is available.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => setReloadCount((n) => n + 1)}
+              className="inline-flex gap-2 items-center px-4 py-2 bg-surface-variant border border-outline-variant font-label-caps"
+            >
+              <RefreshCw size={15} aria-hidden="true" /> RETRY
+            </button>
+            <Link to="/" className="block text-primary-fixed text-[13px]">Return to overview</Link>
           </div>
         </Card>
       </div>
@@ -70,99 +265,43 @@ export const MissionReport: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6 h-full overflow-hidden">
-      {/* Header */}
-      <div className="flex justify-between items-center bg-surface-container-low p-4 border border-outline-variant">
-        <div className="flex items-center gap-4">
-          <Link to="/" className="p-2 hover:bg-surface-variant transition-colors border border-outline-variant">
-            <ChevronLeft size={20} className="text-on-surface-variant" />
+      <style>{REPORT_PRINT_STYLES}</style>
+      <div className="mission-report-no-print flex flex-wrap justify-between gap-4 items-center bg-surface-container-low p-4 border border-outline-variant">
+        <div className="flex items-center gap-4 min-w-0">
+          <Link to="/" aria-label="Back to overview" className="p-2 hover:bg-surface-variant transition-colors border border-outline-variant">
+            <ChevronLeft size={20} aria-hidden="true" className="text-on-surface-variant" />
           </Link>
-          <div>
-            <div className="flex items-center gap-2">
-               <FileText size={16} className="text-primary-fixed" />
-               <span className="font-code-sm text-[10px] text-on-surface-variant uppercase tracking-tighter">OFFENSIVE SECURITY ASSESSMENT REPORT</span>
+          <FileText size={18} aria-hidden="true" className="text-primary-fixed" />
+          <div className="min-w-0">
+            <div className="font-headline-md text-[18px]">Engagement evidence summary</div>
+            <div className="font-code-sm text-[11px] text-on-surface-variant truncate">
+              {sessionId}
             </div>
-            <div className="font-headline-md text-[18px] text-on-surface">{report.report_id}</div>
           </div>
         </div>
-        <div className="flex gap-2">
-           <button className="flex items-center gap-2 px-4 py-2 bg-surface-variant border border-outline-variant text-[11px] font-label-caps hover:bg-surface-container-high transition-all">
-              <Download size={14} /> EXPORT PDF
-           </button>
-           <button 
-              onClick={handlePrint}
-              className="flex items-center gap-2 px-4 py-2 bg-primary-fixed text-black border border-primary-fixed text-[11px] font-label-caps hover:brightness-110 transition-all font-bold"
-           >
-              <Printer size={14} /> PRINT REPORT
-           </button>
+        <div className="flex gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={openMissionReportPrintDialog}
+            title="Choose Save as PDF in the browser print dialog"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-surface-variant border border-outline-variant text-[11px] font-label-caps hover:bg-surface-container-high"
+          >
+            <Download size={14} aria-hidden="true" /> SAVE AS PDF
+          </button>
+          <button
+            type="button"
+            onClick={openMissionReportPrintDialog}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-primary-fixed text-black border border-primary-fixed text-[11px] font-label-caps hover:brightness-110 font-bold"
+          >
+            <Printer size={14} aria-hidden="true" /> PRINT SUMMARY
+          </button>
         </div>
       </div>
-
-      {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar bg-black/40 p-12 flex justify-center">
-        <div className="max-w-4xl w-full bg-surface-container-high p-20 shadow-[0_30px_60px_-12px_rgba(0,0,0,0.5)] border border-outline-variant relative min-h-[1100px]">
-           {/* Decorative corner accents */}
-           <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-primary-fixed/30"></div>
-           <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-primary-fixed/30"></div>
-           <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-primary-fixed/30"></div>
-           <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-primary-fixed/30"></div>
-
-           {/* Watermark */}
-           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-[0.02] rotate-[-45deg] pointer-events-none select-none">
-              <div className="text-[140px] font-bold text-white whitespace-nowrap">AI-OSOP CONFIDENTIAL</div>
-           </div>
-
-           {/* Report Content */}
-           <div className="relative z-10 text-on-surface">
-              {(report.body_html || report.html) ? (
-                <div 
-                  className="report-body
-                    [&_h1]:text-[36px] [&_h1]:font-display [&_h1]:text-on-surface [&_h1]:uppercase [&_h1]:tracking-tighter [&_h1]:border-b-2 [&_h1]:border-primary-fixed/20 [&_h1]:pb-6 [&_h1]:mb-12 [&_h1]:font-black
-                    [&_h2]:text-[22px] [&_h2]:font-display [&_h2]:text-primary-fixed [&_h2]:uppercase [&_h2]:mt-16 [&_h2]:mb-8 [&_h2]:tracking-widest [&_h2]:border-l-4 [&_h2]:border-primary-fixed [&_h2]:pl-4
-                    [&_h3]:text-[18px] [&_h3]:font-headline-md [&_h3]:text-on-surface [&_h3]:mt-10 [&_h3]:mb-6 [&_h3]:border-b [&_h3]:border-outline-variant [&_h3]:pb-2
-                    [&_h4]:text-[14px] [&_h4]:font-label-caps [&_h4]:text-secondary-fixed [&_h4]:mt-8 [&_h4]:mb-4 [&_h4]:opacity-80
-                    [&_p]:mb-6 [&_p]:leading-relaxed [&_p]:text-[16px] [&_p]:text-on-surface/90
-                    [&_strong]:text-primary-fixed [&_strong]:font-bold
-                    [&_code]:bg-black/60 [&_code]:px-2 [&_code]:py-1 [&_code]:rounded [&_code]:text-secondary-fixed [&_code]:font-code-sm [&_code]:border [&_code]:border-secondary/20
-                    [&_pre]:bg-black/80 [&_pre]:p-8 [&_pre]:border [&_pre]:border-outline-variant [&_pre]:my-8 [&_pre]:overflow-x-auto [&_pre]:shadow-inner
-                    [&_ul]:list-none [&_ul]:pl-0 [&_ul]:mb-8
-                    [&_li]:mb-4 [&_li]:pl-6 [&_li]:relative [&_li]:text-[15px] [&_li]:before:content-['▶'] [&_li]:before:absolute [&_li]:before:left-0 [&_li]:before:text-primary-fixed [&_li]:before:text-[10px] [&_li]:before:top-1.5
-                    [&_table]:w-full [&_table]:border-collapse [&_table]:my-10 [&_table]:shadow-xl
-                    [&_th]:border [&_th]:border-outline-variant [&_th]:p-4 [&_th]:bg-surface-variant/50 [&_th]:text-left [&_th]:text-[12px] [&_th]:font-label-caps [&_th]:text-primary-fixed
-                    [&_td]:border [&_td]:border-outline-variant [&_td]:p-4 [&_td]:text-[14px] [&_td]:bg-black/20
-                  "
-                  dangerouslySetInnerHTML={{ __html: report.body_html || report.html || "" }} 
-                />
-              ) : (
-                <pre className="whitespace-pre-wrap font-code-sm text-on-surface-variant text-[15px] leading-relaxed bg-black/40 p-10 border border-outline-variant">
-                  {report.markdown}
-                </pre>
-              )}
-           </div>
-           
-           {/* Signatures */}
-           <div className="mt-32 grid grid-cols-2 gap-20">
-              <div className="border-t border-outline-variant pt-4">
-                 <div className="font-code-sm text-[12px] text-primary-fixed mb-1 uppercase">Automated Verification</div>
-                 <div className="font-display text-[14px] italic opacity-60 font-light tracking-widest text-on-surface">AI-OSOP V6.5 Elite Kernel</div>
-              </div>
-              <div className="border-t border-outline-variant pt-4">
-                 <div className="font-code-sm text-[12px] text-secondary-fixed mb-1 uppercase">Chain of Custody</div>
-                 <div className="font-code-sm text-[10px] opacity-40 truncate">SIGNATURE: SHA256:{report.report_id.split('-')[1] || 'UNSET'}</div>
-              </div>
-           </div>
-           <div className="mt-20 pt-8 border-t border-outline-variant flex justify-between items-center">
-              <div className="flex items-center gap-4">
-                 <img src="/logo.svg" alt="AI-OSOP" className="h-6 opacity-40 grayscale invert" />
-                 <div className="h-4 w-px bg-outline-variant"></div>
-                 <div className="text-[10px] text-on-surface-variant font-code-sm opacity-60">
-                    GENERATED BY AI-OSOP V6.5 ELITE RUNTIME
-                 </div>
-              </div>
-              <div className="text-[10px] text-on-surface-variant font-code-sm opacity-60">
-                 PAGE 1 / 1
-              </div>
-           </div>
-        </div>
+      <p className="mission-report-no-print text-on-surface-variant text-[12px] px-4">
+        PDF export opens your browser print dialog. Select “Save as PDF” as the destination; this is not a signed report.
+      </p>
+      <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-black/40 flex justify-center">
+        <MissionReportDocument report={report} sessionId={sessionId ?? ''} />
       </div>
     </div>
   );

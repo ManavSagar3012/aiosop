@@ -60,7 +60,7 @@ export const MissionControl: React.FC = () => {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {costData.map((entry, index) => (
+                  {costData.map((_entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>

@@ -135,6 +135,19 @@ class DeadLetterQueue:
         if entry.status != "pending_review":
             return None
 
+        # A signed/Flow-bound task may already have submitted consequential
+        # MCP/Temporal side effects before entering the DLQ. Resetting its
+        # retry count via this historical Redis-backed helper would evade the
+        # original one-shot TaskORM admission, pinned approval and UNKNOWN
+        # outcome fence. The public requeue route is disabled too, but other
+        # internal callers must not be able to silently bypass that policy.
+        persisted = entry.task_payload if isinstance(entry.task_payload, dict) else {}
+        original_payload = persisted.get("payload")
+        if persisted.get("flow_id") is not None or (
+            isinstance(original_payload, dict) and "_authorization_version" in original_payload
+        ):
+            return None
+
         # Reconstruct the task from the stored payload
         task = Task(**entry.task_payload)
         task.retry_count = 0
@@ -151,7 +164,9 @@ class DeadLetterQueue:
         if hasattr(self._session_memory, "store_dlq_entry"):
             await self._session_memory.store_dlq_entry(entry)
         else:
-            await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+            await self._session_memory.store_hot(
+                f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7
+            )
 
         return task
 
@@ -174,7 +189,9 @@ class DeadLetterQueue:
         if hasattr(self._session_memory, "store_dlq_entry"):
             await self._session_memory.store_dlq_entry(entry)
         else:
-            await self._session_memory.store_hot(f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7)
+            await self._session_memory.store_hot(
+                f"dlq:{entry.id}", entry.model_dump(), ttl=86400 * 7
+            )
 
     @trace_span("dlq.get_stats")
     async def get_stats(self) -> Dict[str, int]:

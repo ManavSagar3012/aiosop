@@ -4,9 +4,9 @@ FROM python:3.11-slim AS builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends     gcc     libpq-dev     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir poetry
-COPY pyproject.toml ./
-RUN poetry config virtualenvs.create false     && poetry install --no-interaction --no-ansi --no-root --only main
+RUN pip install --no-cache-dir poetry==1.8.3
+COPY pyproject.toml poetry.lock ./
+RUN poetry config virtualenvs.create false     && poetry install --no-interaction --no-ansi --no-root --only main --sync
 
 # Production stage
 FROM python:3.11-slim AS production
@@ -25,6 +25,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY src/ ./src/
+COPY mcp-servers/python/threat_intel_mcp.py ./mcp-servers/python/threat_intel_mcp.py
 COPY README.md ./
 
 # Set permissions

@@ -1,0 +1,17 @@
+# User-owned 0039 original write readback and pre-parser bounds — 2026-10-21
+
+**Disposition: NOT PRODUCTION CERTIFIED / NOT READY.** This hardens an already mounted, signed-operator-scoped 0039 document workflow. It neither approves user text for agent instruction nor authenticates external target effects.
+
+## Actual production-path changes
+
+- `ui/src/services/userGlobalLibrary.ts`: the completed create/update metadata response alone is no longer presented as a proven original. The client performs a separate current owner-signed GET through the existing resource API, SHA-256 hashes original UTF-8 bytes with `crypto.subtle`, and requires the same revision, SHA, byte length, type, normalized title, and exact content as the submitted mutation. The original POST/PUT is not reissued on a failed/missing current readback. If the owner token changed, the original was changed concurrently, or the response is lost, the result remains **UNKNOWN** and the operator must independently reconcile. A client-side GET and SHA do **not** prove a multi-replica linearizable SQL snapshot beyond the server's existing transactions.
+- `src/ai_osop/api/routers/operator_global_library.py`: a real FastAPI `APIRoute` installed on all three mutating `POST/PUT/DELETE` routes consumes at most **65,536 decoded HTTP request-body bytes before FastAPI parses Pydantic body data**. It rejects bad media type, duplicate/oversized declared length, longer chunked request streams, duplicate nested JSON names, NaN, Infinity, numeric overflow, invalid UTF-8, nonobject bodies and malformed JSON. Accepted exact original bytes remain cached for FastAPI's existing typed/owner-scoped CAS handling. The 65,536-byte wire limit allows common escaped Unicode payloads but is not a payload-size or content-approval grant. This is parser-memory boundedness, not network ingress rate limiting.
+
+## Qualification
+
+- `tests/test_user_global_library_preparse_fence_20261021.py` and existing `tests/test_operator_global_library_api_20261021.py` plus `tests/test_unified_knowledge_search_20261021.py`: **18 passing** in the focused Windows Python environment, with no application DB, external provider or target. The new tests use actual mounted FastAPI router class and real HTTPX/ASGI request streams, with a synthetic operator and mock owner store.
+- `ui/tests/user-global-library-20261021.test.mjs` plus `ui/tests/operator-global-library-20261021.test.mjs`: **12 passing**, including postcommit SHA mismatch, revision shift, foreign title, lost GET and signout-after-mutation with **one and only one** submitted write. Test fixture responses are synthetic and do not prove a PostgreSQL commit. The expanded three-file frontend suite with `provider-credential-admin-20261021.test.mjs` returned **23 passing**. TypeScript check passed; see engineering report for production build result.
+
+## Remaining release blockers
+
+Original knowledge remains explicitly `untrusted_user_text`; no original 0013 reviewed independent-senior ingestion, agent RAG trust or autonomous action permission is granted. Browser/client owner readback is not an independently authenticated server-side audit receipt. The application still lacks real deployed multiple replicas, separately enrolled vault/senior authorities, authorized target-owner signed effects and production release approval. These changes are materially safer operational CRUD, not complete PentAGI v2.2.0 Knowledge parity.

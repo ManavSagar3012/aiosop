@@ -50,11 +50,12 @@ async def verify_postgres_backup() -> bool:
 
         # Fallback: Check PG connection and query table definitions
         from ai_osop.core.config import settings
+        from sqlalchemy import text
         from sqlalchemy.ext.asyncio import create_async_engine
         try:
             engine = create_async_engine(settings.postgres_uri)
             async with engine.connect() as conn:
-                result = await conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
+                result = await conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema='public'"))
                 tables = [row[0] for row in result.all()]
                 if len(tables) > 0:
                     logger.info("PostgreSQL connection and tables verified (Fallback validation PASSED)", tables=tables)

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NetworkService, ConnectionStatus } from '../../services/network';
-import { Activity, Wifi, WifiOff, RefreshCcw } from 'lucide-react';
+import { Wifi, WifiOff, RefreshCcw } from 'lucide-react';
+import { API_BASE, authHeaders } from '../../services/api';
 
 export const NetworkHealth: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
@@ -9,8 +10,8 @@ export const NetworkHealth: React.FC = () => {
   useEffect(() => {
     const fetchAndConnect = async () => {
       try {
-        const response = await fetch('http://127.0.0.1:8200/engagements', {
-            headers: { "Authorization": "Bearer dev-token" }
+        const response = await fetch(`${API_BASE}/engagements`, {
+            headers: authHeaders()
         });
         if (response.ok) {
           const sessions = await response.json();

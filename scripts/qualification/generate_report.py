@@ -1,4 +1,4 @@
-"""Production Readiness Report Generator
+"""Local qualification scorecard (never a production release approval).
 
 Runs all qualification suites and generates a markdown report.
 
@@ -26,16 +26,30 @@ SUITES = [
 async def run_suite(name: str, path: str) -> dict:
     print(f"\nRunning {name} suite...")
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, path,
+        sys.executable,
+        path,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     stdout, stderr = await proc.communicate()
     output = stdout.decode("utf-8", errors="replace")
     # Parse PASS/FAIL from output
-    passed = output.count("  PASS")
-    failed = output.count("  FAIL")
-    errors = output.count("  ERROR")
+    import re
+    res_match = re.search(r"Results:\s*(\d+)\s*passed,\s*(\d+)\s*failed", output, re.IGNORECASE)
+    res_slash_match = re.search(r"RESULTS:\s*(\d+)/(\d+)\s*passed", output, re.IGNORECASE)
+    if res_match:
+        passed = int(res_match.group(1))
+        failed = int(res_match.group(2))
+        errors = len(re.findall(r"\[ERROR\]", output))
+    elif res_slash_match:
+        passed = int(res_slash_match.group(1))
+        total = int(res_slash_match.group(2))
+        failed = total - passed
+        errors = len(re.findall(r"\[ERROR\]|\s+ERROR:", output))
+    else:
+        passed = len(re.findall(r"\[PASS\]|\s+PASS:", output))
+        failed = len(re.findall(r"\[FAIL\]|\s+FAIL:", output))
+        errors = len(re.findall(r"\[ERROR\]|\s+ERROR:", output))
     return {
         "name": name,
         "passed": passed,
@@ -48,7 +62,7 @@ async def run_suite(name: str, path: str) -> dict:
 
 async def main():
     print("=" * 60)
-    print("AI-OSOP PRODUCTION READINESS REPORT")
+    print("AI-OSOP LOCAL QUALIFICATION SCORECARD - NONCERTIFIED")
     print("=" * 60)
 
     results = []
@@ -58,14 +72,16 @@ async def main():
             results.append(result)
         else:
             print(f"WARNING: {path} not found, skipping")
-            results.append({
-                "name": name,
-                "passed": 0,
-                "failed": 0,
-                "errors": 0,
-                "output": "Suite not found",
-                "exit_code": -1,
-            })
+            results.append(
+                {
+                    "name": name,
+                    "passed": 0,
+                    "failed": 0,
+                    "errors": 0,
+                    "output": "Suite not found",
+                    "exit_code": -1,
+                }
+            )
 
     total_passed = sum(r["passed"] for r in results)
     total_failed = sum(r["failed"] for r in results)
@@ -74,7 +90,9 @@ async def main():
 
     score = int((total_passed / total_tests) * 100) if total_tests > 0 else 0
 
-    report = f"""# AI-OSOP Production Readiness Report
+    report = f"""# AI-OSOP Local Qualification Scorecard — NOT CERTIFIED
+
+**FINAL CURRENT RELEASE DECISION: NOT PRODUCTION CERTIFIED / NOT READY.**
 
 **Generated:** {datetime.utcnow().isoformat()}Z
 **Version:** 1.0.0
@@ -84,12 +102,12 @@ async def main():
 
 | Metric | Value |
 |--------|-------|
-| Security Score | {score}% |
+| Local suite outcome score (not security certification) | {score}% |
 | Total Tests | {total_tests} |
 | Passed | {total_passed} |
 | Failed | {total_failed} |
 | Errors | {total_errors} |
-| **Production Ready** | {'YES' if score >= 90 else 'NO (needs work)'} |
+| **Production Ready** | NO — independent target proof, multi-replica qualification and senior release absent |
 
 ## Suite Results
 
@@ -104,18 +122,23 @@ async def main():
     for r in results:
         report += f"### {r['name']}\n\n```\n{r['output']}\n```\n\n"
 
-    report += """## Recommendations
+    report += """## Interpretation
 
-- **Score >= 90%**: Platform is production-ready.
-- **Score 70-89%**: Address failed tests before production.
-- **Score < 70%**: Significant work required.
+- Local suite counts and scores are only local test outcomes.
+- A 90% or 100% score does not establish current target-owner effects,
+  running MCP provider functionality, authorization or production release.
+- Independent authenticated effects, crash/ACK-loss/multi-replica qualification
+  and separate senior-signed final approval remain mandatory.
 
 ## Next Steps
 
 1. Fix any failed tests above
 2. Run self-pentest (`scripts/qualification/test_self_pentest.py`)
 3. Review observability dashboards
-4. Generate release certificate
+4. Review the two append-only engineering reports and independent evidence;
+   do not generate a release certificate without separate senior authorization
+
+**FINAL CURRENT RELEASE DECISION: NOT PRODUCTION CERTIFIED / NOT READY.**
 """
 
     output_path = Path("PRODUCTION_READINESS_REPORT.md")
@@ -124,7 +147,7 @@ async def main():
 
     print("\n" + "=" * 60)
     print(f"OVERALL SCORE: {score}%")
-    print(f"PRODUCTION READY: {'YES' if score >= 90 else 'NO'}")
+    print("PRODUCTION READY: NO - NOT PRODUCTION CERTIFIED / NOT READY")
     print("=" * 60)
 
 

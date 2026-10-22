@@ -1,3 +1,15 @@
+# HISTORICAL LOCAL TEST REPORT — NOT A PRODUCTION CERTIFICATE
+
+**FINAL CURRENT RELEASE DECISION: NOT PRODUCTION CERTIFIED / NOT READY.**
+
+The following June 21, 2026 scorecard is retained unchanged as historical
+local-suite evidence. Its 100% local pass rate, outdated reference to
+`RELEASE_CERTIFICATE.md`, and reported test counts do not establish current
+all-11 MCP provider effects, owner-of-record verification, multi-replica
+recovery, or independently senior-signed release.
+
+---
+
 # AI-OSOP Production Qualification Report
 
 **Generated:** 2026-06-21T16:04:35.616284Z

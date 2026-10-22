@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card } from '../components/shared/Card';
-import { Maximize2, MousePointer2, Info, Layers, MessageSquare } from 'lucide-react';
+import { Maximize2, Layers, MessageSquare } from 'lucide-react';
 
 export const VisualContext: React.FC = () => {
   return (

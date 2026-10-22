@@ -40,4 +40,6 @@ class TurboIntruderMCPAdapter:
         )
         if response.status != "success":
             raise MCPException(f"turbo-intruder-mcp attack failed: {response.error}")
-        return response.result or {}
+        if not isinstance(response.result, dict) or not response.result:
+            raise MCPException("turbo-intruder-mcp returned no valid execution result")
+        return response.result

@@ -72,9 +72,23 @@ async def test_context_manager_retrieves_semantic_context(
         payload={"query": "xss bypass", "limit": 1},
         engagement_id="eng-001",
     )
+    # Direct unit invocation must model BaseAgent's task-assignment gate.
+    # Tenant semantic reads cannot run with a missing/foreign current task.
+    context_agent.ctx.current_task = task
 
     result = await context_agent._execute(task)
 
     assert result["status"] == "success"
     assert result["matches"] == [{"content": "payload-a"}]
     context_agent.ctx.vector_memory.search_similar_payloads.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_semantic_retrieval_denies_missing_execution_ownership(context_agent):
+    from ai_osop.core.exceptions import AgentException
+
+    task = Task(type="retrieve_context", agent_type=AgentType.CONTEXT_MANAGER,
+                payload={"query": "private context"}, engagement_id="eng-001")
+    with pytest.raises(AgentException, match="assigned engagement task"):
+        await context_agent._execute(task)
+    context_agent.ctx.vector_memory.search_similar_payloads.assert_not_awaited()

@@ -113,3 +113,28 @@ class WorkflowTransitionError(WorkflowException):
     """Invalid state transition attempted."""
 
     pass
+
+
+class SupervisorException(OSOException):
+    """Supervisor execution or budget policy error."""
+
+    pass
+
+
+class SupervisorLoopDetected(SupervisorException):
+    """Algorithmic tool call loop detected without state progression."""
+
+    pass
+
+
+class BudgetExceededError(SupervisorException):
+    """Subtask or engagement resource/cost budget exceeded."""
+
+    pass
+
+
+class FindingStateViolationError(SafetyException):
+    """Attempted illegal state transition on finding without authority."""
+
+    pass
+

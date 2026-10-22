@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { API_BASE } from '../services/api';
+import { API_BASE, authHeaders } from '../services/api';
 import { Card } from '../components/shared/Card';
-import { User, Shield, Lock, FileJson, Layout as LayoutIcon, Eye } from 'lucide-react';
+import { Shield, Lock, Eye } from 'lucide-react';
 import { useIntelligenceStore } from '../store/useIntelligenceStore';
 
 export const DifferentialAuth: React.FC = () => {
@@ -14,12 +14,15 @@ export const DifferentialAuth: React.FC = () => {
   const handleValidate = async () => {
       if (!currentFinding || !sessionId) return;
       try {
-          await fetch(`${API_BASE}/engagements/${sessionId}/findings/${currentFinding.id}/replay`, {
+          const response = await fetch(`${API_BASE}/engagements/${encodeURIComponent(sessionId)}/findings/${encodeURIComponent(currentFinding.id)}/replay`, {
               method: 'POST',
-              headers: { 'Authorization': 'Bearer dev-token' }
+              headers: authHeaders()
           });
-          alert("Exploit validation task queued.");
-      } catch (e) {}
+          if (!response.ok) throw new Error(`Replay rejected (HTTP ${response.status})`);
+          alert("Replay request accepted. Verify the persisted task state before assuming execution.");
+      } catch (e) {
+          alert(e instanceof Error ? e.message : 'Replay request failed; no execution was confirmed.');
+      }
   };
 
   return (

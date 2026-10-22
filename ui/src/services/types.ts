@@ -3,8 +3,8 @@
  * Strict TypeScript definitions for all backend-to-frontend messages.
  */
 
-import { Finding, VerificationRequest, Uncertainty } from '../store/useIntelligenceStore';
-import { Agent, SwarmBudget } from '../store/useSwarmStore';
+import { Finding, VerificationRequest } from '../store/useIntelligenceStore';
+import { SwarmBudget } from '../store/useSwarmStore';
 
 export type EventType = 
   | 'agent_observation' 
@@ -13,6 +13,8 @@ export type EventType =
   | 'mission_update' 
   | 'verification_update' 
   | 'learning_update'
+  | 'phase_transition'
+  | 'graph_update'
   | 'heartbeat';
 
 export interface BaseEvent {
@@ -74,6 +76,16 @@ export interface HeartbeatEvent extends BaseEvent {
   };
 }
 
+export interface PhaseTransitionEvent extends BaseEvent {
+  event_type: 'phase_transition';
+  data: { phase: string; new_phase?: string };
+}
+
+export interface GraphUpdateEvent extends BaseEvent {
+  event_type: 'graph_update';
+  data: Record<string, unknown>;
+}
+
 export type SwarmEvent = 
   | AgentObservationEvent 
   | BudgetUpdateEvent 
@@ -81,4 +93,6 @@ export type SwarmEvent =
   | MissionUpdateEvent 
   | VerificationUpdateEvent 
   | LearningUpdateEvent
+  | PhaseTransitionEvent
+  | GraphUpdateEvent
   | HeartbeatEvent;

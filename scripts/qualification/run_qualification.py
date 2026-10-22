@@ -48,9 +48,23 @@ def run_script(name: str) -> dict:
             "stderr": result.stderr,
         }
     except subprocess.TimeoutExpired:
-        return {"script": name, "returncode": -1, "passed": 0, "failed": 0, "stdout": "", "stderr": "TIMEOUT"}
+        return {
+            "script": name,
+            "returncode": -1,
+            "passed": 0,
+            "failed": 0,
+            "stdout": "",
+            "stderr": "TIMEOUT",
+        }
     except Exception as e:
-        return {"script": name, "returncode": -1, "passed": 0, "failed": 0, "stdout": "", "stderr": str(e)}
+        return {
+            "script": name,
+            "returncode": -1,
+            "passed": 0,
+            "failed": 0,
+            "stdout": "",
+            "stderr": str(e),
+        }
 
 
 def generate_report(results: list[dict]) -> str:
@@ -60,10 +74,10 @@ def generate_report(results: list[dict]) -> str:
     total_failed = sum(r["failed"] for r in results)
 
     lines = [
-        "# AI-OSOP Production Qualification Report",
+        "# AI-OSOP Local Qualification Report — NOT PRODUCTION CERTIFIED",
         "",
         f"**Generated:** {now}",
-        f"**Git SHA:** (see RELEASE_CERTIFICATE.md)",
+        "**FINAL CURRENT RELEASE DECISION: NOT PRODUCTION CERTIFIED / NOT READY.**",
         "",
         "---",
         "",
@@ -74,7 +88,11 @@ def generate_report(results: list[dict]) -> str:
         f"| Total Tests | {total_passed + total_failed} |",
         f"| Passed | {total_passed} |",
         f"| Failed | {total_failed} |",
-        f"| Success Rate | {(total_passed / (total_passed + total_failed) * 100):.1f}% |" if (total_passed + total_failed) > 0 else "| Success Rate | N/A |",
+        (
+            f"| Success Rate | {(total_passed / (total_passed + total_failed) * 100):.1f}% |"
+            if (total_passed + total_failed) > 0
+            else "| Success Rate | N/A |"
+        ),
         "",
         "## Suite Results",
         "",
@@ -86,11 +104,13 @@ def generate_report(results: list[dict]) -> str:
         status = "PASS" if r["returncode"] == 0 else "FAIL"
         lines.append(f"| {r['script']} | {status} | {r['passed']} | {r['failed']} |")
 
-    lines.extend([
-        "",
-        "## Detailed Output",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Detailed Output",
+            "",
+        ]
+    )
 
     for r in results:
         lines.append(f"### {r['script']}")
@@ -102,19 +122,32 @@ def generate_report(results: list[dict]) -> str:
         lines.append(f"```")
         lines.append("")
 
-    lines.extend([
-        "---",
-        "",
-        "## Certification",
-        "",
-    ])
+    lines.extend(
+        [
+            "---",
+            "",
+            "## Local Test Results (Not Certification)",
+            "",
+        ]
+    )
 
-    if total_failed == 0 and all(r["returncode"] == 0 for r in results):
-        lines.append("**QUALIFICATION PASSED** — All suites passed without failure.")
+    if results and total_passed > 0 and total_failed == 0 and all(
+        r["returncode"] == 0 for r in results
+    ):
+        lines.append(
+            "**LOCAL SUITES PASSED** — This is not target-effect or release certification."
+        )
     else:
-        lines.append("**QUALIFICATION CONDITIONAL** — Some suites had failures. Review detailed output above.")
+        lines.append(
+            "**LOCAL SUITES INCOMPLETE OR FAILED** — Missing, empty or failed "
+            "suite evidence is not a successful run."
+        )
 
     lines.append("")
+    lines.append("Independent owner-of-record target effects, multi-replica checks and a")
+    lines.append("separate senior-signed final production release are NOT verified here.")
+    lines.append("")
+    lines.append("**FINAL CURRENT RELEASE DECISION: NOT PRODUCTION CERTIFIED / NOT READY.**")
     return "\n".join(lines)
 
 

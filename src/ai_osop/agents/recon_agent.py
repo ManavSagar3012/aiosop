@@ -12,6 +12,7 @@ from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.core.config import AgentType
 from ai_osop.core.exceptions import AgentException
 from ai_osop.core.models import Asset, Endpoint, Task
+from ai_osop.core.trusted_search import discover_trusted_search
 
 
 class ReconAgent(BaseAgent):
@@ -41,7 +42,7 @@ class ReconAgent(BaseAgent):
             {"role": "user", "content": context},
         ]
 
-        return await self.ctx.llm_client.complete(messages)
+        return await self._complete_supervised_messages(messages)
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute reconnaissance task."""
@@ -49,7 +50,9 @@ class ReconAgent(BaseAgent):
         payload = task.payload
 
         # Initialize adapter if scope is provided in payload (Issue 12)
-        if "scope" in payload:
+        if "scope" in payload and not (
+            task_type == "osint_lookup" and payload.get("trusted_search") is True
+        ):
             await self.recon_adapter.initialize(payload["scope"], task.engagement_id)
 
         if task_type == "dns_enumeration":
@@ -85,33 +88,52 @@ class ReconAgent(BaseAgent):
             assets = await self.recon_adapter.dns_enumeration(
                 domain=domain, depth=depth, active=active
             )
-        except Exception as e:
-            print(f"WARN: DNS enum failed for {domain}: {e}")
-            # Fallback: create base domain asset
-            assets = [
-                Asset(
-                    id=f"asset-{domain}",
-                    type="domain",
-                    value=domain,
-                    source="recon_fallback",
-                    confidence=1.0,
-                    engagement_id=self.ctx.current_task.engagement_id,
-                )
-            ]
+        except Exception:
+            # A failed DNS provider is not evidence that even the submitted
+            # domain resolved. The old fallback invented a 100%-confidence
+            # discovered asset and could enqueue downstream active scans.
+            return {
+                "status": "unknown",
+                "validation_state": "UNKNOWN",
+                "domain": domain,
+                "assets_discovered": 0,
+                "assets": [],
+                "provider_status": "unavailable",
+            }
+        if not isinstance(assets, list) or any(not isinstance(asset, Asset) for asset in assets):
+            return {
+                "status": "unknown",
+                "validation_state": "UNKNOWN",
+                "domain": domain,
+                "assets_discovered": 0,
+                "assets": [],
+                "provider_status": "malformed",
+            }
 
         # Set engagement ID and store in graph memory
+        persisted = []
         for asset in assets:
             try:
                 asset.engagement_id = self.ctx.current_task.engagement_id
                 await self.ctx.graph_memory.add_asset(asset)
                 self.asset_inventory[asset.id] = asset
-            except Exception as e:
-                print(f"ERROR: Failed to add asset {asset.value} to graph: {e}")
+                persisted.append(asset)
+            except Exception:
+                # Graph failure makes this collection uncertain: a partial
+                # write cannot be advertised as a completed recon task.
+                return {
+                    "status": "unknown",
+                    "validation_state": "UNKNOWN",
+                    "domain": domain,
+                    "assets_discovered": 0,
+                    "assets": [],
+                    "provider_status": "graph_unavailable",
+                }
 
         return {
             "status": "success",
-            "assets_discovered": len(assets),
-            "assets": [a.model_dump() for a in assets],
+            "assets_discovered": len(persisted),
+            "assets": [a.model_dump() for a in persisted],
             "domain": domain,
         }
 
@@ -122,9 +144,14 @@ class ReconAgent(BaseAgent):
 
         try:
             assets = await self.recon_adapter.port_scan(targets=targets, ports=ports)
-        except Exception as e:
-            print(f"WARN: Port scan failed: {e}")
-            assets = []
+        except Exception:
+            return {
+                "status": "unknown",
+                "validation_state": "UNKNOWN",
+                "targets": targets,
+                "assets_discovered": 0,
+                "provider_status": "unavailable",
+            }
 
         # Set engagement ID and store in graph memory
         for asset in assets:
@@ -142,29 +169,56 @@ class ReconAgent(BaseAgent):
         targets = payload["targets"]
 
         try:
-            assets = await self.recon_adapter.service_discovery(targets)
-        except Exception as e:
-            print(f"WARN: Service probe failed: {e}")
-            assets = []
+            endpoints = await self.recon_adapter.service_probe(targets)
+        except Exception:
+            return {
+                "status": "unknown",
+                "validation_state": "UNKNOWN",
+                "probed_count": 0,
+                "provider_status": "unavailable",
+            }
 
-        for asset in assets:
+        for endpoint in endpoints:
             try:
-                asset.engagement_id = self.ctx.current_task.engagement_id
-                await self.ctx.graph_memory.add_asset(asset)
-            except Exception as e:
-                print(f"ERROR: Failed to add asset {asset.value} to graph: {e}")
+                endpoint.engagement_id = self.ctx.current_task.engagement_id
+                await self.ctx.graph_memory.add_endpoint(endpoint)
+                self.endpoint_inventory[endpoint.id] = endpoint
+            except Exception:
+                return {
+                    "status": "unknown",
+                    "validation_state": "UNKNOWN",
+                    "probed_count": 0,
+                    "provider_status": "persistence_unavailable",
+                }
 
-        return {"status": "success", "probed_count": len(assets)}
+        return {"status": "success", "probed_count": len(endpoints)}
 
     async def _execute_osint(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute OSINT lookups."""
-        domain = payload["domain"]
-        return {"status": "success", "domain": domain, "findings": []}
+        """Discover unverified public-source leads with explicit signed opt-in."""
+        domain = payload.get("domain")
+        if payload.get("trusted_search") is not True:
+            # Preserve legacy opt-out behavior without implying a finding.
+            return {"status": "success", "domain": domain, "findings": []}
+        task = self.ctx.current_task
+        return await discover_trusted_search(context=self.ctx, task=task, domain=domain)
 
     async def _execute_tech_fingerprint(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Fingerprint technologies on endpoints."""
         endpoints = payload["endpoints"]
-        return {"status": "success", "processed_count": len(endpoints)}
+        try:
+            fingerprints = await self.recon_adapter.technology_fingerprint(endpoints)
+        except Exception:
+            return {
+                "status": "unknown",
+                "validation_state": "UNKNOWN",
+                "processed_count": 0,
+                "provider_status": "unavailable",
+            }
+        return {
+            "status": "success",
+            "processed_count": len(fingerprints),
+            "fingerprints": fingerprints,
+        }
 
     async def _execute_full_recon(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute comprehensive reconnaissance chain."""
@@ -177,6 +231,16 @@ class ReconAgent(BaseAgent):
 
         # 1. DNS Enum
         dns_results = await self._execute_dns_enum({"domain": domain})
+        if dns_results.get("status", "success") != "success":
+            # Do not seed the graph, reason from fictitious observations or
+            # trigger an active scan when DNS admission was inconclusive.
+            return {
+                "status": "unknown",
+                "validation_state": "UNKNOWN",
+                "target": domain,
+                "subdomains_found": 0,
+                "reason": "signed_dns_observation_unavailable",
+            }
 
         # Guarantee the root domain itself is always persisted as an Asset, even
         # when DNS enumeration resolves nothing. Downstream VULNERABILITY_DISCOVERY
@@ -190,8 +254,10 @@ class ReconAgent(BaseAgent):
                 id=f"asset-{domain}",
                 type="domain",
                 value=domain,
-                source="recon_seed",
-                confidence=1.0,
+                # This is a known operator-supplied scope seed, NOT an
+                # independently observed DNS result.
+                source="recon_scope_seed_unverified",
+                confidence=0.0,
                 engagement_id=self.ctx.current_task.engagement_id,
             )
             await self.ctx.graph_memory.add_asset(root_asset)
@@ -212,14 +278,29 @@ class ReconAgent(BaseAgent):
         print(f"AGENT REASONING: {reasoning}")
 
         if subdomains:
-            await self._execute_port_scan({"targets": subdomains})
+            scan_status = await self._execute_port_scan({"targets": subdomains})
+            if not isinstance(scan_status, dict) or scan_status.get("status") != "success":
+                return {
+                    "status": "unknown",
+                    "validation_state": "UNKNOWN",
+                    "target": domain,
+                    "subdomains_found": len(subdomains),
+                    "reason": "signed_port_observation_unavailable",
+                }
 
-        return {
+        result = {
             "status": "success",
             "target": domain,
             "subdomains_found": len(subdomains),
             "reasoning": reasoning,
         }
+        # Search snippets are only returned as unverified operator leads.
+        # Never add links to the graph, inventory or subsequent port-scan set.
+        if payload.get("trusted_search") is True:
+            result["search_discovery"] = await discover_trusted_search(
+                context=self.ctx, task=self.ctx.current_task, domain=domain
+            )
+        return result
 
     async def _cleanup_resources(self) -> None:
         """Cleanup recon resources."""

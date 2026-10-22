@@ -29,6 +29,7 @@ CSRF token. No agent should ever read raw credentials and inject them by hand.
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -39,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from sqlalchemy import JSON, Column, DateTime, String, Text
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy import or_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ai_osop.core.config import settings
@@ -412,7 +414,62 @@ class SessionStore:
         except UserSessionNotFound:
             return None
 
+    async def get_session_authoritative(
+        self, engagement_id: str, user_label: str
+    ) -> Optional[UserSession]:
+        """PG-only imported identity read for signed browser execution.
+
+        A cached Redis storage_state may remain after another replica deletes
+        or replaces the original import. Authorization must never be inferred
+        from that cache when executing a signed authenticated chain. Missing,
+        expired, foreign or malformed persisted identities fail closed; no
+        fallback to Redis or anonymous browser navigation is permitted.
+        """
+        if (
+            not isinstance(engagement_id, str)
+            or not 1 <= len(engagement_id) <= 80
+            or not isinstance(user_label, str)
+            or not 1 <= len(user_label) <= 64
+            or any(c in engagement_id + user_label for c in ":\\/\x00")
+        ):
+            raise ValueError("Authenticated user session identity is invalid")
+        if self.sm._async_session is None or inspect.iscoroutinefunction(
+            self.sm._async_session
+        ):
+            raise RuntimeError("Authenticated session database unavailable")
+        async with self.sm._async_session() as db:
+            row = (
+                await db.execute(
+                    select(UserSessionORM).where(
+                        UserSessionORM.pk == self._pk(engagement_id, user_label),
+                        UserSessionORM.engagement_id == engagement_id,
+                        UserSessionORM.user_label == user_label,
+                    )
+                )
+            ).scalar_one_or_none()
+        if row is None:
+            return None
+        session = self._orm_to_dto(row, self._encryption)
+        if (
+            session.engagement_id != engagement_id
+            or session.user_label != user_label
+            or session.is_expired(skew_seconds=0)
+            or not isinstance(session.cookies, list)
+            or not isinstance(session.local_storage, dict)
+            or not isinstance(session.bearer_token, str)
+        ):
+            raise RuntimeError("Authenticated session unavailable or expired")
+        return session
+
     async def list_sessions(self, engagement_id: str) -> List[UserSession]:
+        # SQLAlchemy's async_sessionmaker is a synchronous callable that
+        # returns an async context manager. Treat a coroutine factory as
+        # unavailable instead of constructing a coroutine and leaking it
+        # through 'async with' (common in disconnected recovery fixtures).
+        if self.sm._async_session is None or inspect.iscoroutinefunction(
+            self.sm._async_session
+        ):
+            raise RuntimeError("Authenticated session database unavailable")
         async with self.sm._async_session() as db:
             rows = (
                 (
@@ -436,6 +493,47 @@ class SessionStore:
         await self.sm._redis.delete(self._redis_key(engagement_id, user_label))
         return result.rowcount > 0
 
+    async def _persist_rotated_cookies_if_original(self, sess: UserSession) -> bool:
+        """Rotate cookies with a PostgreSQL CAS, never resurrect a deleted identity.
+
+        A browser request may still be in flight when an operator deletes or
+        replaces an imported session. The old as_user() unconditionally called
+        save_session() on exit, whose INSERT/UPSERT recreated that deleted
+        credential across replicas. Only update the *existing* same captured
+        import; never insert, never extend expiry, never rewrite credentials
+        of a more recent replacement. Invalidate Redis only after SQL commits.
+        """
+        if not isinstance(sess, UserSession):
+            raise TypeError("Original imported session required")
+        if sess.is_expired(skew_seconds=0):
+            return False
+        stmt = (
+            update(UserSessionORM)
+            .where(
+                UserSessionORM.pk == self._pk(sess.engagement_id, sess.user_label),
+                UserSessionORM.engagement_id == sess.engagement_id,
+                UserSessionORM.user_label == sess.user_label,
+                UserSessionORM.captured_at == sess.captured_at,
+                or_(
+                    UserSessionORM.expires_at.is_(None),
+                    UserSessionORM.expires_at > datetime.now(timezone.utc),
+                ),
+            )
+            .values(cookies=self._encrypt_field(self._encryption, sess.cookies))
+            .returning(UserSessionORM.pk)
+        )
+        async with self.sm._async_session() as db:
+            updated = (await db.execute(stmt)).scalar_one_or_none()
+            await db.commit()
+        # Stale hot-cache credentials must not outlive the authoritative SQL
+        # import. A failure to clear Redis is fail-closed for signed agents,
+        # which now read PostgreSQL directly; legacy cache remains advisory.
+        try:
+            await self.sm._redis.delete(self._redis_key(sess.engagement_id, sess.user_label))
+        except Exception:
+            logger.warning("imported_session_cache_invalidation_unavailable")
+        return updated is not None
+
     # -- as_user context manager ----------------------------------------------
 
     @asynccontextmanager
@@ -455,22 +553,12 @@ class SessionStore:
         try:
             yield client
         finally:
-            # Persist any cookie updates the client recorded mid-flight.
-            if client.cookies_dirty:
-                await self.save_session(
-                    engagement_id,
-                    user_label,
-                    cookies=sess.cookies,
-                    bearer_token=sess.bearer_token,
-                    local_storage=sess.local_storage,
-                    session_storage=sess.session_storage,
-                    csrf_token=sess.csrf_token,
-                    extra_headers=sess.extra_headers,
-                    user_agent=sess.user_agent,
-                    expires_at=sess.expires_at,
-                    metadata_blob=sess.metadata_blob,
-                )
-            await client.aclose()
+            try:
+                if client.cookies_dirty:
+                    await self._persist_rotated_cookies_if_original(sess)
+            finally:
+                # Always close even if the PostgreSQL CAS is unavailable.
+                await client.aclose()
 
     # -- internals -------------------------------------------------------------
 

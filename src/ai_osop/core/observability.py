@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Dict, Optional
 
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -199,20 +200,51 @@ def record_postgres_latency(operation: str, latency_seconds: float) -> None:
     POSTGRES_LATENCY_SECONDS.labels(operation=operation).observe(max(latency_seconds, 0.0))
 
 
-def record_llm_call(model: str, operation: str, tokens_input: int = 0, tokens_output: int = 0, cost_usd: float = 0.0) -> None:
-    """Record LLM usage and estimated cost."""
-    LLM_CALLS_TOTAL.labels(model=model, operation=operation).inc()
-    if tokens_input:
-        LLM_TOKENS_TOTAL.labels(model=model, type="input").inc(tokens_input)
-    if tokens_output:
-        LLM_TOKENS_TOTAL.labels(model=model, type="output").inc(tokens_output)
-    if cost_usd:
-        LLM_COST_USD.labels(model=model).inc(cost_usd)
+def record_llm_call(
+    model: str,
+    operation: str,
+    tokens_input: int = 0,
+    tokens_output: int = 0,
+    cost_usd: Optional[float] = None,
+) -> None:
+    """Record provider-reported usage and billed cost when present."""
+    # Model identifiers may originate from provider response metadata.
+    # Never turn an arbitrary response body into an unbounded metric label.
+    from ai_osop.core.call_provenance import safe_label
+
+    label = safe_label(model)
+    operation_label = operation if operation in {"completion", "embedding"} else "unknown"
+    LLM_CALLS_TOTAL.labels(model=label, operation=operation_label).inc()
+    if type(tokens_input) is int and tokens_input > 0:
+        LLM_TOKENS_TOTAL.labels(model=label, type="input").inc(tokens_input)
+    if type(tokens_output) is int and tokens_output > 0:
+        LLM_TOKENS_TOTAL.labels(model=label, type="output").inc(tokens_output)
+    if (
+        cost_usd is not None
+        and not isinstance(cost_usd, bool)
+        and isinstance(cost_usd, (int, float))
+        and math.isfinite(cost_usd)
+        and cost_usd > 0
+    ):
+        LLM_COST_USD.labels(model=label).inc(cost_usd)
 
 
 def record_engagement_cost(engagement_id: str, cost_usd: float) -> None:
-    """Record total cost attributed to an engagement."""
-    ENGAGEMENT_COST_USD.labels(engagement_id=engagement_id).inc(cost_usd)
+    """Publish safe aggregate only; private per-tenant billing stays in PG.
+
+    Raw tenant/engagement identifiers in global Prometheus exposition leak
+    resource identities and allow an unbounded label cardinality attack.
+    This metric is an *incremental observed process total*, not an
+    independently reconciled organization invoice or cross-worker gauge.
+    """
+    if (
+        isinstance(cost_usd, bool)
+        or not isinstance(cost_usd, (int, float))
+        or not math.isfinite(cost_usd)
+        or cost_usd < 0
+    ):
+        return
+    ENGAGEMENT_COST_USD.labels(engagement_id="all").inc(cost_usd)
 
 
 def record_browser_runtime(task_type: str, runtime_seconds: float) -> None:
@@ -232,16 +264,6 @@ def render_prometheus() -> bytes:
 
 # ============== Cost Estimation ==============
 
-# Approximate cost per 1K tokens (USD) — update with actual provider pricing
-_COST_PER_1K: Dict[str, Dict[str, float]] = {
-    "gpt-4o": {"input": 0.005, "output": 0.015},
-    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-    "claude-3-5-sonnet": {"input": 0.003, "output": 0.015},
-    "claude-3-haiku": {"input": 0.00025, "output": 0.00125},
-}
-
-
-def estimate_cost(model: str, tokens_input: int, tokens_output: int) -> float:
-    """Estimate LLM cost in USD."""
-    rates = _COST_PER_1K.get(model, {"input": 0.01, "output": 0.03})
-    return (tokens_input / 1000.0) * rates["input"] + (tokens_output / 1000.0) * rates["output"]
+def estimate_cost(model: str, tokens_input: int, tokens_output: int) -> Optional[float]:
+    """Legacy compatibility: actual billed cost cannot be inferred from tokens."""
+    return None

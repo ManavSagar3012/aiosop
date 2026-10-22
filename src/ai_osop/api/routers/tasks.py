@@ -54,7 +54,17 @@ async def get_task(
     operator: Dict[str, Any] = Depends(verify_token),
 ):
     """Get task status and results."""
-    task = state["orchestrator"]._tasks.get(task_id)
+    orchestrator = state["orchestrator"]
+    session_memory = getattr(orchestrator, "session_memory", None)
+    # Replica-local _tasks is a scheduling cache. A task may have completed,
+    # halted, or become indeterminate on another worker; operator status
+    # must use the durable record whenever the real PostgreSQL store exists.
+    from ai_osop.memory.session_memory import SessionMemory
+
+    if isinstance(session_memory, SessionMemory) and session_memory._async_session is not None:
+        task = await session_memory.load_task_authoritative(task_id)
+    else:
+        task = orchestrator._tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 

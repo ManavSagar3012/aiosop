@@ -32,7 +32,9 @@ class CloudMCPAdapter:
         )
         if response.status != "success":
             raise MCPException(f"cloud-mcp analyze_iam failed: {response.error}")
-        return response.result or {}
+        if not isinstance(response.result, dict) or not response.result:
+            raise MCPException("cloud-mcp analyze_iam returned no valid result")
+        return response.result
 
     async def discover_privilege_escalation(
         self,
@@ -50,4 +52,6 @@ class CloudMCPAdapter:
         )
         if response.status != "success":
             raise MCPException(f"cloud-mcp discover_privesc failed: {response.error}")
-        return response.result or {}
+        if not isinstance(response.result, dict) or not response.result:
+            raise MCPException("cloud-mcp discover_privesc returned no valid result")
+        return response.result

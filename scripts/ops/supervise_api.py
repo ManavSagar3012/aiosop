@@ -53,6 +53,10 @@ def main() -> int:
 
     env = dict(os.environ)
     env["PYTHONPATH"] = os.path.join(os.getcwd(), "src") + os.pathsep + env.get("PYTHONPATH", "")
+    # Worker stdout is a pipe -> Python falls back to the locale codec (cp1252),
+    # and LLM output containing non-ASCII crashes every print() with a charmap
+    # UnicodeEncodeError. Pin UTF-8 for all worker processes.
+    env["PYTHONIOENCODING"] = "utf-8"
     cmd = [sys.executable, "-m", "uvicorn", "ai_osop.api.main:app",
            "--host", HOST, "--port", str(PORT)]
 

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 
@@ -15,7 +16,7 @@ func main() {
 		Name:           "shodan_lookup",
 		Description:    "Query Shodan host search for a scoped domain.",
 		TimeoutSeconds: 120,
-		ScopeCheck:      true,
+		ScopeCheck:     true,
 		Parameters: []map[string]any{
 			{"name": "domain", "type": "string", "description": "Domain to search", "required": true},
 		},
@@ -37,5 +38,9 @@ func main() {
 			return body
 		},
 	})
-	_ = server.Run(":8085")
+	address, err := sdk.LocalPortAddress(8085)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(server.Run(address))
 }

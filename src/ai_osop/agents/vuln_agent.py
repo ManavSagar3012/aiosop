@@ -6,13 +6,14 @@ Specialized agent for vulnerability scanning, correlation, and validation.
 import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from ai_osop.adapters.burp_mcp import BurpMCPAdapter
 from ai_osop.agents.base import AgentContext, BaseAgent
 from ai_osop.auth.session_store import SessionStore
 from ai_osop.core.config import AgentType, Severity, VulnClass, settings
 from ai_osop.core.exceptions import AgentException
-from ai_osop.core.models import Asset, Endpoint, Task, Vulnerability
+from ai_osop.core.models import Asset, Endpoint, FindingStatus, Task, Vulnerability
 
 
 class VulnAnalysisAgent(BaseAgent):
@@ -73,7 +74,7 @@ class VulnAnalysisAgent(BaseAgent):
             {"role": "user", "content": context},
         ]
 
-        return await self.ctx.llm_client.complete(messages)
+        return await self._complete_supervised_messages(messages)
 
     async def _execute(self, task: Task) -> Dict[str, Any]:
         """Execute vulnerability analysis task."""
@@ -119,16 +120,32 @@ class VulnAnalysisAgent(BaseAgent):
         )
         if not engagement_id:
             raise AgentException("burp_scan: cannot determine engagement_id")
-        domain = url.replace("https://", "").replace("http://", "").split("/")[0]
+        if not isinstance(url, str) or len(url) > 2048:
+            raise AgentException("Burp scan requires a bounded, authorized target URL")
+        parsed_target = urlsplit(url if "://" in url else "https://" + url)
+        if (
+            parsed_target.scheme not in {"http", "https"}
+            or not parsed_target.hostname
+            or parsed_target.username is not None
+            or parsed_target.password is not None
+            or parsed_target.fragment
+        ):
+            raise AgentException("Burp scan target origin is invalid")
+        try:
+            approved_port = parsed_target.port or (443 if parsed_target.scheme == "https" else 80)
+        except ValueError as exc:
+            raise AgentException("Burp scan target port is invalid") from exc
+        domain = parsed_target.hostname.lower()
         config = payload.get("config", {})
 
-        # Ensure base Asset exists for graph linking
+        # This is a requested scope seed, NOT an independently observed DNS
+        # asset. Do not publish it before an actual tool admission receipt.
         asset = Asset(
             id=f"asset-{domain}",
             type="domain",
             value=domain,
-            source="manual_input",
-            confidence=1.0,
+            source="scan_scope_seed_unverified",
+            confidence=0.0,
             first_seen=datetime.utcnow(),
             last_seen=datetime.utcnow(),
             engagement_id=engagement_id,
@@ -136,20 +153,18 @@ class VulnAnalysisAgent(BaseAgent):
         )
         # Note: metadata might cause issues if Neo4j expects primitives,
         # but let's ensure we match the pydantic requirements first.
-        await self.ctx.graph_memory.add_asset(asset)
 
         # Ensure default Endpoint node exists for f"endpoint-{domain}"
         from ai_osop.core.models import Endpoint
 
         default_ep = Endpoint(
             id=f"endpoint-{domain}",
-            url=f"https://{domain}/",
+            url=f"{parsed_target.scheme}://{parsed_target.netloc}/",
             asset_id=asset.id,
-            source="scan_base",
-            confidence=1.0,
+            source="scan_scope_seed_unverified",
+            confidence=0.0,
             engagement_id=engagement_id,
         )
-        await self.ctx.graph_memory.add_endpoint(default_ep)
 
         # Ensure adapter is initialized for this engagement
         session = await self.ctx.session_memory.get_session_state(engagement_id)
@@ -157,54 +172,94 @@ class VulnAnalysisAgent(BaseAgent):
             await self.burp_adapter.initialize(session.scope, session.session_id)
 
         # Launch Burp scan
-        scan_result = await self.burp_adapter.scan_target(url, config)
-        burp_error = None
-
-        if scan_result.status != "success":
-            burp_error = scan_result.error
-            print(f"WARN: Burp scan failed to start: {burp_error}")
+        try:
+            scan_result = await self.burp_adapter.scan_target(url, config)
+        except Exception:
+            # A dropped MCP acknowledgement cannot establish that a remotely
+            # accepted scan stopped; never retry or load stale issues as new.
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "target": url,
+                "findings_count": 0,
+                "endpoints_count": 0,
+                "reason": "burp_scan_dispatch_unconfirmed",
+            }
+        if getattr(scan_result, "status", None) != "success":
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "target": url,
+                "findings_count": 0,
+                "endpoints_count": 0,
+                "reason": "burp_scan_dispatch_unconfirmed",
+            }
 
         # Retrieve and normalize findings
-        print(f"DEBUG: Requesting issues, sitemap, and proxy history for {url}")
-        vulns = await self.burp_adapter.get_scan_issues(url)
+        try:
+            vulns = await self.burp_adapter.get_scan_issues(url)
+            endpoints = await self.burp_adapter.get_sitemap(url_prefix=domain)
+            history = await self.burp_adapter.get_proxy_history()
+        except Exception:
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "target": url,
+                "findings_count": 0,
+                "endpoints_count": 0,
+                "reason": "burp_observations_unconfirmed",
+            }
+        if (
+            not isinstance(vulns, list)
+            or not isinstance(endpoints, list)
+            or not isinstance(history, list)
+            or len(vulns) > 500
+            or len(endpoints) > 1000
+            or len(history) > 1000
+            or any(not isinstance(v, Vulnerability) for v in vulns)
+            or any(not isinstance(ep, Endpoint) for ep in endpoints)
+        ):
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "target": url,
+                "findings_count": 0,
+                "endpoints_count": 0,
+                "reason": "burp_observations_malformed",
+            }
 
-        # --- MOCK DISCOVERY TRIGGER ---
-        if settings.mock_llm and len(vulns) == 0:
-            print("MOCK_MODE: Simulating advanced attack chain for exploitation phase trigger.")
-            from ai_osop.core.config import Severity, VulnClass
+        def same_target(value: object) -> bool:
+            if not isinstance(value, str) or len(value) > 2048:
+                return False
+            try:
+                parsed = urlsplit(value)
+                return (
+                    parsed.scheme == parsed_target.scheme
+                    and parsed.hostname == domain
+                    and (parsed.port or (443 if parsed.scheme == "https" else 80)) == approved_port
+                    and parsed.username is None
+                    and parsed.password is None
+                    and not parsed.fragment
+                )
+            except ValueError:
+                return False
 
-            # 1. WAF Bypass finding
-            vuln1 = Vulnerability(
-                id=f"vuln-waf-{int(datetime.utcnow().timestamp())}",
-                vuln_type=VulnClass.AUTHENTICATION_WEAKNESS,
-                severity=Severity.MEDIUM,
-                title="WAF Configuration Weakness (Simulated)",
-                description="Detected pattern-based WAF bypass using HTTP Parameter Pollution.",
-                evidence=[{"type": "mock_probe", "payload": "param=1&param=2"}],
-                tool_source="vuln-agent-mock",
-                endpoint_id=f"endpoint-{domain}",
-                confidence=0.8,
-                engagement_id=engagement_id,
-            )
-
-            # 2. Blind SQL Injection
-            vuln2 = Vulnerability(
-                id=f"vuln-blind-sqli-{int(datetime.utcnow().timestamp()) + 1}",
-                vuln_type=VulnClass.SQLI,
-                severity=Severity.HIGH,
-                title="Blind SQL Injection (Simulated)",
-                description="Blind SQL injection detected behind bypassed WAF.",
-                evidence=[{"type": "mock_probe", "payload": "AND 1=SLEEP(5)"}],
-                tool_source="vuln-agent-mock",
-                endpoint_id=f"endpoint-{domain}",
-                confidence=0.9,
-                engagement_id=engagement_id,
-            )
-            vulns = [vuln1, vuln2]
-        # -----------------------------
-
-        endpoints = await self.burp_adapter.get_sitemap(url_prefix=domain)
-        history = await self.burp_adapter.get_proxy_history()
+        # Proxy history and sitemap are global Burp workspace observations;
+        # they may include another host or another operator's private traffic.
+        # Ingest only exact-origin, bounded endpoint metadata, never raw bodies.
+        endpoints = [ep for ep in endpoints if same_target(ep.url)]
+        try:
+            await self.ctx.graph_memory.add_asset(asset)
+            await self.ctx.graph_memory.add_endpoint(default_ep)
+        except Exception:
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "target": url,
+                "findings_count": 0,
+                "endpoints_count": 0,
+                "reason": "burp_graph_projection_unconfirmed",
+            }
 
         print(
             f"DEBUG: Burp returned {len(vulns)} issues, {len(endpoints)} sitemap entries, and {len(history)} history entries"
@@ -213,16 +268,18 @@ class VulnAnalysisAgent(BaseAgent):
         # Combine endpoints from sitemap and history
         all_endpoints = {ep.url: ep for ep in endpoints}
         for entry in history:
-            url = entry.get("url", "")
-            if domain in url and url not in all_endpoints:
-                all_endpoints[url] = Endpoint(
-                    url=url,
+            if not isinstance(entry, dict):
+                continue
+            history_url = entry.get("url", "")
+            if same_target(history_url) and history_url not in all_endpoints:
+                all_endpoints[history_url] = Endpoint(
+                    url=history_url,
                     method=entry.get("method", "GET"),
                     status_code=entry.get("status_code", 0),
                     host=entry.get("host", domain),
                     asset_id=asset.id,
-                    source="burp_proxy",
-                    confidence=1.0,
+                    source="burp_proxy_candidate_unverified",
+                    confidence=0.0,
                     engagement_id=engagement_id,
                 )
 
@@ -234,22 +291,45 @@ class VulnAnalysisAgent(BaseAgent):
         # written to the graph. Now we persist immediately so partial results
         # survive any downstream timeout. Reasoning is best-effort with its
         # own short ceiling.
+        persisted: List[Vulnerability] = []
+        graph_unconfirmed = False
         for vuln in vulns:
             try:
+                # A simulated finding, provider assertion or scanner issue
+                # is never independently verified target-owned private effect.
+                if vuln.tool_source == "vuln-agent-mock":
+                    continue
                 vuln.engagement_id = engagement_id
                 vuln.endpoint_id = f"endpoint-{domain}"
+                vuln.validated = False
+                vuln.finding_status = FindingStatus.CANDIDATE
+                vuln.validation_authority = None
+                vuln.validation_state = "UNKNOWN"
                 await self.ctx.graph_memory.add_vulnerability(vuln)
                 self.findings[vuln.id] = vuln
-            except Exception as e:
-                print(f"ERROR: Failed to add vulnerability {vuln.id} to graph: {e}")
+                persisted.append(vuln)
+            except Exception:
+                graph_unconfirmed = True
 
         for ep in all_endpoints.values():
             try:
                 ep.engagement_id = engagement_id
                 ep.asset_id = asset.id
                 await self.ctx.graph_memory.add_endpoint(ep)
-            except Exception as e:
-                print(f"ERROR: Failed to add endpoint {ep.url} to graph: {e}")
+            except Exception:
+                graph_unconfirmed = True
+
+        if graph_unconfirmed:
+            # Partial writes may already exist; never report a complete graph
+            # projection or retry the external scan on an uncertain outcome.
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "target": url,
+                "findings_count": len(persisted),
+                "endpoints_count": 0,
+                "reason": "burp_graph_projection_partial",
+            }
 
         # Perform reasoning using security skills (best-effort, never blocks
         # finding persistence; bounded by a short timeout so vuln_agent fits
@@ -263,30 +343,36 @@ class VulnAnalysisAgent(BaseAgent):
 
         reasoning = "(reasoning skipped: not attempted)"
         try:
+            reasoning_timeout = min(
+                60.0, max(1.0, float(payload.get("reasoning_timeout_seconds", 45)))
+            )
+        except (ValueError, TypeError, OverflowError):
+            reasoning_timeout = 45.0
+        try:
             skills = await self._get_relevant_skills(self.ctx.current_task)
-            reasoning_timeout = float(payload.get("reasoning_timeout_seconds", 45))
             reasoning = await asyncio.wait_for(
                 self.think(analysis_context, skills),
                 timeout=reasoning_timeout,
             )
-            reasoning = f"[VERIFIED_V0.1.2] {reasoning}"
+            reasoning = f"[UNVERIFIED_PROVIDER_ANALYSIS] {reasoning}"
         except asyncio.TimeoutError:
             reasoning = f"(reasoning skipped: exceeded {reasoning_timeout}s budget)"
             print(f"WARN: vuln_agent reasoning timed out for {domain}; findings persisted anyway")
-        except Exception as e:
-            reasoning = f"(reasoning skipped: {type(e).__name__}: {str(e)[:120]})"
-            print(f"WARN: vuln_agent reasoning errored for {domain}: {e}")
+        except Exception:
+            reasoning = "(reasoning unavailable: provider or safety gate denied)"
         print(f"AGENT REASONING: {reasoning}")
 
         return {
             "status": "success",
+            "validation_state": "candidate_unverified",
             "tool": "burp_scanner",
             "target": url,
-            "findings_count": len(vulns),
+            "findings_count": len(persisted),
             "endpoints_count": len(all_endpoints),
             "reasoning": reasoning,
-            "burp_error": burp_error,
-            "findings": [v.model_dump() for v in vulns],
+            "findings": [
+                {"id": v.id, "verification_status": "candidate_unverified"} for v in persisted
+            ],
         }
 
     async def _execute_intruder_fuzz(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -298,8 +384,6 @@ class VulnAnalysisAgent(BaseAgent):
             "payload_set", ["' OR 1=1 --", "admin'--", "<script>alert(1)</script>"]
         )
         tab_name = payload.get("tab_name", f"AI-FUZZ-{int(datetime.utcnow().timestamp())}")
-
-        print(f"DEBUG: Deploying Intruder attack against {url}")
 
         # Prepare the base request definition expected by our Java MCP adapter
         mock_request = {
@@ -321,19 +405,26 @@ class VulnAnalysisAgent(BaseAgent):
                 config={"attack_type": "sniper", "tab_name": tab_name},
             )
 
-            # Simulated reasoning over Intruder decision
-            reasoning = f"[INTRUDER_DEPLOYED] Dispatched Sniper attack to {url} with {len(payload_set)} payloads targeting dynamic parameters."
-
+            if getattr(response, "status", None) != "success":
+                return {
+                    "status": "execution_unknown",
+                    "validation_state": "UNKNOWN",
+                    "reason": "intruder_dispatch_unconfirmed",
+                }
             return {
                 "status": "success",
+                "validation_state": "candidate_unverified",
                 "target": url,
                 "tab_name": tab_name,
-                "reasoning": reasoning,
-                "mcp_response": response.model_dump() if hasattr(response, "model_dump") else str(response),
+                "remote_effect_verified": False,
             }
 
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
+        except Exception:
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "reason": "intruder_dispatch_unconfirmed",
+            }
 
     async def _execute_nuclei_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Execute Nuclei scan on targets."""
@@ -353,46 +444,122 @@ class VulnAnalysisAgent(BaseAgent):
         if isinstance(targets, str):
             targets = [targets]
         templates = payload.get("templates", [])
+        if (
+            not isinstance(targets, list)
+            or not 1 <= len(targets) <= 25
+            or not all(isinstance(t, str) and 1 <= len(t) <= 2048 for t in targets)
+            or not isinstance(templates, list)
+            or len(templates) > 100
+            or not all(isinstance(t, str) and 1 <= len(t) <= 256 for t in templates)
+        ):
+            raise AgentException("Nuclei targets/templates must be explicitly bounded")
         engagement_id = payload.get("engagement_id") or (
             self.ctx.current_task.engagement_id if self.ctx.current_task else None
         )
+        if not isinstance(engagement_id, str) or not engagement_id:
+            raise AgentException("Nuclei requires a current engagement identity")
 
-        # Execute via MCP
-        response = await self.ctx.mcp_registry.execute_tool(
-            "nuclei-mcp",
-            "scan",
-            {"targets": targets, "templates": templates, "rate_limit": 150},
-            timeout_override=settings.nuclei_mcp_timeout,
-        )
+        def host(value: str) -> str:
+            try:
+                candidate = urlsplit(value if "://" in value else "https://" + value)
+                if (
+                    candidate.scheme not in {"http", "https"}
+                    or not candidate.hostname
+                    or candidate.username is not None
+                    or candidate.password is not None
+                    or candidate.fragment
+                ):
+                    return ""
+                return candidate.hostname.lower()
+            except ValueError:
+                return ""
 
-        if response.status != "success":
-            return {"status": "error", "error": response.error}
+        target_hosts = {host(value) for value in targets}
+        if not target_hosts or "" in target_hosts:
+            raise AgentException("Nuclei target origin is not authorized for an observation")
 
-        # Normalize Nuclei findings
-        raw_findings = response.result.get("findings", [])
-        vulns = []
+        try:
+            response = await self.ctx.mcp_registry.execute_tool(
+                "nuclei-mcp",
+                "scan",
+                {"targets": targets, "templates": templates, "rate_limit": 150},
+                timeout_override=settings.nuclei_mcp_timeout,
+            )
+        except Exception:
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "reason": "nuclei_remote_execution_unconfirmed",
+            }
 
+        if getattr(response, "status", None) != "success" or not isinstance(
+            getattr(response, "result", None), dict
+        ):
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "reason": "nuclei_observation_unconfirmed",
+            }
+
+        raw_findings = response.result.get("findings")
+        if not isinstance(raw_findings, list) or len(raw_findings) > 500:
+            return {
+                "status": "execution_unknown",
+                "validation_state": "UNKNOWN",
+                "reason": "nuclei_observation_malformed",
+            }
+        normalized: List[Vulnerability] = []
         for finding in raw_findings:
-            # PATCH (REL-015): _normalize_nuclei_finding does `finding.get(...)`,
-            # which raised "'str' object has no attribute 'get'" when the MCP
-            # returned a list of strings. Skip non-dict findings instead of
-            # crashing the whole task.
             if not isinstance(finding, dict):
-                print(f"WARN: skipping non-dict nuclei finding: {finding!r}")
+                return {
+                    "status": "execution_unknown",
+                    "validation_state": "UNKNOWN",
+                    "reason": "nuclei_observation_malformed",
+                }
+            # A shared provider may send findings from its entire scan
+            # workspace. Its `matched_at` must belong to this exact signed
+            # Task's requested target host; query-string substrings don't count.
+            matched = finding.get("matched_at")
+            if not isinstance(matched, str) or host(matched) not in target_hosts:
                 continue
-            vuln = self._normalize_nuclei_finding(finding)
-            if engagement_id:
-                vuln.engagement_id = engagement_id
-            await self.ctx.graph_memory.add_vulnerability(vuln)
-            self.findings[vuln.id] = vuln
-            vulns.append(vuln)
+            try:
+                vuln = self._normalize_nuclei_finding(finding)
+            except Exception:
+                return {
+                    "status": "execution_unknown",
+                    "validation_state": "UNKNOWN",
+                    "reason": "nuclei_observation_malformed",
+                }
+            vuln.engagement_id = engagement_id
+            vuln.validated = False
+            vuln.finding_status = FindingStatus.CANDIDATE
+            vuln.validation_authority = None
+            vuln.validation_state = "UNKNOWN"
+            normalized.append(vuln)
+
+        persisted: List[Vulnerability] = []
+        for vuln in normalized:
+            try:
+                await self.ctx.graph_memory.add_vulnerability(vuln)
+                self.findings[vuln.id] = vuln
+                persisted.append(vuln)
+            except Exception:
+                return {
+                    "status": "execution_unknown",
+                    "validation_state": "UNKNOWN",
+                    "reason": "nuclei_graph_projection_partial",
+                    "persisted_candidates": len(persisted),
+                }
 
         return {
             "status": "success",
+            "validation_state": "candidate_unverified",
             "tool": "nuclei",
-            "targets": targets,
-            "findings_count": len(vulns),
-            "findings": [v.model_dump() for v in vulns],
+            "target_count": len(targets),
+            "findings_count": len(persisted),
+            "findings": [
+                {"id": v.id, "verification_status": "candidate_unverified"} for v in persisted
+            ],
         }
 
     async def _execute_correlation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -402,21 +569,31 @@ class VulnAnalysisAgent(BaseAgent):
         # Get correlations from graph memory
         correlations = await self.ctx.graph_memory.correlate_vulnerabilities(engagement_id)
 
-        # Cross-tool confirmation
-        confirmed_findings = []
+        # Similar provider reports are corroborating *leads*, not independent
+        # target-owner effect proof. Never turn graph correlations into VERIFIED.
+        correlated_candidates = []
         for vuln in self.findings.values():
-            # Check if confirmed by multiple tools
+            if vuln.engagement_id != engagement_id:
+                continue
             similar = await self._find_similar_findings(vuln)
             if len(similar) > 1:
-                vuln.confidence = 0.95
-                vuln.correlated_ids = [s.id for s in similar if s.id != vuln.id]
-                confirmed_findings.append(vuln)
+                vuln.validated = False
+                vuln.finding_status = FindingStatus.CANDIDATE
+                vuln.validation_state = "UNKNOWN"
+                vuln.validation_authority = None
+                vuln.correlated_ids = [
+                    s.id for s in similar if s.id != vuln.id and s.engagement_id == engagement_id
+                ]
+                correlated_candidates.append(vuln)
 
         return {
             "status": "success",
-            "correlations": correlations,
-            "confirmed_findings": len(confirmed_findings),
-            "confirmed_details": [v.model_dump() for v in confirmed_findings],
+            "validation_state": "candidate_unverified",
+            "correlations": correlations if isinstance(correlations, int) else None,
+            "confirmed_findings": 0,
+            "confirmed_details": [],
+            "correlated_candidates": len(correlated_candidates),
+            "candidate_ids": [v.id for v in correlated_candidates],
         }
 
     async def _execute_triage(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -432,15 +609,22 @@ class VulnAnalysisAgent(BaseAgent):
 
         if is_fp:
             vuln.confidence = 0.1
-            vuln.metadata["triage_result"] = "likely_false_positive"
+            outcome = "likely_false_positive"
         else:
-            vuln.metadata["triage_result"] = "confirmed"
+            # An absence of a heuristic false-positive signal cannot
+            # independently prove target-owned unauthorized access.
+            outcome = "not_flagged_by_heuristic"
+        vuln.validated = False
+        vuln.finding_status = FindingStatus.CANDIDATE
+        vuln.validation_authority = None
+        vuln.validation_state = "UNKNOWN"
 
         return {
             "status": "success",
             "finding_id": finding_id,
-            "triage_result": vuln.metadata["triage_result"],
+            "triage_result": outcome,
             "confidence": vuln.confidence,
+            "independent_effect_verified": False,
         }
 
     def _normalize_nuclei_finding(self, finding: Dict[str, Any]) -> Vulnerability:
