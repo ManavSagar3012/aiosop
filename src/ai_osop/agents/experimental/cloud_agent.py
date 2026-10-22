@@ -40,12 +40,27 @@ class CloudSpecialistAgent(BaseAgent):
         task_type = task.type
         payload = task.payload
 
-        if task_type == "analyze_iam":
+        if task_type == "scan_local_iac":
+            return await self._scan_local_iac(payload)
+        elif task_type == "analyze_iam":
             return await self._analyze_iam_policy(payload)
         elif task_type == "probe_metadata":
             return await self._probe_cloud_metadata(payload)
         else:
             return {"status": "failed", "error": f"Unknown task type: {task_type}"}
+
+    async def _scan_local_iac(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Use the approved local scanner without claiming a live IAM finding."""
+        if payload:
+            return {"status": "failed", "error": "Local IaC scan accepts no target or path"}
+        from ai_osop.adapters.cloud_mcp import CloudMCPAdapter
+
+        adapter = CloudMCPAdapter(self.ctx.mcp_registry)
+        await adapter.initialize(
+            self.ctx.scope.model_dump() if self.ctx.scope else {}, self.ctx.session_id
+        )
+        result = await adapter.scan_local_iac()
+        return {"status": "success", **result}
 
     async def _analyze_iam_policy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze IAM policies for over-permissive actions."""

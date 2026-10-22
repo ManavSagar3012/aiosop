@@ -49,6 +49,7 @@ ui/.vite/
 tmp/
 tmp_*
 validation-artifacts/
+.runtime/
 
 # OS & Editor
 .DS_Store

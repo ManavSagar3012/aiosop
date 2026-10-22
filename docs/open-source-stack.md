@@ -43,7 +43,7 @@ Compose also publishes this public-data endpoint on `127.0.0.1:8086` so the host
 | Security Bridge | Go declarations exist; handler execution disabled | Tool-specific signed grant, scope, approval, timeout, and evidence fencing |
 | Shodan | Go handler disabled; Shodan requires a provider key | Replace specific use cases with free public sources; no equivalent global Shodan database is assumed |
 | Burp | Local Burp service was previously observed on 8081 | Verify source-side trust and live tool receipts before treating it as an execution provider |
-| Cloud | Service explicitly reports unavailable | Prowler adapter plus authorized cloud account access and signed source authority |
+| Cloud | Optional local Checkov Terraform scan; adapter and `scan_local_iac` agent task wired | Signed engagement execution and stored report evidence; live cloud account scanning remains unsupported |
 | Turbo Intruder | Service explicitly reports unavailable | An independently authorized local execution backend and signed source authority |
 
 The Go SDK and central grant issuer currently admit only the inert `authority_status` operation. The registered Go scanner handlers are therefore not executable through MCP. A healthy port or advertised declaration is insufficient evidence of execution.
@@ -58,3 +58,38 @@ Run `poetry run python scripts/ops/mcp_validator.py --public-intel-smoke` for a 
 2. Test each provider against an authorized local lab and verify request, tool result, stored evidence, and UI reporting. Keep live target scanning within the signed engagement scope.
 3. Verify a signed engagement calls both local model operations and settles usage in PostgreSQL. The direct local model smoke check used a disposable ledger and does not satisfy this gate.
 4. Keep `/ready` degraded while critical MCP services are not initialized and runtime verified.
+
+## Running the local services (2026-10-22)
+
+On this workspace, run `poetry run python scripts/ops/start_local_stack.py`.
+It starts the existing separate lab PostgreSQL (55435), Redis (6380), and
+Threat Intel containers; creates a separate loopback Neo4j lab container
+(17687/17474); builds and launches current Go MCP sources on 8082–8085 and
+8087; and launches Browser, Source Map, Cloud, Turbo Intruder, the lab target,
+API and UI. The API is explicitly a development instance with local Ollama.
+It never enables disabled scanner handlers or creates a fake Burp service.
+An existing listener is retained and reported with ownership unverified.
+
+The launcher pins Cloud to `tests/fixtures/local_iac` and the isolated installed
+Checkov interpreter in `.runtime/checkov-venv`. Its generated bearer and graph
+password, child PID files and logs are in `.runtime/local-stack`, outside Git.
+It requires that runtime and the named existing Docker containers. It does
+not install or configure an independent signing authority.
+
+Run `poetry run python scripts/ops/verify_local_stack.py` for current API,
+database readiness, UI, lab and authenticated direct static-IaC observations.
+Run `poetry run python scripts/ops/mcp_validator.py --public-intel-smoke` for
+all eleven transport/initialize observations. These are diagnostics, not
+signed engagement execution or a production readiness certificate.
+
+The live 2026-10-22 run returned API health 200, UI 200, lab 200 and all three
+databases healthy. Ten MCP endpoints were reachable. The API initialized
+three providers but reported zero runtime-verified providers and degraded
+readiness. An authenticated direct Cloud request ran Checkov and returned 11
+static findings. Burp has no actual local backend listening on 8081; Go scan
+handlers, signed Browser/Source Map execution and Turbo Intruder remain
+unverified/unavailable. Restarting their processes does not supply those paths.
+
+The final Cloud adapter/agent/source/HTTP qualification on 2026-10-22 passed
+10 tests. An unauthenticated live request to `/engagements` returned 403.
+No signed engagement-to-report workflow was executed or certified by this run.

@@ -1,6 +1,7 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from ai_osop.agents.base import AgentContext
 from ai_osop.agents.experimental.cloud_agent import CloudSpecialistAgent
@@ -45,20 +46,24 @@ async def test_cloud_agent_analyze_iam_success(agent) -> None:
         id="task-1",
         type="analyze_iam",
         agent_type=AgentType.CLOUD_SPECIALIST,
-        payload={"account_id": "123456789012", "principal_arn": "arn:aws:iam::123456789012:user/admin"},
+        payload={
+            "account_id": "123456789012",
+            "principal_arn": "arn:aws:iam::123456789012:user/admin",
+        },
         engagement_id="test-session",
     )
 
     mock_adapter_instance = AsyncMock()
     mock_adapter_instance.analyze_iam_trust_policies.return_value = {
         "findings": [
-            {"role": "arn:aws:iam::123456789012:role/OverprivilegedRole", "issue": "Cross-account assume role allowed"}
+            {
+                "role": "arn:aws:iam::123456789012:role/OverprivilegedRole",
+                "issue": "Cross-account assume role allowed",
+            }
         ]
     }
     mock_adapter_instance.discover_privilege_escalation.return_value = {
-        "paths": [
-            {"target": "admin-policy", "path": "iam:PutUserPolicy"}
-        ]
+        "paths": [{"target": "admin-policy", "path": "iam:PutUserPolicy"}]
     }
 
     with patch("ai_osop.adapters.cloud_mcp.CloudMCPAdapter") as mock_adapter_cls:
@@ -71,8 +76,41 @@ async def test_cloud_agent_analyze_iam_success(agent) -> None:
         assert "complete" in result["msg"]
         mock_adapter_instance.initialize.assert_awaited_once()
         mock_adapter_instance.analyze_iam_trust_policies.assert_awaited_once_with("123456789012")
-        mock_adapter_instance.discover_privilege_escalation.assert_awaited_once_with("arn:aws:iam::123456789012:user/admin")
+        mock_adapter_instance.discover_privilege_escalation.assert_awaited_once_with(
+            "arn:aws:iam::123456789012:user/admin"
+        )
         assert agent.ctx.coordination_bus.publish.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cloud_agent_local_iac_does_not_promote_to_live_iam(agent) -> None:
+    task = Task(
+        id="task-local-iac",
+        type="scan_local_iac",
+        agent_type=AgentType.CLOUD_SPECIALIST,
+        payload={},
+        engagement_id="test-session",
+    )
+    adapter = AsyncMock()
+    adapter.scan_local_iac.return_value = {
+        "findings_count": 1,
+        "findings": [{"check_id": "CKV_AWS_1"}],
+        "live_cloud_account_verified": False,
+        "target_effect_verified": False,
+    }
+    with patch("ai_osop.adapters.cloud_mcp.CloudMCPAdapter", return_value=adapter):
+        result = await agent._execute(task)
+    assert result["status"] == "success"
+    assert result["live_cloud_account_verified"] is False
+    adapter.scan_local_iac.assert_awaited_once_with()
+    agent.ctx.coordination_bus.publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cloud_agent_local_iac_rejects_caller_paths(agent) -> None:
+    result = await agent._scan_local_iac({"path": "arbitrary"})
+    assert result["status"] == "failed"
+    agent.ctx.mcp_registry.execute_tool.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,25 @@ class CloudMCPAdapter:
             self.SERVER_ID, scope=scope, credentials={}, session_id=session_id
         )
 
+    async def scan_local_iac(self, timeout_seconds: int = 70) -> Dict[str, Any]:
+        """Scan only the source's pinned tree, preserving static-only provenance."""
+        response = await self.registry.execute_tool(
+            self.SERVER_ID, "scan_local_iac", {}, timeout_override=timeout_seconds
+        )
+        result = response.result
+        if (
+            response.status != "success"
+            or not isinstance(result, dict)
+            or result.get("live_cloud_account_verified") is not False
+            or result.get("target_effect_verified") is not False
+            or result.get("source") != "CHECKOV_LOCAL_IAC_UNVERIFIED"
+            or not isinstance(result.get("findings"), list)
+            or type(result.get("findings_count")) is not int
+            or result["findings_count"] != len(result["findings"])
+        ):
+            raise MCPException("cloud-mcp local IaC result unavailable or provenance invalid")
+        return result
+
     async def analyze_iam_trust_policies(
         self,
         account_id: Optional[str] = None,
