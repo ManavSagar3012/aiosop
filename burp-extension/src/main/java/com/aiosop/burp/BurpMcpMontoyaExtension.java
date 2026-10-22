@@ -27,6 +27,14 @@ import java.util.stream.Collectors;
 
 public final class BurpMcpMontoyaExtension implements BurpExtension {
     private static final String SERVER_ID = "burp-mcp";
+    // This extension has NO independently enrolled host-owned ROE/reviewer,
+    // bounded one-use Action, tenant/owner/Flow/Task or trusted target-effect
+    // ledger. A loopback TCP client or a forged MCP JSON body is not authority.
+    // Never expose the historical direct scan/Intruder/HTTP code via HTTP.
+    private static final String UNAUTHORIZED_STATUS =
+        "{\"server_id\":\"burp-mcp\",\"status\":\"unavailable\"," +
+        "\"execution_enabled\":false,\"source_side_signed_authorization_verified\":false," +
+        "\"reason\":\"independent_host_burp_authority_not_enrolled\"}";
     private SimpleHttpServer server;
     private MontoyaApi api;
 
@@ -54,9 +62,9 @@ public final class BurpMcpMontoyaExtension implements BurpExtension {
     private void startServer() throws IOException {
         server = new SimpleHttpServer(new InetSocketAddress(host(), port()));
         server.addHandler("/health", request -> new HttpResponse(
-            200,
+            503,
             "application/json; charset=utf-8",
-            "{\"server_id\":\"" + SERVER_ID + "\",\"status\":\"ready\"}"
+            UNAUTHORIZED_STATUS
         ));
         server.addHandler("/mcp/initialize", request -> new HttpResponse(
             200,
@@ -64,9 +72,9 @@ public final class BurpMcpMontoyaExtension implements BurpExtension {
             initializePayload()
         ));
         server.addHandler("/mcp/execute", request -> new HttpResponse(
-            200,
+            503,
             "application/json; charset=utf-8",
-            handleExecute(request.body)
+            UNAUTHORIZED_STATUS
         ));
         server.start();
     }
@@ -93,19 +101,11 @@ public final class BurpMcpMontoyaExtension implements BurpExtension {
         return "{" +
             "\"server_id\":\"" + SERVER_ID + "\"," +
             "\"version\":\"0.1.1\"," +
-            "\"capabilities\":[\"proxy\",\"scanner\",\"repeater\",\"intruder\",\"extensions\"]," +
-            "\"tools\":" +
-            "[" +
-                tool("scan_target") + "," +
-                tool("get_proxy_history") + "," +
-                tool("get_scan_issues") + "," +
-                tool("send_to_repeater") + "," +
-                tool("intruder_attack") + "," +
-                tool("send_http_request") + "," +
-                tool("extension_call") + "," +
-                tool("get_sitemap") +
-            "]," +
-            "\"status\":\"ready\"" +
+            "\"capabilities\":[\"execution_unavailable_no_signed_original_host_authority\"]," +
+            "\"tools\":[]," +
+            "\"status\":\"unavailable\"," +
+            "\"execution_enabled\":false," +
+            "\"source_side_signed_authorization_verified\":false" +
             "}";
     }
 
@@ -252,7 +252,11 @@ public final class BurpMcpMontoyaExtension implements BurpExtension {
     }
 
     private String host() {
-        return envOrDefault("OSOP_BURP_MCP_HOST", "127.0.0.1");
+        String configured = envOrDefault("OSOP_BURP_MCP_HOST", "127.0.0.1");
+        if (!"127.0.0.1".equals(configured)) {
+            throw new IllegalArgumentException("Burp MCP requires numeric IPv4 loopback host");
+        }
+        return configured;
     }
 
     private int port() {
@@ -274,6 +278,9 @@ public final class BurpMcpMontoyaExtension implements BurpExtension {
     }
 
     private static final class SimpleHttpServer {
+        private static final int MAX_REQUEST_LINE = 2048;
+        private static final int MAX_HEADER_LINE = 4096;
+        private static final int MAX_HEADER_COUNT = 32;
         private final InetSocketAddress address;
         private final Map<String, Handler> handlers = new HashMap<>();
         private ServerSocket serverSocket;
@@ -292,7 +299,9 @@ public final class BurpMcpMontoyaExtension implements BurpExtension {
             serverSocket = new ServerSocket();
             serverSocket.setReuseAddress(true);
             serverSocket.bind(address);
-            executor = Executors.newCachedThreadPool();
+            // The listener is diagnostic only until an independent signer
+            // exists. Do not allow arbitrary local clients to spawn threads.
+            executor = Executors.newFixedThreadPool(4);
             running = true;
             Thread acceptThread = new Thread(() -> {
                 while (running && !serverSocket.isClosed()) {
@@ -316,46 +325,63 @@ public final class BurpMcpMontoyaExtension implements BurpExtension {
 
         private void handleConnection(Socket socket) {
             try (socket) {
-                socket.setSoTimeout(15000);
+                socket.setSoTimeout(3000);
                 BufferedReader reader = new BufferedReader(new InputStreamReader(
                     socket.getInputStream(),
                     StandardCharsets.UTF_8
                 ));
-                String requestLine = reader.readLine();
+                String requestLine = readLineLimited(reader, MAX_REQUEST_LINE);
                 if (requestLine == null || requestLine.isEmpty()) return;
                 
                 String[] parts = requestLine.split(" ");
-                String path = parts.length > 1 ? parts[1] : "/";
+                if (parts.length < 2) {
+                    writeResponse(socket, new HttpResponse(400, "text/plain", "Invalid request"));
+                    return;
+                }
+                String method = parts[0];
+                String path = parts[1];
                 int queryIndex = path.indexOf('?');
                 if (queryIndex >= 0) path = path.substring(0, queryIndex);
 
-                Map<String, String> headers = new HashMap<>();
+                // Read a bounded number of bounded lines, and NEVER buffer
+                // an attacker-supplied body: the only permitted endpoints are
+                // inert status/manifest + permanently denied execute.
                 String line;
-                while ((line = reader.readLine()) != null && !line.isEmpty()) {
-                    int idx = line.indexOf(':');
-                    if (idx > 0) headers.put(line.substring(0, idx).trim().toLowerCase(), line.substring(idx + 1).trim());
+                int headerCount = 0;
+                while ((line = readLineLimited(reader, MAX_HEADER_LINE)) != null && !line.isEmpty()) {
+                    if (++headerCount > MAX_HEADER_COUNT) {
+                        writeResponse(socket, new HttpResponse(400, "text/plain", "Too many headers"));
+                        return;
+                    }
                 }
-
-                int contentLength = 0;
-                String lengthHeader = headers.get("content-length");
-                if (lengthHeader != null) try { contentLength = Integer.parseInt(lengthHeader); } catch (NumberFormatException ignored) {}
-
-                char[] bodyChars = new char[contentLength];
-                int read = 0;
-                while (read < contentLength) {
-                    int count = reader.read(bodyChars, read, contentLength - read);
-                    if (count == -1) break;
-                    read += count;
+                if (line == null) return;
+                if ((!"GET".equals(method) || !"/health".equals(path)) &&
+                    (!"POST".equals(method) ||
+                        (!"/mcp/initialize".equals(path) && !"/mcp/execute".equals(path)))) {
+                    writeResponse(socket, new HttpResponse(405, "text/plain", "Unavailable method"));
+                    return;
                 }
-                String body = read > 0 ? new String(bodyChars, 0, read) : "";
 
                 Handler handler = handlers.get(path);
                 HttpResponse response = handler == null
                     ? new HttpResponse(404, "text/plain; charset=utf-8", "Not Found")
-                    : handler.handle(new HttpRequestWrapper(path, body));
+                    : handler.handle(new HttpRequestWrapper(path, ""));
 
                 writeResponse(socket, response);
             } catch (IOException ignored) {}
+        }
+
+        private static String readLineLimited(BufferedReader reader, int maximum) throws IOException {
+            StringBuilder content = new StringBuilder();
+            int current;
+            while ((current = reader.read()) != -1) {
+                if (current == '\n') break;
+                if (current == '\r') continue;
+                if (content.length() >= maximum) throw new IOException("HTTP line length exceeded");
+                content.append((char) current);
+            }
+            if (current == -1 && content.length() == 0) return null;
+            return content.toString();
         }
 
         private void writeResponse(Socket socket, HttpResponse response) throws IOException {
@@ -364,6 +390,8 @@ public final class BurpMcpMontoyaExtension implements BurpExtension {
             String headers = "HTTP/1.1 " + response.status + " " + statusText + "\r\n" +
                 "Content-Type: " + response.contentType + "\r\n" +
                 "Content-Length: " + bodyBytes.length + "\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "X-Content-Type-Options: nosniff\r\n" +
                 "Connection: close\r\n\r\n";
             OutputStream out = socket.getOutputStream();
             out.write(headers.getBytes(StandardCharsets.UTF_8));

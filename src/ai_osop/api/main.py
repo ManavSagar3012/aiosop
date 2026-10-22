@@ -36,6 +36,9 @@ from ai_osop.api.browser_current_custody_readback import (
 from ai_osop.api.source_map_host_witness_operator import (
     create_source_map_host_witness_router,
 )
+from ai_osop.api.browser_original_host_join_20261022 import (
+    create_browser_original_host_join_router,
+)
 from ai_osop.api.mcp_transport_operator_diagnostics import (
     router as mcp_transport_operator_diagnostics_router,
 )
@@ -74,6 +77,7 @@ from ai_osop.api.routers import (
     native_mcp_stage_receipts,
     native_mcp_supervision,
     native_inert_fleet,
+    python_inert_turbo,
     operator_knowledge,
     operator_global_library,
     reviewed_library_flow_import,
@@ -85,6 +89,7 @@ from ai_osop.api.routers import (
     sessions,
     supervision,
     durable_supervision_subscriptions,
+    durable_leased_sse_20261022,
     system,
     target_authority,
     verified_finding_reviews,
@@ -596,6 +601,10 @@ async def lifespan(app: FastAPI):
         await shutdown_host_native_inert_fleet_control(app)
     except Exception:
         logger.error("Host-owned inert fleet shutdown outcome UNKNOWN")
+    try:
+        await python_inert_turbo.shutdown_host_python_inert_turbo(app)
+    except Exception:
+        logger.error("Host-owned disabled Python Turbo shutdown outcome UNKNOWN")
     if safety_monitor is not None:
         await safety_monitor.shutdown()
     if bound_temporal_worker is not None:
@@ -750,6 +759,7 @@ app.include_router(mcp_tool_catalog.router)
 app.include_router(native_browser_source_authority.router)
 app.include_router(native_browser_current_authority.router)
 app.include_router(create_browser_current_custody_router())
+app.include_router(create_browser_original_host_join_router())
 app.include_router(native_sourcemap_source_authority.router)
 app.include_router(native_sourcemap_status_authority.router)
 app.include_router(native_mcp_redemption.router)
@@ -758,11 +768,13 @@ app.include_router(native_mcp_resources.router)
 app.include_router(native_mcp_stage_receipts.router)
 app.include_router(native_mcp_supervision.router)
 app.include_router(native_inert_fleet.router)
+app.include_router(python_inert_turbo.router)
 app.include_router(mcp_transport_operator_diagnostics_router)
 app.include_router(mcp_eleven_supervised_recovery_router)
 app.include_router(create_source_map_host_witness_router())
 app.include_router(supervision.router)
 app.include_router(durable_supervision_subscriptions.router)
+app.include_router(durable_leased_sse_20261022.router)
 app.include_router(provider_invoices.router)
 app.include_router(provider_route_policy_reviews.router)
 app.include_router(provider_credential_profile_refs.router)

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { currentOperator, subscribeOperator } from '../../services/api';
+import { readLeasedSupervisionStream } from '../../services/leasedSupervisionStream';
 import {
   durableSubscriberApi, newDurableSubscriberId,
   type DurableSubscriberEvent, type DurableSubscriberLease, type SubscriberScope,
@@ -19,9 +20,12 @@ export function DurableSupervisionSubscribersPanel({ engagementId, taskId, canCo
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const epoch = useRef(0);
+  const activeStream = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const invalidate = () => {
+      activeStream.current?.abort();
+      activeStream.current = null;
       ++epoch.current;
       setLease(null);
       setUnknownAckLease(null);
@@ -32,10 +36,12 @@ export function DurableSupervisionSubscribersPanel({ engagementId, taskId, canCo
       setSubscriberId('');
     };
     invalidate();
-    return () => { ++epoch.current; };
+    return () => { ++epoch.current; activeStream.current?.abort(); activeStream.current = null; };
   }, [engagementId, taskId]);
 
   useEffect(() => subscribeOperator(identity => {
+    activeStream.current?.abort();
+    activeStream.current = null;
     ++epoch.current;
     setActor(identity?.sub || '');
     setLease(null);
@@ -49,7 +55,7 @@ export function DurableSupervisionSubscribersPanel({ engagementId, taskId, canCo
 
   const scope: SubscriberScope = { engagementId, subscriberId, ...(taskId ? { taskId } : {}) };
 
-  async function perform(action: 'acquire' | 'read' | 'ack' | 'cursor-readback' | 'renew' | 'release' | 'revoke') {
+  async function perform(action: 'acquire' | 'read' | 'stream' | 'ack' | 'cursor-readback' | 'renew' | 'release' | 'revoke') {
     if (!actor || !canControl || busy) return;
     const stamp = ++epoch.current;
     setBusy(true);
@@ -86,7 +92,15 @@ export function DurableSupervisionSubscribersPanel({ engagementId, taskId, canCo
         }
       } else {
         if (!lease) throw new Error('A current fenced lease is required.');
-        if (action === 'read') {
+        if (action === 'stream') {
+          const controller = new AbortController();
+          activeStream.current = controller;
+          const committed = await readLeasedSupervisionStream(scope, lease, controller.signal);
+          if (stamp === epoch.current) {
+            setEvents(committed);
+            setNotice('Lease-fenced SSE committed events received without ACK. Explicitly ACK only the next event; delivery remains at-least-once.');
+          }
+        } else if (action === 'read') {
           const committed = await durableSubscriberApi.read(scope, lease);
           if (stamp === epoch.current) {
             setEvents(committed);
@@ -124,6 +138,7 @@ export function DurableSupervisionSubscribersPanel({ engagementId, taskId, canCo
           + ' State UNKNOWN; refresh independent server evidence before any new action.');
       }
     } finally {
+      if (action === 'stream') activeStream.current = null;
       if (stamp === epoch.current) setBusy(false);
     }
   }
@@ -164,6 +179,8 @@ export function DurableSupervisionSubscribersPanel({ engagementId, taskId, canCo
           onClick={() => void perform('acquire')}>ACQUIRE FENCED LEASE</button>
         <button type="button" className={style} disabled={!lease || busy || !canControl}
           onClick={() => void perform('read')}>READ COMMITTED (NO ACK)</button>
+        <button type="button" className={style} disabled={!lease || busy || !canControl}
+          onClick={() => void perform('stream')}>STREAM FENCED EVENTS (NO ACK)</button>
         <button type="button" className={style} disabled={!lease || !events.length || busy || !canControl}
           onClick={() => void perform('ack')}>ACK NEXT OBSERVED EVENT</button>
         <button type="button" className={style} disabled={!unknownAckLease || busy || !canControl || !actor}

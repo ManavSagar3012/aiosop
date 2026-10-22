@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Card } from '../components/shared/Card';
 import { ProviderCredentialAdministrationPanel } from '../components/ProviderCredentialAdministrationPanel';
 import { NativeInertFleetOperatorPanel } from '../components/NativeInertFleetOperatorPanel';
+import { PythonInertTurboOperatorPanel } from '../components/PythonInertTurboOperatorPanel';
 import { ProviderVaultOperatorStatusPanel } from '../components/ProviderVaultOperatorStatusPanel';
 import { BrowserCurrentCustodyPanel } from '../components/BrowserCurrentCustodyPanel';
+import { BrowserHostOriginalPanel } from '../components/BrowserHostOriginalPanel';
 import { Settings, Shield, Cpu, RefreshCw, Radio, CheckCircle2, AlertTriangle, XCircle, Wrench } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { API_BASE, authHeaders, currentOperator, isSecureApiBase, isSecureBrowserOrigin, subscribeOperator } from '../services/api';
@@ -292,7 +294,9 @@ export const Administration: React.FC = () => {
       <ProviderCredentialAdministrationPanel />
       <ProviderVaultOperatorStatusPanel />
       <NativeInertFleetOperatorPanel />
+      <PythonInertTurboOperatorPanel />
       <BrowserCurrentCustodyPanel />
+      <BrowserHostOriginalPanel />
       <div className="grid grid-cols-3 gap-6">
         <Card title="Swarm Configuration">
            <div className="space-y-4">

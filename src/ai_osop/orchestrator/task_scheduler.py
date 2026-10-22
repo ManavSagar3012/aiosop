@@ -602,7 +602,12 @@ class TaskScheduler:
         self, agent_type: AgentType, task_type: str = ""
     ) -> Optional[Any]:
         """Use the canonical distributed agent claim implementation."""
-        return await self._orch._find_available_agent(agent_type, task_type)
+        import inspect
+
+        res = self._orch._find_available_agent(agent_type, task_type)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
     def _release_agent(self, agent_id: Optional[str]) -> None:
         """Release the same local and distributed ownership that was claimed."""

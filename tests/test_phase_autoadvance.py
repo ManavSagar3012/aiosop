@@ -12,7 +12,7 @@ engagement from running end-to-end without manual intervention:
      complete (guards against premature advance).
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -128,3 +128,30 @@ async def test_invalid_graph_statistics_block_auto_advance(stats: object) -> Non
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_phase_transition_reverts_on_phase_enter_failure() -> None:
+    from ai_osop.core.models import ScopeDefinition, SessionState
+
+    orch = _orch(vuln_count=1)
+    session = SessionState(
+        session_id="eng-rollback",
+        scope=ScopeDefinition(engagement_id="eng-rollback", domains=["test.com"]),
+        roe={},
+        phase=EngagementPhase.INITIALIZED.value,
+        agents={},
+        checkpoint_id=None,
+        audit_log_position="0",
+    )
+    orch._sessions["eng-rollback"] = session
+
+    # Make _on_phase_enter raise
+    orch._on_phase_enter = AsyncMock(side_effect=RuntimeError("Simulated task scheduling failure"))
+
+    with pytest.raises(RuntimeError, match="Simulated task scheduling failure"):
+        await orch.transition_phase("eng-rollback", EngagementPhase.RECONNAISSANCE)
+
+    # Session phase must be reverted to INITIALIZED
+    assert session.phase == EngagementPhase.INITIALIZED.value
+    orch.session_memory.persist_session_state.assert_awaited()

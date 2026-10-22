@@ -55,7 +55,9 @@ class ScaleQualification:
             sessions.append(s)
         elapsed = time.perf_counter() - start
         rate = 100 / elapsed if elapsed > 0 else float("inf")
-        self._record("engage_creation_100", True, f"100 engagements in {elapsed:.3f}s ({rate:.0f}/s)")
+        self._record(
+            "engage_creation_100", True, f"100 engagements in {elapsed:.3f}s ({rate:.0f}/s)"
+        )
 
     # -------------------- Task Creation Throughput --------------------
 
@@ -121,7 +123,11 @@ class ScaleQualification:
             _ = session.model_dump()
         elapsed = time.perf_counter() - start
         avg_ms = (elapsed / 1000) * 1000
-        self._record("session_serialize_1000", True, f"1000 serializations in {elapsed:.3f}s (avg {avg_ms:.3f}ms)")
+        self._record(
+            "session_serialize_1000",
+            True,
+            f"1000 serializations in {elapsed:.3f}s (avg {avg_ms:.3f}ms)",
+        )
 
     # -------------------- Service / Concurrency Load Testing --------------------
 
@@ -148,7 +154,9 @@ class ScaleQualification:
                 assert resp.status_code == 200
 
         start = time.perf_counter()
-        async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://testserver") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=test_app), base_url="http://testserver"
+        ) as client:
             await asyncio.gather(*(worker(client) for _ in range(num_requests)))
         total_time = time.perf_counter() - start
 
@@ -177,6 +185,7 @@ class ScaleQualification:
         mock_orch.graph_memory = AsyncMock()
         mock_orch.coordination_bus = AsyncMock()
         mock_orch.session_memory = AsyncMock()
+        mock_orch._find_available_agent = AsyncMock(return_value=None)
 
         scheduler = TaskScheduler(orchestrator=mock_orch)
         num_tasks = 200
@@ -202,7 +211,11 @@ class ScaleQualification:
         rate = num_tasks / elapsed if elapsed > 0 else 0
 
         assert mock_orch.session_memory.push_task_queue.await_count == num_tasks
-        self._record("concurrent_task_scheduling", True, f"{num_tasks} tasks scheduled concurrently in {elapsed:.3f}s ({rate:.0f} tasks/s)")
+        self._record(
+            "concurrent_task_scheduling",
+            True,
+            f"{num_tasks} tasks scheduled concurrently in {elapsed:.3f}s ({rate:.0f} tasks/s)",
+        )
 
     # -------------------- Orchestrator --------------------
 

@@ -333,4 +333,63 @@ The mounted `0039` global user library mutation UI now independently GETs and SH
 
 Pinned v2.2.0 source and the historical October 16 main sample remain the only upstream comparison references used here. No asserted whole-tree identity, independent target-owner effects, live provider credentials or senior signed release.
 
+## 2026-10-22 material 0041/0042 user-global → Flow Knowledge/Resources parity delta
+
+The earlier **2026-10-16 historical static** inventory entries and 2026-10-21
+PENDING-only remarks above describe the code at those checkpoints. They must
+not be used as current assertions that all reviewed Flow original storage is
+missing. The source-level implementation now has these additional **partial**
+features, qualified only within the bounds below:
+
+- **0041:** Independently host-enrolled four-signature reviewed global source
+  original + current Flow/Task/ROE PostgreSQL-lock admission can atomically
+  record a durable, immutable 0039 source version/SHA/owner citation on the
+  selected Flow. Mounted signed-owner recording and readback API and explicit
+  operator choice. It never copies source into an agent prompt.
+- **0042:** Separate deliberate operator choice can atomically INSERT the
+  exact reviewed source original UTF-8 bytes into a permanent **inert**
+  Flow-scoped resource row and the 0041 immutable citation in **one** actual
+  PostgreSQL transaction. The SQL schema enforces original content SHA,
+  source+Flow/tenant+owner composite FK, immutability and immutable false
+  agent-context/effect-promotion flags. Mounted fresh signed-current original
+  readback is separate and cannot replay a lost write. No agent or filesystem
+  worker reads this new inert table by default.
+- **Qualification:** Current joined 0039+0041+0042 signed-fixture backend tests
+  **56 passed**; operator UI (existing preflight + 0041 metadata + 0042 exact
+  original + independent readbacks) **12 passed**; TypeScript and Vite build
+  (2,669 modules) passed. Actual opt-in fresh nonroot PostgreSQL16 private Unix
+  socket online 0039→0041→0042 migration/joint commit/forced original digest
+  failure rolling back metadata/immutability/tenant FK test **1 passed**.
+  Another distinct real private 0041 schema qualification passed. Synthetic
+  independently signed fixture public roots and minimal predecessor SQL do
+  not certify deployed external signers or production app SQLAlchemy startup.
+- **Parity grade:** Domain 7 user KB/review import and Domain 8 Flow resources
+  have a **material new W/P/S counterpart** for *immutable, inert* original
+  provenance/resource materialization—not full PentAGI knowledge CRUD/vector
+  synthesis, independent reviewer service deployment, mutable user resource
+  file system, trusted AI-agent ingestion, or worker mount parity. PentAGI
+  `v2.2.0` remains pinned source; no fresh upstream-main sample was obtained.
+  Complete eleven-provider process/target-effect/source custody/physical
+  multireplica/senior release acceptance remains unmet.
+
+### 2026-10-22 original disabled Python Turbo process-owner parity delta
+
+- **Material local process-operation improvement, not PentAGI execution parity:** The selected original Python `turbo-intruder-mcp` service now has an opt-in host-reviewed fixed-source/venv/base Python SHA process supervisor, exact Windows parent/owned-child PID/socket observation, sanitizer for inherited cloud/provider/OSOP credentials, current process teardown/cancellation, and mounted senior-only start/status/stop lifecycle with read-only Administration frontend. Genuine private ephemeral loopback subprocess `/health` and `/mcp/execute` both deny 503, and the original `MCPRegistry` refuses registration; actual scanner/race execution remains disabled. This covers a narrow host lifecycle/readback gap relative to pinned PentAGI v2.2.0's supervised worker patterns, but does NOT match its live worker execution, target effects, provider authorization or current real eleven fleet startup. The implementation does not derive runtime identity from source declarations or permit client-installed roots.
+- Existing pinned PentAGI v2.2.0 and historical sample evidence remain unchanged; no new upstream whole-tree claim. The independent host signer/approved external target effect, physical 0040 multi-replica and signed senior release gates remain unsatisfied.
+
+### 2026-10-22 actual bounded 0040 leased SSE operator-workflow delta
+
+- A distinct mounted 0040 signed-operator, lease-fenced bounded POST leased-stream publishes original committed supervision rows as SSE, with current signed owner/Task/ROE/revocation/PG lease checked again per frame. The Flow human reader can explicitly stream via a secure memory-only bearer; ACK and UNKNOWN committed-cursor readback remain separate manual paths. This is a narrow supervised operator live-update improvement relative to pinned PentAGI v2.2.0, not full feature parity or GraphQL subscription equivalence.
+- Disposable nonroot PostgreSQL16 opt-in mounted signed test-fixture SSE: 1 passed. Default adverse backend: 6 passed. New UI stream parser: 4 passed; TypeScript/Vite build passed (2,672 modules). No physical client receipt, deployed independent trust roots, multi-replica/reverse proxy qualification, eleven authorized provider tool executions/target-owner effects, or signed senior release. No new comparison against moving PentAGI main.
+
+### 2026-10-22 mounted Browser four-original and 0042 response-secrecy parity deltas
+
+- Added main-mounted default-503 signed-senior Browser ORIGINAL host reader join with trusted-only one-shot enrollment: source host HTTP/PNG/DOM/HAR exact bytes, SHA/size, native signed three-file custody and repeated independent CURRENT owner/Flow/Task/ROE. Browser join 23 passed; joined Browser/SourceMap/11 roster 55 passed, 2 skipped. Narrow host-original reconciliation improvement, not independently enrolled production keys/WORM originals/target-owned effects or full pinned PentAGI v2.2.0 parity.
+- Reviewed-library scoped Pydantic 422 error redaction prevents reflection of forbidden client original content. Mounted 0039->0041->0042 private nonroot PostgreSQL16 test 4 passed with separately controlled test-only Ed25519 roots and test signed ROE. Actual atomic immutable inert Flow original persisted without API echo; wrong owner/reviewer/ROE/Task denied, no prompt promotion. This narrows operator knowledge and original custody gaps, not actual production reviewed agent knowledge ingestion or full upstream equivalence.
+
+### 2026-10-22 actual two-connection durable subscription and four-original operator UI parity
+
+- A real nonroot disposable PG16 two-backend-PID qualification now supports bounded 0040 lease ownership, cursor CAS, revocation NOWAIT lock and disconnect rollback statements (2 opt-in passed), rather than in-memory-only simulations. A mounted bounded leased SSE API/Flow operator client now gates completion on a final non-ACK current lease marker and handles UNKNOWN ACK by separate readback; a genuine private PG opt-in verified stream/ACK/stale cursor/revoke, 1 passed. This narrows supervisory at-least-once event behavior compared with pinned PentAGI v2.2.0, not long-lived GraphQL, a two-machine deployment, independent physical client receipt or exactly-once delivery.
+- Signed-senior Administration now also offers four-original Browser HTTP/PNG/DOM/HAR host digest readback with exact-metadata shape, no raw originals or signer key request, no scanner invoke and explicit NOT READY. Five focused Node tests passed; Browser combined 13 passed, Vite 2674 modules. Backend defaults to 503 until separately enrolled independently signed host originals/custody/current ROE. This is not verified autonomous browser execution nor signed target-owner effects; complete 11 MCP parity and production signoff remain open.
+
 **FINAL CURRENT RELEASE DECISION: NOT PRODUCTION CERTIFIED / NOT READY.**

@@ -34,7 +34,8 @@ from ai_osop.core.metrics import (
 from ai_osop.reliability.dlq import DeadLetterQueue
 from ai_osop.orchestrator.task_scheduler import TaskScheduler
 from ai_osop.orchestrator.approval_coordinator import (
-    ApprovalCoordinator, remaining_durable_approval_seconds,
+    ApprovalCoordinator,
+    remaining_durable_approval_seconds,
 )
 from ai_osop.orchestrator.phase_monitor import PhaseMonitor
 from ai_osop.orchestrator.engagement_manager import EngagementManager
@@ -228,6 +229,7 @@ class Orchestrator:
         if self._supervision_active and callable(
             getattr(self.mcp_registry, "set_execution_event_callback", None)
         ):
+
             async def persist_mcp_execution_event(
                 engagement_id: str, task_id: str, kind: str, metadata: Dict[str, Any]
             ) -> bool:
@@ -241,18 +243,23 @@ class Orchestrator:
                     # A previous replica can have accepted this request and
                     # disappeared before an HTTP response. Never replay it.
                     return await self.supervision_store.claim_mcp_dispatch(
-                        engagement_id, task_id, server_id,
-                        remote_request_id, metadata.get("tool_name", ""),
+                        engagement_id,
+                        task_id,
+                        server_id,
+                        remote_request_id,
+                        metadata.get("tool_name", ""),
                     )
                 return await self.supervision_store.record_mcp_dispatch_event(
-                    engagement_id, task_id, server_id, remote_request_id,
-                    kind, metadata.get("status", "unknown"),
+                    engagement_id,
+                    task_id,
+                    server_id,
+                    remote_request_id,
+                    kind,
+                    metadata.get("status", "unknown"),
                     attested_receipt=metadata.get("attested_receipt"),
                 )
 
-            self.mcp_registry.set_execution_event_callback(
-                persist_mcp_execution_event
-            )
+            self.mcp_registry.set_execution_event_callback(persist_mcp_execution_event)
         await self.graph_memory.connect()
         if self.temporal_enabled:
             if not temporal_available() and self.temporal_scheduler is None:
@@ -365,9 +372,7 @@ class Orchestrator:
                     expected_version=verified.version,
                     expected_digest=verified.policy_digest,
                 )
-                persisted = await self.session_memory.load_session_state(
-                    verified.engagement_id
-                )
+                persisted = await self.session_memory.load_session_state(verified.engagement_id)
                 if (
                     not isinstance(persisted, SessionState)
                     or persisted.created_by != created_by
@@ -396,18 +401,18 @@ class Orchestrator:
             try:
                 await self._audit_log(
                     AuditEvent(
-                    event_type="engagement_created",
-                    severity="info",
-                    actor_type="system",
-                    actor_id="orchestrator",
-                    action={
-                        "authorization_id": verified.authorization_id,
-                        "policy_digest": verified.policy_digest,
-                        "policy_version": verified.version,
-                    },
-                    result={"session_id": session.session_id},
-                    context={"phase": session.phase},
-                    engagement_id=scope.engagement_id,
+                        event_type="engagement_created",
+                        severity="info",
+                        actor_type="system",
+                        actor_id="orchestrator",
+                        action={
+                            "authorization_id": verified.authorization_id,
+                            "policy_digest": verified.policy_digest,
+                            "policy_version": verified.version,
+                        },
+                        result={"session_id": session.session_id},
+                        context={"phase": session.phase},
+                        engagement_id=scope.engagement_id,
                     )
                 )
             except Exception as exc:
@@ -449,7 +454,9 @@ class Orchestrator:
             task.engagement_id == session_id and task.status in active_states
             for task in self._tasks.values()
         ):
-            raise WorkflowException("Cannot restore checkpoint while tasks are running or unresolved")
+            raise WorkflowException(
+                "Cannot restore checkpoint while tasks are running or unresolved"
+            )
         session = await self.session_memory.restore_checkpoint(checkpoint_id)
         self._sessions[session.session_id] = session
         return session
@@ -480,29 +487,46 @@ class Orchestrator:
             if stats["vulnerabilities"] == 0:
                 raise WorkflowException("Cannot transition to exploitation without vulnerabilities")
 
-        session.phase = new_phase.value
-        session.updated_at = datetime.utcnow()
+        old_phase = current.value
+        old_updated_at = session.updated_at
 
-        await self.session_memory.store_session_state(session)
-        await self.session_memory.persist_session_state(session)
+        try:
+            session.phase = new_phase.value
+            session.updated_at = datetime.utcnow()
 
-        # Trigger phase-specific tasks
-        await self._on_phase_enter(session, new_phase)
+            await self.session_memory.store_session_state(session)
+            await self.session_memory.persist_session_state(session)
 
-        await self._audit_log(
-            AuditEvent(
-                event_type="phase_transition",
-                severity="info",
-                actor_type="system",
-                actor_id="orchestrator",
-                action={"from_phase": current.value, "to_phase": new_phase.value},
-                result={"success": True},
-                context={"session_id": session_id},
-                engagement_id=session.scope.engagement_id,
+            # Trigger phase-specific tasks
+            await self._on_phase_enter(session, new_phase)
+
+            await self._audit_log(
+                AuditEvent(
+                    event_type="phase_transition",
+                    severity="info",
+                    actor_type="system",
+                    actor_id="orchestrator",
+                    action={"from_phase": current.value, "to_phase": new_phase.value},
+                    result={"success": True},
+                    context={"session_id": session_id},
+                    engagement_id=session.scope.engagement_id,
+                )
             )
-        )
 
-        return session
+            return session
+        except Exception:
+            session.phase = old_phase
+            session.updated_at = old_updated_at
+            try:
+                await self.session_memory.store_session_state(session)
+                await self.session_memory.persist_session_state(session)
+            except Exception as rollback_exc:
+                logger.warning(
+                    "phase_transition_rollback_failed",
+                    session_id=session_id,
+                    error=str(rollback_exc),
+                )
+            raise
 
     async def _on_phase_enter(self, session: SessionState, phase: EngagementPhase) -> None:
         """Trigger automatic tasks when entering a phase."""
@@ -603,15 +627,11 @@ class Orchestrator:
         if not isinstance(self.session_memory, SessionMemory):
             return  # Isolated fake-memory unit harnesses have no PG backing.
         try:
-            receipt = await self.session_memory.assert_signed_authorization(
-                task.engagement_id
-            )
+            receipt = await self.session_memory.assert_signed_authorization(task.engagement_id)
         except Exception as exc:
             raise WorkflowException("Task lacks active signed authorization") from exc
         previous = task.payload.get("_authorization_version")
-        if previous is not None and (
-            type(previous) is not int or previous != receipt.version
-        ):
+        if previous is not None and (type(previous) is not int or previous != receipt.version):
             raise WorkflowException("Task carries a stale authorization revision")
         task.payload["_authorization_version"] = receipt.version
 
@@ -630,8 +650,11 @@ class Orchestrator:
         sm = self.session_memory
         task = await sm.load_task_authoritative(task_id)
         if (
-            task is None or task.status != "pending"
-            or not task.flow_id or not task.subtask_id or not task.parent_task_id
+            task is None
+            or task.status != "pending"
+            or not task.flow_id
+            or not task.subtask_id
+            or not task.parent_task_id
             or not isinstance(task.payload, dict)
             or any(key in task.payload for key in ("operator_approved", "approval_id"))
         ):
@@ -648,25 +671,32 @@ class Orchestrator:
             matching = [step for step in steps if step.id == task.subtask_id]
             step = matching[0] if len(matching) == 1 else None
             if (
-                engagement is None or engagement.phase in {"halted", "completed"}
-                or flow is None or flow.engagement_id != task.engagement_id
+                engagement is None
+                or engagement.phase in {"halted", "completed"}
+                or flow is None
+                or flow.engagement_id != task.engagement_id
                 or flow.status not in {"pending", "running"}
-                or step is None or step.engagement_id != task.engagement_id
+                or step is None
+                or step.engagement_id != task.engagement_id
                 or step.status != "dispatched"
                 or step.execution_task_id != task.id
                 or step.task_id != task.parent_task_id
                 or step.task_type != task.type
                 or step.agent_type != task.agent_type
-                or step.approval_required and not task.approval_required
-                or (action_requires_approval(task.type, engagement.scope)
-                    or task.agent_type == AgentType.EXPLOIT_VALIDATION)
+                or step.approval_required
+                and not task.approval_required
+                or (
+                    action_requires_approval(task.type, engagement.scope)
+                    or task.agent_type == AgentType.EXPLOIT_VALIDATION
+                )
                 and not task.approval_required
             ):
                 raise WorkflowException("Flow execution lineage changed before queue admission")
             enforcer = ScopeEnforcer(engagement.scope)
             enforcer.validate_time_window()
             validate_payload_targets(
-                enforcer, task.payload,
+                enforcer,
+                task.payload,
                 require_target=task.agent_type in {AgentType.RECON, AgentType.VULN_ANALYSIS},
             )
         except Exception as exc:
@@ -694,8 +724,15 @@ class Orchestrator:
             await self.enqueue_registered_task(task_id)
             return
         if task.status in {
-            "awaiting_approval", "dispatching", "dispatch_unknown",
-            "scheduled", "running", "completed", "failed", "cancelled", "halted",
+            "awaiting_approval",
+            "dispatching",
+            "dispatch_unknown",
+            "scheduled",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "halted",
         }:
             # A durable downstream state is evidence that queue delivery is
             # no longer needed. It is NOT evidence of remote termination.
@@ -806,7 +843,11 @@ class Orchestrator:
             engagement_id=task.engagement_id,
             flow_id=task.flow_id or "",
             subtask_id=task.subtask_id or "",
-            trace_id=task.trace_context.get("traceparent", "").split("-")[1] if task.trace_context.get("traceparent") else "",
+            trace_id=(
+                task.trace_context.get("traceparent", "").split("-")[1]
+                if task.trace_context.get("traceparent")
+                else ""
+            ),
         )
 
         with trace_span(
@@ -853,7 +894,11 @@ class Orchestrator:
             try:
                 await self.coordination_bus.publish(
                     "task.scheduled",
-                    {"task_id": task.id, "task_type": task.type, "agent_type": task.agent_type.value},
+                    {
+                        "task_id": task.id,
+                        "task_type": task.type,
+                        "agent_type": task.agent_type.value,
+                    },
                     "orchestrator",
                 )
             except Exception:
@@ -890,9 +935,7 @@ class Orchestrator:
             raise WorkflowException("Cannot schedule work on an inactive engagement")
         enforcer = ScopeEnforcer(session.scope)
         enforcer.validate_time_window()
-        if not session.scope.authorization_ref or not (
-            session.scope.domains or session.scope.ips
-        ):
+        if not session.scope.authorization_ref or not (session.scope.domains or session.scope.ips):
             raise ScopeException("Temporal dispatch requires explicit authorization and scope")
         if not task.scope_check:
             return
@@ -980,8 +1023,7 @@ class Orchestrator:
             await self.task_scheduler._dispatch_temporal_task(task)
             return
         if any(
-            self._tasks.get(dep_id) is None
-            or self._tasks[dep_id].status != "completed"
+            self._tasks.get(dep_id) is None or self._tasks[dep_id].status != "completed"
             for dep_id in task.dependencies
         ):
             if task.status != "awaiting_approval":
@@ -1010,7 +1052,8 @@ class Orchestrator:
                     # parked without the corresponding durable request.
                     request = ApprovalRequest(
                         id=self.session_memory.deterministic_task_approval_id(
-                            task.engagement_id, task.id,
+                            task.engagement_id,
+                            task.id,
                         ),
                         task_id=task.id,
                         agent_id="",
@@ -1022,11 +1065,13 @@ class Orchestrator:
                     )
                     try:
                         created = await self.session_memory.park_task_for_approval_atomic(
-                            task, request,
+                            task,
+                            request,
                         )
                     except Exception as exc:
                         logger.warning(
-                            "approval_parking_unavailable", task_id=task.id,
+                            "approval_parking_unavailable",
+                            task_id=task.id,
                             error_type=type(exc).__name__,
                         )
                         return
@@ -1070,11 +1115,13 @@ class Orchestrator:
                 if durable_claim:
                     try:
                         admitted = await self.session_memory.claim_local_agent_start(
-                            task, agent.ctx.agent_id,
+                            task,
+                            agent.ctx.agent_id,
                         )
                     except Exception as exc:
                         logger.warning(
-                            "local_agent_claim_denied", task_id=task.id,
+                            "local_agent_claim_denied",
+                            task_id=task.id,
                             error_type=type(exc).__name__,
                         )
                         admitted = False
@@ -1093,15 +1140,15 @@ class Orchestrator:
                     # an irrevocably claimed signed TaskORM in RUNNING
                     # without a coroutine or supervision attempt.
                     try:
-                        self._spawn_agent_execution(
-                            agent, task, self._execute_via_agent
-                        )
+                        self._spawn_agent_execution(agent, task, self._execute_via_agent)
                     except BaseException:
                         self._release_agent(agent.ctx.agent_id)
                         raise
                     try:
                         await self.session_memory.store_hot(
-                            f"task:{task.id}", task.model_dump(), ttl=86400 * 7,
+                            f"task:{task.id}",
+                            task.model_dump(),
+                            ttl=86400 * 7,
                         )
                     except Exception:
                         logger.warning("local_agent_hot_cache_unavailable", task_id=task.id)
@@ -1116,7 +1163,9 @@ class Orchestrator:
                             "orchestrator",
                         )
                     except Exception:
-                        logger.warning("local_agent_assignment_notification_delayed", task_id=task.id)
+                        logger.warning(
+                            "local_agent_assignment_notification_delayed", task_id=task.id
+                        )
                 else:
                     await self.graph_memory.upsert_task(task)
                     await self.session_memory.store_task(task)
@@ -1164,7 +1213,9 @@ class Orchestrator:
                 # Sprint 6A: Distributed Lock — acquire lock in Redis
                 lock_key = f"lock:agent:{agent.ctx.agent_id}"
                 lock_value = f"orch-{id(self)}"
-                acquired = await self.session_memory.acquire_lock(lock_key, lock_value, ttl_seconds=60)
+                acquired = await self.session_memory.acquire_lock(
+                    lock_key, lock_value, ttl_seconds=60
+                )
                 if not acquired:
                     continue  # Locked by another replica
 
@@ -1264,13 +1315,17 @@ class Orchestrator:
             result = await agent.execute_task(task)
         except asyncio.CancelledError:
             await self.supervision_store.update_attempt(
-                record["id"], record["revision"], "unknown",
+                record["id"],
+                record["revision"],
+                "unknown",
                 receipt={"reason": "local_coroutine_cancelled_remote_unverified"},
             )
             raise
         except Exception:
             await self.supervision_store.update_attempt(
-                record["id"], record["revision"], "unknown",
+                record["id"],
+                record["revision"],
+                "unknown",
                 receipt={"reason": "unhandled_agent_exception_remote_unverified"},
             )
             return {"status": "execution_unknown", "reason": "agent_exception"}
@@ -1282,7 +1337,9 @@ class Orchestrator:
         if status in {"unknown", "execution_unknown", "timeout"}:
             try:
                 await self.supervision_store.update_attempt(
-                    record["id"], record["revision"], "unknown",
+                    record["id"],
+                    record["revision"],
+                    "unknown",
                     receipt={"result_code": "remote_outcome_unverified"},
                 )
             except Exception:
@@ -1293,18 +1350,28 @@ class Orchestrator:
             # arbitrary agent failure into an automatically replayable task.
             try:
                 await self.terminal_store.commit_terminal(
-                    task.engagement_id, task.id, record["id"], record["revision"],
-                    "unknown", receipt_code="unverified_agent_failure",
+                    task.engagement_id,
+                    task.id,
+                    record["id"],
+                    record["revision"],
+                    "unknown",
+                    receipt_code="unverified_agent_failure",
                 )
             except Exception:
                 pass
             return {"status": "execution_unknown", "reason": "failure_outcome_unverified"}
         try:
-            if not await self.validate_workflow_completion(task, result if isinstance(result, dict) else {}):
+            if not await self.validate_workflow_completion(
+                task, result if isinstance(result, dict) else {}
+            ):
                 return {"status": "execution_unknown", "reason": "workflow_result_not_verified"}
             persisted = await self.terminal_store.commit_terminal(
-                task.engagement_id, task.id, record["id"], record["revision"],
-                "succeeded", receipt_code="agent_completed",
+                task.engagement_id,
+                task.id,
+                record["id"],
+                record["revision"],
+                "succeeded",
+                receipt_code="agent_completed",
                 continuation=result if isinstance(result, dict) else None,
             )
         except Exception:
@@ -1409,9 +1476,7 @@ class Orchestrator:
                 await asyncio.wait_for(asyncio.shield(handle), timeout=5.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
-            receipts["local_coroutine"] = (
-                "cancelled" if handle.done() else "cancel_pending"
-            )
+            receipts["local_coroutine"] = "cancelled" if handle.done() else "cancel_pending"
         else:
             receipts["local_coroutine"] = "not_present_on_this_replica"
 
@@ -1430,9 +1495,7 @@ class Orchestrator:
         ):
             try:
                 receipts["mcp"] = await asyncio.wait_for(
-                    self.mcp_registry.cancel_task_execution(
-                        task_id, engagement_id, request_id
-                    ),
+                    self.mcp_registry.cancel_task_execution(task_id, engagement_id, request_id),
                     timeout=5.0,
                 )
             except (Exception, asyncio.TimeoutError):
@@ -1471,17 +1534,23 @@ class Orchestrator:
             or claim.get("request_id") != request_id
             or type(claim.get("authorization_version")) is not int
             or claim["authorization_version"] < 1
-            or claim.get("status") not in {
-                "accepted_unconfirmed", "started_unknown", "outcome_unknown",
-                "provider_returned", "cancel_requested", "provider_running",
-                "confirmed_stopped", "confirmed_finished",
+            or claim.get("status")
+            not in {
+                "accepted_unconfirmed",
+                "started_unknown",
+                "outcome_unknown",
+                "provider_returned",
+                "cancel_requested",
+                "provider_running",
+                "confirmed_stopped",
+                "confirmed_finished",
             }
         ):
             return {"status": "unknown", "reason": "original_dispatch_unverified"}
         connection = (
             self.mcp_registry.get_server(server_id)
-            if self.mcp_registry is not None and
-            callable(getattr(self.mcp_registry, "get_server", None))
+            if self.mcp_registry is not None
+            and callable(getattr(self.mcp_registry, "get_server", None))
             else None
         )
         if connection is None:
@@ -1497,20 +1566,24 @@ class Orchestrator:
         persisted = await self.supervision_store.get_mcp_dispatch(
             engagement_id, task_id, server_id, request_id
         )
-        if (
-            not isinstance(persisted, dict)
-            or any(persisted.get(key) != claim.get(key) for key in (
-                "engagement_id", "task_id", "server_id", "request_id",
-                "tool_name", "authorization_version",
-            ))
+        if not isinstance(persisted, dict) or any(
+            persisted.get(key) != claim.get(key)
+            for key in (
+                "engagement_id",
+                "task_id",
+                "server_id",
+                "request_id",
+                "tool_name",
+                "authorization_version",
+            )
         ):
             return {"status": "unknown", "reason": "receipt_not_persisted"}
         if not isinstance(receipt, dict):
             return {"status": "unknown", "reason": "invalid_remote_observation"}
         status = receipt.get("status")
-        if (
-            receipt.get("server_id") not in (None, server_id)
-            or receipt.get("request_id") not in (None, request_id)
+        if receipt.get("server_id") not in (None, server_id) or receipt.get("request_id") not in (
+            None,
+            request_id,
         ):
             return {"status": "unknown", "reason": "remote_observation_identity_mismatch"}
         if status in {"confirmed_stopped", "confirmed_finished"} and persisted["status"] != status:
@@ -1521,8 +1594,12 @@ class Orchestrator:
         if status == "running" and persisted["status"] != "provider_running":
             return {"status": "unknown", "reason": "running_receipt_not_persisted"}
         if status not in {
-            "unknown", "running", "confirmed_stopped", "confirmed_finished",
-            "not_supported", "denied",
+            "unknown",
+            "running",
+            "confirmed_stopped",
+            "confirmed_finished",
+            "not_supported",
+            "denied",
         }:
             return {"status": "unknown", "reason": "unverified_provider_receipt"}
         return {
@@ -1534,8 +1611,14 @@ class Orchestrator:
         }
 
     async def cancel_persisted_mcp_dispatch(
-        self, engagement_id: str, task_id: str, server_id: str,
-        request_id: str, *, actor_id: str, reason: str,
+        self,
+        engagement_id: str,
+        task_id: str,
+        server_id: str,
+        request_id: str,
+        *,
+        actor_id: str,
+        reason: str,
         expected_authorization_version: int,
     ) -> Dict[str, Any]:
         """Single global PostgreSQL-admitted stop for a remote surviving restart.
@@ -1546,18 +1629,27 @@ class Orchestrator:
         reconciled with provider status. Never retry this provider stop blindly.
         """
         claim = await self.supervision_store.get_mcp_dispatch(
-            engagement_id, task_id, server_id, request_id,
+            engagement_id,
+            task_id,
+            server_id,
+            request_id,
         )
-        if (
-            not isinstance(claim, dict)
-            or any(claim.get(key) != expected for key, expected in (
-                ("engagement_id", engagement_id), ("task_id", task_id),
-                ("server_id", server_id), ("request_id", request_id),
+        if not isinstance(claim, dict) or any(
+            claim.get(key) != expected
+            for key, expected in (
+                ("engagement_id", engagement_id),
+                ("task_id", task_id),
+                ("server_id", server_id),
+                ("request_id", request_id),
                 ("authorization_version", expected_authorization_version),
-            ))
+            )
         ):
-            return {"status": "denied", "persisted_status": "unknown",
-                    "safe_to_retry": False, "remote_stopped": False}
+            return {
+                "status": "denied",
+                "persisted_status": "unknown",
+                "safe_to_retry": False,
+                "remote_stopped": False,
+            }
         connection = (
             self.mcp_registry.get_server(server_id)
             if self.mcp_registry is not None
@@ -1567,57 +1659,88 @@ class Orchestrator:
         if connection is None or not callable(
             getattr(connection, "cancel_persisted_execution", None)
         ):
-            return {"status": "not_supported", "persisted_status": claim["status"],
-                    "safe_to_retry": False, "remote_stopped": False}
+            return {
+                "status": "not_supported",
+                "persisted_status": claim["status"],
+                "safe_to_retry": False,
+                "remote_stopped": False,
+            }
         # A registry may lazily configure a connection only on first execute.
         # A process restarted solely to stop old jobs must attach the current
         # authoritative PG budget/ROE verifier and event writer *before*
         # touching a remote provider; never inherit stale connection callbacks.
         registry_budget = getattr(self.mcp_registry, "_budget_callback", None)
         registry_events = getattr(self.mcp_registry, "_execution_event_callback", None)
-        if (
-            registry_budget is not None
-            and callable(getattr(connection, "set_budget_callback", None))
+        if registry_budget is not None and callable(
+            getattr(connection, "set_budget_callback", None)
         ):
             connection.set_budget_callback(registry_budget)
-        if (
-            registry_events is not None
-            and callable(getattr(connection, "set_execution_event_callback", None))
+        if registry_events is not None and callable(
+            getattr(connection, "set_execution_event_callback", None)
         ):
             connection.set_execution_event_callback(registry_events)
         try:
             admitted = await self.supervision_store.claim_mcp_cancellation_once(
-                engagement_id, task_id, server_id, request_id,
-                actor_id=actor_id, reason=reason,
+                engagement_id,
+                task_id,
+                server_id,
+                request_id,
+                actor_id=actor_id,
+                reason=reason,
                 expected_authorization_version=expected_authorization_version,
             )
         except Exception:
-            return {"status": "denied", "persisted_status": "unknown",
-                    "safe_to_retry": False, "remote_stopped": False}
+            return {
+                "status": "denied",
+                "persisted_status": "unknown",
+                "safe_to_retry": False,
+                "remote_stopped": False,
+            }
         if admitted is not True:
-            return {"status": "unknown", "persisted_status": claim["status"],
-                    "safe_to_retry": False, "remote_stopped": False}
+            return {
+                "status": "unknown",
+                "persisted_status": claim["status"],
+                "safe_to_retry": False,
+                "remote_stopped": False,
+            }
         # Fresh durable exact identity after atomic admission; a completed
         # provider action/terminal callback may have raced the requested stop.
         current = await self.supervision_store.get_mcp_dispatch(
-            engagement_id, task_id, server_id, request_id,
+            engagement_id,
+            task_id,
+            server_id,
+            request_id,
         )
         if (
             not isinstance(current, dict)
             or current.get("status") != "cancel_requested"
-            or any(current.get(key) != claim.get(key) for key in (
-                "engagement_id", "task_id", "server_id", "request_id",
-                "tool_name", "authorization_version",
-            ))
+            or any(
+                current.get(key) != claim.get(key)
+                for key in (
+                    "engagement_id",
+                    "task_id",
+                    "server_id",
+                    "request_id",
+                    "tool_name",
+                    "authorization_version",
+                )
+            )
         ):
-            return {"status": "unknown", "persisted_status": "unknown",
-                    "safe_to_retry": False, "remote_stopped": False}
+            return {
+                "status": "unknown",
+                "persisted_status": "unknown",
+                "safe_to_retry": False,
+                "remote_stopped": False,
+            }
         try:
             receipt = await connection.cancel_persisted_execution(current)
         except Exception:
             receipt = None
         verified = await self.supervision_store.get_mcp_dispatch(
-            engagement_id, task_id, server_id, request_id,
+            engagement_id,
+            task_id,
+            server_id,
+            request_id,
         )
         committed = (
             isinstance(receipt, dict)
@@ -1626,15 +1749,23 @@ class Orchestrator:
             and receipt.get("request_id") == request_id
             and isinstance(verified, dict)
             and verified.get("status") == "confirmed_stopped"
-            and all(verified.get(key) == claim.get(key) for key in (
-                "engagement_id", "task_id", "server_id", "request_id",
-                "tool_name", "authorization_version",
-            ))
+            and all(
+                verified.get(key) == claim.get(key)
+                for key in (
+                    "engagement_id",
+                    "task_id",
+                    "server_id",
+                    "request_id",
+                    "tool_name",
+                    "authorization_version",
+                )
+            )
         )
         return {
             "status": "confirmed_stopped" if committed else "unknown",
-            "persisted_status": verified.get("status", "unknown")
-            if isinstance(verified, dict) else "unknown",
+            "persisted_status": (
+                verified.get("status", "unknown") if isinstance(verified, dict) else "unknown"
+            ),
             # Provider-signed STOP is a provider's statement, not independent
             # proof that a real target-side external effect has ceased.
             "remote_stopped": False,
@@ -1798,9 +1929,11 @@ class Orchestrator:
             return True
 
         workflow_id = result.get("workflow_id") if isinstance(result, dict) else None
-        if not isinstance(workflow_id, str) or not re.fullmatch(
-            r"wf-[A-Za-z0-9._-]{1,80}", workflow_id
-        ) or not task.engagement_id:
+        if (
+            not isinstance(workflow_id, str)
+            or not re.fullmatch(r"wf-[A-Za-z0-9._-]{1,80}", workflow_id)
+            or not task.engagement_id
+        ):
             logger.error("validate_workflow_completion_missing_workflow_id", task_id=task.id)
             return False
 
@@ -1869,15 +2002,10 @@ class Orchestrator:
         cannot authorize an original user-label-bound autonomous child, and
         a stale Redis storage state cannot resurrect a revoked credential.
         """
-        if (
-            not isinstance(user_label, str)
-            or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", user_label)
-        ):
+        if not isinstance(user_label, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", user_label):
             return False
         try:
-            record = await self.session_store.get_session_authoritative(
-                engagement_id, user_label
-            )
+            record = await self.session_store.get_session_authoritative(engagement_id, user_label)
             return bool(
                 record is not None
                 and record.engagement_id == engagement_id
@@ -1950,9 +2078,12 @@ class Orchestrator:
                 )
             except (ScopeException, WorkflowException, ValueError, PermissionError):
                 return None
-            task_id = "task-" + hashlib.sha256(
-                f"{engagement_id}:auto_authenticated_map_workflow".encode("utf-8")
-            ).hexdigest()[:32]
+            task_id = (
+                "task-"
+                + hashlib.sha256(
+                    f"{engagement_id}:auto_authenticated_map_workflow".encode("utf-8")
+                ).hexdigest()[:32]
+            )
             existing = await self.session_memory.load_task_authoritative(task_id)
             if existing is not None:
                 if existing.engagement_id != engagement_id or existing.type != "map_workflow":
@@ -1964,9 +2095,7 @@ class Orchestrator:
             if (
                 not isinstance(user_label, str)
                 or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", user_label)
-                or not await self._authenticated_user_label_is_active(
-                    engagement_id, user_label
-                )
+                or not await self._authenticated_user_label_is_active(engagement_id, user_label)
             ):
                 return None
             task = Task(
@@ -2141,8 +2270,7 @@ class Orchestrator:
                         or path.startswith(("/", "\\"))
                         or ":" in path
                         or any(
-                            part in {"", ".", ".."}
-                            for part in path.replace("\\", "/").split("/")
+                            part in {"", ".", ".."} for part in path.replace("\\", "/").split("/")
                         )
                     ):
                         return
@@ -2155,16 +2283,14 @@ class Orchestrator:
                 # workflow; model/graph summaries cannot select it later.
                 if task.type in {"capture_authenticated_surface", "extract_har_api_inventory"}:
                     workflow_id = canonical.payload.get("workflow_id")
-                    if (
-                        isinstance(workflow_id, str)
-                        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", workflow_id)
+                    if isinstance(workflow_id, str) and re.fullmatch(
+                        r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", workflow_id
                     ):
                         metadata["workflow_id"] = workflow_id
                 if task.type == "extract_har_api_inventory":
                     replay_user = canonical.payload.get("target_user_label")
-                    if (
-                        isinstance(replay_user, str)
-                        and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", replay_user)
+                    if isinstance(replay_user, str) and re.fullmatch(
+                        r"[A-Za-z0-9_.-]{1,64}", replay_user
                     ):
                         metadata["target_user_label"] = replay_user
                 await self._resume_chain_link(
@@ -2314,7 +2440,9 @@ class Orchestrator:
 
             if isinstance(self.session_memory, SessionMemory):
                 admitted = await self.session_memory.settle_local_task_terminal_atomic(
-                    task, "completed", result,
+                    task,
+                    "completed",
+                    result,
                 )
                 if not admitted:
                     logger.warning("stale_local_success_callback_ignored", task_id=task.id)
@@ -2377,7 +2505,9 @@ class Orchestrator:
             try:
                 await self.adaptive_planner.on_task_completed(task)
             except Exception as exc:
-                logger.warning("adaptive_planning_after_task_failed", task_id=task.id, error=str(exc))
+                logger.warning(
+                    "adaptive_planning_after_task_failed", task_id=task.id, error=str(exc)
+                )
 
     async def _on_task_failure(self, task: Task, result: Dict[str, Any]) -> None:
         """Handle task failure."""
@@ -2395,7 +2525,9 @@ class Orchestrator:
         ):
             if isinstance(self.session_memory, SessionMemory):
                 admitted = await self.session_memory.settle_local_task_terminal_atomic(
-                    task, "failed", result,
+                    task,
+                    "failed",
+                    result,
                 )
                 if not admitted:
                     logger.warning("stale_local_failure_callback_ignored", task_id=task.id)
@@ -2437,9 +2569,7 @@ class Orchestrator:
                 # Notify operator
                 pass
 
-    async def _sync_subtask_result(
-        self, task: Task, status: str, result: Dict[str, Any]
-    ) -> None:
+    async def _sync_subtask_result(self, task: Task, status: str, result: Dict[str, Any]) -> None:
         """Mirror worker terminal results into persistent execution subtasks."""
         if not task.flow_id or not task.subtask_id:
             return
@@ -2464,13 +2594,16 @@ class Orchestrator:
                     # cross-account bodies, URLs, headers, cookies or a
                     # model/provider response. Comparison is a separate
                     # owner-scoped signed evidence read.
-                    subtask.result_summary = json.dumps({
-                        "status": status,
-                        "comparison_role": task.payload["_comparison_role"],
-                        "verification_status": "provider_testimony_only",
-                        "target_effect_verified": False,
-                        "authorization_violation_verified": False,
-                    }, separators=(",", ":"))
+                    subtask.result_summary = json.dumps(
+                        {
+                            "status": status,
+                            "comparison_role": task.payload["_comparison_role"],
+                            "verification_status": "provider_testimony_only",
+                            "target_effect_verified": False,
+                            "authorization_violation_verified": False,
+                        },
+                        separators=(",", ":"),
+                    )
                 else:
                     subtask.result_summary = json.dumps(result, default=str)[:4000]
                 subtask.updated_at = datetime.utcnow()
@@ -2486,17 +2619,11 @@ class Orchestrator:
         """
         return await self.flow_refiner.generate(flow_id, task_id)
 
-    async def refine_flow_subtask(
-        self, flow_id: str, subtask_id: str
-    ) -> Dict[str, Any]:
+    async def refine_flow_subtask(self, flow_id: str, subtask_id: str) -> Dict[str, Any]:
         """Explicit operator revision of a completed source (up to three passes)."""
-        return await self.flow_refiner.refine(
-            flow_id, subtask_id, operator_initiated=True
-        )
+        return await self.flow_refiner.refine(flow_id, subtask_id, operator_initiated=True)
 
-    async def _refine_completed_flow_subtask(
-        self, task: Task, result: Dict[str, Any]
-    ) -> None:
+    async def _refine_completed_flow_subtask(self, task: Task, result: Dict[str, Any]) -> None:
         """Best-effort follow-up after task and subtask completion are durable."""
         if (
             task.flow_id
@@ -2554,7 +2681,8 @@ class Orchestrator:
         return request
 
     async def _expire_pending_approval(
-        self, request_id: str,
+        self,
+        request_id: str,
     ) -> tuple[Optional[ApprovalRequest], bool]:
         """Resolve a timer race against the *durable* operator decision.
 
@@ -2569,7 +2697,9 @@ class Orchestrator:
                 if current is None:
                     raise WorkflowException("Approval timeout request unavailable")
                 persisted, _ = await self.session_memory.expire_approval_atomic(
-                    request_id, current.engagement_id, current.task_id,
+                    request_id,
+                    current.engagement_id,
+                    current.task_id,
                 )
                 self._approval_requests[request_id] = persisted
                 task = self._tasks.get(persisted.task_id)
@@ -2581,10 +2711,13 @@ class Orchestrator:
                 return persisted, False
             if request is None or request.status != "pending":
                 return request, False
-            expired = request.model_copy(update={
-                "status": "timeout", "operator_notes": "Auto-rejected due to timeout",
-                "responded_at": datetime.utcnow(),
-            })
+            expired = request.model_copy(
+                update={
+                    "status": "timeout",
+                    "operator_notes": "Auto-rejected due to timeout",
+                    "responded_at": datetime.utcnow(),
+                }
+            )
             await self.session_memory.store_approval_request(expired)
             request.status = expired.status
             request.operator_notes = expired.operator_notes
@@ -2617,16 +2750,17 @@ class Orchestrator:
         try:
             request = self._approval_requests.get(request_id)
             remaining = remaining_durable_approval_seconds(
-                request, settings.approval_timeout_seconds,
+                request,
+                settings.approval_timeout_seconds,
             )
-            await asyncio.wait_for(
-                self._wait_for_approval(request_id), timeout=remaining
-            )
+            await asyncio.wait_for(self._wait_for_approval(request_id), timeout=remaining)
         except asyncio.TimeoutError:
             try:
                 await self._expire_pending_approval(request_id)
             except Exception as exc:
-                logger.warning("approval_timeout_persistence_unavailable", error_type=type(exc).__name__)
+                logger.warning(
+                    "approval_timeout_persistence_unavailable", error_type=type(exc).__name__
+                )
                 return  # Never falsely fail a task after an uncommitted timeout.
         request = self._approval_requests.get(request_id)
         if not request or request.status == "approved":
@@ -2667,8 +2801,12 @@ class Orchestrator:
             if durable is None:
                 raise WorkflowException("Approval request does not exist")
             resolved, first_decision = await self.session_memory.resolve_approval_atomic(
-                request_id, durable.engagement_id, durable.task_id, decision,
-                operator_id, notes,
+                request_id,
+                durable.engagement_id,
+                durable.task_id,
+                decision,
+                operator_id,
+                notes,
             )
             self._approval_requests[request_id] = resolved
             local_task = self._tasks.get(resolved.task_id)
@@ -2682,9 +2820,7 @@ class Orchestrator:
                     await self._assign_task(local_task)
                 elif local_task.status == "awaiting_approval":
                     local_task.status = "failed"
-                    local_task.result = {
-                        "status": "failed", "reason": "operator_rejected"
-                    }
+                    local_task.result = {"status": "failed", "reason": "operator_rejected"}
             # The transactional outbox is the durable audit source. A local
             # audit fan-out failure cannot undo a committed human decision.
             return resolved
@@ -2723,10 +2859,14 @@ class Orchestrator:
                 # admission ledger, never executed by an external agent.
                 raise WorkflowException("Internal planner approval cannot dispatch an agent task")
 
-            resolved = request.model_copy(update={
-                "status": decision, "operator_id": operator_id,
-                "operator_notes": notes, "responded_at": datetime.utcnow(),
-            })
+            resolved = request.model_copy(
+                update={
+                    "status": decision,
+                    "operator_id": operator_id,
+                    "operator_notes": notes,
+                    "responded_at": datetime.utcnow(),
+                }
+            )
 
             # Persist first. A failed write must NOT cause waiters, other
             # coroutines or dispatcher guards to observe a phantom grant.
@@ -2808,11 +2948,16 @@ class Orchestrator:
             # approval-waiting states, before returning to the operator.
             for task in self._tasks.values():
                 if task.engagement_id == session_id and task.status in {
-                    "pending", "running", "scheduled", "dispatching", "awaiting_approval",
+                    "pending",
+                    "running",
+                    "scheduled",
+                    "dispatching",
+                    "awaiting_approval",
                 }:
-                    previously_running_temporal = (
-                        self.temporal_enabled and task.status in {"scheduled", "running"}
-                    )
+                    previously_running_temporal = self.temporal_enabled and task.status in {
+                        "scheduled",
+                        "running",
+                    }
                     task.status = "cancelled"
                     await self.session_memory.store_task(task)
                     if previously_running_temporal and self.temporal_scheduler:
@@ -2985,7 +3130,8 @@ class Orchestrator:
                         if durable
                         else self.session_memory.load_task(parent_id)
                     )
-                    if isinstance(parent_id, str) and parent_id else None
+                    if isinstance(parent_id, str) and parent_id
+                    else None
                 )
                 if (
                     canonical is None
@@ -2994,9 +3140,7 @@ class Orchestrator:
                     or canonical.type != parent.get("type")
                 ):
                     continue
-                live_session = await self.session_memory.load_session_state(
-                    canonical.engagement_id
-                )
+                live_session = await self.session_memory.load_session_state(canonical.engagement_id)
                 if (
                     live_session is None
                     or live_session.phase in {"halted", "completed"}
@@ -3022,17 +3166,17 @@ class Orchestrator:
 
                     version = (
                         canonical.payload.get("_authorization_version")
-                        if isinstance(canonical.payload, dict) else None
+                        if isinstance(canonical.payload, dict)
+                        else None
                     )
                     if type(version) is not int or version < 1:
                         continue
                     try:
                         await self.session_memory.assert_signed_authorization(
-                            canonical.engagement_id, expected_version=version,
+                            canonical.engagement_id,
+                            expected_version=version,
                         )
-                        metadata = _continuation_metadata(
-                            canonical.type, canonical.result
-                        )
+                        metadata = _continuation_metadata(canonical.type, canonical.result)
                         if canonical.type == "map_workflow":
                             url = canonical.payload.get("url")
                             if not isinstance(url, str) or not 1 <= len(url) <= 1024:
@@ -3061,25 +3205,23 @@ class Orchestrator:
                                 continue
                         elif canonical.type != "extract_har_api_inventory":
                             continue
-                        if canonical.type in {"capture_authenticated_surface", "extract_har_api_inventory"}:
+                        if canonical.type in {
+                            "capture_authenticated_surface",
+                            "extract_har_api_inventory",
+                        }:
                             workflow_id = canonical.payload.get("workflow_id")
-                            if (
-                                isinstance(workflow_id, str)
-                                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", workflow_id)
+                            if isinstance(workflow_id, str) and re.fullmatch(
+                                r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", workflow_id
                             ):
                                 metadata["workflow_id"] = workflow_id
                         if canonical.type == "extract_har_api_inventory":
                             replay_user = canonical.payload.get("target_user_label")
-                            if (
-                                isinstance(replay_user, str)
-                                and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", replay_user)
+                            if isinstance(replay_user, str) and re.fullmatch(
+                                r"[A-Za-z0-9_.-]{1,64}", replay_user
                             ):
                                 metadata["target_user_label"] = replay_user
                         label = canonical.payload.get("user_label")
-                        if (
-                            isinstance(label, str)
-                            and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", label)
-                        ):
+                        if isinstance(label, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", label):
                             metadata["user_label"] = label
                         safe_parent = {
                             "id": canonical.id,
@@ -3223,9 +3365,8 @@ class Orchestrator:
             ptype == "map_workflow"
             and await self._engagement_is_authenticated(eid)
             and (
-                not durable or await self._authenticated_user_label_is_active(
-                    eid, rs.get("user_label")
-                )
+                not durable
+                or await self._authenticated_user_label_is_active(eid, rs.get("user_label"))
             )
         ):
             child = Task(
@@ -3284,11 +3425,15 @@ class Orchestrator:
                     "Authenticated recovery requires original signed policy version"
                 )
             await self.session_memory.assert_signed_authorization(
-                eid, expected_version=original_version,
+                eid,
+                expected_version=original_version,
             )
-            child.id = "task-" + hashlib.sha256(
-                f"{eid}:{parent['id']}:{child.type}".encode("utf-8")
-            ).hexdigest()[:32]
+            child.id = (
+                "task-"
+                + hashlib.sha256(f"{eid}:{parent['id']}:{child.type}".encode("utf-8")).hexdigest()[
+                    :32
+                ]
+            )
             child.parent_task_id = parent["id"]
         parent_stub = Task(
             id=parent["id"],
@@ -3311,14 +3456,16 @@ class Orchestrator:
                     or not isinstance(prior.payload, dict)
                     or prior.payload.get("_authorization_version") != original_version
                     or (
-                        set(prior.payload) - set(child.payload)
+                        set(prior.payload)
+                        - set(child.payload)
                         - {"_authorization_version"}
-                        - ({"approval_id", "operator_approved"} if prior.approval_required else set())
+                        - (
+                            {"approval_id", "operator_approved"}
+                            if prior.approval_required
+                            else set()
+                        )
                     )
-                    or any(
-                        prior.payload.get(key) != value
-                        for key, value in child.payload.items()
-                    )
+                    or any(prior.payload.get(key) != value for key, value in child.payload.items())
                 ):
                     raise WorkflowException(
                         "Authenticated recovery child identity conflicts with TaskORM"

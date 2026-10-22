@@ -121,8 +121,16 @@ async def _post(
 
 
 @pytest.mark.asyncio
-async def test_auth_host_body_and_unconfigured_registry_never_open_transport(isolated) -> None:
+async def test_auth_host_body_and_unconfigured_registry_never_open_transport(
+    isolated, monkeypatch: pytest.MonkeyPatch
+) -> None:
     api, registry, _ = isolated
+    # A user's configured provider may have started since this test was
+    # authored. Never contact that real configured port: qualification must
+    # use a known closed numeric loopback endpoint, not a live MCP service.
+    monkeypatch.setattr(
+        main, "configured_mcp_server_specs", lambda: _specs(NON_GO, 1)
+    )
     for result in (
         await _post(api),
         await _post(api, token=_token("operator")),

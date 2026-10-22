@@ -22,7 +22,6 @@ import pytest
 from ai_osop.memory import operator_reviewed_flow_atomic_writer_20261022 as atomic
 from ai_osop.memory.flow_artifacts import FlowArtifactStore
 from ai_osop.memory.operator_global_library import OperatorGlobalLibrary
-from ai_osop.memory.reviewed_library_flow_import import ReviewedLibraryFlowImport
 
 
 def _signed_fixture() -> tuple[Any, Any, Dict[str, Any]]:
@@ -121,6 +120,8 @@ def scope(monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
             "status": "running",
             "payload": {
                 "_authorization_version": proposal.authorization_version,
+                "_authorization_sha256": proposal.authorization_sha256,
+                "_authorization_id": proposal.authorization_id,
                 "_flow_revision": proposal.flow_revision,
                 "planner_flow_revision": proposal.flow_revision,
             },
@@ -323,6 +324,7 @@ def test_owner_locked_global_original_conflicts_deny(
         "task_wrong_auth",
         "task_revision_race",
         "task_fake_auth_hash",
+        "task_wrong_auth_id",
     ],
 )
 def test_current_signed_flow_task_roe_and_source_owner_bindings_deny_mismatch(
@@ -349,8 +351,24 @@ def test_current_signed_flow_task_roe_and_source_owner_bindings_deny_mismatch(
         payload["_authorization_version"] += 1
     elif variant == "task_revision_race":
         payload["planner_flow_revision"] += 1
+    elif variant == "task_wrong_auth_id":
+        payload["_authorization_id"] = "auth-forged"
     else:
         payload["_authorization_sha256"] = "f" * 64
+    _denied(scope)
+
+
+def test_version_only_historical_task_still_requires_separate_current_signed_roe(
+    scope: Dict[str, Any],
+) -> None:
+    """Real Task creators pin version; guard_sql and signer roots prove ID/SHA."""
+    payload = scope["state"]["task"]["payload"]
+    del payload["_authorization_sha256"]
+    del payload["_authorization_id"]
+    pending = _inspect(scope)
+    assert pending.approved_for_agent_context is False
+    assert pending.transaction_committed_citation is False
+    scope["state"]["signed_authorization_id"] = "other-signed-roe"
     _denied(scope)
 
 

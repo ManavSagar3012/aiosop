@@ -1,4 +1,4 @@
-"""Mounted 0039 original-global-to-Flow *preflight*, never an import grant.
+"""Mounted 0039 preflight and 0041 immutable citation, never an agent import grant.
 
 Actual admission requires a separately host-enrolled four-root signed reviewer,
 principal, current Flow and current Task/ROE service. A body cannot provide
@@ -12,6 +12,7 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 from ai_osop.api.deps import state
@@ -23,8 +24,38 @@ from ai_osop.memory.reviewed_library_flow_import import (
     ReviewedLibraryFlowImportDenied,
 )
 
+
+class _PrivateReviewedImportRoute(_BoundedUserLibraryRoute):
+    """Never reflect rejected untrusted original text in Pydantic 422 output.
+
+    FastAPI normally serializes the rejected JSON field into detail[].input.
+    An unauthorized body containing `content` could therefore be reflected
+    verbatim even though our schema never stores or imports that content.
+    Keep the existing strict bounded raw-body parser, then redact validation
+    failures for just these sensitive reviewed-original Flow endpoints.
+    """
+
+    def get_route_handler(self):
+        bounded = super().get_route_handler()
+
+        async def private_validation(request: Request):
+            try:
+                return await bounded(request)
+            except RequestValidationError:
+                raise HTTPException(
+                    422,
+                    "Strict reviewed-library metadata required",
+                    headers={
+                        "Cache-Control": "private, no-store",
+                        "X-Content-Type-Options": "nosniff",
+                    },
+                ) from None
+
+        return private_validation
+
+
 router = APIRouter(
-    prefix="/flows", tags=["reviewed-library-import"], route_class=_BoundedUserLibraryRoute
+    prefix="/flows", tags=["reviewed-library-import"], route_class=_PrivateReviewedImportRoute
 )
 _HOST_SLOT = "_host_reviewed_global_flow_import_20261021"
 _LOCKED_SLOT = "_host_reviewed_global_flow_locked_20261022"
@@ -83,11 +114,15 @@ def install_host_locked_reviewed_library_preflight(app: Any, writer: Any) -> Non
         or type(original) is not ReviewedLibraryFlowImport
         or writer._preflight is not original
     ):
-        raise ReviewedLibraryFlowImportDenied("Independent same-transaction review authority unavailable")
+        raise ReviewedLibraryFlowImportDenied(
+            "Independent same-transaction review authority unavailable"
+        )
     try:
         writer._trusted_session_maker()
     except Exception:
-        raise ReviewedLibraryFlowImportDenied("Independent same-transaction review authority unavailable") from None
+        raise ReviewedLibraryFlowImportDenied(
+            "Independent same-transaction review authority unavailable"
+        ) from None
     setattr(app_state, _LOCKED_SLOT, writer)
 
 
@@ -103,9 +138,220 @@ def _guarded_service(request: Request) -> ReviewedLibraryFlowImport:
         or service._library._maker is not getattr(memory, "_async_session", None)
     ):
         raise HTTPException(
-            503, "Independent reviewed-library original/Flow/ROE authority not enrolled"
+            503,
+            "Independent reviewed-library original/Flow/ROE authority not enrolled",
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
         )
     return service
+
+
+def _locked_writer(request: Request, service: ReviewedLibraryFlowImport) -> Any:
+    """Host-injected independent writer or 503; no request-supplied roots."""
+    from ai_osop.memory.operator_reviewed_flow_atomic_writer_20261022 import (
+        OperatorReviewedFlowAtomicWriter,
+    )
+
+    writer = getattr(request.app.state, _LOCKED_SLOT, None)
+    memory = getattr(state.get("orchestrator"), "session_memory", None)
+    if (
+        type(writer) is not OperatorReviewedFlowAtomicWriter
+        or writer._preflight is not service
+        or memory is None
+        or getattr(writer._artifacts, "session_memory", None) is not memory
+    ):
+        raise HTTPException(
+            503,
+            "Independent reviewed citation writer not enrolled",
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
+    return writer
+
+
+@router.post("/{flow_id}/reviewed-library-import/record-citation")
+async def record_reviewed_library_citation(
+    flow_id: str,
+    body: PreflightBody,
+    request: Request,
+    response: Response,
+    operator: dict[str, Any] = Depends(_operator),
+) -> dict[str, Any]:
+    """Persist reviewed original *metadata*, never Flow text or agent context.
+
+    Safe only with independently installed four current signer roots and one
+    original PostgreSQL transaction. Lost responses require explicit independent
+    source/Flow readback; clients must not blindly retry the operation.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    issuer, _ = _identity(operator)
+    if body.flow_owner != operator["sub"]:
+        raise HTTPException(403, "Current signed Flow owner required")
+    service = _guarded_service(request)
+    writer = _locked_writer(request, service)
+    proposal = GlobalFlowImportRequest(
+        issuer=issuer,
+        principal_subject=operator["sub"],
+        flow_owner=operator["sub"],
+        engagement_id=body.engagement_id,
+        flow_id=flow_id,
+        flow_revision=body.expected_flow_revision,
+        task_id=body.task_id,
+        authorization_id=body.authorization_id,
+        authorization_version=body.authorization_version,
+        authorization_sha256=body.authorization_sha256,
+        global_document_id=body.global_document_id,
+        global_revision=body.global_revision,
+        global_sha256=body.global_sha256,
+    )
+    try:
+        from ai_osop.memory.operator_reviewed_flow_atomic_writer_20261022 import (
+            AtomicReviewedImportDenied,
+        )
+
+        citation = await writer.record_reviewed_metadata_citation(proposal)
+    except AtomicReviewedImportDenied as exc:
+        raise HTTPException(
+            409, "Current review or atomic citation unavailable or UNKNOWN"
+        ) from exc
+    return asdict(citation)
+
+
+@router.post("/{flow_id}/reviewed-library-import/record-citation/readback")
+async def readback_reviewed_library_citation(
+    flow_id: str,
+    body: PreflightBody,
+    request: Request,
+    response: Response,
+    operator: dict[str, Any] = Depends(_operator),
+) -> dict[str, Any]:
+    """Read a committed original citation without replaying an uncertain write.
+
+    Requires the same fresh four-root witness and original PostgreSQL locks;
+    absent/stale rows return UNKNOWN, not a statement that an earlier request
+    was never committed. Never returns original user text or execution grant.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    issuer, _ = _identity(operator)
+    if body.flow_owner != operator["sub"]:
+        raise HTTPException(403, "Current signed Flow owner required")
+    service = _guarded_service(request)
+    writer = _locked_writer(request, service)
+    proposal = GlobalFlowImportRequest(
+        issuer=issuer,
+        principal_subject=operator["sub"],
+        flow_owner=operator["sub"],
+        engagement_id=body.engagement_id,
+        flow_id=flow_id,
+        flow_revision=body.expected_flow_revision,
+        task_id=body.task_id,
+        authorization_id=body.authorization_id,
+        authorization_version=body.authorization_version,
+        authorization_sha256=body.authorization_sha256,
+        global_document_id=body.global_document_id,
+        global_revision=body.global_revision,
+        global_sha256=body.global_sha256,
+    )
+    try:
+        from ai_osop.memory.operator_reviewed_flow_atomic_writer_20261022 import (
+            AtomicReviewedImportDenied,
+        )
+
+        citation = await writer.readback_reviewed_metadata_citation(proposal)
+    except AtomicReviewedImportDenied as exc:
+        raise HTTPException(409, "Current committed citation unconfirmed or UNKNOWN") from exc
+    return asdict(citation)
+
+
+@router.post("/{flow_id}/reviewed-library-import/store-reviewed-original")
+async def store_reviewed_original_inert(
+    flow_id: str,
+    body: PreflightBody,
+    request: Request,
+    response: Response,
+    operator: dict[str, Any] = Depends(_operator),
+) -> dict[str, Any]:
+    """Persist exact independently reviewed original with citation atomically.
+
+    A separate operator action; no source text is supplied by the client or
+    returned, and the immutable Flow original can never be auto-promoted to
+    an agent prompt, target finding or execution authority.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    issuer, _ = _identity(operator)
+    if body.flow_owner != operator["sub"]:
+        raise HTTPException(403, "Current signed Flow owner required")
+    service = _guarded_service(request)
+    writer = _locked_writer(request, service)
+    proposal = GlobalFlowImportRequest(
+        issuer=issuer,
+        principal_subject=operator["sub"],
+        flow_owner=operator["sub"],
+        engagement_id=body.engagement_id,
+        flow_id=flow_id,
+        flow_revision=body.expected_flow_revision,
+        task_id=body.task_id,
+        authorization_id=body.authorization_id,
+        authorization_version=body.authorization_version,
+        authorization_sha256=body.authorization_sha256,
+        global_document_id=body.global_document_id,
+        global_revision=body.global_revision,
+        global_sha256=body.global_sha256,
+    )
+    try:
+        from ai_osop.memory.operator_reviewed_flow_atomic_writer_20261022 import (
+            AtomicReviewedImportDenied,
+        )
+
+        receipt = await writer.store_reviewed_flow_original(proposal)
+    except AtomicReviewedImportDenied as exc:
+        raise HTTPException(
+            409, "Current original/reviewer/Flow/ROE changed or transaction UNKNOWN"
+        ) from exc
+    return asdict(receipt)
+
+
+@router.post("/{flow_id}/reviewed-library-import/store-reviewed-original/readback")
+async def readback_stored_reviewed_original(
+    flow_id: str,
+    body: PreflightBody,
+    request: Request,
+    response: Response,
+    operator: dict[str, Any] = Depends(_operator),
+) -> dict[str, Any]:
+    """Distinct nonmutating current 0041 + 0042 confirmation after lost ACK."""
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    issuer, _ = _identity(operator)
+    if body.flow_owner != operator["sub"]:
+        raise HTTPException(403, "Current signed Flow owner required")
+    service = _guarded_service(request)
+    writer = _locked_writer(request, service)
+    proposal = GlobalFlowImportRequest(
+        issuer=issuer,
+        principal_subject=operator["sub"],
+        flow_owner=operator["sub"],
+        engagement_id=body.engagement_id,
+        flow_id=flow_id,
+        flow_revision=body.expected_flow_revision,
+        task_id=body.task_id,
+        authorization_id=body.authorization_id,
+        authorization_version=body.authorization_version,
+        authorization_sha256=body.authorization_sha256,
+        global_document_id=body.global_document_id,
+        global_revision=body.global_revision,
+        global_sha256=body.global_sha256,
+    )
+    try:
+        from ai_osop.memory.operator_reviewed_flow_atomic_writer_20261022 import (
+            AtomicReviewedImportDenied,
+        )
+
+        original = await writer.readback_reviewed_flow_original(proposal)
+    except AtomicReviewedImportDenied as exc:
+        raise HTTPException(409, "Current reviewed Flow original unconfirmed or UNKNOWN") from exc
+    return asdict(original)
 
 
 @router.post("/{flow_id}/reviewed-library-import/preflight")
@@ -155,11 +401,15 @@ async def reviewed_library_preflight(
                 or memory is None
                 or getattr(locked._artifacts, "session_memory", None) is not memory
             ):
-                raise ReviewedLibraryFlowImportDenied("Independent current locked review unavailable")
+                raise ReviewedLibraryFlowImportDenied(
+                    "Independent current locked review unavailable"
+                )
             try:
                 observation = await locked.inspect_pending(proposal)
             except AtomicReviewedImportDenied:
-                raise ReviewedLibraryFlowImportDenied("Independent current locked review unavailable") from None
+                raise ReviewedLibraryFlowImportDenied(
+                    "Independent current locked review unavailable"
+                ) from None
             if (
                 observation.source_id != pending.source_id
                 or observation.source_revision != pending.original_revision
