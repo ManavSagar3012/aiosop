@@ -40,8 +40,8 @@ AI-OSOP transforms Burp Suite MCP from a simple tool-access bridge into a **cogn
 ### Installation
 ```bash
 # Clone repository
-git clone https://github.com/ai-osop/ai-osop.git
-cd ai-osop
+git clone https://github.com/ManavSagar3012/aiosop.git
+cd aiosop
 
 # Install dependencies
 poetry install
